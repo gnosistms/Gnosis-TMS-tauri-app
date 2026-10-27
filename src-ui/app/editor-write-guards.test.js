@@ -145,6 +145,9 @@ const {
   resetEditorOperationQueue,
 } = await import("./editor-operation-queue.js");
 const {
+  assertQueuedEditorRowsReady,
+} = await import("./editor-queued-write.js");
+const {
   deleteActiveEditorRowComment,
   saveActiveEditorRowComment,
 } = await import("./editor-comments-flow.js");
@@ -1512,6 +1515,7 @@ test("replace selected queues behind active repo writes and captures the selecte
         rowId: "row-1",
         textStyle: "paragraph",
         fields: { es: "hola uno" },
+        footnotes: { es: [{ marker: 1, text: "nota hola" }] },
         fieldStates: { es: { reviewed: false, pleaseCheck: false } },
       },
       {
@@ -1561,7 +1565,9 @@ test("replace selected queues behind active repo writes and captures the selecte
 
   assert.deepEqual(invokeLog.map((entry) => entry.command), ["update_gtms_editor_row_fields_batch"]);
   assert.deepEqual(invokeLog[0].payload.input.rows.map((row) => row.rowId), ["row-1"]);
+  assert.equal(invokeLog[0].payload.input.rows[0].footnotes.es, "nota ciao");
   assert.equal(state.editorChapter.rows[0].fields.es, "ciao uno");
+  assert.deepEqual(state.editorChapter.rows[0].footnotes.es, [{ marker: 1, text: "nota ciao" }]);
   assert.equal(state.editorChapter.rows[1].fields.es, "hola dos");
   assert.equal(state.editorChapter.replace.status, "idle");
 });
@@ -1777,6 +1783,64 @@ test("restore history rolls back the optimistic row when the queued restore fail
   assert.equal(state.editorChapter.history.restoringCommitSha, null);
 });
 
+test("unreview all accepts a chapter containing a settled soft-deleted row", async () => {
+  installEditorFixture();
+  state.editorChapter.rows.push(...normalizeEditorRows([{
+    rowId: "deleted-row",
+    lifecycleState: "deleted",
+    fields: { es: "deleted text" },
+    fieldStates: { es: { reviewed: true, pleaseCheck: true } },
+  }]));
+  state.editorChapter.unreviewAllModal = {
+    ...state.editorChapter.unreviewAllModal,
+    isOpen: true,
+    languageCode: "es",
+  };
+  invokeHandler = async (command) => {
+    assert.equal(command, "clear_gtms_editor_reviewed_markers");
+    return { rowIds: ["row-1", "deleted-row"], chapterBaseCommitSha: "head-unreview" };
+  };
+
+  await confirmEditorUnreviewAll(() => {});
+  await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
+
+  assert.deepEqual(invokeLog.map((entry) => entry.command), ["clear_gtms_editor_reviewed_markers"]);
+  assert.equal(state.editorChapter.unreviewAllModal.isOpen, false);
+  assert.equal(state.editorChapter.rows[1].lifecycleState, "deleted");
+  assert.equal(state.editorChapter.rows[1].fields.es, "deleted text");
+  assert.equal(state.editorChapter.rows[1].fieldStates.es.reviewed, false);
+  assert.equal(state.editorChapter.rows[1].fieldStates.es.pleaseCheck, true);
+});
+
+test("queued writes still reject explicitly targeted deleted rows", () => {
+  installEditorFixture();
+  state.editorChapter.rows[0].lifecycleState = "deleted";
+
+  assert.throws(() => assertQueuedEditorRowsReady({
+    chapterId: "chapter-1",
+    rowIds: ["row-1"],
+  }), /Refresh or resolve/);
+});
+
+test("chapter-wide queued writes still reject unresolved state on active and deleted rows", () => {
+  for (const lifecycleState of ["active", "deleted"]) {
+    for (const unresolvedState of [
+      { freshness: "stale" },
+      { freshness: "staleDirty" },
+      { freshness: "conflict" },
+      { saveStatus: "conflict" },
+      { remotelyDeleted: true },
+    ]) {
+      installEditorFixture();
+      Object.assign(state.editorChapter.rows[0], { lifecycleState }, unresolvedState);
+      assert.throws(() => assertQueuedEditorRowsReady({
+        chapterId: "chapter-1",
+        includeAllRows: true,
+      }), /Refresh or resolve/);
+    }
+  }
+});
+
 test("unreview all queues behind dirty row text instead of blocking on the save", async () => {
   installEditorFixture();
   state.editorChapter = {
@@ -1835,6 +1899,81 @@ test("unreview all queues behind dirty row text instead of blocking on the save"
   ]);
   assert.equal(state.editorChapter.rows[0].fieldStates.es.reviewed, false);
   assert.equal(state.editorChapter.rows[0].fieldStates.es.pleaseCheck, true);
+});
+
+test("clear translations stops when a captured row is deleted by an earlier queued operation", async () => {
+  installEditorFixture();
+  const blocker = deferred();
+  const blockerPromise = enqueueRepoWrite({
+    scope: "7:project-1:fixture-project",
+    kind: "testBlocker",
+    run: () => blocker.promise,
+  });
+  invokeHandler = async (command) => {
+    if (command === "soft_delete_gtms_editor_row") {
+      return { lifecycleState: "deleted", wordCounts: {}, chapterBaseCommitSha: "head-delete" };
+    }
+    if (command === "update_gtms_editor_row_fields_batch") {
+      return { rowIds: ["row-1"], wordCounts: {}, chapterBaseCommitSha: "head-clear" };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await softDeleteEditorRow(() => {}, "row-1", null, {
+    applyStructuralEditorChange(_render, applyChange) {
+      applyChange();
+    },
+    applyEditorSelectionsToProjectState,
+  });
+  state.editorChapter.clearTranslationsModal = {
+    ...state.editorChapter.clearTranslationsModal,
+    isOpen: true,
+    step: "confirm",
+    selectedLanguageCodes: ["es"],
+    status: "idle",
+  };
+  await confirmEditorClearTranslations(() => {});
+  assert.deepEqual(invokeLog, []);
+
+  blocker.resolve(null);
+  await blockerPromise;
+  await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
+
+  assert.deepEqual(invokeLog.map((entry) => entry.command), ["soft_delete_gtms_editor_row"]);
+  assert.equal(state.editorChapter.rows[0].lifecycleState, "deleted");
+  assert.equal(state.editorChapter.rows[0].fields.es, "hola");
+  assert.equal(state.editorChapter.clearTranslationsModal.isOpen, true);
+  assert.match(state.editorChapter.clearTranslationsModal.error, /Refresh or resolve/);
+});
+
+test("clear translations accepts a chapter with an unrelated settled deleted row", async () => {
+  installEditorFixture();
+  state.editorChapter.rows.push(...normalizeEditorRows([{
+    rowId: "deleted-row",
+    lifecycleState: "deleted",
+    fields: { es: "deleted text" },
+  }]));
+  state.editorChapter.clearTranslationsModal = {
+    ...state.editorChapter.clearTranslationsModal,
+    isOpen: true,
+    step: "confirm",
+    selectedLanguageCodes: ["es"],
+    status: "idle",
+  };
+  invokeHandler = async (command, payload) => {
+    assert.equal(command, "update_gtms_editor_row_fields_batch");
+    assert.deepEqual(payload.input.rows.map((row) => row.rowId), ["row-1"]);
+    return { rowIds: ["row-1"], wordCounts: {}, chapterBaseCommitSha: "head-clear" };
+  };
+
+  await confirmEditorClearTranslations(() => {});
+  await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
+
+  assert.equal(invokeLog.length, 1);
+  assert.equal(state.editorChapter.rows[0].fields.es, "");
+  assert.equal(state.editorChapter.rows[1].fields.es, "deleted text");
+  assert.equal(state.editorChapter.rows[1].lifecycleState, "deleted");
+  assert.equal(state.editorChapter.clearTranslationsModal.isOpen, false);
 });
 
 test("clear translations queues behind dirty row text instead of blocking on the save", async () => {
@@ -2243,4 +2382,55 @@ test("target language manager queues after dirty row saves", async () => {
   ]);
   assert.deepEqual(invokeLog[1].payload.input.languages.map((language) => language.code), ["es", "fr"]);
   assert.equal(state.targetLanguageManager.isOpen, false);
+});
+
+test("a failed access check retains dirty row text and a later save persists it", async () => {
+  installEditorFixture();
+  state.auth.session = { login: "owner", sessionToken: "stale-token" };
+  state.editorChapter.dirtyRowIds = new Set(["row-1"]);
+  state.editorChapter.rows[0].fields.es = "latest translation";
+  state.editorChapter.rows[0].saveStatus = "dirty";
+  let available = false;
+  let commits = 0;
+  invokeHandler = async (command, payload) => {
+    if (command !== "update_gtms_editor_row_fields") return null;
+    if (!available) throw 'ACCESS_VERIFICATION_FAILED:{"category":"snapshot_storage"}';
+    commits += 1;
+    return {
+      status: "saved", row: { rowId: "row-1", textStyle: "paragraph", fields: payload.input.fields },
+      wordCounts: {}, chapterBaseCommitSha: "head-2",
+    };
+  };
+  const operations = { updateEditorChapterRow, applyEditorSelectionsToProjectState };
+  await flushDirtyEditorRows(() => {}, operations);
+  assert.equal(state.editorChapter.rows[0].fields.es, "latest translation");
+  assert.equal(state.editorChapter.rows[0].persistedFields.es, "hola");
+  assert.equal(state.editorChapter.rows[0].saveStatus, "error");
+  assert.equal(commits, 0);
+  available = true;
+  await flushDirtyEditorRows(() => {}, operations);
+  assert.equal(state.editorChapter.rows[0].persistedFields.es, "latest translation");
+  assert.equal(state.editorChapter.rows[0].saveStatus, "idle");
+  assert.equal(commits, 1);
+});
+
+test("a style save recovers its expired native session before committing once", async () => {
+  installEditorFixture();
+  state.auth.session = { login: "owner", sessionToken: "stale-token" };
+  let nativeToken = "stale-token";
+  let commits = 0;
+  invokeHandler = async (command, payload) => {
+    if (command === "refresh_broker_auth_session") return { login: "owner", sessionToken: "fresh-token" };
+    if (command === "save_broker_auth_session") { nativeToken = payload.session.sessionToken; return; }
+    if (command !== "update_gtms_editor_row_text_style") return null;
+    if (nativeToken === "stale-token") throw "AUTH_RETRY_SAFE:AUTH_REQUIRED:Expired";
+    commits += 1;
+    return { textStyle: payload.input.textStyle, chapterBaseCommitSha: "head-2" };
+  };
+  await updateEditorRowTextStyle(() => {}, "row-1", "heading1", { updateEditorChapterRow, applyEditorSelectionsToProjectState });
+  await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
+  assert.equal(commits, 1);
+  assert.equal(state.editorChapter.rows[0].textStyle, "heading1");
+  assert.equal(state.editorChapter.rows[0].persistedTextStyle, "heading1");
+  assert.equal(state.editorChapter.rows[0].textStyleSaveState.error, "");
 });

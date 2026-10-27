@@ -87,7 +87,7 @@ function activeAssistantThreadHasItems(editorChapter, activeRowId, sourceLanguag
 }
 
 function renderTranslateTools(editorChapter, rows, languages, sourceCode, targetCode, actionConfig, offlineMode = false, readOnly = false) {
-  const activeRow = rows.find((row) => row.id === editorChapter?.activeRowId) ?? null;
+  const activeRow = rows.find((row) => (row.id === editorChapter?.activeRowId || row.srtGroup?.memberRowIds.includes(editorChapter?.activeRowId))) ?? null;
   const translateLanguages = resolveEditorAiTranslateLanguages(editorChapter);
   const sourceLanguage =
     translateLanguages.sourceLanguage
@@ -155,7 +155,7 @@ function renderTranslateTools(editorChapter, rows, languages, sourceCode, target
       : sourceLanguage.code === targetLanguage.code || languageBaseCodesMatch(sourceLanguage, targetLanguage)
       ? "Choose a language other than the source language before translating."
       : !sourceHasTranslatableContent
-        ? "There is no source text to translate yet."
+        ? `Warning: the selected row has no text in ${sourceLanguage.name ?? sourceLanguage.code}.`
         : "";
   const alternateTargetMarkup =
     translateLanguages.usesAlternateTarget
@@ -659,7 +659,7 @@ function assistantTranscriptStatusText(assistant, threadKey) {
 }
 
 function renderAssistantTranscript(editorChapter, rows, languages, sourceCode, targetCode) {
-  const activeRow = rows.find((row) => row.id === editorChapter?.activeRowId) ?? null;
+  const activeRow = rows.find((row) => (row.id === editorChapter?.activeRowId || row.srtGroup?.memberRowIds.includes(editorChapter?.activeRowId))) ?? null;
   const translateLanguages = resolveEditorAiTranslateLanguages(editorChapter);
   const sourceLanguage =
     translateLanguages.sourceLanguage
@@ -710,7 +710,7 @@ function renderAssistantTranscript(editorChapter, rows, languages, sourceCode, t
 }
 
 function renderAssistantComposer(editorChapter, rows, languages, targetCode, offlineMode = false) {
-  const activeRow = rows.find((row) => row.id === editorChapter?.activeRowId) ?? null;
+  const activeRow = rows.find((row) => (row.id === editorChapter?.activeRowId || row.srtGroup?.memberRowIds.includes(editorChapter?.activeRowId))) ?? null;
   const translateLanguages = resolveEditorAiTranslateLanguages(editorChapter);
   const targetLanguage =
     translateLanguages.targetLanguage
@@ -736,6 +736,14 @@ function renderAssistantComposer(editorChapter, rows, languages, targetCode, off
 }
 
 function renderAssistantPane(editorChapter, rows, languages, sourceCode, targetCode, actionConfig, offlineMode = false, readOnly = false) {
+  if (!rows.some((row) => (row.id === editorChapter?.activeRowId || row.srtGroup?.memberRowIds.includes(editorChapter?.activeRowId)))) {
+    return `
+      <div class="history-empty">
+        <p>Select a translation to use the AI Assistant.</p>
+      </div>
+    `;
+  }
+
   return `
     <div class="assistant-pane">
       ${renderTranslateTools(editorChapter, rows, languages, sourceCode, targetCode, actionConfig, offlineMode, readOnly)}
@@ -757,6 +765,7 @@ export function renderTranslateSidebar(
   writeActionsAvailable = true,
 ) {
   const requestedTab = normalizeEditorSidebarTab(editorChapter?.sidebarTab);
+  const hasActiveRow = rows.some((row) => (row.id === editorChapter?.activeRowId || row.srtGroup?.memberRowIds.includes(editorChapter?.activeRowId)));
   const activeTab = !writeActionsAvailable && (requestedTab === "assistant" || requestedTab === "review")
     ? "history"
     : requestedTab;
@@ -769,8 +778,14 @@ export function renderTranslateSidebar(
       : renderHistoryPane(editorChapter, rows, languages);
 
   return `
-    <aside class="translate-sidebar card card--history${activeTab === "assistant" ? " translate-sidebar--assistant" : ""}">
+    <aside class="translate-sidebar card card--history${activeTab === "assistant" && hasActiveRow ? " translate-sidebar--assistant" : ""}">
       <div class="card__body">
+        <button type="button" class="editor-row-connection" data-editor-row-connection
+          data-action="show-connected-editor-row" hidden>
+          <span class="editor-row-connection__arrow" data-editor-row-connection-arrow aria-hidden="true"></span>
+          <span class="editor-row-connection__text" data-editor-row-connection-text></span>
+          <span class="editor-row-connection__action">Show row</span>
+        </button>
         <div class="history-tabs">
           ${writeActionsAvailable ? renderSidebarTab("AI Assistant", "assistant", activeTab, "translate") : ""}
           ${writeActionsAvailable ? renderSidebarTab("Review", "review", activeTab) : ""}

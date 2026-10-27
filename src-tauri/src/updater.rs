@@ -1,9 +1,17 @@
-use std::{cmp::Ordering, collections::HashSet, sync::Mutex};
+use std::{
+    cmp::Ordering,
+    collections::HashSet,
+    sync::{
+        atomic::{AtomicBool, Ordering as AtomicOrdering},
+        Mutex,
+    },
+    time::Duration,
+};
 
 use reqwest::blocking::Client as BlockingClient;
 use reqwest::header::{ACCEPT as REQWEST_ACCEPT, USER_AGENT as REQWEST_USER_AGENT};
 use serde::Deserialize;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_updater::{Error as UpdaterError, Update, UpdaterExt};
 use url::Url;
 
@@ -16,8 +24,50 @@ const GITHUB_RELEASE_DOWNLOADS_BASE_URL: &str =
 const GITHUB_API_USER_AGENT: &str = "gnosis-tms-updater";
 const UPDATER_PUBLIC_KEY: &str = include_str!("../updater-public-key.txt");
 const DEVELOPMENT_UPDATE_INSTALL_ERROR: &str = "Automatic updates are unavailable in development builds. Merge or rebase this branch onto current main, then restart the development app.";
+const MAX_UPDATE_DOWNLOAD_ATTEMPTS: usize = 2;
+const UPDATE_DOWNLOAD_RETRY_DELAY: Duration = Duration::from_millis(500);
+// Per manifest request. The check may fall back through many release endpoints,
+// so the command as a whole is bounded separately below.
+const UPDATE_CHECK_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+// For the whole check command. A stalled check must fail rather than leave the
+// frontend on "checking" forever; the hourly timer does not run while that
+// status is set.
+const UPDATE_CHECK_TOTAL_TIMEOUT: Duration = Duration::from_secs(90);
+const UPDATE_CHECK_TIMED_OUT_ERROR: &str =
+    "Could not check for updates: the update server did not respond in time.";
+const APP_UPDATE_DOWNLOAD_PROGRESS_EVENT: &str = "app-update-download-progress";
 
 pub(crate) struct PendingUpdate(pub(crate) Mutex<Option<Update>>);
+
+#[derive(Default)]
+pub(crate) struct UpdateInstallation {
+    busy: AtomicBool,
+    downloaded: Mutex<Option<(Update, Vec<u8>)>>,
+}
+
+struct UpdateOperation<'a>(&'a AtomicBool);
+
+impl<'a> UpdateOperation<'a> {
+    fn acquire(busy: &'a AtomicBool) -> Result<Self, String> {
+        busy.compare_exchange(false, true, AtomicOrdering::AcqRel, AtomicOrdering::Acquire)
+            .map_err(|_| "An update operation is already running.".to_string())?;
+        Ok(Self(busy))
+    }
+}
+
+impl Drop for UpdateOperation<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, AtomicOrdering::Release);
+    }
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateDownloadProgress {
+    downloaded_bytes: u64,
+    total_bytes: Option<u64>,
+    percentage: Option<u8>,
+}
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -39,6 +89,12 @@ enum ResolvedUpdate {
 enum PendingUpdateDecision {
     UsePending,
     ResolveUpdate,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum DownloadFailureClass {
+    Transient,
+    Permanent,
 }
 
 #[derive(Debug)]
@@ -101,6 +157,116 @@ fn should_skip_fallback_endpoint(error: &UpdaterError) -> bool {
             | UpdaterError::TargetNotFound(_)
             | UpdaterError::TargetsNotFound(_)
     )
+}
+
+fn is_retryable_download_status(status: u16) -> bool {
+    matches!(status, 408 | 429 | 500 | 502 | 503 | 504)
+}
+
+fn network_error_status(message: &str) -> Option<u16> {
+    message
+        .strip_prefix("Download request failed with status:")?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()
+}
+
+fn classify_download_failure(error: &UpdaterError) -> DownloadFailureClass {
+    match error {
+        UpdaterError::Reqwest(error)
+            if error.is_connect()
+                || error.is_timeout()
+                || error.is_body()
+                || error.is_request()
+                || error
+                    .status()
+                    .is_some_and(|status| is_retryable_download_status(status.as_u16())) =>
+        {
+            DownloadFailureClass::Transient
+        }
+        UpdaterError::Network(message)
+            if network_error_status(message).is_some_and(is_retryable_download_status) =>
+        {
+            DownloadFailureClass::Transient
+        }
+        _ => DownloadFailureClass::Permanent,
+    }
+}
+
+fn should_retry_download(error: &UpdaterError, failed_attempt: usize) -> bool {
+    failed_attempt < MAX_UPDATE_DOWNLOAD_ATTEMPTS
+        && classify_download_failure(error) == DownloadFailureClass::Transient
+}
+
+fn download_percentage(downloaded_bytes: u64, total_bytes: Option<u64>) -> Option<u8> {
+    total_bytes
+        .filter(|total| *total > 0)
+        .map(|total| ((u128::from(downloaded_bytes.min(total)) * 100) / u128::from(total)) as u8)
+}
+
+fn emit_update_download_progress(app: &AppHandle, downloaded_bytes: u64, total_bytes: Option<u64>) {
+    let _ = app.emit(
+        APP_UPDATE_DOWNLOAD_PROGRESS_EVENT,
+        UpdateDownloadProgress {
+            downloaded_bytes,
+            total_bytes,
+            percentage: download_percentage(downloaded_bytes, total_bytes),
+        },
+    );
+}
+
+async fn download_update_with_retry(app: &AppHandle, update: &Update) -> Result<Vec<u8>, String> {
+    let mut first_error = None;
+
+    for attempt in 1..=MAX_UPDATE_DOWNLOAD_ATTEMPTS {
+        emit_update_download_progress(app, 0, None);
+        let progress_app = app.clone();
+        let mut downloaded_bytes = 0_u64;
+        let mut last_emitted_percentage = None;
+        match update
+            .download(
+                move |chunk_length, total_bytes| {
+                    downloaded_bytes = downloaded_bytes.saturating_add(chunk_length as u64);
+                    let percentage = download_percentage(downloaded_bytes, total_bytes);
+                    if percentage != last_emitted_percentage {
+                        emit_update_download_progress(&progress_app, downloaded_bytes, total_bytes);
+                        last_emitted_percentage = percentage;
+                    }
+                },
+                || {},
+            )
+            .await
+        {
+            Ok(bytes) => {
+                let byte_count = bytes.len() as u64;
+                emit_update_download_progress(app, byte_count, Some(byte_count));
+                return Ok(bytes);
+            }
+            Err(error) if should_retry_download(&error, attempt) => {
+                first_error = Some(error.to_string());
+                tokio::time::sleep(UPDATE_DOWNLOAD_RETRY_DELAY).await;
+            }
+            Err(error) => {
+                return if let Some(first_error) = first_error {
+                    Err(format!(
+                        "Could not download and verify Gnosis TMS {} after {attempt} attempts. The retry failed: {error}. First attempt: {first_error}",
+                        update.version
+                    ))
+                } else {
+                    Err(format!(
+                        "Could not download and verify Gnosis TMS {}: {error}",
+                        update.version
+                    ))
+                };
+            }
+        }
+    }
+
+    Err(format!(
+        "Could not download and verify Gnosis TMS {}.",
+        update.version
+    ))
 }
 
 fn platform_wait_message() -> String {
@@ -313,6 +479,7 @@ async fn check_update_at_endpoint(
     let updater = app
         .updater_builder()
         .pubkey(UPDATER_PUBLIC_KEY.trim())
+        .timeout(UPDATE_CHECK_REQUEST_TIMEOUT)
         .endpoints(vec![endpoint])
         .map_err(|error| {
             EndpointCheckError::Configuration(format!(
@@ -472,6 +639,7 @@ async fn resolve_install_update(
 pub(crate) async fn check_for_app_update(
     app: AppHandle,
     pending_update: State<'_, PendingUpdate>,
+    requested_version: Option<String>,
 ) -> Result<UpdateMetadata, String> {
     let current_version = app.package_info().version.to_string();
 
@@ -479,7 +647,14 @@ pub(crate) async fn check_for_app_update(
         return Ok(build_no_update_metadata(current_version, None));
     }
 
-    let (update, unavailable_message) = match resolve_latest_compatible_update(&app).await? {
+    let requested_version = normalize_requested_version(requested_version);
+    let resolved = tokio::time::timeout(
+        UPDATE_CHECK_TOTAL_TIMEOUT,
+        resolve_install_update(&app, requested_version.as_deref()),
+    )
+    .await
+    .map_err(|_elapsed| UPDATE_CHECK_TIMED_OUT_ERROR.to_string())??;
+    let (update, unavailable_message) = match resolved {
         ResolvedUpdate::Available(update) => (Some(update), None),
         ResolvedUpdate::Unavailable { message } => (None, message),
     };
@@ -497,14 +672,17 @@ pub(crate) async fn check_for_app_update(
 }
 
 #[tauri::command]
-pub(crate) async fn install_app_update(
+pub(crate) async fn download_app_update(
     app: AppHandle,
     pending_update: State<'_, PendingUpdate>,
+    installation: State<'_, UpdateInstallation>,
     requested_version: Option<String>,
 ) -> Result<(), String> {
     if !updates_enabled() {
         return Err(DEVELOPMENT_UPDATE_INSTALL_ERROR.to_string());
     }
+
+    let _operation = UpdateOperation::acquire(&installation.busy)?;
 
     let requested_version = normalize_requested_version(requested_version);
     let requested_version_ref = requested_version.as_deref();
@@ -549,10 +727,61 @@ pub(crate) async fn install_app_update(
         }
     };
 
-    update
-        .download_and_install(|_, _| {}, || {})
-        .await
-        .map_err(|error| format!("Could not install the update: {error}"))?;
+    let bytes = download_update_with_retry(&app, &update).await?;
+    *installation
+        .downloaded
+        .lock()
+        .map_err(|_| "Could not store the downloaded update.".to_string())? = Some((update, bytes));
+    Ok(())
+}
+
+// Called only after the user confirms restart and the frontend has flushed and
+// checked durable writes. Windows installation itself may terminate the app.
+#[tauri::command]
+pub(crate) async fn install_app_update(
+    app: AppHandle,
+    installation: State<'_, UpdateInstallation>,
+    requested_version: Option<String>,
+) -> Result<(), String> {
+    if !updates_enabled() {
+        return Err(DEVELOPMENT_UPDATE_INSTALL_ERROR.to_string());
+    }
+    let _operation = UpdateOperation::acquire(&installation.busy)?;
+    let staged = {
+        let mut downloaded = installation
+            .downloaded
+            .lock()
+            .map_err(|_| "Could not access the downloaded update.".to_string())?;
+        if let Some((update, _)) = downloaded.as_ref() {
+            if !version_satisfies_requested(&update.version, requested_version.as_deref()) {
+                *downloaded = None;
+                return Err(
+                    "APP_UPDATE_DOWNLOAD_REQUIRED:A newer update is required. Download it before restarting.".to_string(),
+                );
+            }
+        }
+        downloaded
+            .take()
+            .ok_or("APP_UPDATE_DOWNLOAD_REQUIRED:Download the update before installing it.")?
+    };
+    let (staged, result) = tauri::async_runtime::spawn_blocking(move || {
+        let result = staged.0.install(&staged.1).map_err(|error| {
+            format!(
+                "Gnosis TMS {} could not be installed: {error}",
+                staged.0.version
+            )
+        });
+        (staged, result)
+    })
+    .await
+    .map_err(|error| format!("Could not run the installer: {error}"))?;
+    if let Err(error) = result {
+        *installation
+            .downloaded
+            .lock()
+            .map_err(|_| "Could not retain the downloaded update.".to_string())? = Some(staged);
+        return Err(error);
+    }
 
     app.request_restart();
     Ok(())
@@ -560,13 +789,24 @@ pub(crate) async fn install_app_update(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn update_operation_rejects_overlap_and_releases_on_failure() {
+        let busy = std::sync::atomic::AtomicBool::new(false);
+        let first = super::UpdateOperation::acquire(&busy).unwrap();
+        assert!(super::UpdateOperation::acquire(&busy).is_err());
+        drop(first);
+        assert!(super::UpdateOperation::acquire(&busy).is_ok());
+    }
+
     use super::{
-        compare_stable_versions, github_release_latest_json_url, parse_github_release_tags,
+        classify_download_failure, compare_stable_versions, download_percentage,
+        github_release_latest_json_url, network_error_status, parse_github_release_tags,
         pending_update_decision, platform_wait_and_lookup_failed_message, platform_wait_message,
-        release_tag_candidates_for_version, version_satisfies_requested, PendingUpdateDecision,
-        DEVELOPMENT_UPDATE_INSTALL_ERROR,
+        release_tag_candidates_for_version, should_retry_download, version_satisfies_requested,
+        DownloadFailureClass, PendingUpdateDecision, DEVELOPMENT_UPDATE_INSTALL_ERROR,
     };
     use std::cmp::Ordering;
+    use tauri_plugin_updater::Error as UpdaterError;
 
     #[test]
     fn parse_github_release_tags_filters_drafts_prereleases_and_duplicates() {
@@ -661,5 +901,73 @@ mod tests {
             pending_update_decision(Some("0.3.0"), None),
             PendingUpdateDecision::UsePending,
         );
+    }
+
+    #[test]
+    fn download_failure_classification_retries_only_selected_transient_statuses() {
+        for status in [408, 429, 500, 502, 503, 504] {
+            let error = UpdaterError::Network(format!(
+                "Download request failed with status: {status} Service Unavailable"
+            ));
+            assert_eq!(
+                classify_download_failure(&error),
+                DownloadFailureClass::Transient,
+                "expected status {status} to be transient"
+            );
+        }
+
+        for status in [400, 401, 403, 404, 409, 422] {
+            let error = UpdaterError::Network(format!(
+                "Download request failed with status: {status} Client Error"
+            ));
+            assert_eq!(
+                classify_download_failure(&error),
+                DownloadFailureClass::Permanent,
+                "expected status {status} to be permanent"
+            );
+        }
+    }
+
+    #[test]
+    fn download_percentage_is_bounded_and_requires_a_total() {
+        assert_eq!(download_percentage(25, Some(100)), Some(25));
+        assert_eq!(download_percentage(125, Some(100)), Some(100));
+        assert_eq!(download_percentage(25, Some(0)), None);
+        assert_eq!(download_percentage(25, None), None);
+    }
+
+    #[test]
+    fn download_failure_classification_does_not_guess_from_unstructured_network_errors() {
+        let error = UpdaterError::Network("server temporarily unavailable".to_string());
+
+        assert_eq!(network_error_status("server temporarily unavailable"), None);
+        assert_eq!(
+            classify_download_failure(&error),
+            DownloadFailureClass::Permanent
+        );
+    }
+
+    #[test]
+    fn download_failure_classification_does_not_retry_signature_errors() {
+        let error = UpdaterError::Base64(base64::DecodeError::InvalidLength(1));
+
+        assert_eq!(
+            classify_download_failure(&error),
+            DownloadFailureClass::Permanent
+        );
+        assert!(!should_retry_download(&error, 1));
+    }
+
+    #[test]
+    fn download_retry_policy_allows_exactly_one_retry() {
+        let transient = UpdaterError::Network(
+            "Download request failed with status: 503 Service Unavailable".to_string(),
+        );
+        let permanent =
+            UpdaterError::Network("Download request failed with status: 404 Not Found".to_string());
+
+        assert!(should_retry_download(&transient, 1));
+        assert!(!should_retry_download(&transient, 2));
+        assert!(!should_retry_download(&permanent, 1));
     }
 }

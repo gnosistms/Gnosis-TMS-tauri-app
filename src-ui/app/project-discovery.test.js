@@ -778,6 +778,48 @@ test("project loading clears stale missing-local-repo repair after repo sync clo
   assert.equal(state.projects[0].chapters.length, 1);
 });
 
+test("repo sync publications render once after applying project state", async () => {
+  setupProjectDiscoveryFlowTest();
+  installProjectDiscoveryInvokeMock({
+    remoteProjectsPromise: Promise.resolve([{
+      id: "project-1",
+      name: "project-repo",
+      title: "Local Project",
+      fullName: "team/project-repo",
+      defaultBranchName: "main",
+      defaultBranchHeadOid: "remote-head",
+    }]),
+    repoSyncSnapshots: [{ projectId: "project-1", repoName: "project-repo", status: "upToDate" }],
+  });
+  const options = projectDiscoveryOptions();
+  const publishSnapshot = options.publishProjectLoadSnapshot;
+  const publications = [];
+  let currentPublication = null;
+  options.publishProjectLoadSnapshot = (payload) => {
+    currentPublication = null;
+    if (["repoSyncProgress", "repoSyncSnapshot"].includes(payload.progressType)) {
+      currentPublication = { type: payload.progressType, renders: 0 };
+      publications.push(currentPublication);
+    }
+    publishSnapshot(payload);
+  };
+  // Other progress events delimit the next phase of the load.
+  options.onProjectLoadProgress = ({ type }) => {
+    if (!["repoSyncProgress", "repoSyncSnapshot"].includes(type)) currentPublication = null;
+  };
+  await loadProjectSnapshotForTeam((renderOptions) => {
+    if (!renderOptions?.scope && currentPublication) {
+      currentPublication.renders += 1;
+      assert.equal(state.projectRepoSyncByProjectId["project-1"].status, "upToDate");
+    }
+  }, "team-1", options);
+
+  assert.deepEqual(publications, [
+    { type: "repoSyncProgress", renders: 1 },
+    { type: "repoSyncSnapshot", renders: 1 },
+  ]);
+});
+
 test("an expired session during the remote phase routes to the sign-in screen", async () => {
   setupProjectDiscoveryFlowTest();
   // Local data exists, so the local-first tolerance would normally swallow the broker
@@ -870,3 +912,318 @@ test("online project loading does not render persistent cache when local scan fa
   assert.deepEqual(state.projects.map((project) => project.title), ["Remote Project"]);
   assert.ok(!renders.some((snapshot) => snapshot.projects.includes("Cached Project")));
 });
+
+test("an empty local checkout remains ready through remote discovery and sync failure", async () => {
+  setupProjectDiscoveryFlowTest();
+  const events = [];
+  installProjectDiscoveryInvokeMock({
+    localMetadata: [projectMetadataRecord({ chapterCount: 0 })],
+    remoteProjectsPromise: Promise.resolve([{
+      id: "project-1", name: "project-repo", fullName: "team/project-repo", defaultBranchName: "main",
+    }]),
+    localProjectFiles: [{ projectId: "project-1", repoName: "project-repo", localRepoReady: true, chapters: [] }],
+    repoSyncSnapshots: [{ projectId: "project-1", repoName: "project-repo", status: "syncError", message: "Network unavailable" }],
+  });
+  await loadProjectSnapshotForTeam(() => {}, "team-1", projectDiscoveryOptions({
+    onProjectLoadProgress: (event) => events.push(event),
+  }));
+  for (const type of ["localSnapshot", "remoteSnapshot", "repoSyncSnapshot", "repairSnapshot"]) {
+    const event = events.find((item) => item.type === type);
+    assert.ok(event, type);
+    assert.equal(event.snapshot.items[0]?.fileLoadState, "ready", type);
+  }
+  assert.equal(state.projects[0].fileLoadState, "ready");
+});
+
+test("a missing checkout is not a ready empty project", async () => {
+  setupProjectDiscoveryFlowTest();
+  const listing = deferred();
+  const events = [];
+  installProjectDiscoveryInvokeMock({
+    remoteProjectsPromise: listing.promise,
+    localProjectFiles: [{ projectId: "project-1", repoName: "project-repo", localRepoReady: false, chapters: [] }],
+  });
+  const load = loadProjectSnapshotForTeam(() => {}, "team-1", projectDiscoveryOptions({
+    onProjectLoadProgress: (event) => events.push(event),
+  }));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(events.find((event) => event.type === "localSnapshot")?.snapshot.items[0]?.fileLoadState, "loading");
+  state.screen = "teams";
+  listing.resolve([]);
+  await load;
+});
+
+test("creation cancels an older discovery before it can report the new repo missing", async () => {
+  setupProjectDiscoveryFlowTest();
+  const { createProjectsQueryOptions, publishCreatedProjectToQuery } = await import("./project-query.js");
+  const remoteListing = deferred();
+  const localPublished = deferred();
+  let metadataWrites = 0;
+  installProjectDiscoveryInvokeMock({ remoteProjectsPromise: remoteListing.promise });
+  const team = state.teams[0];
+  const oldLoad = queryClient.fetchQuery(createProjectsQueryOptions(team, projectDiscoveryOptions({
+    onProjectLoadProgress: (event) => {
+      if (event.type === "localSnapshot") localPublished.resolve();
+    },
+    upsertProjectMetadataRecord: async () => { metadataWrites += 1; },
+  }))).catch(() => null);
+  await localPublished.promise;
+  await publishCreatedProjectToQuery(team, {
+    projectId: "new-project", title: "New project", repoName: "new-project",
+    remoteProject: { name: "new-project", fullName: "team/new-project" },
+  });
+  remoteListing.resolve([]);
+  await oldLoad;
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(metadataWrites, 0, "canceled discovery must not finalize missing repos");
+  assert.deepEqual(state.projects.map((project) => project.id).sort(), ["new-project", "project-1"]);
+  assert.equal(state.projectDiscovery.status, "ready");
+});
+
+const editorRefreshRaceCases = ["translate", "glossaryEditor", "qaListEditor"].flatMap((screen) =>
+  ["local scan", "file rescan"].map((phase) => ({ screen, phase })),
+);
+for (const { screen, phase } of editorRefreshRaceCases) {
+  test(`a project refresh abandoned for ${screen} during ${phase} keeps the chapter editor writable`, async () => {
+    setupProjectDiscoveryFlowTest();
+    const {
+      createProjectsQuerySnapshot,
+      ensureProjectsQueryObserver,
+    } = await import("./project-query.js");
+    const { projectKeys } = await import("./query-client.js");
+    const { applyEditorRegressionFixture } = await import("./editor-regression-fixture.js");
+    const { buildEditorScreenViewModel } = await import("./editor-screen-model.js");
+    const { resolveSelectedChapterGlossary } = await import("./project-context.js");
+    const { captureEditorWritePermissionSnapshot } = await import("./editor-write-permission.js");
+    const fixture = applyEditorRegressionFixture(state, { rowCount: 1, chapterStatus: "ready" });
+    const team = state.teams[0];
+    team.membershipRole = "owner";
+    team.id = `${team.id}-${screen}-${phase}`;
+    state.selectedTeamId = team.id;
+    const project = state.projects[0];
+    const chapter = project.chapters[0];
+    chapter.linkedGlossary = { glossaryId: "glossary-1", repoName: "glossary-repo" };
+    state.editorChapter.writePermissionSnapshot = captureEditorWritePermissionSnapshot({ team, project, chapter });
+    applyProjectSnapshotToState({ items: [project], deletedItems: [] });
+    const cached = createProjectsQuerySnapshot({
+      // Progress can discover chapters newer than the last completed query.
+      items: [phase === "file rescan" ? { ...project, chapters: [] } : project],
+      glossaries: state.glossaries,
+    });
+    const queryKey = projectKeys.byTeam(team.id);
+    queryClient.setQueryData(queryKey, cached);
+    const pendingRead = deferred();
+    const started = deferred();
+    const record = projectMetadataRecord({ id: project.id, repoName: project.name, fullName: project.fullName });
+    const listing = { projectId: project.id, repoName: project.name, localRepoReady: true, chapters: [chapter] };
+    installProjectDiscoveryInvokeMock({
+      localMetadata: [record],
+      localProjectFiles: [listing],
+      remoteProjectsPromise: Promise.resolve([project]),
+    });
+    const baseInvoke = invokeHandler;
+    let fileReads = 0;
+    invokeHandler = (command, payload) => {
+      if (phase === "file rescan" && command === "list_local_gtms_project_files" && ++fileReads === 2) {
+        started.resolve();
+        return pendingRead.promise;
+      }
+      return baseInvoke(command, payload);
+    };
+    state.screen = "projects";
+    const subscription = ensureProjectsQueryObserver(() => {}, team, projectDiscoveryOptions({
+      ...(phase === "local scan" ? {
+        listLocalProjectMetadataRecords: () => {
+          started.resolve();
+          return pendingRead.promise;
+        },
+      } : {}),
+    }));
+    const refresh = subscription.observer.refetch({ cancelRefetch: false });
+    try {
+      await started.promise;
+      // Open the chapter from the cached list, then visit its linked resource
+      // before the project scan finishes. Returning uses the live editor rows.
+      state.screen = "translate";
+      assert.equal(buildEditorScreenViewModel(state).contentRows[0].canEdit, true);
+      state.screen = screen;
+      pendingRead.resolve([]);
+      await refresh;
+      state.screen = "translate";
+
+      const row = buildEditorScreenViewModel(state).contentRows.find((item) => item.id === fixture.firstRowId);
+      assert.equal(row.canEdit, true);
+      assert.equal(row.sections.find((section) => section.code === fixture.targetCode).canEdit, true);
+      assert.equal(resolveSelectedChapterGlossary()?.glossaryId, chapter.linkedGlossary.glossaryId);
+      assert.equal(queryClient.getQueryData(queryKey), cached, "an abandoned scan must not replace cached projects");
+      assert.equal(state.projectDiscovery.error, "");
+      assert.equal(state.projectsPage.isRefreshing, false);
+    } finally {
+      subscription.unsubscribe();
+    }
+  });
+}
+
+test("returning to Projects during stale discovery cleanup does not validate its partial result", async () => {
+  setupProjectDiscoveryFlowTest();
+  const { createProjectsQueryOptions } = await import("./project-query.js");
+  const remote = deferred();
+  const localPublished = deferred();
+  const cleanupStarted = deferred();
+  const cleanup = deferred();
+  installProjectDiscoveryInvokeMock({ remoteProjectsPromise: remote.promise });
+  const query = createProjectsQueryOptions(state.teams[0], projectDiscoveryOptions({
+    render: () => {},
+    onProjectLoadProgress: (event) => {
+      if (event.type === "localSnapshot") localPublished.resolve();
+    },
+    pageSyncController: {
+      complete: async () => {
+        cleanupStarted.resolve();
+        await cleanup.promise;
+      },
+    },
+  }));
+  const rejected = assert.rejects(query.queryFn(), /Stale project refresh ignored/);
+  await localPublished.promise;
+  state.screen = "glossaryEditor";
+  remote.resolve([]);
+  await cleanupStarted.promise;
+  state.screen = "projects";
+  cleanup.resolve();
+  await rejected;
+});
+
+for (const contextChange of ["none", "screen", "team", "session"]) {
+  test(`returning project load retries abandoned cleanup only in the same context: ${contextChange}`, async () => {
+    setupProjectDiscoveryFlowTest();
+    const { createProjectsQueryOptions, createProjectsQuerySnapshot, ensureProjectsQueryObserver } = await import("./project-query.js");
+    const { projectKeys } = await import("./query-client.js");
+    const { loadTeamProjects } = await import("./project-flow.js");
+    const { invalidateAuthSession } = await import("./state.js");
+    const team = state.teams[0];
+    team.id = `returning-team-${contextChange}`;
+    state.selectedTeamId = team.id;
+    queryClient.setQueryData(projectKeys.byTeam(team.id), createProjectsQuerySnapshot({
+      items: [{ id: "project-1", name: "project-repo", title: "Cached Project", chapters: [{ id: "chapter-1" }] }],
+    }));
+    const remote = deferred();
+    const localPublished = deferred();
+    const cleanupStarted = deferred();
+    const cleanup = deferred();
+    installProjectDiscoveryInvokeMock({ remoteProjectsPromise: remote.promise });
+    const oldOptions = projectDiscoveryOptions({
+      render: () => {},
+      onProjectLoadProgress: (event) => {
+        if (event.type === "localSnapshot") localPublished.resolve();
+      },
+      pageSyncController: {
+        complete: async () => {
+          cleanupStarted.resolve();
+          await cleanup.promise;
+        },
+      },
+    });
+    const subscription = ensureProjectsQueryObserver(() => {}, team, oldOptions);
+    const oldQuery = createProjectsQueryOptions(team, oldOptions);
+    const rejected = assert.rejects(queryClient.fetchQuery(oldQuery), /Stale project refresh ignored/);
+    try {
+      await localPublished.promise;
+      state.screen = "glossaryEditor";
+      remote.resolve([]);
+      await cleanupStarted.promise;
+      state.screen = "projects";
+      const requestsBeforeReturn = state.projectDiscoveryRequestId;
+      const returningLoad = loadTeamProjects(() => {}, team.id);
+      if (contextChange === "screen") state.screen = "glossaryEditor";
+      if (contextChange === "team") state.selectedTeamId = "another-team";
+      if (contextChange === "session") invalidateAuthSession();
+      // A replacement request must discover fresh data instead of accepting the
+      // older partial result or stopping with the cached collection.
+      installProjectDiscoveryInvokeMock({
+        localMetadata: [projectMetadataRecord({ title: "Fresh Project" })],
+        remoteProjectsPromise: Promise.resolve([{
+          id: "project-1", name: "project-repo", fullName: "team/project-repo",
+        }]),
+      });
+      cleanup.resolve();
+      const result = await returningLoad;
+      await rejected;
+
+      if (contextChange === "none") {
+        assert.equal(state.projectDiscoveryRequestId, requestsBeforeReturn + 1);
+        assert.equal(result[0]?.title, "Fresh Project");
+        assert.equal(state.projects[0]?.title, "Fresh Project");
+        assert.equal(queryClient.getQueryState(projectKeys.byTeam(team.id)).status, "success");
+        assert.equal(state.projectsPage.isRefreshing, false);
+      } else {
+        assert.equal(state.projectDiscoveryRequestId, requestsBeforeReturn, "stale callers must not start a new load");
+        assert.deepEqual(result, []);
+      }
+    } finally {
+      subscription.unsubscribe();
+    }
+  });
+}
+
+test("a completed project query still accepts an authoritative empty collection", async () => {
+  setupProjectDiscoveryFlowTest();
+  const { createProjectsQueryOptions, createProjectsQuerySnapshot } = await import("./project-query.js");
+  const { projectKeys } = await import("./query-client.js");
+  const team = state.teams[0];
+  queryClient.setQueryData(projectKeys.byTeam(team.id), createProjectsQuerySnapshot({
+    items: [{ id: "old-project", chapters: [] }],
+  }));
+  installProjectDiscoveryInvokeMock({ localMetadata: [], localProjectFiles: [] });
+  const result = await queryClient.fetchQuery(createProjectsQueryOptions(team, projectDiscoveryOptions({ render: () => {} })));
+  assert.deepEqual(result.snapshot, { items: [], deletedItems: [] });
+  assert.deepEqual(queryClient.getQueryData(projectKeys.byTeam(team.id)), result);
+  assert.equal(result.discovery.error, "");
+});
+
+for (const scenario of ["restored", "removed-during-refresh", "offline", "failed-metadata"]) {
+  test(`project local removal restoration requires subsequent successful metadata: ${scenario}`, async () => {
+    setupProjectDiscoveryFlowTest();
+    const { setActiveStorageLogin } = await import("./team-storage.js");
+    const { addLocalHardDeleteTombstone, isLocalHardDeletedResource } = await import("./local-hard-delete-store.js");
+    const { removePersistentValue } = await import("./persistent-store.js");
+    const login = `removal-discovery-${scenario}`;
+    setActiveStorageLogin(login);
+    const team = state.teams[0];
+    const record = projectMetadataRecord();
+    const project = { id: record.id, name: record.repoName, fullName: record.fullName, lifecycleState: "deleted" };
+    const metadata = deferred();
+    const started = deferred();
+    installProjectDiscoveryInvokeMock({
+      localMetadata: [record],
+      remoteMetadata: [record],
+      remoteProjectsPromise: Promise.resolve([{ id: record.id, name: record.repoName, fullName: record.fullName }]),
+      metadataSyncPromise: metadata.promise,
+    });
+    const baseInvoke = invokeHandler;
+    invokeHandler = (command, payload) => {
+      if (command === "sync_local_team_metadata_repo") started.resolve();
+      return baseInvoke(command, payload);
+    };
+    if (scenario !== "removed-during-refresh") addLocalHardDeleteTombstone(team, "project", project);
+    state.offline.isEnabled = scenario === "offline";
+    const options = projectDiscoveryOptions({
+      loadStoredProjectsForTeam: () => ({ exists: true, projects: [{ ...project, lifecycleState: "active" }], deletedProjects: [] }),
+    });
+    try {
+      const request = loadProjectSnapshotForTeam(() => {}, team.id, options);
+      if (scenario !== "offline") await started.promise;
+      if (scenario === "removed-during-refresh") addLocalHardDeleteTombstone(team, "project", project);
+      if (scenario === "failed-metadata") metadata.reject(new Error("Network unavailable"));
+      else metadata.resolve();
+      const result = await request;
+      const restored = scenario === "restored";
+      assert.equal(isLocalHardDeletedResource(team, "project", project), !restored);
+      assert.deepEqual(result.items.map(item => item.id), restored ? [project.id] : []);
+      assert.deepEqual(result.deletedItems, []);
+    } finally {
+      metadata.resolve();
+      removePersistentValue(`gnosis-tms-local-hard-delete-tombstones:${login}`);
+    }
+  });
+}

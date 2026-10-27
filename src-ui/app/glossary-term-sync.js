@@ -20,6 +20,7 @@ const glossaryTermSync = createRepoResourceTermSync({
           : "",
       footnote: typeof draftSnapshot?.footnote === "string" ? draftSnapshot.footnote : "",
       untranslated: draftSnapshot?.untranslated === true,
+      siblingTermIds: Array.isArray(draftSnapshot?.siblingTermIds) ? draftSnapshot.siblingTermIds : [],
     };
   },
   termNoun: "term",

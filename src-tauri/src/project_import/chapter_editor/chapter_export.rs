@@ -1,3 +1,4 @@
+use super::book_export::{section_document, BookItemInput, BookPart};
 use super::row_fields::parse_labeled_footnote_text_for_merge;
 use super::*;
 use crate::project_import::chapter_import::format_srt_timestamp;
@@ -90,6 +91,13 @@ pub(crate) struct ExportChapterFileInput {
     #[serde(default)]
     pub(super) project_full_name: Option<String>,
     pub(super) chapter_id: String,
+    /// Ordered project export scope; empty preserves the single-chapter API.
+    #[serde(default)]
+    pub(super) chapter_ids: Vec<String>,
+    #[serde(default)]
+    pub(super) project_title: String,
+    #[serde(default)]
+    pub(super) book_items: Vec<BookItemInput>,
     pub(super) language_code: String,
     pub(super) format: String,
     pub(super) output_path: String,
@@ -118,6 +126,9 @@ pub(super) enum ExportImage {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum ExportBlock {
+    Attribution {
+        text: String,
+    },
     Text {
         text_style: String,
         text: String,
@@ -140,6 +151,7 @@ pub(super) struct ExportDocument {
     pub(super) title: String,
     pub(super) language_code: String,
     pub(super) blocks: Vec<ExportBlock>,
+    pub(super) book_parts: Vec<BookPart>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -194,34 +206,27 @@ pub(crate) fn export_gtms_chapter_file_sync(
     ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
 
-    let chapter_path =
-        find_chapter_path_by_id(app, &repo_path.join("chapters"), &input.chapter_id)?;
-    let chapter_file: StoredChapterFile =
-        read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
-    let languages = sanitize_chapter_languages(&chapter_file.languages);
-    if !languages
-        .iter()
-        .any(|language| language.code == input.language_code)
+    let chapters = load_export_chapters(app, &repo_path, &input)?;
+    let languages = export_languages(&chapters);
+    if format == "srt"
+        && chapters
+            .iter()
+            .any(|(chapter, _)| !chapter_has_srt_source(chapter))
     {
-        return Err("The selected export language is not available in this file.".to_string());
+        return Err("SRT export requires every file to have been imported from SRT.".to_string());
     }
-    // SRT export is provenance-gated: only chapters imported from an SRT file carry
-    // the timing data an SRT file needs. The UI hides the option; this is the backstop.
-    if format == "srt" && !chapter_has_srt_source(&chapter_file) {
-        return Err(
-            "SRT export is only available for files imported from an SRT subtitle file."
-                .to_string(),
-        );
-    }
-
-    let rows = load_editor_rows(&chapter_path.join("rows"))?;
+    let rows = if matches!(format.as_str(), "srt" | "xlsx") {
+        combined_export_rows(&chapters, format == "srt")
+    } else {
+        Vec::new()
+    };
     let head_sha = current_repo_head_sha(&repo_path);
     let full_name = resolve_project_full_name(&repo_path, input.project_full_name.as_deref());
-    let document = build_export_document(
+    let document = build_scoped_export_document(
+        app,
         &repo_path,
-        &chapter_file,
-        &rows,
-        &input.language_code,
+        &chapters,
+        &input,
         full_name.as_deref(),
         head_sha.as_deref().unwrap_or_default(),
     )?;
@@ -255,12 +260,7 @@ pub(crate) fn export_gtms_chapter_file_sync(
         .map_err(|error| format!("Could not write '{}': {error}", output_path.display())),
         "xlsx" => fs::write(
             &output_path,
-            render_xlsx_workbook(
-                &chapter_file.title,
-                &languages,
-                &rows,
-                input.omit_custom_html,
-            )?,
+            render_xlsx_workbook(&document.title, &languages, &rows, input.omit_custom_html)?,
         )
         .map_err(|error| format!("Could not write '{}': {error}", output_path.display())),
         "rtf" => fs::write(
@@ -277,6 +277,276 @@ pub(crate) fn export_gtms_chapter_file_sync(
     Ok(ExportChapterFileResponse {
         skipped_rows_without_timing,
     })
+}
+
+/// Load only the requested, ordered scope from the local repo. Never silently
+/// skip missing languages/files: that would produce an incomplete book.
+pub(super) fn load_export_chapters(
+    app: &AppHandle,
+    repo_path: &Path,
+    input: &ExportChapterFileInput,
+) -> Result<Vec<(StoredChapterFile, Vec<StoredRowFile>)>, String> {
+    let ids = if input.chapter_ids.is_empty() && input.book_items.is_empty() {
+        vec![input.chapter_id.clone()]
+    } else {
+        input.chapter_ids.clone()
+    };
+    let mut seen = std::collections::BTreeSet::new();
+    ids.iter().map(|id| {
+        if id.trim().is_empty() || !seen.insert(id) {
+            return Err("The export contains an invalid or duplicate file.".to_string());
+        }
+        let path = find_chapter_path_by_id(app, &repo_path.join("chapters"), id)?;
+        let chapter: StoredChapterFile = read_json_file(&path.join("chapter.json"), "chapter.json")?;
+        if chapter.lifecycle.state == "deleted" {
+            return Err("A file selected for export has been deleted. Reopen Export to update the file list.".to_string());
+        }
+        if !sanitize_chapter_languages(&chapter.languages).iter().any(|language| language.code == input.language_code) {
+            return Err(format!("The selected export language is not available in '{}'.", chapter.title));
+        }
+        Ok((chapter, load_editor_rows(&path.join("rows"))?))
+    }).collect()
+}
+
+fn export_languages(chapters: &[(StoredChapterFile, Vec<StoredRowFile>)]) -> Vec<ChapterLanguage> {
+    let mut languages = Vec::new();
+    for (chapter, _) in chapters {
+        for language in sanitize_chapter_languages(&chapter.languages) {
+            if !languages
+                .iter()
+                .any(|existing: &ChapterLanguage| existing.code == language.code)
+            {
+                languages.push(language);
+            }
+        }
+    }
+    languages
+}
+
+fn combined_export_rows(
+    chapters: &[(StoredChapterFile, Vec<StoredRowFile>)],
+    subtitle_sequence: bool,
+) -> Vec<StoredRowFile> {
+    let mut rows = Vec::new();
+    let mut offset = 0;
+    for (_, chapter_rows) in chapters {
+        let mut end = offset;
+        for row in chapter_rows {
+            let mut row = row.clone();
+            if subtitle_sequence && row.lifecycle.state != "deleted" {
+                for timing in row.format_metadata.srt.iter_mut().chain(
+                    row.fields
+                        .values_mut()
+                        .filter_map(|field| field.timing.as_mut()),
+                ) {
+                    timing.start_ms += offset;
+                    timing.end_ms += offset;
+                    end = end.max(timing.end_ms);
+                }
+            }
+            rows.push(row);
+        }
+        offset = end;
+    }
+    rows
+}
+
+pub(super) fn build_scoped_export_document(
+    app: &AppHandle,
+    repo_path: &Path,
+    chapters: &[(StoredChapterFile, Vec<StoredRowFile>)],
+    input: &ExportChapterFileInput,
+    full_name: Option<&str>,
+    head_sha: &str,
+) -> Result<ExportDocument, String> {
+    let documents = chapters
+        .iter()
+        .map(|(chapter, rows)| {
+            build_export_document(
+                repo_path,
+                chapter,
+                rows,
+                &input.language_code,
+                full_name,
+                head_sha,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if !input.book_items.is_empty() {
+        let document_language = documents
+            .first()
+            .map(|document| document.language_code.as_str())
+            .unwrap_or(&input.language_code);
+        let contents = input
+            .book_items
+            .iter()
+            .filter(|item| !matches!(item.kind.as_str(), "title" | "copyright" | "contents"))
+            .map(|item| item.title.clone())
+            .collect::<Vec<_>>();
+        let mut seen = BTreeSet::new();
+        let mut parts = Vec::new();
+        for item in &input.book_items {
+            if item.id.is_empty() || !seen.insert(item.id.clone()) {
+                return Err("The book contains a duplicate or invalid item.".into());
+            }
+            let document = if item.kind == "chapter" {
+                let index = chapters
+                    .iter()
+                    .position(|(chapter, _)| chapter.chapter_id == item.chapter_id)
+                    .ok_or_else(|| "A chapter selected for the book is missing.".to_string())?;
+                documents[index].clone()
+            } else {
+                section_document(app, item, document_language, &contents)?
+            };
+            parts.push(BookPart {
+                item: item.clone(),
+                document,
+            });
+        }
+        let mut flattened = combine_export_documents(
+            &input.project_title,
+            document_language,
+            parts.iter().map(|part| part.document.clone()).collect(),
+        );
+        flattened.book_parts = parts;
+        return Ok(flattened);
+    }
+    if input.chapter_ids.is_empty() {
+        return documents
+            .into_iter()
+            .next()
+            .ok_or_else(|| "There are no files to export.".to_string());
+    }
+    Ok(combine_export_documents(
+        &input.project_title,
+        &input.language_code,
+        documents,
+    ))
+}
+
+fn combine_export_documents(
+    title: &str,
+    language_code: &str,
+    documents: Vec<ExportDocument>,
+) -> ExportDocument {
+    let mut blocks = Vec::new();
+    let mut footnotes = 0;
+    let language_code = documents
+        .first()
+        .map(|document| document.language_code.clone())
+        .unwrap_or_else(|| language_code.to_string());
+    for mut document in documents {
+        renumber_book_footnote_markers(&mut document.blocks, footnotes);
+        if !matches!(document.blocks.first(), Some(ExportBlock::Text { text_style, text }) if export_text_style(Some(text_style)) == "heading1" && inline_visible_text(text) == document.title)
+        {
+            blocks.push(ExportBlock::Text {
+                text_style: "chapter_heading".into(),
+                text: document.title,
+            });
+        }
+        let offset = blocks.len();
+        let mut count = 0;
+        for mut block in document.blocks {
+            if let ExportBlock::Footnote {
+                number,
+                anchor_block,
+                ..
+            } = &mut block
+            {
+                count += 1;
+                *number += footnotes;
+                *anchor_block = anchor_block.map(|index| index + offset);
+            }
+            blocks.push(block);
+        }
+        footnotes += count;
+    }
+    ExportDocument {
+        book_parts: Vec::new(),
+        title: title.to_string(),
+        language_code,
+        blocks,
+    }
+}
+
+// Markers are local to their source row, while book footnote numbers are
+// global. Rebase the matching visible markers as well as the footnote records.
+fn renumber_book_footnote_markers(blocks: &mut [ExportBlock], offset: usize) {
+    let mut replacements: BTreeMap<usize, BTreeMap<usize, usize>> = BTreeMap::new();
+    for block in blocks.iter_mut() {
+        if let ExportBlock::Footnote {
+            number,
+            marker,
+            anchor_block: Some(anchor),
+            ..
+        } = block
+        {
+            replacements
+                .entry(*anchor)
+                .or_default()
+                .insert(*marker, *number + offset);
+            *marker = *number + offset;
+        }
+    }
+    for (anchor, markers) in replacements {
+        if let Some(ExportBlock::Text { text, text_style }) = blocks.get_mut(anchor) {
+            if export_text_style(Some(text_style)) != "custom_html" {
+                *text = remap_visible_footnote_markers(text, &markers);
+            }
+        }
+    }
+}
+
+fn remap_visible_footnote_markers(text: &str, markers: &BTreeMap<usize, usize>) -> String {
+    let bytes = text.as_bytes();
+    let mut result = String::new();
+    let mut last = 0;
+    let mut index = 0;
+    let mut in_tag = false;
+    while index < bytes.len() {
+        if bytes[index] == b'<' {
+            in_tag = true;
+        }
+        if bytes[index] == b'>' {
+            in_tag = false;
+        }
+        if !in_tag && bytes[index] == b'[' {
+            let slashes = bytes[..index]
+                .iter()
+                .rev()
+                .take_while(|byte| **byte == b'\\')
+                .count();
+            let mut end = index + 1;
+            while end < bytes.len() && bytes[end].is_ascii_digit() {
+                end += 1;
+            }
+            if slashes.is_multiple_of(2) && end < bytes.len() && bytes[end] == b']' {
+                if let Some(number) = text[index + 1..end]
+                    .parse::<usize>()
+                    .ok()
+                    .and_then(|marker| markers.get(&marker))
+                {
+                    result.push_str(&text[last..index]);
+                    result.push_str(&format!("[{number}]"));
+                    index = end;
+                    last = end + 1;
+                }
+            }
+        }
+        index += 1;
+    }
+    result.push_str(&text[last..]);
+    result
+}
+
+// Chapter boundaries use normal heading formatting in document formats; PDF
+// additionally starts each chapter on a new page.
+pub(super) fn export_text_style(style: Option<&str>) -> String {
+    if style == Some("chapter_heading") {
+        "heading1".into()
+    } else {
+        normalize_editor_text_style_value(style)
+    }
 }
 
 /// Render an SRT document for one language. Timing comes from the language's
@@ -350,15 +620,33 @@ pub(super) fn build_export_document(
             .map(|value| value.plain_text.trim())
             .filter(|text| !text.is_empty())
         {
-            if normalize_editor_text_style_value(Some(&style)) == "custom_html" {
+            if export_text_style(Some(&style)) == "custom_html" {
                 // Custom HTML is opaque — never split it on "<hr>" markers, which
                 // may be intentional content rather than separators.
                 blocks.push(ExportBlock::Text {
-                    text_style: style,
+                    text_style: style.clone(),
                     text: text.to_string(),
                 });
             } else {
-                push_text_blocks_with_separators(&mut blocks, style, text);
+                push_text_blocks_with_separators(&mut blocks, style.clone(), text);
+            }
+        }
+
+        if style == "quote" {
+            if let Some(attribution) = field
+                .map(|value| value.attribution.trim())
+                .filter(|text| !text.is_empty())
+            {
+                // A quote with only an attribution still needs an owning block.
+                if blocks.len() == row_block_start {
+                    blocks.push(ExportBlock::Text {
+                        text_style: "quote".into(),
+                        text: String::new(),
+                    });
+                }
+                blocks.push(ExportBlock::Attribution {
+                    text: attribution.to_string(),
+                });
             }
         }
 
@@ -414,6 +702,7 @@ pub(super) fn build_export_document(
         .unwrap_or_else(|| language_code.to_string());
 
     Ok(ExportDocument {
+        book_parts: Vec::new(),
         title: chapter_file.title.clone(),
         language_code: export_language_code,
         blocks,
@@ -530,7 +819,7 @@ pub(super) fn apply_print_custom_html_policy(
     for (old_index, block) in document.blocks.iter().enumerate() {
         let next_block = match block {
             ExportBlock::Text { text_style, text }
-                if normalize_editor_text_style_value(Some(text_style)) == "custom_html" =>
+                if export_text_style(Some(text_style)) == "custom_html" =>
             {
                 if omit {
                     None
@@ -565,6 +854,14 @@ pub(super) fn apply_print_custom_html_policy(
         }
     }
     ExportDocument {
+        book_parts: document
+            .book_parts
+            .iter()
+            .map(|part| BookPart {
+                item: part.item.clone(),
+                document: apply_print_custom_html_policy(&part.document, omit),
+            })
+            .collect(),
         title: document.title.clone(),
         language_code: document.language_code.clone(),
         blocks,
@@ -887,13 +1184,13 @@ fn render_html_document(document: &ExportDocument) -> Result<String, String> {
     for block in &document.blocks {
         match block {
             ExportBlock::Text { text_style, text } => {
-                if normalize_editor_text_style_value(Some(text_style)) == "custom_html" {
+                if export_text_style(Some(text_style)) == "custom_html" {
                     // Custom HTML rows carry the author's raw HTML — emit it verbatim.
                     let _ = writeln!(body, "{text}");
                     continue;
                 }
                 let text = sanitize_inline_html(text).replace('\n', "<br>");
-                match normalize_editor_text_style_value(Some(text_style)).as_str() {
+                match export_text_style(Some(text_style)).as_str() {
                     "heading1" => {
                         let _ = writeln!(body, "<h1>{text}</h1>");
                     }
@@ -913,6 +1210,19 @@ fn render_html_document(document: &ExportDocument) -> Result<String, String> {
                         let _ = writeln!(body, "<p>{text}</p>");
                     }
                 }
+            }
+            ExportBlock::Attribution { text } => {
+                let attribution = sanitize_inline_html(text).replace('\n', "<br>");
+                if body.ends_with("</blockquote>\n") {
+                    body.truncate(body.len() - "</blockquote>\n".len());
+                } else {
+                    // A trailing separator leaves no open quote for the citation.
+                    body.push_str("<blockquote>");
+                }
+                let _ = writeln!(
+                    body,
+                    "<cite class=\"quote-attribution\">{attribution}</cite></blockquote>"
+                );
             }
             ExportBlock::Separator => {
                 let _ = writeln!(body, "<hr>");
@@ -947,7 +1257,7 @@ fn render_html_document(document: &ExportDocument) -> Result<String, String> {
     }
 
     Ok(format!(
-        "<!doctype html>\n<html lang=\"{}\">\n<head>\n<meta charset=\"utf-8\">\n<title>{}</title>\n<style>body{{max-width:760px;margin:40px auto;padding:0 24px;font-family:serif;line-height:1.6;color:#2f2117;}}h1{{font-size:2rem;}}h2{{font-size:1.4rem;}}blockquote{{margin:1em 2em;font-style:italic;}}.indented{{padding-left:2em;}}.centered{{text-align:center;}}.footnote{{font-size:.95em;}}figure{{margin:1.5em auto;text-align:center;}}img{{display:block;margin:0 auto;max-width:100%;height:auto;}}figcaption{{margin-top:.6em;text-align:center;}}</style>\n</head>\n<body>\n{}\n</body>\n</html>\n",
+        "<!doctype html>\n<html lang=\"{}\">\n<head>\n<meta charset=\"utf-8\">\n<title>{}</title>\n<style>body{{max-width:760px;margin:40px auto;padding:0 24px;font-family:serif;line-height:1.6;color:#2f2117;}}h1{{font-size:2rem;}}h2{{font-size:1.4rem;}}blockquote{{margin:1em 2em;font-style:italic;}}.quote-attribution{{display:block;font-size:90%;text-align:right;font-style:normal;}}.indented{{padding-left:2em;}}.centered{{text-align:center;}}.footnote{{font-size:.95em;}}figure{{margin:1.5em auto;text-align:center;}}img{{display:block;margin:0 auto;max-width:100%;height:auto;}}figcaption{{margin-top:.6em;text-align:center;}}</style>\n</head>\n<body>\n{}\n</body>\n</html>\n",
         escape_html(&document.language_code),
         escape_html(&document.title),
         body
@@ -1079,13 +1389,16 @@ fn render_txt_document(document: &ExportDocument) -> String {
                 if text.is_empty() {
                     continue;
                 }
-                let rendered = match normalize_editor_text_style_value(Some(text_style)).as_str() {
+                let rendered = match export_text_style(Some(text_style)).as_str() {
                     "heading1" => text.to_uppercase(),
                     "heading2" => format!(">>> {}", text.to_uppercase()),
                     "quote" => format!("<blockquote>\n{text}\n</blockquote>"),
                     _ => text,
                 };
                 parts.push(rendered);
+            }
+            ExportBlock::Attribution { text } => {
+                parts.push(txt_inline_text(text));
             }
             ExportBlock::Separator => {
                 parts.push("---".to_string());
@@ -1134,7 +1447,7 @@ fn render_md_document(document: &ExportDocument) -> String {
                 if inline.trim().is_empty() {
                     continue;
                 }
-                let rendered = match normalize_editor_text_style_value(Some(text_style)).as_str() {
+                let rendered = match export_text_style(Some(text_style)).as_str() {
                     "heading1" => format!("# {}", md_single_line(&inline)),
                     "heading2" => format!("## {}", md_single_line(&inline)),
                     "quote" => inline
@@ -1148,6 +1461,15 @@ fn render_md_document(document: &ExportDocument) -> String {
                 };
                 fragments.push(rendered);
                 last_text_fragment = Some(fragments.len() - 1);
+            }
+            ExportBlock::Attribution { text } => {
+                fragments.push(
+                    md_inline_text(text)
+                        .lines()
+                        .map(|line| format!("> {line}"))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                );
             }
             ExportBlock::Separator => {
                 fragments.push("---".to_string());
@@ -1364,58 +1686,147 @@ fn render_docx_document(
     let mut rel_index = 1usize;
     let mut media_index = 1usize;
 
-    for block in &document.blocks {
-        match block {
-            ExportBlock::Text { text_style, text } => {
-                body.push_str(&docx_text_paragraph_xml(Some(text_style), text, false));
+    let sections: Vec<(Option<&BookPart>, &ExportDocument)> = if document.book_parts.is_empty() {
+        vec![(None, document)]
+    } else {
+        document
+            .book_parts
+            .iter()
+            .map(|part| (Some(part), &part.document))
+            .collect()
+    };
+    for (section_index, (part, section)) in sections.iter().enumerate() {
+        let part_kind = part.map(|part| part.item.kind.as_str()).unwrap_or("");
+        if part.is_some() {
+            body.push_str(&format!("<w:p><w:bookmarkStart w:id=\"{section_index}\" w:name=\"BookItem{section_index}\"/><w:bookmarkEnd w:id=\"{section_index}\"/></w:p>"));
+        }
+        if part_kind == "contents" {
+            body.push_str(&docx_text_paragraph_xml(
+                Some("heading1"),
+                &section.title,
+                false,
+            ));
+            for (index, entry) in document.book_parts.iter().enumerate() {
+                if matches!(entry.item.kind.as_str(), "title" | "copyright" | "contents") {
+                    continue;
+                }
+                body.push_str(&format!("<w:p><w:hyperlink w:anchor=\"BookItem{index}\"><w:r>{}</w:r></w:hyperlink><w:r><w:tab/></w:r><w:fldSimple w:instr=\" PAGEREF BookItem{index} \\h \" w:dirty=\"true\"><w:r><w:t> </w:t></w:r></w:fldSimple></w:p>", docx_run_text_xml(&entry.document.title)));
             }
-            ExportBlock::Separator => {
-                body.push_str(&docx_separator_paragraph_xml());
-            }
-            ExportBlock::Footnote { number, text, .. } => {
-                let text = print_footnote_text(text, footnote_links_as_plain_text);
-                body.push_str(&docx_text_paragraph_xml(
-                    None,
-                    &format!("[{number}] {text}"),
-                    true,
+        } else {
+            for block in &section.blocks {
+                match block {
+                    ExportBlock::Text { text_style, text } => {
+                        if part_kind == "title" {
+                            let size = match export_text_style(Some(text_style)).as_str() {
+                                "heading1" => 60,
+                                "heading2" => 36,
+                                _ => 28,
+                            };
+                            body.push_str(&format!("<w:p><w:pPr><w:jc w:val=\"center\"/><w:spacing w:before=\"240\" w:after=\"240\"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii=\"Alegreya\" w:hAnsi=\"Alegreya\"/><w:sz w:val=\"{size}\"/></w:rPr>{}</w:r></w:p>", docx_run_text_xml(&inline_visible_text(text))));
+                        } else {
+                            body.push_str(&docx_text_paragraph_xml(Some(text_style), text, false));
+                        }
+                    }
+                    ExportBlock::Attribution { text } => {
+                        let runs = docx_runs_xml(text, false);
+                        body.push_str(&format!(
+                    r#"<w:p><w:pPr><w:pStyle w:val="VellumAttribution"/></w:pPr>{runs}</w:p>"#
                 ));
-            }
-            ExportBlock::Image { image, caption } => {
-                let image_render = resolve_docx_image_render(image);
-                match image_render {
-                    DocxImageRender::Embedded(image_data) => {
-                        let rel_id = format!("rId{rel_index}");
-                        rel_index += 1;
-                        let file_name = format!("image{media_index}.{}", image_data.extension);
-                        media_index += 1;
-                        relationships.push(format!(
+                    }
+                    ExportBlock::Separator => {
+                        if part_kind == "copyright" || part_kind == "dedication" {
+                            let rel_id = format!("rId{rel_index}");
+                            rel_index += 1;
+                            let file_name = format!("flourish{media_index}.svg");
+                            media_index += 1;
+                            relationships.push(format!("<Relationship Id=\"{rel_id}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\"media/{file_name}\"/>"));
+                            let ornament = DocxImage {
+                                data: include_bytes!("chapter_flourish.svg").to_vec(),
+                                extension: "svg".into(),
+                                width_px: 64,
+                                height_px: 18,
+                            };
+                            body.push_str(&docx_image_paragraph_xml(&rel_id, &ornament));
+                            media.push((format!("word/media/{file_name}"), ornament.data));
+                        } else {
+                            body.push_str(&docx_separator_paragraph_xml());
+                        }
+                    }
+                    ExportBlock::Footnote { number, text, .. } => {
+                        let text = print_footnote_text(text, footnote_links_as_plain_text);
+                        body.push_str(&docx_text_paragraph_xml(
+                            None,
+                            &format!("[{number}] {text}"),
+                            true,
+                        ));
+                    }
+                    ExportBlock::Image { image, caption } => {
+                        let image_render = resolve_docx_image_render(image);
+                        match image_render {
+                            DocxImageRender::Embedded(mut image_data) => {
+                                if part_kind == "title" {
+                                    let scale = (125.0 / image_data.width_px.max(1) as f64)
+                                        .min(67.0 / image_data.height_px.max(1) as f64)
+                                        .min(1.0);
+                                    image_data.width_px =
+                                        (image_data.width_px as f64 * scale).round().max(1.0)
+                                            as u32;
+                                    image_data.height_px =
+                                        (image_data.height_px as f64 * scale).round().max(1.0)
+                                            as u32;
+                                }
+                                let rel_id = format!("rId{rel_index}");
+                                rel_index += 1;
+                                let file_name =
+                                    format!("image{media_index}.{}", image_data.extension);
+                                media_index += 1;
+                                relationships.push(format!(
                             r#"<Relationship Id="{rel_id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/{file_name}"/>"#
                         ));
-                        body.push_str(&docx_image_paragraph_xml(&rel_id, &image_data));
-                        media.push((format!("word/media/{file_name}"), image_data.data));
-                    }
-                    DocxImageRender::Link(url) => {
-                        let rel_id = format!("rId{rel_index}");
-                        rel_index += 1;
-                        relationships.push(format!(
+                                body.push_str(&docx_image_paragraph_xml(&rel_id, &image_data));
+                                media.push((format!("word/media/{file_name}"), image_data.data));
+                            }
+                            DocxImageRender::Link(url) => {
+                                let rel_id = format!("rId{rel_index}");
+                                rel_index += 1;
+                                relationships.push(format!(
                             r#"<Relationship Id="{rel_id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="{}" TargetMode="External"/>"#,
                             escape_xml(&url)
                         ));
-                        body.push_str(&docx_hyperlink_paragraph_xml(&rel_id, &url));
+                                body.push_str(&docx_hyperlink_paragraph_xml(&rel_id, &url));
+                            }
+                        }
+
+                        if !caption.trim().is_empty() {
+                            body.push_str(&docx_text_paragraph_xml(
+                                Some("centered"),
+                                caption,
+                                true,
+                            ));
+                        }
                     }
                 }
-
-                if !caption.trim().is_empty() {
-                    body.push_str(&docx_text_paragraph_xml(Some("centered"), caption, true));
-                }
+            }
+        }
+        if part.is_some() {
+            let section_properties = book_docx_section_properties(part_kind);
+            if section_index + 1 == sections.len() {
+                body.push_str(&section_properties);
+            } else {
+                body.push_str(&format!("<w:p><w:pPr>{section_properties}</w:pPr></w:p>"));
             }
         }
     }
 
-    body.push_str(r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#);
+    if document.book_parts.is_empty() {
+        body.push_str(r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#);
+    }
     let document_xml = format!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><w:body>{body}</w:body></w:document>"#
     );
+    {
+        relationships.push(r#"<Relationship Id="rIdSettings" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/>"#.into());
+    }
     let rels_xml = format!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">{} </Relationships>"#,
         relationships.join("")
@@ -1429,6 +1840,13 @@ fn render_docx_document(
     write_zip_file(&mut writer, "word/document.xml", &document_xml)?;
     write_zip_file(&mut writer, "word/_rels/document.xml.rels", &rels_xml)?;
     write_zip_file(&mut writer, "word/styles.xml", styles_xml())?;
+    {
+        write_zip_file(
+            &mut writer,
+            "word/settings.xml",
+            r#"<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:updateFields w:val="true"/></w:settings>"#,
+        )?;
+    }
     for (path, data) in media {
         writer
             .start_file(path, options)
@@ -1442,6 +1860,22 @@ fn render_docx_document(
         .finish()
         .map(|cursor| cursor.into_inner())
         .map_err(|error| format!("Could not finish DOCX export: {error}"))
+}
+
+fn book_docx_section_properties(kind: &str) -> String {
+    let start = if kind == "copyright" {
+        "evenPage"
+    } else {
+        "oddPage"
+    };
+    let align = if kind == "copyright" {
+        "bottom"
+    } else if matches!(kind, "title" | "image" | "dedication") {
+        "center"
+    } else {
+        "top"
+    };
+    format!("<w:sectPr><w:type w:val=\"{start}\"/><w:pgSz w:w=\"12240\" w:h=\"15840\"/><w:pgMar w:top=\"1152\" w:right=\"1224\" w:bottom=\"1152\" w:left=\"1224\"/><w:vAlign w:val=\"{align}\"/></w:sectPr>")
 }
 
 fn write_zip_file(
@@ -1462,7 +1896,7 @@ fn docx_text_paragraph_xml(text_style: Option<&str>, text: &str, forced_italic: 
 }
 
 fn docx_paragraph_runs_xml(text_style: Option<&str>, runs: &str) -> String {
-    let normalized = normalize_editor_text_style_value(text_style);
+    let normalized = export_text_style(text_style);
     let mut properties = String::new();
     match normalized.as_str() {
         "heading1" => properties.push_str(r#"<w:pStyle w:val="Heading1"/>"#),
@@ -1657,8 +2091,22 @@ fn resolve_docx_image_render(image: &ExportImage) -> DocxImageRender {
 }
 
 fn read_local_docx_image(path: &Path) -> Option<DocxImage> {
-    let data = fs::read(path).ok()?;
-    let (extension, width_px, height_px) = docx_image_info(&data)?;
+    let mut data = fs::read(path).ok()?;
+    if data.starts_with(b"RIFF") && data.get(8..12) == Some(b"WEBP".as_slice()) {
+        let decoded = image::load_from_memory(&data).ok()?;
+        let mut output = Cursor::new(Vec::new());
+        decoded
+            .write_to(&mut output, image::ImageFormat::Png)
+            .ok()?;
+        data = output.into_inner();
+    }
+    let (extension, width_px, height_px) =
+        if path.extension().and_then(|extension| extension.to_str()) == Some("svg") {
+            let (width, height) = super::book_export::svg_dimensions(&data);
+            ("svg".into(), width, height)
+        } else {
+            docx_image_info(&data)?
+        };
     Some(DocxImage {
         data,
         extension,
@@ -1975,6 +2423,10 @@ fn render_rtf_document(document: &ExportDocument, footnote_links_as_plain_text: 
             ExportBlock::Text { text_style, text } => {
                 body.push_str(&rtf_text_paragraph(Some(text_style), text, false));
             }
+            ExportBlock::Attribution { text } => {
+                let paragraph = rtf_text_paragraph(None, text, false);
+                body.push_str(&paragraph.replacen("\\fs24", "\\fs22\\qr", 1));
+            }
             ExportBlock::Separator => {
                 body.push_str(&rtf_separator_paragraph());
             }
@@ -1998,7 +2450,7 @@ fn render_rtf_document(document: &ExportDocument, footnote_links_as_plain_text: 
 }
 
 fn rtf_text_paragraph(text_style: Option<&str>, text: &str, forced_italic: bool) -> String {
-    let properties = match normalize_editor_text_style_value(text_style).as_str() {
+    let properties = match export_text_style(text_style).as_str() {
         "heading1" => "\\sb240\\b\\fs32",
         "heading2" => "\\sb240\\b\\fs26",
         "quote" => "\\li720\\ri720\\i",
@@ -2186,8 +2638,7 @@ fn xlsx_export_rows(
         // whole row, otherwise the raw HTML is kept verbatim so an XLSX round-trip
         // back into the editor preserves it.
         .filter(|row| {
-            !(omit_custom_html
-                && normalize_editor_text_style_value(Some(&row_text_style(row))) == "custom_html")
+            !(omit_custom_html && export_text_style(Some(&row_text_style(row))) == "custom_html")
         })
         .map(|row| {
             languages
@@ -2204,6 +2655,14 @@ fn xlsx_cell_value(field: Option<&StoredFieldValue>) -> String {
         return String::new();
     };
     let text = xlsx_separator_text_fallback(field.plain_text.trim());
+    let attribution = field.attribution.trim();
+    let text = if attribution.is_empty() {
+        text
+    } else if text.is_empty() {
+        attribution.to_string()
+    } else {
+        format!("{text}\n\n{attribution}")
+    };
     let footnote = normalize_editor_footnote_value(&field.footnote);
     let footnote = footnote.trim();
     if footnote.is_empty() {
@@ -2276,7 +2735,7 @@ fn xlsx_workbook_rels_xml() -> &'static str {
 }
 
 fn content_types_xml() -> &'static str {
-    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Default Extension="jpg" ContentType="image/jpeg"/><Default Extension="jpeg" ContentType="image/jpeg"/><Default Extension="gif" ContentType="image/gif"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>"#
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Default Extension="jpg" ContentType="image/jpeg"/><Default Extension="jpeg" ContentType="image/jpeg"/><Default Extension="gif" ContentType="image/gif"/><Default Extension="svg" ContentType="image/svg+xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/></Types>"#
 }
 
 fn package_rels_xml() -> &'static str {
@@ -2284,7 +2743,7 @@ fn package_rels_xml() -> &'static str {
 }
 
 fn styles_xml() -> &'static str {
-    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="32"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:pPr><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:sz w:val="26"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:pPr><w:ind w:left="720" w:right="720"/></w:pPr><w:rPr><w:i/></w:rPr></w:style></w:styles>"#
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="32"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:pPr><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:sz w:val="26"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:pPr><w:ind w:left="720" w:right="720"/></w:pPr><w:rPr><w:i/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="VellumAttribution"><w:name w:val="Vellum Attribution"/><w:pPr><w:jc w:val="right"/></w:pPr><w:rPr><w:sz w:val="20"/></w:rPr></w:style></w:styles>"#
 }
 
 #[cfg(test)]
@@ -2292,6 +2751,109 @@ mod tests {
     use super::*;
     use std::io::Read;
     use zip::ZipArchive;
+
+    #[test]
+    fn quote_attribution_survives_document_exports() {
+        let document = document(vec![
+            ExportBlock::Text {
+                text_style: "quote".into(),
+                text: "Body".into(),
+            },
+            ExportBlock::Attribution {
+                text: "Author & <b>Work</b>".into(),
+            },
+        ]);
+        let html = render_html_document(&document).unwrap();
+        assert!(html.contains("<cite class=\"quote-attribution\">Author &amp; <strong>Work</strong></cite></blockquote>"));
+        assert!(html.contains("blockquote{margin:1em 2em;font-style:italic;}"));
+        assert!(html.contains(".quote-attribution{display:block;font-size:90%;text-align:right;"));
+        assert!(render_txt_document(&document).contains("Author & Work"));
+        assert!(render_md_document(&document).contains("> Author & **Work**"));
+        let rtf = render_rtf_document(&document, false);
+        assert!(rtf.contains("\\li720\\ri720\\i Body"));
+        assert!(rtf.contains("\\fs22\\qr"));
+        assert!(rtf.contains("Author &"));
+        let bytes = render_docx_document(&document, false).unwrap();
+        let mut zip = ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let mut xml = String::new();
+        zip.by_name("word/document.xml")
+            .unwrap()
+            .read_to_string(&mut xml)
+            .unwrap();
+        assert!(xml.contains("<w:pStyle w:val=\"VellumAttribution\"/>"));
+        assert!(styles_xml().contains("w:val=\"Vellum Attribution\""));
+        assert!(styles_xml().contains(r#"<w:name w:val="Quote"/><w:pPr><w:ind w:left="720" w:right="720"/></w:pPr><w:rPr><w:i/>"#));
+    }
+
+    #[test]
+    fn html_quote_attribution_survives_trailing_separators() {
+        let chapter = StoredChapterFile {
+            chapter_id: "chapter-1".into(),
+            title: "Chapter".into(),
+            lifecycle: active_lifecycle_state(),
+            source_files: Vec::new(),
+            languages: vec![export_language("en", "target", None)],
+            settings: None,
+            source_word_count: None,
+        };
+        for text in ["Body<hr>", "<hr>", "Body<hr><hr>"] {
+            let mut quote = row("q", "a", text, "quote");
+            quote.fields.get_mut("en").unwrap().attribution = "Author & <b>Work</b>".into();
+            let document =
+                build_export_document(Path::new("/repo"), &chapter, &[quote], "en", None, "")
+                    .unwrap();
+            let html = render_html_document(&document).unwrap();
+            assert!(html.contains("<hr>\n<blockquote><cite class=\"quote-attribution\">Author &amp; <strong>Work</strong></cite></blockquote>"), "Quote body: {text}");
+            assert_eq!(html.matches("<cite ").count(), 1, "Quote body: {text}");
+        }
+    }
+
+    #[test]
+    fn blank_quote_attribution_does_not_create_an_export_block() {
+        let chapter = StoredChapterFile {
+            chapter_id: "chapter-1".into(),
+            title: "Chapter".into(),
+            lifecycle: active_lifecycle_state(),
+            source_files: Vec::new(),
+            languages: vec![export_language("en", "target", None)],
+            settings: None,
+            source_word_count: None,
+        };
+        for attribution in ["", " \n\t"] {
+            let mut quote = row("q", "a", "Body", "quote");
+            quote.fields.get_mut("en").unwrap().attribution = attribution.into();
+            let document =
+                build_export_document(Path::new("/repo"), &chapter, &[quote], "en", None, "")
+                    .unwrap();
+            assert_eq!(
+                document.blocks,
+                vec![ExportBlock::Text {
+                    text_style: "quote".into(),
+                    text: "Body".into()
+                }]
+            );
+            assert!(!render_html_document(&document).unwrap().contains("<cite"));
+            let mut zip =
+                ZipArchive::new(Cursor::new(render_docx_document(&document, false).unwrap()))
+                    .unwrap();
+            let mut xml = String::new();
+            zip.by_name("word/document.xml")
+                .unwrap()
+                .read_to_string(&mut xml)
+                .unwrap();
+            assert!(!xml.contains("VellumAttribution"));
+        }
+    }
+
+    #[test]
+    fn quote_attribution_is_preserved_in_spreadsheet_cells() {
+        let field = StoredFieldValue {
+            plain_text: "Body".into(),
+            attribution: "Author".into(),
+            ..Default::default()
+        };
+        assert_eq!(xlsx_cell_value(Some(&field)), "Body\n\nAuthor");
+    }
 
     #[test]
     fn webp_dimensions_reads_all_three_container_layouts() {
@@ -2329,6 +2891,176 @@ mod tests {
         "en".to_string()
     }
 
+    #[test]
+    fn project_book_export_preserves_order_and_rebases_footnotes_across_formats() {
+        let chapter = |title: &str, text: &str| ExportDocument {
+            book_parts: Vec::new(),
+            title: title.into(),
+            language_code: "en".into(),
+            blocks: vec![
+                ExportBlock::Text {
+                    text_style: "paragraph".into(),
+                    text: text.into(),
+                },
+                ExportBlock::Footnote {
+                    number: 1,
+                    marker: 1,
+                    anchor_block: Some(0),
+                    text: format!("Note {title}"),
+                },
+            ],
+        };
+        let book = combine_export_documents(
+            "Book",
+            "en",
+            vec![
+                chapter("Chapter 2", "Second [1]"),
+                chapter("Chapter 10", "Tenth [1]"),
+            ],
+        );
+        assert_eq!(book.title, "Book");
+        assert!(matches!(
+            book.blocks[2],
+            ExportBlock::Footnote {
+                number: 1,
+                anchor_block: Some(1),
+                ..
+            }
+        ));
+        assert!(matches!(
+            book.blocks[5],
+            ExportBlock::Footnote {
+                number: 2,
+                anchor_block: Some(4),
+                ..
+            }
+        ));
+        let html = render_html_document(&book).unwrap();
+        assert!(
+            html.find("<h1>Chapter 2</h1>").unwrap() < html.find("<h1>Chapter 10</h1>").unwrap()
+        );
+        assert!(html.contains("[2] Note Chapter 10"));
+        assert!(html.contains("Tenth [2]"));
+        assert_eq!(
+            remap_visible_footnote_markers(
+                r#"字 \[1] <a href="https://example.com/[1]">note [1]</a>"#,
+                &BTreeMap::from([(1, 2)])
+            ),
+            r#"字 \[1] <a href="https://example.com/[1]">note [2]</a>"#
+        );
+        let md = render_md_document(&book);
+        assert!(md.contains("# Chapter 2"));
+        assert!(md.contains("# Chapter 10"));
+        let bytes = render_docx_document(&book, false).unwrap();
+        let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let mut xml = String::new();
+        zip.by_name("word/document.xml")
+            .unwrap()
+            .read_to_string(&mut xml)
+            .unwrap();
+        assert_eq!(xml.matches("w:val=\"Heading1\"").count(), 2);
+        assert!(xml.find("Second").unwrap() < xml.find("Tenth").unwrap());
+    }
+
+    #[test]
+    fn project_book_export_keeps_subtitle_files_in_a_continuous_sequence() {
+        let chapter = |title: &str| StoredChapterFile {
+            chapter_id: title.into(),
+            title: title.into(),
+            lifecycle: active_lifecycle_state(),
+            source_files: Vec::new(),
+            languages: vec![export_language("en", "target", None)],
+            settings: None,
+            source_word_count: None,
+        };
+        let chapters = vec![
+            (
+                chapter("One"),
+                vec![srt_row("a", "1", "First", Some((0, 2000)), None)],
+            ),
+            (
+                chapter("Two"),
+                vec![srt_row(
+                    "b",
+                    "1",
+                    "Next",
+                    Some((1000, 3000)),
+                    Some((500, 2500)),
+                )],
+            ),
+        ];
+        let rows = combined_export_rows(&chapters, true);
+        let (srt, skipped) = render_srt_document(&rows, "en");
+        assert_eq!(skipped, 0);
+        assert!(srt.contains("2\n00:00:02,500 --> 00:00:04,500\nNext"));
+        let xlsx_rows = combined_export_rows(&chapters, false);
+        assert_eq!(xlsx_rows[1].format_metadata.srt.unwrap().start_ms, 1000);
+    }
+
+    #[test]
+    fn composed_docx_keeps_section_order_contents_fields_and_bottom_copyright() {
+        let make = |kind: &str, title: &str, text: &str| BookPart {
+            item: BookItemInput {
+                id: kind.into(),
+                kind: kind.into(),
+                title: title.into(),
+                ..Default::default()
+            },
+            document: ExportDocument {
+                title: title.into(),
+                language_code: "en".into(),
+                book_parts: Vec::new(),
+                blocks: vec![ExportBlock::Text {
+                    text_style: if kind == "title" {
+                        "heading1".into()
+                    } else {
+                        "paragraph".into()
+                    },
+                    text: text.into(),
+                }],
+            },
+        };
+        let doc = ExportDocument {
+            title: "A Book".into(),
+            language_code: "en".into(),
+            blocks: Vec::new(),
+            book_parts: vec![
+                make("title", "A Book", "A Book"),
+                make("copyright", "Copyright", "© <i>Example</i>"),
+                make("chapter", "One", "Opening one"),
+                make("chapter", "Two", "Opening two"),
+                make("contents", "Contents", ""),
+            ],
+        };
+        let bytes = render_docx_document(&doc, true).unwrap();
+        let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let mut xml = String::new();
+        zip.by_name("word/document.xml")
+            .unwrap()
+            .read_to_string(&mut xml)
+            .unwrap();
+        assert!(xml.contains("w:vAlign w:val=\"bottom\""));
+        assert!(xml.contains("w:type w:val=\"evenPage\""));
+        assert!(xml.contains("w:sz w:val=\"60\""));
+        assert!(xml.contains(" PAGEREF BookItem2 "));
+        assert!(xml.contains(" PAGEREF BookItem3 "));
+        assert!(!xml.contains(" PAGEREF BookItem0 "));
+        assert!(!xml.contains(" PAGEREF BookItem1 "));
+        assert!(xml.find("Opening one").unwrap() < xml.find("Opening two").unwrap());
+        let mut reader = quick_xml::Reader::from_str(&xml);
+        loop {
+            if reader.read_event().expect("well formed DOCX XML") == quick_xml::events::Event::Eof {
+                break;
+            }
+        }
+        let mut settings = String::new();
+        zip.by_name("word/settings.xml")
+            .unwrap()
+            .read_to_string(&mut settings)
+            .unwrap();
+        assert!(settings.contains("w:updateFields w:val=\"true\""));
+    }
+
     fn row(row_id: &str, order_key: &str, text: &str, style: &str) -> StoredRowFile {
         let mut fields = BTreeMap::new();
         fields.insert(
@@ -2336,6 +3068,7 @@ mod tests {
             StoredFieldValue {
                 plain_text: text.to_string(),
                 footnote: String::new(),
+                attribution: String::new(),
                 image_caption: String::new(),
                 image: None,
                 editor_flags: StoredFieldEditorFlags::default(),
@@ -2398,6 +3131,29 @@ mod tests {
     }
 
     #[test]
+    fn partially_translated_srt_round_trips_blank_cues_and_their_timings() {
+        let rows = vec![
+            srt_row("r1", "1", "", Some((0, 1000)), None),
+            srt_row("r2", "2", "", Some((1000, 2000)), None),
+            srt_row("r3", "3", "Sentence", Some((2000, 3000)), None),
+            srt_row("r4", "4", "", Some((3000, 4000)), None),
+        ];
+        let (content, skipped) = render_srt_document(&rows, &language());
+        assert_eq!(skipped, 0);
+        let cues = crate::project_import::chapter_import::parse_translation_srt(
+            content.as_bytes(),
+            "roundtrip.srt",
+        )
+        .unwrap();
+        assert_eq!(
+            cues.iter().map(|cue| cue.text.as_str()).collect::<Vec<_>>(),
+            vec!["", "", "Sentence", ""]
+        );
+        assert_eq!(cues[3].start_ms, 3000);
+        assert_eq!(cues[3].end_ms, 4000);
+    }
+
+    #[test]
     fn render_srt_document_prefers_language_timing_over_base_timing() {
         let rows = vec![srt_row(
             "row-1",
@@ -2436,6 +3192,7 @@ mod tests {
 
     fn document(blocks: Vec<ExportBlock>) -> ExportDocument {
         ExportDocument {
+            book_parts: Vec::new(),
             title: "Chapter".to_string(),
             language_code: language(),
             blocks,
@@ -3299,6 +4056,7 @@ mod tests {
         StoredFieldValue {
             plain_text: text.to_string(),
             footnote: footnote.to_string(),
+            attribution: String::new(),
             image_caption: String::new(),
             image: None,
             editor_flags: StoredFieldEditorFlags::default(),

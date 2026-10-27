@@ -81,6 +81,17 @@ export function clearNoticeBadge() {
   };
 }
 
+// A persistent notice (durationMs === null) has no owner, so every path that
+// abandons it must clear it. Guarded by text so a badge shown later by another
+// flow is left alone.
+export function clearNoticeBadgeIfText(text, render) {
+  if (getNoticeBadgeText() !== text) {
+    return;
+  }
+  clearNoticeBadge();
+  render?.({ scope: "status-surface" });
+}
+
 export function showScopedSyncBadge(scope, text, render) {
   state.statusBadges.right = {
     visible: true,

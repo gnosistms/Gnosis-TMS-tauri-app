@@ -114,6 +114,7 @@ const {
   captureTranslateAnchorForRow,
   readPendingTranslateAnchor,
   queueTranslateRowAnchor,
+  resolveTranslateRowAnchor,
   restoreTranslateRowAnchor,
 } = await import("./scroll-state.js");
 
@@ -214,6 +215,47 @@ test("restoreTranslateRowAnchor updates scrollTop when the row offset changed", 
 
   assert.equal(restored, true);
   assert.equal(container.scrollTop, 80);
+});
+
+for (const contentKind of ["field", "footnote", "image-caption"]) {
+  test(`closing the ${contentKind} restores the row using its own captured offset`, () => {
+    const { container } = installScrollFixture({ anchorTop: -160, scrollTop: 2400 });
+    const row = selectors.get('[data-editor-row-card][data-row-id="row-1"]');
+    const field = new FakeHTMLElement({ top: 360, height: 80 }, {
+      dataset: {
+        rowId: "row-1",
+        languageCode: "en",
+        ...(contentKind === "field" ? {} : { contentKind }),
+        ...(contentKind === "footnote" ? { footnoteMarker: "2" } : {}),
+      },
+    });
+    field.closestMap.set("[data-editor-row-field]", field);
+    field.closestMap.set("[data-editor-row-card]", row);
+    const snapshot = resolveTranslateRowAnchor(field);
+    queueTranslateRowAnchor(snapshot);
+    assert.deepEqual(readPendingTranslateAnchor(), snapshot);
+    selectors.delete('[data-editor-row-field][data-row-id="row-1"][data-language-code="en"]:not([data-content-kind])');
+
+    assert.equal(restoreTranslateRowAnchor(snapshot), false);
+    assert.equal(container.scrollTop, 2400);
+
+    // A real layout shift still needs compensation relative to the row.
+    row.rect.top += 40;
+    assert.equal(restoreTranslateRowAnchor(snapshot), true);
+    assert.equal(container.scrollTop, 2440);
+  });
+}
+
+test("a surviving focused field still restores its own offset", () => {
+  const { container } = installScrollFixture({ scrollTop: 2400 });
+  const row = selectors.get('[data-editor-row-card][data-row-id="row-1"]');
+  const field = selectors.get('[data-editor-row-field][data-row-id="row-1"][data-language-code="en"]:not([data-content-kind])');
+  field.closestMap.set("[data-editor-row-field]", field);
+  field.closestMap.set("[data-editor-row-card]", row);
+  const snapshot = resolveTranslateRowAnchor(field);
+  field.rect.top += 30;
+  assert.equal(restoreTranslateRowAnchor(snapshot), true);
+  assert.equal(container.scrollTop, 2430);
 });
 
 test("readPendingTranslateAnchor returns a copy of the queued anchor", () => {

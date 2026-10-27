@@ -3,6 +3,7 @@ import {
   renderGlossaryRubyTermListHtml,
 } from "../glossary-ruby.js";
 import { canManageGlossaries } from "../glossary-shared.js";
+import { renderSanitizedInlineMarkupHtml } from "../editor-inline-markup.js";
 
 // Double-click detection runs on pointerdown: the display-field pointerdown
 // handler calls preventDefault, which suppresses the derived mousedown events, so
@@ -177,11 +178,12 @@ function focusEditorFieldFromGlossaryMark(event) {
 }
 
 function glossaryTooltipMark(target) {
-  return target instanceof Element
+  const mark = target instanceof Element
     ? target.closest(
       "[data-editor-glossary-mark][data-editor-glossary-tooltip-payload], [data-editor-glossary-mark][data-editor-glossary-tooltip], [data-editor-glossary-mark][data-tooltip]",
     )
     : null;
+  return glossaryPopoverContextForMark(mark) ? mark : null;
 }
 
 function ensureGlossaryTooltipElement() {
@@ -298,7 +300,11 @@ function glossaryTooltipPayload(mark) {
   }
 }
 
-function renderStructuredGlossaryTooltipBody(body, payload, { showEditHint = false } = {}) {
+function renderStructuredGlossaryTooltipBody(
+  body,
+  payload,
+  { showEditHint = false, showInsertHint = false } = {},
+) {
   body.replaceChildren();
   body.classList.add("editor-glossary-info-card");
 
@@ -343,13 +349,6 @@ function renderStructuredGlossaryTooltipBody(body, payload, { showEditHint = fal
     body.append(variants);
   }
 
-  if (payload.kind === "target" && payload.targetVariantNote) {
-    const note = document.createElement("p");
-    note.className = "editor-glossary-info-card__comment";
-    note.textContent = payload.targetVariantNote;
-    body.append(note);
-  }
-
   const originTerms = Array.isArray(payload.originTerms) ? payload.originTerms : [];
   if (originTerms.length > 0) {
     const origin = document.createElement("p");
@@ -363,6 +362,14 @@ function renderStructuredGlossaryTooltipBody(body, payload, { showEditHint = fal
   if (translatorNotes.length > 0 || footnotes.length > 0) {
     const comments = document.createElement("div");
     comments.className = "editor-glossary-info-card__comments";
+    const translatorSection = document.createElement("div");
+    translatorSection.className = "editor-glossary-info-card__note-section";
+    if (translatorNotes.length > 0) {
+      const label = document.createElement("p");
+      label.className = "editor-glossary-info-card__label";
+      label.textContent = "Note to Translators:";
+      translatorSection.append(label);
+    }
     for (const note of translatorNotes) {
       const comment = String(note ?? "").trim();
       if (!comment) {
@@ -372,7 +379,19 @@ function renderStructuredGlossaryTooltipBody(body, payload, { showEditHint = fal
       const paragraph = document.createElement("p");
       paragraph.className = "editor-glossary-info-card__comment";
       paragraph.textContent = comment;
-      comments.append(paragraph);
+      translatorSection.append(paragraph);
+    }
+    if (translatorSection.childElementCount > 0) {
+      comments.append(translatorSection);
+    }
+
+    const footnoteSection = document.createElement("div");
+    footnoteSection.className = "editor-glossary-info-card__note-section";
+    if (translatorNotes.length > 0 && footnotes.length > 0) {
+      const label = document.createElement("p");
+      label.className = "editor-glossary-info-card__label";
+      label.textContent = "Footnote:";
+      footnoteSection.append(label);
     }
     for (const footnote of footnotes) {
       const text = String(footnote ?? "").trim();
@@ -382,8 +401,11 @@ function renderStructuredGlossaryTooltipBody(body, payload, { showEditHint = fal
 
       const paragraph = document.createElement("p");
       paragraph.className = "editor-glossary-info-card__comment editor-glossary-info-card__footnote";
-      paragraph.textContent = text;
-      comments.append(paragraph);
+      paragraph.innerHTML = renderSanitizedInlineMarkupHtml(text);
+      footnoteSection.append(paragraph);
+    }
+    if (footnoteSection.childElementCount > 0) {
+      comments.append(footnoteSection);
     }
 
     if (comments.childElementCount > 0) {
@@ -391,11 +413,22 @@ function renderStructuredGlossaryTooltipBody(body, payload, { showEditHint = fal
     }
   }
 
-  if (showEditHint) {
-    const hint = document.createElement("p");
-    hint.className = "editor-glossary-info-card__hint";
-    hint.textContent = "Double click to edit";
-    body.append(hint);
+  if (showEditHint || showInsertHint) {
+    const footer = document.createElement("div");
+    footer.className = "editor-glossary-info-card__footer";
+    if (showEditHint) {
+      const editHint = document.createElement("span");
+      editHint.className = "editor-glossary-info-card__hint";
+      editHint.textContent = "Double click to edit";
+      footer.append(editHint);
+    }
+    if (showInsertHint) {
+      const insertHint = document.createElement("span");
+      insertHint.className = "editor-glossary-info-card__hint editor-glossary-info-card__hint--insert";
+      insertHint.textContent = "Ctrl + F to insert footnote";
+      footer.append(insertHint);
+    }
+    body.append(footer);
   }
 }
 
@@ -439,7 +472,8 @@ function updateGlossaryTooltipPlacement(mark) {
     return;
   }
 
-  const tooltipPayload = glossaryTooltipPayload(mark);
+  const popoverContext = glossaryPopoverContextForMark(mark);
+  const tooltipPayload = popoverContext?.payload ?? null;
   const tooltipText = glossaryTooltipText(mark);
   if (!tooltipPayload && !tooltipText) {
     hideGlossaryTooltip();
@@ -458,7 +492,12 @@ function updateGlossaryTooltipPlacement(mark) {
     // Checked at render time (not baked into the cached highlight HTML) so
     // capability changes apply without invalidating the highlight cache.
     const showEditHint = Boolean(glossaryMarkTermId(mark)) && canManageGlossaries();
-    renderStructuredGlossaryTooltipBody(body, tooltipPayload, { showEditHint });
+    const showInsertHint = popoverContext?.kind === "footnote"
+      && Boolean(glossaryFootnoteInsertionRequestForMark(mark));
+    renderStructuredGlossaryTooltipBody(body, tooltipPayload, {
+      showEditHint,
+      showInsertHint,
+    });
   } else {
     tooltip.classList.remove("editor-glossary-tooltip--structured");
     body.classList.remove("editor-glossary-info-card");
@@ -522,6 +561,13 @@ function activateGlossaryTooltipMark(mark) {
 }
 
 function deactivateGlossaryTooltipMark(mark = activeGlossaryTooltipMark) {
+  // Delegated pointer events can arrive out of order when moving between inline
+  // sibling marks in WKWebView. A stale leave from the previous mark must not
+  // hide the popover already activated for the new mark.
+  if (mark && activeGlossaryTooltipMark !== mark) {
+    return;
+  }
+
   if (glossaryTooltipPlacementFrameId) {
     window.cancelAnimationFrame(glossaryTooltipPlacementFrameId);
     glossaryTooltipPlacementFrameId = 0;
@@ -529,18 +575,109 @@ function deactivateGlossaryTooltipMark(mark = activeGlossaryTooltipMark) {
 
   hideGlossaryTooltip();
 
-  if (!mark || activeGlossaryTooltipMark === mark) {
-    activeGlossaryTooltipMark = null;
-    activeGlossaryTooltipPointer = null;
-  }
+  activeGlossaryTooltipMark = null;
+  activeGlossaryTooltipPointer = null;
 }
 
 export function handleGlossaryTooltipPointerMove(event) {
   const mark = glossaryTooltipMark(event.target);
-  if (mark && activeGlossaryTooltipMark === mark) {
-    setActiveGlossaryTooltipPointer(event.clientX, event.clientY);
-    updateGlossaryTooltipPlacement(mark);
+  if (!mark) {
+    if (activeGlossaryTooltipMark) {
+      deactivateGlossaryTooltipMark();
+    }
+    return;
   }
+
+  setActiveGlossaryTooltipPointer(event.clientX, event.clientY);
+  if (activeGlossaryTooltipMark !== mark) {
+    // Pointerover/out is normally sufficient, but inline marks can be adjacent
+    // siblings (and WebKit may coalesce their boundary transition). Treat every
+    // pointermove target as authoritative so each occurrence can take over the
+    // popover even when the boundary events are skipped.
+    activateGlossaryTooltipMark(mark);
+    return;
+  }
+
+  updateGlossaryTooltipPlacement(mark);
+}
+
+export function glossaryFootnoteInsertionRequestForMark(mark) {
+  const payload = glossaryFootnotePopoverPayloadForMark(mark);
+  if (!payload || payload.footnotes.length !== 1) {
+    return null;
+  }
+
+  const displayField = mark.closest("[data-editor-display-field][data-row-id][data-language-code]");
+  const visibleInsertIndex = Number.parseInt(mark.dataset.textEnd ?? "", 10);
+  if (!(displayField instanceof HTMLElement) || !Number.isInteger(visibleInsertIndex)) {
+    return null;
+  }
+
+  const rowId = String(displayField.dataset.rowId ?? "").trim();
+  const languageCode = String(displayField.dataset.languageCode ?? "").trim();
+  if (!rowId || !languageCode) {
+    return null;
+  }
+
+  return {
+    rowId,
+    languageCode,
+    visibleInsertIndex,
+    footnoteText: payload.footnotes[0],
+  };
+}
+
+export function glossaryFootnotePopoverPayloadForMark(mark) {
+  if (!(mark instanceof HTMLElement) || !mark.isConnected) {
+    return null;
+  }
+
+  const payload = glossaryTooltipPayload(mark);
+  if (payload?.kind !== "target" || payload.footnotes.length === 0) {
+    return null;
+  }
+
+  // Open textareas render glossary marks in a highlight overlay. Only marks in
+  // the closed field's display text are eligible for this popover.
+  if (!(mark.closest("[data-editor-display-text]") instanceof HTMLElement)) {
+    return null;
+  }
+
+  return payload;
+}
+
+export function glossaryPopoverContextForMark(mark) {
+  if (!(mark instanceof HTMLElement) || !mark.isConnected) {
+    return null;
+  }
+
+  const payload = glossaryTooltipPayload(mark);
+  if (payload?.kind === "source") {
+    // Source cards show the complete glossary entry, including footnotes.
+    // Footnote insertion and its hint remain restricted to target terms.
+    return {
+      kind: "glossary",
+      payload,
+    };
+  }
+
+  if (
+    payload?.kind !== "target"
+    || !(mark.closest("[data-editor-display-text]") instanceof HTMLElement)
+  ) {
+    return null;
+  }
+
+  // Closed target fields always retain their normal glossary information card.
+  // A populated footnote enables its insertion hint; it is not what makes the
+  // glossary popover itself eligible. Labels depend on the notes being shown.
+  return payload.footnotes.length > 0
+    ? { kind: "footnote", payload }
+    : { kind: "glossary", payload };
+}
+
+export function activeGlossaryFootnoteInsertionRequest() {
+  return glossaryFootnoteInsertionRequestForMark(activeGlossaryTooltipMark);
 }
 
 export function registerGlossaryTooltipEvents() {

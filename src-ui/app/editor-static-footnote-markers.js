@@ -34,6 +34,9 @@ export function buildStaticInlineFootnoteMarkerRanges(text, footnotes) {
       end: entry.endIndex,
       marker: entry.marker,
       priority: 30,
+      // The renderer replaces the whole "[n]" marker text with one superscript,
+      // so the serializer must not invoke it once per sub-segment.
+      replacesText: true,
       markRenderer: renderStaticInlineFootnoteMarker,
     }));
   for (let index = 1; index < ranges.length; index += 1) {

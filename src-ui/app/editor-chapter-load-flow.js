@@ -1,8 +1,5 @@
 import { loadActiveEditorRowComments, loadEditorCommentSeenRevisionsForChapter } from "./editor-comments-flow.js";
-import {
-  applyStoredSelectedTeamAiActionPreferences,
-  ensureSharedAiActionConfigurationLoaded,
-} from "./ai-settings-flow.js";
+import { applyStoredSelectedTeamAiActionPreferences } from "./ai-settings-flow.js";
 import { loadStoredEditorAssistantChapterData } from "./editor-ai-assistant-cache.js";
 import { loadStoredEditorDerivedGlossariesForChapter, saveStoredEditorDerivedGlossariesForChapter } from "./editor-derived-glossary-cache.js";
 import { hydrateEditorDerivedGlossariesByRowId } from "./editor-derived-glossary-state.js";
@@ -10,6 +7,7 @@ import {
   editorGlossaryStateMatchesLink,
   loadEditorGlossaryState,
   normalizeEditorGlossaryLink,
+  refreshEditorGlossaryAfterLocalChange,
 } from "./editor-glossary-flow.js";
 import {
   EDITOR_ROW_FILTER_MODE_HAS_CONFLICT,
@@ -35,7 +33,7 @@ import {
   waitForEditorOperationQueueIdle,
 } from "./editor-operation-queue.js";
 import { resetProjectsPageSync } from "./page-sync.js";
-import { cloneDirtyRowIds } from "./editor-row-persistence-model.js";
+import { cloneDirtyRowIds, editorRowChangedLanguageCodes } from "./editor-row-persistence-model.js";
 import {
   createEditorChapterFilterState,
   createEditorChapterGlossaryState,
@@ -108,7 +106,7 @@ function hasEditorChapterLoadOperations(operations) {
 // and derives dirty tracking from the pre-invoke snapshot — silently dropping
 // both the typed content and its unsaved-change indicator. Preserve the live
 // dirty rows' content and ids for the chapter being reloaded.
-export function mergeInFlightDirtyEditorRows(reloadedRows, liveChapter, chapterId) {
+export function mergeInFlightDirtyEditorRows(reloadedRows, liveChapter, chapterId, languages = null) {
   const empty = { rows: reloadedRows, dirtyRowIds: new Set() };
   if (!chapterId || liveChapter?.chapterId !== chapterId) {
     return empty;
@@ -122,6 +120,20 @@ export function mergeInFlightDirtyEditorRows(reloadedRows, liveChapter, chapterI
       .filter((row) => row?.rowId)
       .map((row) => [row.rowId, row]),
   );
+  const reloadedRowsById = new Map(reloadedRows.map((row) => [row.rowId, row]));
+  const languageCodes = Array.isArray(languages) ? new Set(languages.map((language) => language.code)) : null;
+  for (const rowId of liveDirtyRowIds) {
+    if (!liveRowsById.has(rowId)) {
+      continue;
+    }
+    if (!reloadedRowsById.has(rowId) || reloadedRowsById.get(rowId)?.lifecycleState === "deleted") {
+      throw new Error("A row with unsaved changes was removed on disk. Your draft has been kept in the editor.");
+    }
+    if (languageCodes && [...editorRowChangedLanguageCodes(liveRowsById.get(rowId))]
+      .some((code) => !languageCodes.has(code))) {
+      throw new Error("A language with unsaved changes was removed on disk. Your draft has been kept in the editor.");
+    }
+  }
   const rows = reloadedRows.map((row) =>
     row?.rowId && liveDirtyRowIds.has(row.rowId) && liveRowsById.has(row.rowId)
       ? liveRowsById.get(row.rowId)
@@ -165,7 +177,7 @@ function applyEditorPayloadToState(
   // must not carry a prior chapter's dirty rows, so gate on chapter identity.
   const isSameChapterReload = previousEditorChapter?.chapterId === payload.chapterId;
   const { rows: reconciledRows, dirtyRowIds: preservedDirtyRowIds } = isSameChapterReload
-    ? mergeInFlightDirtyEditorRows(visibleRows, state.editorChapter, payload.chapterId)
+    ? mergeInFlightDirtyEditorRows(visibleRows, state.editorChapter, payload.chapterId, payload.languages)
     : { rows: visibleRows, dirtyRowIds: new Set() };
   const hasImportedEditorConflicts = visibleRows.some((row) =>
     row?.freshness === "conflict"
@@ -310,7 +322,7 @@ function canResumeCurrentEditorChapter(chapterId) {
 
 export async function loadSelectedChapterEditorData(render, options = {}, operations = {}) {
   if (!hasEditorChapterReloadOperations(operations)) {
-    return;
+    return false;
   }
 
   const team = selectedProjectsTeam();
@@ -322,7 +334,7 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
       error: "Could not determine which file to open.",
     };
     render?.();
-    return;
+    return false;
   }
   if (await ensureProjectNotTombstoned(render, team, context.project)) {
     state.editorChapter = {
@@ -332,7 +344,7 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
       rows: [],
     };
     render?.();
-    return;
+    return false;
   }
 
   const preserveVisibleRows =
@@ -350,9 +362,6 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
   const linkedGlossary = normalizeEditorGlossaryLink(context.chapter.linkedGlossary);
   const aiActionConfigRender = editorAiActionConfigRender(render);
   applyStoredSelectedTeamAiActionPreferences(aiActionConfigRender);
-  if (state.offline?.isEnabled !== true) {
-    void ensureSharedAiActionConfigurationLoaded(aiActionConfigRender).catch(() => {});
-  }
   const nextGlossaryState =
     preserveVisibleRows && editorGlossaryStateMatchesLink(state.editorChapter?.glossary, linkedGlossary)
       ? state.editorChapter.glossary
@@ -364,7 +373,6 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
           repoName: linkedGlossary.repoName,
         }
         : createEditorChapterGlossaryState();
-  const glossaryStatePromise = loadEditorGlossaryState(team, context.chapter);
   const storedAssistantChapterData = loadStoredEditorAssistantChapterData(
     team,
     context.project.id,
@@ -441,7 +449,9 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
         chapterId: context.chapter.id,
       },
     });
-    const glossaryState = await glossaryStatePromise;
+    // Read after the chapter payload so a local save/rollback during that load
+    // cannot leave us applying an earlier, already-resolved glossary snapshot.
+    const glossaryState = await loadEditorGlossaryState(team, context.chapter);
     const validRowIds = new Set(
       (Array.isArray(payload?.rows) ? payload.rows : [])
         .map((row) => row?.rowId)
@@ -486,12 +496,25 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
     if (state.editorChapter.sidebarTab === "comments" && state.editorChapter.activeRowId) {
       loadActiveEditorRowComments(render);
     } else if (state.editorChapter.sidebarTab === "assistant") {
-      return;
+      return true;
     } else if (hasActiveEditorField(state.editorChapter)) {
       operations.loadActiveEditorFieldHistory(render);
     }
+    return true;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    if (preserveVisibleRows && state.editorChapter?.chapterId === context.chapter.id) {
+      // The live rows are the temporary draft storage for an in-process reload.
+      // Keep their latest text, baseline and dirty ids even when loading fails.
+      state.editorChapter = {
+        ...state.editorChapter,
+        status: "ready",
+        error: "",
+      };
+      showNoticeBadge(message || "The file could not be refreshed.", render);
+      render?.();
+      return false;
+    }
     state.editorChapter = {
       ...state.editorChapter,
       status: "error",
@@ -506,23 +529,24 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
     };
     showNoticeBadge(message || "The file could not be loaded.", render);
     render?.();
+    return false;
   }
 }
 
 export async function openTranslateChapter(render, chapterId, operations = {}) {
   if (!hasEditorChapterLoadOperations(operations)) {
-    return;
+    return false;
   }
 
   const context = findChapterContextById(chapterId);
   if (!context) {
     showNoticeBadge("Could not determine which file to open.", render);
-    return;
+    return false;
   }
 
   if (!(await operations.flushDirtyEditorRows(render, { waitForDurable: false }))) {
     showNoticeBadge("Could not queue pending saves before opening a different file.", render);
-    return;
+    return false;
   }
 
   const team = selectedProjectsTeam();
@@ -551,7 +575,15 @@ export async function openTranslateChapter(render, chapterId, operations = {}) {
       chapterId,
     };
     render?.();
-    return;
+    // Saves and rollbacks can finish while the glossary screen is open. Resume
+    // the live rows immediately and refresh only their linked glossary.
+    void refreshEditorGlossaryAfterLocalChange(render, team, context.chapter.linkedGlossary);
+    return true;
   }
   await loadSelectedChapterEditorData(render, {}, operations);
+  return (
+    state.screen === "translate"
+    && state.editorChapter?.chapterId === chapterId
+    && state.editorChapter?.status === "ready"
+  );
 }

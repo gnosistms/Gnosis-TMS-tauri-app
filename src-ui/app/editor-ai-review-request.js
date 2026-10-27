@@ -3,10 +3,15 @@ import {
   buildBatchSourceContext,
   buildRowSourceContextWindow,
 } from "./editor-ai-context-window.js";
-import { buildBatchGlossaryHints } from "./editor-ai-batch-request.js";
+import {
+  buildBatchGlossaryHints,
+  rowIdsAreAdjacentCues,
+  subtitleCuePositions,
+} from "./editor-ai-batch-request.js";
 import { editorFootnotesForAiReview } from "./editor-footnotes.js";
 import { editorFootnotesPlainText } from "./editor-utils.js";
 import { languageBaseCode } from "./editor-language-utils.js";
+import { srtLinguisticRow } from "./editor-srt-grouping.js";
 
 export function normalizeEditorAiReviewMode(value) {
   return String(value ?? "").trim() === "meaning" ? "meaning" : "grammar";
@@ -231,7 +236,7 @@ export function buildEditorAiReviewBatchRequest({
 
   const glossaryHints = meaning
     ? buildBatchGlossaryHints(
-      rowInputs.map((row) => row.sourceText),
+      rowList.map((row) => readEditorReviewRowFieldText(srtLinguisticRow(row, chapterState), sourceLanguageCode)),
       languageBaseCode(sourceLanguage),
       languageBaseCode(targetLanguage),
       chapterState?.glossary?.matcherModel ?? null,
@@ -262,6 +267,14 @@ export function buildEditorAiReviewBatchRequest({
     contextAfter,
     rows: rowInputs,
   };
+  // Translate All may have moved words between adjacent subtitle cues, so a
+  // meaning review of such rows must read them together with their neighbours.
+  if (
+    meaning
+    && rowIdsAreAdjacentCues(subtitleCuePositions(chapterState), rowInputs.map((row) => row.rowId))
+  ) {
+    request.subtitleCues = true;
+  }
   return Number.isFinite(installationId)
     ? { ...request, installationId }
     : request;

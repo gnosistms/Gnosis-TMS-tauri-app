@@ -57,6 +57,7 @@ const buildEnv = {
   ...(sentryReady ? { GNOSIS_EMIT_SOURCEMAPS: "1" } : {}),
 };
 
+run("node", ["scripts/guard-macos-git-runtime.mjs"]);
 run("node", ["scripts/prepare-typst-sidecar.mjs"]);
 
 if (uploadRequested && !sentryReady) {
@@ -77,8 +78,10 @@ if (!sentryReady) {
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 const release = `gnosis-tms@${pkg.version}`;
 
-run("npx", ["--yes", "@sentry/cli", "releases", "new", release], { allowFailure: true });
-run("npx", [
+const createReleaseStatus = run("npx", ["--yes", "@sentry/cli", "releases", "new", release], {
+  allowFailure: true,
+});
+const uploadStatus = run("npx", [
   "--yes",
   "@sentry/cli",
   "sourcemaps",
@@ -88,6 +91,15 @@ run("npx", [
   "--url-prefix",
   "~/assets",
   "dist/assets",
-]);
-run("npx", ["--yes", "@sentry/cli", "releases", "finalize", release]);
+], { allowFailure: true });
+const finalizeStatus = uploadStatus === 0
+  ? run("npx", ["--yes", "@sentry/cli", "releases", "finalize", release], {
+    allowFailure: true,
+  })
+  : 1;
+if (createReleaseStatus !== 0 || uploadStatus !== 0 || finalizeStatus !== 0) {
+  console.warn(
+    "Sentry source map publishing failed; continuing the application release without uploaded source maps.",
+  );
+}
 removeSourceMaps(distAssetsDir);

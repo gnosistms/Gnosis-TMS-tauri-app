@@ -250,6 +250,7 @@ function buildRowIndexById(rows) {
   rows.forEach((row, index) => {
     if (typeof row?.id === "string" && row.id) {
       rowIndexById.set(row.id, index);
+      for (const member of row.srtGroup?.memberRowIds ?? []) rowIndexById.set(member, index);
     }
   });
   return rowIndexById;
@@ -275,7 +276,7 @@ function renderWindowRange(
   editorReplace,
   editorChapter,
 ) {
-  itemsContainer.innerHTML = renderTranslationContentRowsRange(
+  const html = renderTranslationContentRowsRange(
     rows,
     collapsedLanguageCodes,
     startIndex,
@@ -283,6 +284,46 @@ function renderWindowRange(
     editorReplace,
     editorChapter,
   );
+  const activeField = itemsContainer.ownerDocument.activeElement;
+  const focusedRow = activeField instanceof HTMLTextAreaElement
+    && activeField.matches("[data-editor-row-field]")
+    ? activeField.closest("[data-editor-row-card]")
+    : null;
+  const template = itemsContainer.ownerDocument.createElement("template");
+  if (focusedRow?.parentElement === itemsContainer) {
+    template.innerHTML = html;
+  }
+  const nextRow = focusedRow
+    ? template.content.querySelector(
+      `[data-editor-row-card][data-row-id="${CSS.escape(focusedRow.dataset.rowId)}"]`,
+    )
+    : null;
+
+  if (nextRow) {
+    // Range changes only update layout; row-content changes are applied through
+    // row patching. Keep the focused row connected at all times: even removing
+    // and reinserting the same textarea discards its native undo/redo history.
+    const before = [];
+    const after = [];
+    let seenFocusedRow = false;
+    for (const node of [...template.content.childNodes]) {
+      if (node === nextRow) {
+        seenFocusedRow = true;
+      } else {
+        (seenFocusedRow ? after : before).push(node);
+      }
+    }
+    while (focusedRow.previousSibling) {
+      focusedRow.previousSibling.remove();
+    }
+    while (focusedRow.nextSibling) {
+      focusedRow.nextSibling.remove();
+    }
+    focusedRow.before(...before);
+    focusedRow.after(...after);
+  } else {
+    itemsContainer.innerHTML = html;
+  }
   syncEditorRowTextareaHeights(itemsContainer);
 }
 
@@ -294,6 +335,7 @@ export function createEditorVirtualListController({
   topSpacer,
   bottomSpacer,
   rowHeightCache,
+  onLayout = () => {},
 }) {
   if (
     !(root instanceof HTMLElement)
@@ -347,7 +389,7 @@ export function createEditorVirtualListController({
       ?? estimateEditorRowHeight(row, currentModel.collapsedLanguageCodes, currentModel.editorFontSizePx);
   };
 
-  const getRowKey = (index) => currentModel.contentRows[index]?.id ?? index;
+  const getRowKey = (index) => currentModel.contentRows[index]?.srtGroup?.key ?? currentModel.contentRows[index]?.id ?? index;
 
   const extractRange = (range) => {
     const indexes = defaultRangeExtractor(range);
@@ -363,12 +405,21 @@ export function createEditorVirtualListController({
     return indexes;
   };
 
+  // Controls, banners, and document padding precede the list in this same
+  // scroller. Virtual Core measures item starts in scroll-content coordinates;
+  // the DOM spacers below remain local to the list itself.
+  const readListScrollMargin = () => Math.max(0,
+    topSpacer.getBoundingClientRect().top
+      - scrollContainer.getBoundingClientRect().top - scrollContainer.clientTop
+      + scrollContainer.scrollTop);
+
   const buildVirtualizerOptions = () => ({
     count: Array.isArray(currentModel.contentRows) ? currentModel.contentRows.length : 0,
     getScrollElement: () => scrollContainer,
     estimateSize: estimateRowSize,
     getItemKey: getRowKey,
     gap: EDITOR_ROW_GAP_PX,
+    scrollMargin: readListScrollMargin(),
     overscan: EDITOR_VIRTUALIZER_OVERSCAN_ROWS,
     rangeExtractor: extractRange,
     initialRect: {
@@ -447,14 +498,18 @@ export function createEditorVirtualListController({
   };
 
   const updateVirtualizerModel = () => {
+    const oldGroups = new Map(currentModel.contentRows.map((row) => [row.id, row.srtGroup?.key]));
     currentModel = buildEditorScreenViewModel(appState);
+    for (const row of currentModel.contentRows) {
+      if (oldGroups.get(row.id) !== row.srtGroup?.key) rowHeightCache.delete(row.id);
+    }
     currentRowIndexById = buildRowIndexById(currentModel.contentRows);
     const activeRowId =
       pendingTranslateAnchorRowId()
       || pinnedFocusedRowId(root, scrollContainer)
       || "";
     pinnedRowIndex = activeRowId
-      ? currentModel.contentRows.findIndex((row) => row.id === activeRowId)
+      ? currentRowIndexById.get(activeRowId) ?? -1
       : -1;
     virtualizer.setOptions(buildVirtualizerOptions());
     virtualizer._willUpdate();
@@ -530,6 +585,7 @@ export function createEditorVirtualListController({
     resolveEditorVirtualRangeState(
       virtualizer.getVirtualItems(),
       virtualizer.getTotalSize(),
+      virtualizer.options.scrollMargin,
     );
 
   const applyRangeState = (rangeState) => {
@@ -625,6 +681,7 @@ export function createEditorVirtualListController({
       }
     } finally {
       isRendering = false;
+      onLayout();
     }
 
     if (needsPostMeasureRender) {
@@ -717,7 +774,7 @@ export function createEditorVirtualListController({
 
   const notifyRowsChanged = (rowIds, options = {}) => {
     updateVirtualizerModel();
-    const normalizedRowIds = normalizeEditorRowIds(rowIds);
+    const normalizedRowIds = normalizeEditorRowIds((Array.isArray(rowIds) ? rowIds : []).map((id) => currentModel.contentRows[currentRowIndexById.get(id)]?.id ?? id));
     if (normalizedRowIds.length === 0) {
       return false;
     }
@@ -854,6 +911,18 @@ export function createEditorVirtualListController({
   glossarySync.schedule();
 
   return {
+    getRowBounds(rowId) {
+      const index = currentRowIndexById.get(rowId);
+      if (!Number.isInteger(index)) return null;
+      // getTotalSize refreshes measurements; measurementsCache is a public
+      // Virtual Core field. Keep that dependency inside this controller.
+      virtualizer.getTotalSize();
+      const item = virtualizer.measurementsCache[index];
+      return item ? { start: item.start, end: item.end } : null;
+    },
+    renderRevealedRow() {
+      renderWindow(false, { reason: EDITOR_VIRTUALIZATION_SCROLL_REASON });
+    },
     notifyRowsChanged,
     notifyRowHeightMayHaveChanged,
     refreshLayout,

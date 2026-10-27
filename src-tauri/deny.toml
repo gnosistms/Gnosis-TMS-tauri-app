@@ -1,9 +1,9 @@
 # cargo-deny configuration — license compliance only.
 #
-# Gnosis TMS ships under PolyForm Noncommercial + commercial licenses, so the
-# dependency tree must stay free of strong copyleft. cargo-deny treats any
-# license not in `allow` as an error, which is what denies GPL/AGPL/LGPL-only
-# and unknown/unlicensed crates.
+# Gnosis TMS ships under GPL-3.0-only. Keep the existing, reviewed dependency
+# allowlist; this is intentionally narrower than all GPLv3-compatible licenses.
+# cargo-deny rejects licenses outside `allow`. Review compatibility and source
+# obligations before adding any new license, including other copyleft licenses.
 #
 # Run locally with: npm run check:licenses:rust
 # Keep the allowlist in sync with `about.toml` and the `check:licenses:npm`
@@ -11,8 +11,8 @@
 
 [licenses]
 # The gnosis-tms crate itself is unpublished (publish = false in Cargo.toml)
-# and carries the product's own PolyForm NC + commercial terms, not an SPDX
-# license, so it is excluded from the dependency license check.
+# and carries GPL-3.0-only, so it is excluded from this third-party dependency
+# license check.
 private = { ignore = true }
 allow = [
     "MIT",

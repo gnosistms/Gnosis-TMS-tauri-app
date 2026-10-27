@@ -33,6 +33,21 @@ test.afterEach(() => {
   resetSessionState();
 });
 
+test("duplicate feedback appears before variants and marks only conflicting inputs", () => {
+  installModalFixture();
+  state.glossaryTermEditor.sourceTerms = ["Dag Dugpa", "Dag-Dugpa"];
+  state.glossaryTermEditor.redundantSourceVariantIndices = [1];
+  state.glossaryTermEditor.sourceTermDuplicateWarning = "Remove or change the marked variants before saving.";
+
+  const html = renderGlossaryTermEditorModal(state);
+  const inputs = [...html.matchAll(/<textarea\b[^>]*data-glossary-term-variant-input[^>]*>[\s\S]*?<\/textarea>/g)].map(match => match[0]);
+  assert.doesNotMatch(inputs[0], /term-variant-row__input--redundant/);
+  assert.match(inputs[1], /term-variant-row__input--redundant/);
+  assert.match(inputs[1], /aria-invalid="true"/);
+  assert.ok(html.indexOf("Remove or change the marked variants") < html.indexOf("Dag Dugpa"));
+  assert.doesNotMatch(html, /class="modal__error"/);
+});
+
 test("glossary term modal renders localized ruby buttons as visible lane controls", () => {
   installModalFixture();
 

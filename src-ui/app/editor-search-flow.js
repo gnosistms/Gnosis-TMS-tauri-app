@@ -1,9 +1,12 @@
 import { buildEditorRowSearchHighlights } from "./editor-search-highlighting.js";
+import { srtLinguisticRow, srtGroupingEnabled, srtGroupsForChapter } from "./editor-srt-grouping.js";
 import {
+  EDITOR_ROW_FILTER_MODE_SHOW_ALL,
   editorChapterFiltersAreActive,
   normalizeEditorChapterFilterState,
 } from "./editor-filters.js";
-import { rowFieldsEqual } from "./editor-row-persistence-model.js";
+import { rowFieldsEqual, rowFootnotesEqual } from "./editor-row-persistence-model.js";
+import { serializeEditorFootnotesForLegacy } from "./editor-footnotes.js";
 import {
   buildEditorBatchReplaceUpdates,
   buildEditorReplaceCommitMessage,
@@ -24,6 +27,10 @@ import {
   findEditorRowById,
 } from "./editor-utils.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
+import {
+  changedAfterMyEditFilterIsActive,
+  loadChangedAfterMyEditRows,
+} from "./editor-changed-after-my-edit-flow.js";
 import { waitForNextPaint } from "./runtime.js";
 import { noteUserScrollIntent, readSessionAnchor } from "./editor-scroll-session.js";
 import { state } from "./state.js";
@@ -70,6 +77,19 @@ function hasEditorSearchOperations(operations) {
   );
 }
 
+function serializeBatchReplaceRowsForWire(rows) {
+  return (Array.isArray(rows) ? rows : []).map((row) => ({
+    ...row,
+    footnotes: Object.fromEntries(
+      Object.entries(row?.footnotes && typeof row.footnotes === "object" ? row.footnotes : {})
+        .map(([languageCode, footnotes]) => [
+          languageCode,
+          serializeEditorFootnotesForLegacy(footnotes),
+        ]),
+    ),
+  }));
+}
+
 function buildEditorRowSections(row, chapterState = state.editorChapter) {
   const sections = [];
   for (const language of Array.isArray(chapterState?.languages) ? chapterState.languages : []) {
@@ -99,6 +119,7 @@ function buildEditorRowSections(row, chapterState = state.editorChapter) {
 }
 
 export function buildEditorRowSearchHighlightMap(row, chapterState = state.editorChapter) {
+  row = srtLinguisticRow(row, chapterState);
   const filters = normalizeEditorChapterFilters(chapterState?.filters);
   const searchQuery = typeof filters?.searchQuery === "string" ? filters.searchQuery.trim() : "";
   if (!searchQuery) {
@@ -264,6 +285,34 @@ export function updateEditorSearchFilterQuery(render, nextValue) {
   renderEditorFilterChange(render, viewportTransition);
 }
 
+export function applyProjectSearchToEditor(render, nextValue, options = {}) {
+  if (!state.editorChapter?.chapterId) {
+    return;
+  }
+
+  const currentFilters = normalizeEditorChapterFilters(state.editorChapter?.filters);
+  const nextFilters = normalizeEditorChapterFilters({
+    ...currentFilters,
+    searchQuery: typeof nextValue === "string" ? nextValue : String(nextValue ?? ""),
+    caseSensitive: options.caseSensitive === true,
+    rowFilterMode: EDITOR_ROW_FILTER_MODE_SHOW_ALL,
+  });
+  const viewportTransition = prepareEditorFilterViewportTransition(currentFilters, nextFilters);
+  const currentReplaceState = normalizeEditorReplaceState(state.editorChapter?.replace);
+  state.editorChapter = {
+    ...state.editorChapter,
+    filters: nextFilters,
+    replace: {
+      ...currentReplaceState,
+      enabled: nextFilters.searchQuery.trim().length > 0 ? currentReplaceState.enabled : false,
+      selectedRowIds: new Set(),
+      status: "idle",
+      error: "",
+    },
+  };
+  renderEditorFilterChange(render, viewportTransition);
+}
+
 export function toggleEditorSearchFilterCaseSensitive(render, enabled) {
   if (!state.editorChapter?.chapterId) {
     return;
@@ -325,6 +374,9 @@ export function updateEditorRowFilterMode(render, nextValue) {
     },
   };
   renderEditorFilterChange(render, viewportTransition);
+  if (changedAfterMyEditFilterIsActive(state.editorChapter)) {
+    void loadChangedAfterMyEditRows(render);
+  }
 }
 
 export async function showEditorRowInContext(render, rowId) {
@@ -471,7 +523,10 @@ export async function replaceSelectedEditorRows(render, operations = {}) {
     return;
   }
 
-  const selectedRows = selectedRowIds
+  const selectedMemberIds = srtGroupingEnabled(editorChapter)
+    ? srtGroupsForChapter(editorChapter).filter((members) => selectedRowIds.includes(members[0].rowId)).flatMap((members) => members.map((row) => row.rowId))
+    : selectedRowIds;
+  const selectedRows = selectedMemberIds
     .map((rowId) => findEditorRowById(rowId, editorChapter))
     .filter(Boolean);
   if (state.editorChapter.deferredStructuralChanges === true) {
@@ -485,6 +540,7 @@ export async function replaceSelectedEditorRows(render, operations = {}) {
 
   const replacePlan = buildEditorBatchReplaceUpdates({
     rows: editorChapter.rows,
+    groups: srtGroupingEnabled(editorChapter) ? srtGroupsForChapter(editorChapter) : null,
     selectedRowIds: new Set(selectedRowIds),
     visibleLanguageCodes: buildVisibleEditorLanguageCodeSet(editorChapter),
     searchQuery,
@@ -501,7 +557,7 @@ export async function replaceSelectedEditorRows(render, operations = {}) {
     .filter((row) => affectedRowIds.has(row.rowId))
     .filter((row) =>
       !rowFieldsEqual(row.fields, row.persistedFields)
-      || !rowFieldsEqual(row.footnotes, row.persistedFootnotes)
+      || !rowFootnotesEqual(row.footnotes, row.persistedFootnotes)
       || !rowFieldsEqual(row.imageCaptions, row.persistedImageCaptions)
     )
     .map((row) => ({
@@ -580,7 +636,7 @@ export async function replaceSelectedEditorRows(render, operations = {}) {
         resetPayload = await invokeQueuedEditorWriteCommand("update_gtms_editor_row_fields_batch", {
           input: {
             ...value.inputBase,
-            rows: value.resetRows,
+            rows: serializeBatchReplaceRowsForWire(value.resetRows),
             commitMessage: buildEditorReplaceResetCommitMessage(value.resetRows.length),
             operation: "editor-replace-reset",
           },
@@ -590,11 +646,12 @@ export async function replaceSelectedEditorRows(render, operations = {}) {
       const replacePayload = await invokeQueuedEditorWriteCommand("update_gtms_editor_row_fields_batch", {
         input: {
           ...value.inputBase,
-          rows: value.replaceRows,
+          rows: serializeBatchReplaceRowsForWire(value.replaceRows),
           commitMessage: buildEditorReplaceCommitMessage(value.searchQuery, value.replaceRows.length),
           operation: "editor-replace",
         },
       }, value.permissionContext, render);
+      if (replacePayload?.conflicts?.length) throw new Error("A subtitle changed elsewhere. Refresh or resolve the group before replacing text.");
       return { resetPayload, replacePayload };
     },
     onSuccess: ({ resetPayload, replacePayload } = {}, operation) => {
@@ -610,7 +667,8 @@ export async function replaceSelectedEditorRows(render, operations = {}) {
         );
       }
       operations.markEditorRowsPersisted(
-        value.replaceRows,
+        value.replaceRows.map((row) => ({ ...row,
+          fields: replacePayload?.rows?.find((saved) => saved.rowId === row.rowId)?.fields ?? row.fields })),
         replacePayload?.wordCounts,
         nextChapterBaseCommitSha(replacePayload, state.editorChapter),
       );

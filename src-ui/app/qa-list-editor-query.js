@@ -1,6 +1,7 @@
 import { qaListEditorKeys } from "./query-client.js";
 import { createRepoResourceEditorQuery } from "./repo-resource/editor-query.js";
 import { qaListResourceDescriptor } from "./qa-list-resource-descriptor.js";
+import { listLocalQaListMetadataRecords } from "./team-metadata-flow.js";
 
 const qaListEditorQuery = createRepoResourceEditorQuery({
   ...qaListResourceDescriptor,
@@ -8,6 +9,7 @@ const qaListEditorQuery = createRepoResourceEditorQuery({
   contextIdFields: ["qaListId", "id"],
   queryKey: qaListEditorKeys.byQaList,
   command: "load_gtms_qa_list_editor_data",
+  listLocalMetadataRecords: listLocalQaListMetadataRecords,
 });
 
 export const qaListEditorQueryKey = qaListEditorQuery.editorQueryKey;

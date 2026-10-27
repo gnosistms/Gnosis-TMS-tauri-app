@@ -5,6 +5,7 @@ import {
   closeAiReviewMissingKeyModal,
   openAiKeyPage,
   saveAiProviderSecret,
+  removeAiProviderSecret,
   selectAiProvider,
 } from "../ai-settings-flow.js";
 import { state } from "../state.js";
@@ -20,6 +21,7 @@ export function createAiActions(render) {
   return {
     ...providerActions,
     "save-ai-key": () => saveAiProviderSecret(render),
+    "remove-ai-key": () => removeAiProviderSecret(render),
     "cancel-ai-review-missing-key": () => {
       closeAiReviewMissingKeyModal();
       render();

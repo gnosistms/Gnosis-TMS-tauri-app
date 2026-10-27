@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   compareStableVersions,
@@ -12,6 +17,34 @@ const synchronizedVersions = (version) => ({
   "package.json": version,
   "src-tauri/Cargo.toml": version,
   "src-tauri/tauri.conf.json": version,
+});
+
+test("local launcher permits an older release label but still rejects inconsistent metadata", (t) => {
+  const cwd = mkdtempSync(path.join(os.tmpdir(), "gnosis-dev-version-"));
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  mkdirSync(path.join(cwd, "src-tauri"));
+  writeFileSync(path.join(cwd, "package.json"), '{"version":"0.8.101"}');
+  writeFileSync(path.join(cwd, "src-tauri/tauri.conf.json"), '{"version":"0.8.101"}');
+  writeFileSync(path.join(cwd, "src-tauri/Cargo.toml"), '[package]\nversion = "0.8.101"\n');
+  const git = (args) => execFileSync("git", args, { cwd, stdio: "ignore" });
+  git(["init"]);
+  git(["add", "."]);
+  git(["-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "commit", "-m", "Fixture"]);
+  git(["tag", "v0.8.102"]);
+  const guard = fileURLToPath(new URL("./guard-dev-app-version.mjs", import.meta.url));
+  const run = (allow) => spawnSync(process.execPath, [guard], {
+    cwd, encoding: "utf8",
+    env: { ...process.env, GNOSIS_ALLOW_STALE_DEV_VERSION: allow ? "1" : "0" },
+  });
+  assert.equal(run(false).status, 1);
+  const allowed = run(true);
+  assert.equal(allowed.status, 0, allowed.stderr);
+  assert.match(allowed.stderr, /Starting this checkout/);
+  assert.doesNotMatch(allowed.stderr, /Merge or rebase/);
+  writeFileSync(path.join(cwd, "src-tauri/tauri.conf.json"), '{"version":"0.8.100"}');
+  const inconsistent = run(true);
+  assert.equal(inconsistent.status, 1);
+  assert.match(inconsistent.stderr, /metadata is inconsistent/);
 });
 
 test("parseStableVersion accepts stable app versions only", () => {

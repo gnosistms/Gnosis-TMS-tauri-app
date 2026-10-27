@@ -70,7 +70,7 @@ export function renderCommentsPane(editorChapter, rows, session, options = {}) {
   if (!activeRow) {
     return `
       <div class="history-empty">
-        <p>Select a translation to view comments.</p>
+        <p>Select a translation to view Comments.</p>
       </div>
     `;
   }

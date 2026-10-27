@@ -3,6 +3,7 @@ import {
   buildSectionNav,
   escapeHtml,
   pageShell,
+  renderAppUpdatePill,
   primaryButton,
   renderInlineStateBox,
   renderStateCard,
@@ -272,6 +273,7 @@ export function renderQaScreen(state) {
     pageShell({
       title: "QA Lists",
       subtitle: selectedTeam?.name ?? "Team",
+      subtitleAction: renderAppUpdatePill(state.appUpdate),
       titleAction: buildPageRefreshAction(state, state.pageSync, "refresh-page", {
         backgroundRefreshing: refreshInProgress || coordinatorWriteActive,
         backgroundRefreshStartedAt: state.qaListsPage?.refreshStartedAt,

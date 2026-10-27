@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./test.js";
 
 test("reload shows the start hero while persistent storage is still loading", async ({ page }) => {
   await page.addInitScript(() => {

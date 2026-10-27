@@ -11,7 +11,6 @@ import {
   collapseEditorImageCaption,
   collapseEmptyEditorFootnote,
   collapseEmptyEditorImageEditor,
-  persistEditorRowOnBlur,
   moveEditorPreviewSearch,
   dismissActiveIdleEditorImageUpload,
   flushDirtyEditorRows,
@@ -25,7 +24,6 @@ import {
   jumpFromPreviewBlockToTranslateMode,
 } from "./translate-flow.js";
 import { syncActiveEditorInlineStyleButtons } from "./editor-inline-markup-flow.js";
-import { showNoticeBadge } from "./status-feedback.js";
 import {
   dismissEditorImageContextMenu,
   handleEditorImageContextMenuInvocationKeydown,
@@ -33,14 +31,9 @@ import {
   openEditorImageContextMenu,
 } from "./editor-image-context-menu.js";
 
-const PREVIEW_EDITABLE_TEXT_BLOCK_SELECTOR = [
-  "[data-editor-preview-document] p.translate-preview__block[data-preview-block][data-row-id]",
-  "[data-editor-preview-document] h1.translate-preview__block[data-preview-block][data-row-id]",
-  "[data-editor-preview-document] h2.translate-preview__block[data-preview-block][data-row-id]",
-  "[data-editor-preview-document] blockquote.translate-preview__block[data-preview-block][data-row-id]",
-].join(", ");
+const PREVIEW_EDITABLE_BLOCK_SELECTOR = "[data-editor-preview-document] [data-preview-block][data-row-id]";
 
-function previewEditableTextBlockFromTarget(target) {
+function previewEditableBlockFromTarget(target) {
   if (!(target instanceof Element)) {
     return null;
   }
@@ -49,8 +42,33 @@ function previewEditableTextBlockFromTarget(target) {
     return null;
   }
 
-  const block = target.closest(PREVIEW_EDITABLE_TEXT_BLOCK_SELECTOR);
+  const block = target.closest(PREVIEW_EDITABLE_BLOCK_SELECTOR);
   return block instanceof HTMLElement ? block : null;
+}
+
+function cardWhitespaceLanguageFromPointer(event) {
+  const target = event.target;
+  if (!(target instanceof Element) || target.closest(
+    'button, a, input, textarea, select, label, [contenteditable], [data-action], [data-stop-row-action], [data-editor-glossary-field-stack]',
+  )) {
+    return null;
+  }
+
+  const card = target.closest("[data-editor-row-card] .card--translation");
+  if (!(card instanceof HTMLElement)) {
+    return null;
+  }
+
+  const panels = Array.from(card.querySelectorAll("[data-editor-language-panel]"));
+  // A section's top border is the visible language divider. Extend each
+  // section horizontally to the card edges; give outer padding and the gap
+  // before the next divider to the adjacent section, leaving no dead zones.
+  let selected = panels[0] ?? null;
+  for (const panel of panels) {
+    if (panel.getBoundingClientRect().top > event.clientY) break;
+    selected = panel;
+  }
+  return selected;
 }
 
 export function activeElementKeepsEditorControlOpen(
@@ -340,9 +358,22 @@ export function registerTranslateEditorDomEvents(app, render) {
   });
 
   app.addEventListener("mousedown", (event) => {
+    // Refresh preserves the draft. Do not let its button first blur the textarea
+    // and submit that draft through the ordinary focusout save handler.
+    if (
+      closestEventTarget(event.target, '[data-action="refresh-page"]')
+      && document.activeElement instanceof HTMLTextAreaElement
+      && document.activeElement.matches("[data-editor-row-field]")
+    ) {
+      event.preventDefault();
+      return;
+    }
+
+    // Keep closed-note marker presses from blurring and remounting the row
+    // before mouseup can dispatch their click action.
     const button = closestEventTarget(
       event.target,
-      "[data-editor-row-text-style-button], [data-editor-inline-style-button], [data-editor-separator-button], [data-editor-link-button], [data-editor-footnote-button], [data-editor-image-button], [data-editor-image-caption-button], [data-editor-image-upload-dropzone], [data-editor-image-upload-close-button], [data-editor-image-url-close-button], [data-editor-image-url-status-button], [data-editor-language-image-remove-button], [data-action^=\"switch-editor-sidebar-tab:\"], [data-action^=\"restore-editor-history:\"], [data-action^=\"run-editor-ai-translate:\"], [data-action^=\"apply-editor-assistant-draft:\"], [data-action^=\"review-editor-text-now:\"], [data-action=\"review-editor-text-now\"], [data-action=\"apply-editor-ai-review\"], [data-preview-search-nav-button]",
+      "[data-editor-row-text-style-button], [data-editor-inline-style-button], [data-editor-separator-button], [data-editor-link-button], [data-editor-footnote-button], [data-editor-footnote-display], [data-editor-image-button], [data-editor-image-caption-button], [data-editor-image-upload-dropzone], [data-editor-image-upload-close-button], [data-editor-image-url-close-button], [data-editor-image-url-status-button], [data-editor-language-image-remove-button], [data-editor-row-connection], [data-action^=\"switch-editor-sidebar-tab:\"], [data-action^=\"restore-editor-history:\"], [data-action^=\"run-editor-ai-translate:\"], [data-action^=\"apply-editor-assistant-draft:\"], [data-action^=\"review-editor-text-now:\"], [data-action=\"review-editor-text-now\"], [data-action=\"apply-editor-ai-review\"], [data-preview-search-nav-button]",
     );
     if (!button) {
       return;
@@ -365,9 +396,14 @@ export function registerTranslateEditorDomEvents(app, render) {
       return;
     }
 
-    const previewBlock = previewEditableTextBlockFromTarget(event.target);
-    if (previewBlock && event.detail === 1) {
-      showNoticeBadge("Double click to edit this text", render, 2200);
+    const cardLanguage = cardWhitespaceLanguageFromPointer(event);
+    if (cardLanguage) {
+      const rowId = cardLanguage.dataset.rowId ?? "";
+      const languageCode = cardLanguage.dataset.languageCode ?? "";
+      dismissActiveIdleEditorImageUpload(render);
+      // Keep normal blur behavior so an existing draft is saved/collapsed.
+      // Selection itself must never open an editing control.
+      void setActiveEditorField(render, rowId, languageCode);
       return;
     }
 
@@ -400,7 +436,7 @@ export function registerTranslateEditorDomEvents(app, render) {
 
     const editorControl = closestEventTarget(
       event.target,
-      "[data-editor-row-text-style-button], [data-editor-inline-style-button], [data-editor-separator-button], [data-editor-link-button], [data-editor-footnote-button], [data-editor-footnote-display], [data-editor-image-button], [data-editor-image-caption-button], [data-editor-image-upload-close-button], [data-editor-image-url-close-button], [data-editor-image-url-status-button], [data-editor-language-image-remove-button], [data-action^=\"switch-editor-sidebar-tab:\"]",
+      "[data-editor-row-text-style-button], [data-editor-inline-style-button], [data-editor-separator-button], [data-editor-link-button], [data-editor-footnote-button], [data-editor-footnote-display], [data-editor-image-button], [data-editor-image-caption-button], [data-editor-image-upload-close-button], [data-editor-image-url-close-button], [data-editor-image-url-status-button], [data-editor-language-image-remove-button], [data-editor-row-connection], [data-action^=\"switch-editor-sidebar-tab:\"]",
     );
     const imageOpenButton = closestEventTarget(
       event.target,
@@ -528,7 +564,7 @@ export function registerTranslateEditorDomEvents(app, render) {
   });
 
   app.addEventListener("dblclick", (event) => {
-    const previewBlock = previewEditableTextBlockFromTarget(event.target);
+    const previewBlock = previewEditableBlockFromTarget(event.target);
     if (!previewBlock) {
       return;
     }
@@ -603,9 +639,8 @@ export function registerTranslateEditorDomEvents(app, render) {
         }
 
         collapseEditorImageCaption(render, rowId, languageCode);
-        void persistEditorRowOnBlur(render, rowId);
+        scheduleDirtyEditorRowScan(render, rowId, { quoteLanguageCode: languageCode });
       });
-      scheduleDirtyEditorRowScan(render, rowId);
       return;
     }
     requestAnimationFrame(() => {
@@ -621,10 +656,10 @@ export function registerTranslateEditorDomEvents(app, render) {
       collapseEmptyEditorFootnote(render, rowId, languageCode);
       collapseEmptyEditorImageEditor(render, rowId, languageCode);
       void submitEditorImageUrl(render, rowId, languageCode);
+      if (textarea instanceof HTMLTextAreaElement) {
+        scheduleDirtyEditorRowScan(render, rowId, { quoteLanguageCode: languageCode });
+      }
     });
-    if (textarea instanceof HTMLTextAreaElement) {
-      scheduleDirtyEditorRowScan(render, rowId);
-    }
   });
 
   app.addEventListener("keydown", (event) => {
@@ -764,7 +799,20 @@ export function registerTranslateEditorDomEvents(app, render) {
     });
   }, true);
 
+  for (const type of ["compositionstart", "compositionend"]) {
+    app.addEventListener(type, (event) => {
+      const input = closestEventTarget(event.target, "[data-editor-row-field]");
+      if (input instanceof HTMLTextAreaElement) input.dataset.srtComposing = String(type === "compositionstart");
+    });
+  }
+
+  app.addEventListener("input", (event) => {
+    const input = closestEventTarget(event.target, "[data-editor-srt-recovery]");
+    if (input instanceof HTMLTextAreaElement) updateSrtGroupDraft(input.dataset.rowId, input.dataset.languageCode, input.value);
+  });
+
   document.addEventListener("selectionchange", () => {
     syncActiveEditorInlineStyleButtons(document);
   });
 }
+import { updateSrtGroupDraft } from "./editor-srt-group-edit-flow.js";

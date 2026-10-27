@@ -3,6 +3,7 @@ import {
   buildSectionNav,
   escapeHtml,
   pageShell,
+  renderAppUpdatePill,
   primaryButton,
   renderSelectPillControl,
   renderStateCard,
@@ -183,6 +184,7 @@ export function renderUsersScreen(state) {
     pageShell({
       title: "Members",
       subtitle: selectedTeam?.name ?? "Team",
+      subtitleAction: renderAppUpdatePill(state.appUpdate),
       titleAction: buildPageRefreshAction(state, state.pageSync, "refresh-page", {
         backgroundRefreshing: state.membersPage?.isRefreshing === true || anyMemberWriteIsActive(),
       }),

@@ -4,6 +4,7 @@
     "src-ui/app/*.test.js",
     "src-ui/screens/*.test.js",
     "scripts/build-frontend-for-tauri.mjs",
+    "scripts/glossary-research-lab/studio-budget-comparison.mjs",
     "docs/app.js"
   ],
   "project": [

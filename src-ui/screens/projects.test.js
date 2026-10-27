@@ -109,6 +109,136 @@ test.afterEach(() => {
   resetSessionState();
 });
 
+test("project search renders collapsed compact cards and all excerpts after expansion", () => {
+  const row = {
+    projectId: "project-search",
+    projectTitle: "Logos Mantra Theurgy",
+    chapterId: "chapter-search",
+    chapterTitle: "Chapter 04 · Angel Aroch",
+    rowId: "row-search",
+    rowOrderKey: "a0",
+    score: 20,
+    qualityTier: "strong",
+    excerpts: [
+      {
+        languageCode: "en",
+        languageName: "English",
+        snippetSource: "field",
+        snippet: "The Drukpa lineage",
+      },
+      {
+        languageCode: "vi",
+        languageName: "Vietnamese",
+        snippetSource: "footnote",
+        snippet: "Dòng truyền thừa Drukpa",
+      },
+    ],
+  };
+  const baseSearch = {
+    query: "Drukpa",
+    status: "ready",
+    results: [row],
+    total: 1,
+    strongTotal: 1,
+    weakerTotal: 0,
+    totalCapped: false,
+    expandedProjectIds: new Set(),
+    expandedChapterIds: new Set(),
+  };
+
+  const collapsedHtml = renderProjectsScreen(projectsState({ projectsSearch: baseSearch }));
+  assert.match(collapsedHtml, /1 strong matching row/);
+  assert.match(collapsedHtml, /Logos Mantra Theurgy/);
+  assert.match(collapsedHtml, /aria-controls="project-search-project-0"/);
+  assert.match(collapsedHtml, /id="project-search-project-0" hidden/);
+  assert.doesNotMatch(collapsedHtml, /Chapter 04 · Angel Aroch/);
+  assert.doesNotMatch(collapsedHtml, /data-project-search-row/);
+
+  const projectExpandedHtml = renderProjectsScreen(projectsState({
+    projectsSearch: {
+      ...baseSearch,
+      expandedProjectIds: new Set(["project-search"]),
+    },
+  }));
+  assert.match(projectExpandedHtml, /Chapter 04 · Angel Aroch/);
+  assert.match(projectExpandedHtml, /aria-controls="project-search-chapter-0-0"/);
+  assert.match(projectExpandedHtml, /id="project-search-chapter-0-0" hidden/);
+  assert.match(projectExpandedHtml, /data-action="open-project-search-chapter:chapter-search"/);
+  assert.doesNotMatch(projectExpandedHtml, /data-project-search-row/);
+
+  const chapterExpandedHtml = renderProjectsScreen(projectsState({
+    projectsSearch: {
+      ...baseSearch,
+      expandedProjectIds: new Set(["project-search"]),
+      expandedChapterIds: new Set(["chapter-search"]),
+    },
+  }));
+  assert.match(chapterExpandedHtml, /data-project-search-row/);
+  assert.match(chapterExpandedHtml, /id="project-search-chapter-0-0">/);
+  assert.doesNotMatch(chapterExpandedHtml, /id="project-search-chapter-0-0" hidden/);
+  assert.match(chapterExpandedHtml, /English · Text/);
+  assert.match(chapterExpandedHtml, /Vietnamese · Footnote/);
+  assert.match(chapterExpandedHtml, /lang="en" dir="auto"/);
+  assert.match(chapterExpandedHtml, /lang="vi" dir="auto"/);
+  assert.equal((chapterExpandedHtml.match(/open-project-search-chapter:/g) ?? []).length, 1);
+  assert.doesNotMatch(chapterExpandedHtml, /open-project-search-result:/);
+  assert.match(chapterExpandedHtml, /<button\s+type="button"\s+class="project-search-tree__disclosure/);
+});
+
+test("project search hides weak-only branches until weaker matches are included", () => {
+  const results = [
+    {
+      projectId: "strong-project",
+      projectTitle: "Strong Project",
+      chapterId: "strong-chapter",
+      chapterTitle: "Strong Chapter",
+      rowId: "strong-row",
+      rowOrderKey: "a0",
+      score: 100,
+      qualityTier: "strong",
+      excerpts: [],
+    },
+    {
+      projectId: "weak-project",
+      projectTitle: "Weak Project",
+      chapterId: "weak-chapter",
+      chapterTitle: "Weak Chapter",
+      rowId: "weak-row",
+      rowOrderKey: "b0",
+      score: 10,
+      qualityTier: "weaker",
+      excerpts: [],
+    },
+  ];
+  const baseSearch = {
+    query: "query",
+    status: "ready",
+    results,
+    total: 2,
+    strongTotal: 1,
+    weakerTotal: 1,
+    totalCapped: true,
+    includeWeakerMatches: false,
+    expandedProjectIds: new Set(),
+    expandedChapterIds: new Set(),
+  };
+
+  const strongHtml = renderProjectsScreen(projectsState({ projectsSearch: baseSearch }));
+  assert.match(strongHtml, /1 strong matching row shown/);
+  assert.match(strongHtml, /Strong Project/);
+  assert.doesNotMatch(strongHtml, /Weak Project/);
+  assert.match(strongHtml, /data-action="toggle-project-search-weaker"/);
+  assert.match(strongHtml, /Show more results \(1\)/);
+
+  const allHtml = renderProjectsScreen(projectsState({
+    projectsSearch: { ...baseSearch, includeWeakerMatches: true },
+  }));
+  assert.match(allHtml, /2 matching rows shown/);
+  assert.match(allHtml, /Strong Project/);
+  assert.match(allHtml, /Weak Project/);
+  assert.match(allHtml, /Show fewer results/);
+});
+
 test("offline banner renders inside the page header", () => {
   const html = renderProjectsScreen(projectsState({
     offline: {
@@ -122,6 +252,39 @@ test("offline banner renders inside the page header", () => {
   assert.ok(headerStart >= 0);
   assert.ok(bannerStart > headerStart);
   assert.ok(bannerStart < headerEnd);
+});
+
+test("available app update renders a compact orange download pill beside the team name", () => {
+  const html = renderProjectsScreen(projectsState({
+    appUpdate: {
+      available: true,
+      status: "available",
+      version: "0.9.0",
+      downloadPercent: null,
+    },
+  }));
+  const subtitleRow = html.match(/<div class="page-header__subtitle-row">[\s\S]*?<\/div>/)?.[0] ?? "";
+
+  assert.match(subtitleRow, /class="page-header__subtitle">Team<\/p>/);
+  assert.match(html, /class="app-update-pill"/);
+  assert.match(html, /data-action="install-app-update"/);
+  assert.match(html, /M12 15V3/);
+  assert.match(html, />Update<\/span>/);
+});
+
+test("app update pill shows native download percentage", () => {
+  const html = renderProjectsScreen(projectsState({
+    appUpdate: {
+      available: true,
+      status: "installing",
+      version: "0.9.0",
+      downloadPercent: 47,
+    },
+  }));
+
+  assert.match(html, /class="app-update-pill"[^>]*data-action="noop"/);
+  assert.match(html, /aria-busy="true"/);
+  assert.match(html, />47%<\/span>/);
 });
 
 test("offline reconnect banner preserves its guarded action with a stable loading key", () => {
@@ -726,7 +889,7 @@ test("disabled project glossary selectors show assigned repo label when the glos
   assert.doesNotMatch(html, /select-pill__value">no glossary</);
 });
 
-test("project refresh keeps lifecycle and local hard-delete actions enabled and heavy actions disabled", () => {
+test("project refresh keeps creation, lifecycle and local hard-delete actions enabled", () => {
   const html = renderProjectsScreen(projectsState({
     projectsPage: {
       isRefreshing: true,
@@ -773,7 +936,7 @@ test("project refresh keeps lifecycle and local hard-delete actions enabled and 
   assert.doesNotMatch(actionButtonHtml(html, "delete-file:chapter-1"), /disabled/);
   assert.doesNotMatch(actionButtonHtml(html, "restore-file:deleted-chapter-1"), /disabled/);
 
-  assert.match(actionButtonHtml(html, "open-new-project"), /disabled/);
+  assert.doesNotMatch(actionButtonHtml(html, "open-new-project"), /disabled/);
   assert.doesNotMatch(actionButtonHtml(html, "add-project-files:project-1"), /disabled/);
   // Local hard-delete is local-only and stays available during a background refresh.
   assert.doesNotMatch(actionButtonHtml(html, "clear-deleted-files:project-1"), /disabled/);
@@ -1072,4 +1235,43 @@ test("repo sync intents do not globally disable new project, add files, or keep 
   assert.doesNotMatch(actionButtonHtml(html, "add-project-files:project-1"), /disabled/);
   assert.doesNotMatch(actionButtonHtml(html, "refresh-page"), /\bis-spinning\b/);
   assert.doesNotMatch(actionButtonHtml(html, "refresh-page"), /aria-disabled="true"/);
+});
+
+test("an empty local project stays usable while background sync is running", () => {
+  const html = renderProjectsScreen(projectsState({
+    projectsPage: { isRefreshing: true, writeState: "idle" },
+    projects: [{ id: "project-1", title: "New project", name: "new-project", chapters: [], fileLoadState: "ready" }],
+    projectRepoSyncByProjectId: { "project-1": { status: "syncing" } },
+  }));
+  assert.match(html, />0 files</);
+  assert.doesNotMatch(html, /Downloading data|Loading files/);
+  for (const action of ["add-project-files:project-1", "transfer-project:project-1", "rename-project:project-1", "delete-project:project-1", "open-new-project"]) {
+    assert.doesNotMatch(actionButtonHtml(html, action), /disabled/, action);
+  }
+});
+
+
+test("project search renders the editor-style case toggle with its current state", () => {
+  for (const caseSensitive of [false, true]) {
+    const html = renderProjectsScreen(projectsState({ projectsSearch: { query: "", caseSensitive } }));
+    assert.match(html, /data-action="toggle-project-search-case-sensitive"/);
+    assert.match(html, new RegExp(`aria-pressed="${caseSensitive}"`));
+    assert.match(html, new RegExp(`aria-label="${caseSensitive ? "Disable" : "Enable"} case-sensitive search"`));
+    assert.equal(html.includes('search-field__action--active'), caseSensitive);
+  }
+});
+
+test("project export appears before Add files and remains available during background refresh", () => {
+  const html = renderProjectsScreen(projectsState({ projectsPage: { isRefreshing: true, writeState: "idle" } }));
+  assert.ok(html.indexOf('data-action="export-project:project-1"') < html.indexOf('data-action="add-project-files:project-1"'));
+  assert.match(html, /data-action="export-project:project-1">\s*Export/);
+  assert.doesNotMatch(actionButtonHtml(html, "export-project:project-1"), /disabled/);
+});
+
+test("project WordPress export displays the shared success dialog", () => {
+  const html = renderProjectsScreen(projectsState({ editorChapter: {
+    wordpressExportSuccessModal: { isOpen: true, isDraft: true, url: "https://example.com/wp-admin/post.php?post=32" },
+  } }));
+  assert.match(html, /Content successfully exported to WordPress/);
+  assert.match(html, /unpublished draft/);
 });

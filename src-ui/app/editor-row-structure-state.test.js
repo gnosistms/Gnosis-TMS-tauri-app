@@ -338,3 +338,22 @@ test("applyPermanentlyDeletedEditorRowState removes the row, clears dirty tracki
     offsetTop: 96,
   });
 });
+
+test("soft deletion into an expanded section keeps the connection until that section closes", () => {
+  const chapter = {
+    ...createEditorChapterState(), chapterId: "chapter-1",
+    activeRowId: "row-2", activeLanguageCode: "en",
+    rows: [row("row-1", "deleted"), row("row-2"), row("row-3")],
+    expandedDeletedRowGroupIds: new Set(["row-1"]),
+  };
+  const deleted = applySoftDeletedEditorRowState(chapter, "row-2").chapterState;
+  assert.equal(deleted.activeRowId, "row-2");
+  assert.equal(deleted.activeLanguageCode, "en");
+  assert.ok(deleted.expandedDeletedRowGroupIds.has("row-1:row-2"));
+  const closed = toggleDeletedEditorRowGroupState(deleted, "row-1:row-2");
+  assert.equal(closed.activeRowId, null);
+  assert.equal(closed.activeLanguageCode, null);
+  assert.equal(toggleDeletedEditorRowGroupState(closed, "row-1:row-2").activeRowId, null);
+  const other = toggleDeletedEditorRowGroupState({ ...deleted, activeRowId: "row-3" }, "row-1:row-2");
+  assert.equal(other.activeRowId, "row-3");
+});

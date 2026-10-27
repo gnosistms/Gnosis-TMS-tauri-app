@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { nativeAccessInventory } from "../test/native-command-access.mjs";
 
 let invokeHandler = async () => null;
 
@@ -19,25 +20,206 @@ globalThis.window.__TAURI__ = {
 };
 
 const { invoke } = await import("./runtime.js");
-const { resetSessionState } = await import("./state.js");
+const { resetSessionState, state } = await import("./state.js");
+
+test.beforeEach(() => {
+  state.auth.session = { sessionToken: "stale-token", login: "owner" };
+});
 
 test.afterEach(() => {
   resetSessionState();
   invokeHandler = async () => null;
 });
 
-test("a connectivity-failed refresh rethrows the original error, not AUTH_REQUIRED", async () => {
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+
+for (const change of ["sign-out", "account-switch", "sign-out-and-same-account"]) {
+  test(`a delayed refresh cannot undo ${change}`, async () => {
+    const refresh = deferred();
+    const started = deferred();
+    const calls = [];
+    invokeHandler = async (command, payload) => {
+      calls.push({ command, payload });
+      if (command === "refresh_broker_auth_session") {
+        started.resolve();
+        return refresh.promise;
+      }
+      throw new Error("GitHub API 401: Bad credentials");
+    };
+    const request = invoke("list_gnosis_resources_for_installation", { sessionToken: "stale-token" });
+    const rejected = assert.rejects(request, { code: "AUTH_SESSION_CHANGED" });
+    await started.promise;
+    resetSessionState();
+    if (change === "account-switch") {
+      state.auth.session = { sessionToken: "bob-token", login: "bob" };
+    } else if (change === "sign-out-and-same-account") {
+      state.auth.session = { sessionToken: "stale-token", login: "owner" };
+    }
+    const expectedSession = state.auth.session;
+    refresh.resolve({ sessionToken: "fresh-token", login: "owner" });
+    await rejected;
+    assert.equal(state.auth.session, expectedSession);
+    assert.equal(calls.some(({ command }) => command === "save_broker_auth_session"), false);
+    assert.equal(calls.filter(({ command }) => command === "list_gnosis_resources_for_installation").length, 1);
+  });
+}
+
+test("a late refresh rejection cannot expire a different login", async () => {
+  const refresh = deferred();
+  const started = deferred();
   invokeHandler = async (command) => {
     if (command === "refresh_broker_auth_session") {
-      throw new Error("Failed to fetch");
+      started.resolve();
+      return refresh.promise;
+    }
+    throw new Error("GitHub API 401: Bad credentials");
+  };
+  const request = invoke("list_gnosis_resources_for_installation", { sessionToken: "stale-token" });
+  const rejected = assert.rejects(request, { code: "AUTH_SESSION_CHANGED" });
+  await started.promise;
+  resetSessionState();
+  state.auth.session = { sessionToken: "bob-token", login: "bob" };
+  refresh.reject(new Error("Unauthorized"));
+  await rejected;
+  assert.equal(state.auth.session.login, "bob");
+});
+
+test("refresh persistence failure preserves the old session and does not retry or require login", async () => {
+  const oldSession = state.auth.session;
+  let requestCount = 0;
+  invokeHandler = async (command, payload) => {
+    if (command === "refresh_broker_auth_session") {
+      return { sessionToken: "fresh-token", login: "owner" };
+    }
+    if (command === "save_broker_auth_session") {
+      assert.equal(payload.expectedSessionToken, "stale-token");
+      assert.equal(state.auth.session, oldSession);
+      throw new Error("Disk full");
+    }
+    requestCount += 1;
+    throw new Error("GitHub API 401: Bad credentials");
+  };
+  await assert.rejects(
+    invoke("list_gnosis_resources_for_installation", { sessionToken: "stale-token" }),
+    { code: "AUTH_STORAGE_FAILED", message: /Could not save/ },
+  );
+  assert.equal(state.auth.session, oldSession);
+  assert.equal(requestCount, 1);
+});
+
+test("sign-out while a native refresh save is pending cannot restore memory or retry", async () => {
+  const save = deferred();
+  const started = deferred();
+  let requestCount = 0;
+  invokeHandler = async (command) => {
+    if (command === "refresh_broker_auth_session") {
+      return { sessionToken: "fresh-token", login: "owner" };
+    }
+    if (command === "save_broker_auth_session") {
+      started.resolve();
+      return save.promise;
+    }
+    requestCount += 1;
+    throw new Error("GitHub API 401: Bad credentials");
+  };
+  const request = invoke("list_gnosis_resources_for_installation", { sessionToken: "stale-token" });
+  const rejected = assert.rejects(request, { code: "AUTH_SESSION_CHANGED" });
+  await started.promise;
+  resetSessionState();
+  save.resolve();
+  await rejected;
+  assert.equal(state.auth.session, null);
+  assert.equal(requestCount, 1);
+});
+
+test("a new account never shares the old account's pending refresh", async () => {
+  const oldRefresh = deferred();
+  const started = deferred();
+  const refreshTokens = [];
+  invokeHandler = async (command, payload) => {
+    if (command === "refresh_broker_auth_session") {
+      refreshTokens.push(payload.sessionToken);
+      if (payload.sessionToken === "stale-token") {
+        started.resolve();
+        return oldRefresh.promise;
+      }
+      return { sessionToken: "bob-fresh", login: "bob" };
+    }
+    if (command === "save_broker_auth_session" || payload.sessionToken === "bob-fresh") {
+      return true;
+    }
+    throw new Error("GitHub API 401: Bad credentials");
+  };
+  const oldRequest = invoke("list_gnosis_resources_for_installation", { sessionToken: "stale-token" });
+  const rejected = assert.rejects(oldRequest, { code: "AUTH_SESSION_CHANGED" });
+  await started.promise;
+  resetSessionState();
+  state.auth.session = { sessionToken: "bob-token", login: "bob" };
+  assert.equal(await invoke("list_gnosis_resources_for_installation", { sessionToken: "bob-token" }), true);
+  oldRefresh.resolve({ sessionToken: "old-fresh", login: "owner" });
+  await rejected;
+  assert.deepEqual(refreshTokens, ["stale-token", "bob-token"]);
+  assert.equal(state.auth.session.sessionToken, "bob-fresh");
+});
+
+test("concurrent requests for the same login share one refresh", async () => {
+  const refresh = deferred();
+  const started = deferred();
+  let refreshCount = 0;
+  let saveCount = 0;
+  invokeHandler = async (command, payload) => {
+    if (command === "refresh_broker_auth_session") {
+      refreshCount += 1;
+      started.resolve();
+      return refresh.promise;
+    }
+    if (command === "save_broker_auth_session") { saveCount += 1; return; }
+    if (payload.sessionToken === "stale-token") throw new Error("GitHub API 401: Bad credentials");
+    return payload.sessionToken;
+  };
+  const first = invoke("list_gnosis_resources_for_installation", { sessionToken: "stale-token" });
+  await started.promise;
+  const second = invoke("list_gnosis_resources_for_installation", { sessionToken: "stale-token" });
+  await new Promise((resolve) => setImmediate(resolve));
+  refresh.resolve({ sessionToken: "fresh-token", login: "owner" });
+  assert.deepEqual(await Promise.all([first, second]), ["fresh-token", "fresh-token"]);
+  assert.equal(refreshCount, 1);
+  assert.equal(saveCount, 1);
+  // A slower failure using the old token reuses the completed refresh as well.
+  assert.equal(await invoke("list_gnosis_resources_for_installation", { sessionToken: "stale-token" }), "fresh-token");
+  assert.equal(refreshCount, 1);
+});
+
+test("a request carrying an unrelated token cannot retry under the current account", async () => {
+  let calls = 0;
+  invokeHandler = async () => { calls += 1; throw new Error("GitHub API 401: Bad credentials"); };
+  await assert.rejects(
+    invoke("list_gnosis_resources_for_installation", { sessionToken: "other-account-token" }),
+    { code: "AUTH_SESSION_CHANGED" },
+  );
+  assert.equal(calls, 1);
+});
+
+test("a connectivity-failed refresh propagates the connection error", async () => {
+  const refreshFailure = new Error("Failed to fetch");
+  const session = state.auth.session;
+  invokeHandler = async (command) => {
+    if (command === "refresh_broker_auth_session") {
+      throw refreshFailure;
     }
     throw new Error("GitHub API 401: Bad credentials");
   };
 
   await assert.rejects(
-    () => invoke("list_gnosis_resources_for_installation", { installationId: 1, sessionToken: "tok" }),
-    /Bad credentials/,
+    () => invoke("list_gnosis_resources_for_installation", { installationId: 1, sessionToken: "stale-token" }),
+    (error) => error === refreshFailure,
   );
+  assert.equal(state.auth.session, session);
 });
 
 test("a rejected refresh raises AUTH_REQUIRED", async () => {
@@ -49,7 +231,7 @@ test("a rejected refresh raises AUTH_REQUIRED", async () => {
   };
 
   await assert.rejects(
-    () => invoke("list_gnosis_resources_for_installation", { installationId: 1, sessionToken: "tok" }),
+    () => invoke("list_gnosis_resources_for_installation", { installationId: 1, sessionToken: "stale-token" }),
     /^Error: AUTH_REQUIRED:/,
   );
 });
@@ -138,4 +320,154 @@ test("a failed command retry stops after one refresh and surfaces the final erro
 
   assert.equal(calls.filter((entry) => entry.command === "refresh_broker_auth_session").length, 1);
   assert.equal(calls.filter((entry) => entry.command === "sync_gtms_project_editor_repo").length, 2);
+});
+
+// Discover command coverage from Rust so newly added native actions get tested.
+const nativeAccess = nativeAccessInventory();
+const NATIVE_ACCESS_COMMANDS = nativeAccess.native
+  .filter((fn) => fn.calls.includes("require_command_access")).map((fn) => fn.name);
+const NATIVE_PREFLIGHT_AUTH_ERROR = `${nativeAccess.retryPrefix}AUTH_REQUIRED:Expired`;
+
+for (const command of NATIVE_ACCESS_COMMANDS) {
+  test(`${command} refreshes its native stored session once without a payload token`, async () => {
+    let writes = 0;
+    let refreshes = 0;
+    let nativeToken = "stale-token";
+    const payload = { input: { installationId: 42, rowId: "row-1" } };
+    invokeHandler = async (name, args) => {
+      if (name === "refresh_broker_auth_session") {
+        refreshes += 1;
+        assert.equal(args.sessionToken, "stale-token");
+        return { sessionToken: "fresh-token", login: "owner" };
+      }
+      if (name === "save_broker_auth_session") {
+        nativeToken = args.session.sessionToken;
+        return;
+      }
+      assert.equal(name, command);
+      assert.deepEqual(args, payload);
+      if (nativeToken === "stale-token") throw new Error(NATIVE_PREFLIGHT_AUTH_ERROR);
+      writes += 1;
+      return "saved";
+    };
+    assert.equal(await invoke(command, payload), "saved");
+    assert.equal(refreshes, 1);
+    assert.equal(writes, 1);
+  });
+}
+
+for (const command of ["update_gtms_editor_row_fields", "remove_gtms_editor_language_image"]) {
+  for (const change of ["sign-out", "account-switch", "team-switch"]) {
+    test(`${command} recovery cannot replay after ${change}`, async () => {
+      const refresh = deferred();
+      const started = deferred();
+      let attempts = 0;
+      state.selectedTeamId = "team-a";
+      invokeHandler = async (command) => {
+        if (command === "refresh_broker_auth_session") { started.resolve(); return refresh.promise; }
+        if (command === "save_broker_auth_session") return;
+        attempts += 1;
+        throw new Error(NATIVE_PREFLIGHT_AUTH_ERROR);
+      };
+      const request = invoke(command, { input: { installationId: 42 } });
+      const rejected = assert.rejects(request, { code: change === "team-switch" ? "EDITOR_CONTEXT_CHANGED" : "AUTH_SESSION_CHANGED" });
+      await started.promise;
+      if (change === "team-switch") state.selectedTeamId = "team-b";
+      else {
+        resetSessionState();
+        if (change === "account-switch") state.auth.session = { login: "bob", sessionToken: "bob-token" };
+      }
+      refresh.resolve({ login: "owner", sessionToken: "fresh-token" });
+      await rejected;
+      assert.equal(attempts, 1);
+    });
+  }
+}
+
+for (const nativeCommand of NATIVE_ACCESS_COMMANDS) {
+  test(`${nativeCommand} retries stop after one failed recovery attempt`, async () => {
+    let attempts = 0;
+    let refreshes = 0;
+    invokeHandler = async (command) => {
+      if (command === "refresh_broker_auth_session") { refreshes += 1; return { login: "owner", sessionToken: "fresh-token" }; }
+      if (command === "save_broker_auth_session") return;
+      attempts += 1;
+      throw new Error(NATIVE_PREFLIGHT_AUTH_ERROR);
+    };
+    await assert.rejects(invoke(nativeCommand, { input: {} }), /AUTH_REQUIRED/);
+    assert.equal(attempts, 2);
+    assert.equal(refreshes, 1);
+  });
+}
+
+test("unverified access and ambiguous write failures are never blindly retried", async () => {
+  for (const message of [
+    'ACCESS_VERIFICATION_FAILED:{"category":"snapshot_storage","message":"ignored"}',
+    "git commit failed: ambiguous result",
+    "Your account type cannot edit shared content.",
+    "AUTH_REQUIRED:Expired Rollback failed: Could not restore the image file.",
+    `${NATIVE_PREFLIGHT_AUTH_ERROR} Rollback failed: Could not restore the image file.`,
+    "AUTH_REQUIRED:An authentication failure after the action started.",
+  ]) {
+    for (const command of NATIVE_ACCESS_COMMANDS) {
+      let attempts = 0;
+      invokeHandler = async () => { attempts += 1; throw message; };
+      await assert.rejects(invoke(command, { input: {} }));
+      assert.equal(attempts, 1, `${command}: ${message}`);
+    }
+  }
+});
+
+test("an unrelated tokenless command cannot acquire editor retry privileges", async () => {
+  let attempts = 0;
+  invokeHandler = async () => { attempts += 1; throw new Error("AUTH_REQUIRED:Expired"); };
+  await assert.rejects(invoke("delete_gnosis_project_repo", {}), /AUTH_REQUIRED/);
+  assert.equal(attempts, 1);
+});
+
+test("a future native command recovers through the preflight contract without a JS allowlist", async () => {
+  let attempts = 0;
+  invokeHandler = async (command) => {
+    if (command === "refresh_broker_auth_session") return { login: "owner", sessionToken: "fresh-token" };
+    if (command === "save_broker_auth_session") return;
+    assert.equal(command, "future_native_write");
+    attempts += 1;
+    if (attempts === 1) throw NATIVE_PREFLIGHT_AUTH_ERROR;
+    return "saved";
+  };
+  assert.equal(await invoke("future_native_write", { input: { installationId: 42 } }), "saved");
+  assert.equal(attempts, 2);
+});
+
+test("concurrent editor and QA actions share one persisted native-session refresh", async () => {
+  const refresh = deferred();
+  const started = deferred();
+  let refreshes = 0;
+  let saves = 0;
+  let nativeToken = "stale-token";
+  const attempts = new Map();
+  invokeHandler = async (command) => {
+    if (command === "refresh_broker_auth_session") {
+      refreshes += 1;
+      started.resolve();
+      return refresh.promise;
+    }
+    if (command === "save_broker_auth_session") {
+      saves += 1;
+      nativeToken = "fresh-token";
+      return;
+    }
+    attempts.set(command, (attempts.get(command) ?? 0) + 1);
+    if (nativeToken === "stale-token") throw NATIVE_PREFLIGHT_AUTH_ERROR;
+    return "saved";
+  };
+  const editor = invoke("merge_gtms_editor_rows", { input: { installationId: 42 } });
+  await started.promise;
+  const qa = invoke("upsert_gtms_qa_list_term", { input: { installationId: 42 } });
+  refresh.resolve({ login: "owner", sessionToken: "fresh-token" });
+  assert.deepEqual(await Promise.all([editor, qa]), ["saved", "saved"]);
+  assert.equal(refreshes, 1);
+  assert.equal(saves, 1);
+  assert.equal(attempts.get("merge_gtms_editor_rows"), 2);
+  assert.equal(attempts.get("upsert_gtms_qa_list_term"), 2);
 });

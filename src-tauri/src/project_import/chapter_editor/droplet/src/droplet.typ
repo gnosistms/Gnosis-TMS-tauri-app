@@ -1,6 +1,6 @@
 #import "extract.typ": extract
 #import "split.typ": split
-#import "util.typ": inline
+#import "util.typ": inline, to-string
 
 // Sets the font size so the resulting text height matches the given height.
 //
@@ -10,9 +10,20 @@
 // - body: The content of the text element.
 //
 // Returns: The text with the adjusted size.
-#let sized(height, ..text-args, body) = context {
+#let sized(height, sizing-body: none, ..text-args, body) = context {
   let styled-text = text.with(..text-args.named(), body)
-  let measured = measure(styled-text(1em)).height 
+  let measured-text = if sizing-body == none {
+    styled-text
+  } else {
+    // The rendered glyph may contain accents that must extend outside the base
+    // capital instead of shrinking it. Measure the sizing glyph by its actual
+    // ink bounds while leaving the rendered glyph's vertical edges untouched.
+    let sizing-args = text-args.named()
+    sizing-args.insert("top-edge", "bounds")
+    sizing-args.insert("bottom-edge", "bounds")
+    text.with(..sizing-args, sizing-body)
+  }
+  let measured = measure(measured-text(1em)).height
   let factor = if measured > 0pt { height / measured } else { 1 }
   styled-text(factor * 1em)
 }
@@ -42,13 +53,17 @@
 //           lines (integer) or as a length. If set to `auto`, no scaling is
 //           applied.
 // - justify: Whether to justify the text next to the first letter.
-// - gap: The space between the first letter and the text.
+// - gap: The space between the first letter and the text. May be a function
+//        receiving the extracted letter as a string.
 // - hanging-indent: The indent of lines after the first line.
 // - overhang: The amount by which the first letter should overhang into the
 //             margin. Ratios are relative to the width of the first letter.
 // - depth: The minimum space below the first letter. Can be given as the
 //          number of lines (integer) or as a length.
 // - transform: A function to be applied to the first letter.
+// - sizing-transform: An optional function that receives the extracted letter as
+//                     a string and returns the glyph used only to calculate its
+//                     scale. The original letter is still rendered.
 // - text-args: Named arguments to be passed to the underlying text element.
 // - body: The content to be shown.
 //
@@ -61,6 +76,7 @@
   overhang: 0pt,
   depth: 0pt,
   transform: none,
+  sizing-transform: none,
   ..text-args,
   body
 ) = layout(bounds => {
@@ -76,15 +92,34 @@
     }
   }
 
-  let (letter, rest) = if text-args.pos() == () {
+  let (letter, rest, metric-letter) = if text-args.pos() == () {
     extract(body)
   } else {
     // First letter already given.
-    (text-args.pos().first(), body)
+    let provided = text-args.pos().first()
+    let (_, _, metric-letter) = extract(provided)
+    (provided, body, metric-letter)
   }
 
   if transform != none {
     letter = context transform(letter)
+  }
+
+  let metric-letter-string = to-string(metric-letter)
+  let sizing-letter = if sizing-transform != none and metric-letter-string != none {
+    context sizing-transform(metric-letter-string)
+  } else {
+    none
+  }
+
+  // A function-valued gap can reserve the full rendered glyph's ink overhang.
+  // The resulting gutter protects every line beside the rectangular drop cap.
+  let gap = if type(gap) == function and metric-letter-string != none {
+    gap(metric-letter-string)
+  } else if type(gap) == function {
+    0pt
+  } else {
+    gap
   }
 
   let letter-height = if height == auto {
@@ -99,7 +134,12 @@
   // Create dropcap with the height of sample content.
   let letter = box(
     height: letter-height + depth,
-    sized(letter-height, letter, ..text-args.named())
+    sized(
+      letter-height,
+      sizing-body: sizing-letter,
+      letter,
+      ..text-args.named(),
+    )
   )
   let letter-width = measure(letter).width
 

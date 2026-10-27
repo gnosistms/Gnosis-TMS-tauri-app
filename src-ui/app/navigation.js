@@ -8,7 +8,7 @@ import {
   resetProjectsPageSync,
 } from "./page-sync.js";
 import { lockScreenScrollSnapshot, unlockScreenScrollSnapshot } from "./scroll-state.js";
-import { state, resetSessionState } from "./state.js";
+import { authSessionGeneration, state, resetSessionState } from "./state.js";
 import { waitForNextPaint } from "./runtime.js";
 import {
   loadSelectedGlossaryEditorData,
@@ -70,6 +70,8 @@ import { refreshCurrentUserTeamAccess } from "./team-query.js";
 import { setResourcePageRefreshing } from "./resource-page-controller.js";
 import { invalidateInstallationResourcesForTeam } from "./installation-resources-query.js";
 import { invalidateTeamMetadataSyncForTeam } from "./team-metadata-flow.js";
+import { waitForEditorOperationQueueIdle } from "./editor-operation-queue.js";
+import { projectRepoScope } from "./repo-write-queue.js";
 
 function selectedNavigationTeam() {
   return state.teams.find((team) => team?.id === state.selectedTeamId) ?? null;
@@ -142,7 +144,7 @@ function failRefreshButtonFeedback(screen, render) {
 }
 
 function syncSummaryNeedsLocalEditorReload(syncResult) {
-  if (!syncResult || syncResult.performedBlockingReload === true) {
+  if (!syncResult || syncResult.performedBlockingReload === true || syncResult.reloadDeferred === true) {
     return false;
   }
   if (syncResult.requiresChapterReload === true || syncResult.requiresBlockingReload === true) {
@@ -224,7 +226,19 @@ export async function handleNavigation(navTarget, render) {
     }
 
     if (navTarget === "start") {
-      void clearStoredAuthSession();
+      const deletion = clearStoredAuthSession();
+      const generation = authSessionGeneration;
+      try {
+        await deletion;
+      } catch {
+        if (generation === authSessionGeneration) {
+          showNoticeBadge("Could not remove your saved GitHub login. You are still signed in. Please try signing out again.", render, null);
+        }
+        return;
+      }
+      if (generation !== authSessionGeneration) {
+        return;
+      }
       resetSessionState();
     } else {
       resetPageSync();
@@ -359,11 +373,18 @@ export async function refreshCurrentScreen(render) {
   }
 
   const screen = state.screen;
+  const refreshingChapterId = state.editorChapter?.chapterId;
+  const refreshingRepoScope = projectRepoScope({
+    team: selectedNavigationTeam(),
+    project: state.projects.find((project) => project.id === state.editorChapter?.projectId),
+  });
 
   if (!(await guardRefreshingTranslateEditor({
     currentScreen: screen,
-    render,
-    flushDirtyEditorRows,
+    waitForPendingEditorWrites: () => waitForEditorOperationQueueIdle((operation) =>
+      operation.repoScope === refreshingRepoScope
+      && operation.metadata?.chapterId === refreshingChapterId,
+    ),
   }))) {
     return;
   }
@@ -467,14 +488,25 @@ export async function refreshCurrentScreen(render) {
         showNoticeBadge(error?.message ?? String(error), render);
       }
       startEditorBackgroundSyncSession(render, { skipInitialSync: true });
-      await loadSelectedChapterEditorData(render, { preserveVisibleRows: true });
+      if (!(await loadSelectedChapterEditorData(render, { preserveVisibleRows: true }))) {
+        failRefreshButtonFeedback(screen, render);
+        return;
+      }
       const syncResult = await syncEditorBackgroundNowWithSummary(render, {
         skipDirtyFlush: true,
         afterLocalCommit: true,
         suppressConservativeRerender: true,
       });
+      if (syncResult.reloadDeferred === true) {
+        resetPageSync();
+        render?.({ scope: "status-surface" });
+        return;
+      }
       if (syncSummaryNeedsLocalEditorReload(syncResult)) {
-        await loadSelectedChapterEditorData(render, { preserveVisibleRows: true });
+        if (!(await loadSelectedChapterEditorData(render, { preserveVisibleRows: true }))) {
+          failRefreshButtonFeedback(screen, render);
+          return;
+        }
       }
       await completePageSync(render);
       return;

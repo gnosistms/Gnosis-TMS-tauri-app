@@ -281,7 +281,7 @@ pub(super) fn parse_editor_footnote_entries(value: &str) -> Vec<ParsedFootnoteEn
 pub(super) fn serialize_editor_footnote_entries(entries: &[ParsedFootnoteEntry]) -> String {
     match entries {
         [] => String::new(),
-        [single] if single.marker == 1 => single.text.clone(),
+        [single] if single.marker == 1 && !single.text.is_empty() => single.text.clone(),
         _ => entries
             .iter()
             .map(|entry| {
@@ -438,6 +438,7 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
             base_fields: input.base_fields,
             base_footnotes: input.base_footnotes,
             base_image_captions: input.base_image_captions,
+            base_attributions: input.base_attributions,
             conflict_remote_version: None,
             chapter_base_commit_sha: current_repo_head_sha(&repo_path),
         });
@@ -472,6 +473,7 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
             base_fields: input.base_fields,
             base_footnotes: input.base_footnotes,
             base_image_captions: input.base_image_captions,
+            base_attributions: input.base_attributions,
             conflict_remote_version: None,
             chapter_base_commit_sha: current_repo_head_sha(&repo_path),
         });
@@ -480,6 +482,7 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
     let current_fields = row_plain_text_map(&original_row_file);
     let current_footnotes = row_footnote_map(&original_row_file);
     let current_image_captions = row_image_caption_map(&original_row_file);
+    let current_attributions = row_attribution_map(&original_row_file);
     let current_timings = row_timing_string_map(&original_row_file);
     let merged_fields =
         merge_editor_string_maps(&input.base_fields, &input.fields, &current_fields);
@@ -489,6 +492,11 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
         &input.base_image_captions,
         &input.image_captions,
         &current_image_captions,
+    );
+    let merged_attributions = merge_editor_string_maps(
+        &input.base_attributions,
+        &input.attributions,
+        &current_attributions,
     );
     let merged_images =
         merge_editor_image_maps(&input.base_images, &input.images, &original_row_file);
@@ -500,6 +508,7 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
     if merged_fields.is_none()
         || merged_footnotes.is_none()
         || merged_image_captions.is_none()
+        || merged_attributions.is_none()
         || merged_images.is_none()
         || merged_timings.is_none()
     {
@@ -548,6 +557,7 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
             base_fields: input.base_fields,
             base_footnotes: input.base_footnotes,
             base_image_captions: input.base_image_captions,
+            base_attributions: input.base_attributions,
             conflict_remote_version: load_latest_row_version_metadata(
                 &repo_path,
                 &relative_row_json,
@@ -558,6 +568,7 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
     let merged_fields = merged_fields.unwrap_or_default();
     let merged_footnotes = merged_footnotes.unwrap_or_default();
     let merged_image_captions = merged_image_captions.unwrap_or_default();
+    let merged_attributions = merged_attributions.unwrap_or_default();
     let merged_images = merged_images.unwrap_or_default();
     let merged_timings = decode_editor_timing_map(&merged_timings.unwrap_or_default());
 
@@ -570,6 +581,7 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
     apply_editor_plain_text_updates(&mut row_value, &merged_fields)?;
     apply_editor_footnote_updates(&mut row_value, &merged_footnotes)?;
     apply_editor_image_caption_updates(&mut row_value, &merged_image_captions)?;
+    apply_editor_attribution_updates(&mut row_value, &merged_attributions)?;
     apply_editor_timing_updates(&mut row_value, &merged_timings)?;
     for (language_code, image) in merged_images {
         apply_editor_field_image_update(&mut row_value, &language_code, image)?;
@@ -657,6 +669,7 @@ pub(crate) fn update_gtms_editor_row_fields_sync(
         base_fields: input.base_fields,
         base_footnotes: input.base_footnotes,
         base_image_captions: input.base_image_captions,
+        base_attributions: input.base_attributions,
         conflict_remote_version: None,
         chapter_base_commit_sha: current_repo_head_sha(&repo_path),
     })
@@ -672,6 +685,34 @@ mod tests {
             .iter()
             .map(|(key, value)| (key.to_string(), value.to_string()))
             .collect()
+    }
+
+    #[test]
+    fn grouped_batch_input_is_backward_compatible_and_preserves_disjoint_fields() {
+        let old: UpdateEditorRowFieldsBatchRowInput = serde_json::from_value(json!({
+            "rowId": "r1", "fields": { "vi": "translation" }
+        }))
+        .unwrap();
+        assert!(old.base_fields.is_none());
+        assert!(old.base_footnotes.is_none());
+        assert!(old.base_image_captions.is_none());
+        assert!(old.field_flags.is_empty());
+        assert!(old.lifecycle_state.is_none());
+        assert!(old.text_style.is_none());
+        let merged = merge_editor_string_maps(
+            &map(&[("vi", "old")]),
+            &map(&[("vi", "new")]),
+            &map(&[("vi", "old"), ("en", "new remote source")]),
+        )
+        .unwrap();
+        assert_eq!(merged["vi"], "new");
+        assert_eq!(merged["en"], "new remote source");
+        assert!(merge_editor_string_maps(
+            &map(&[("vi", "old")]),
+            &map(&[("vi", "new")]),
+            &map(&[("vi", "different remote edit")])
+        )
+        .is_none());
     }
 
     #[test]
@@ -736,17 +777,29 @@ mod tests {
     }
 
     #[test]
+    fn ai_review_footnote_corrections_preserve_empty_first_marker() {
+        let merged = merge_ai_review_footnote_corrections(
+            "One",
+            &[EditorAiReviewFootnoteCorrection {
+                marker: 1,
+                text: String::new(),
+            }],
+        )
+        .expect("empty correction should preserve its marker");
+
+        assert_eq!(merged.as_deref(), Some("[1]"));
+    }
+
+    #[test]
     fn ai_review_footnote_corrections_reject_serialized_marker_changes() {
-        for text in ["", "[9] Invented"] {
-            assert!(merge_ai_review_footnote_corrections(
-                "One",
-                &[EditorAiReviewFootnoteCorrection {
-                    marker: 1,
-                    text: text.to_string(),
-                }],
-            )
-            .is_err());
-        }
+        assert!(merge_ai_review_footnote_corrections(
+            "One",
+            &[EditorAiReviewFootnoteCorrection {
+                marker: 1,
+                text: "[9] Invented".to_string(),
+            }],
+        )
+        .is_err());
         assert!(merge_ai_review_footnote_corrections(
             "[1] One\n\n[2] Two",
             &[EditorAiReviewFootnoteCorrection {
@@ -1185,11 +1238,125 @@ pub(crate) fn update_gtms_editor_row_fields_batch_sync(
     let mut prepared_writes = Vec::new();
     let mut removed_uploaded_paths = Vec::new();
 
+    // Validate every member before committing any part of a redistribution.
+    // Legacy batch callers omit base_fields and retain their existing behavior.
+    let mut conflicts = Vec::new();
+    let imported_conflict_ids: BTreeSet<String> =
+        if rows_by_id.values().any(|row| row.base_fields.is_some()) {
+            git_conflicts::list_imported_editor_conflict_refs(&repo_path)?
+                .into_iter()
+                .filter(|entry| entry.chapter_id == input.chapter_id)
+                .map(|entry| entry.row_id)
+                .collect()
+        } else {
+            BTreeSet::new()
+        };
+    for (row_id, batch_row) in &mut rows_by_id {
+        if batch_row.base_fields.is_none() && batch_row.base_attributions.is_none() {
+            continue;
+        }
+        let edit = load_editable_row_file(&repo_path, &chapter_path, row_id)?;
+        let remote = row_plain_text_map(&edit.original_file);
+        let base = batch_row
+            .base_fields
+            .clone()
+            .unwrap_or_else(|| remote.clone());
+        if edit.original_file.lifecycle.state != "active" {
+            return Err("A subtitle in the group was deleted. Refresh before saving.".into());
+        }
+        let merged = if imported_conflict_ids.contains(row_id) {
+            None
+        } else {
+            merge_editor_string_maps(&base, &batch_row.fields, &remote)
+        };
+        let merged_footnotes = match &batch_row.base_footnotes {
+            Some(base) => merge_editor_footnote_maps(
+                base,
+                &batch_row.footnotes,
+                &row_footnote_map(&edit.original_file),
+            ),
+            None => Some(batch_row.footnotes.clone()),
+        };
+        let merged_captions = match &batch_row.base_image_captions {
+            Some(base) => merge_editor_string_maps(
+                base,
+                &batch_row.image_captions,
+                &row_image_caption_map(&edit.original_file),
+            ),
+            None => Some(batch_row.image_captions.clone()),
+        };
+        let merged_attributions = match &batch_row.base_attributions {
+            Some(base) => merge_editor_string_maps(
+                base,
+                &batch_row.attributions,
+                &row_attribution_map(&edit.original_file),
+            ),
+            None => Some(batch_row.attributions.clone()),
+        };
+        if let (Some(fields), Some(footnotes), Some(captions), Some(attributions)) = (
+            merged,
+            merged_footnotes,
+            merged_captions,
+            merged_attributions,
+        ) {
+            batch_row.fields = fields;
+            batch_row.footnotes = footnotes;
+            batch_row.image_captions = captions;
+            batch_row.attributions = attributions;
+        } else {
+            conflicts.push(SaveEditorRowWithConcurrencyResponse {
+                row_id: row_id.clone(),
+                status: "conflict".into(),
+                row: git_conflicts::overlay_imported_editor_conflict_row(
+                    &repo_path,
+                    &input.chapter_id,
+                    Some(editor_row_from_stored_row_file_with_update(
+                        &repo_path,
+                        &chapter_path,
+                        edit.original_file,
+                    )?),
+                )?,
+                word_counts: word_counts.clone(),
+                base_fields: base.clone(),
+                base_footnotes: batch_row.base_footnotes.clone().unwrap_or_default(),
+                base_image_captions: batch_row.base_image_captions.clone().unwrap_or_default(),
+                base_attributions: batch_row.base_attributions.clone().unwrap_or_default(),
+                conflict_remote_version: None,
+                chapter_base_commit_sha: current_repo_head_sha(&repo_path),
+            });
+        }
+    }
+    if !conflicts.is_empty() {
+        return Ok(UpdateEditorRowFieldsBatchResponse {
+            row_ids: Vec::new(),
+            word_counts,
+            commit_sha: None,
+            chapter_base_commit_sha: current_repo_head_sha(&repo_path),
+            rows: Vec::new(),
+            conflicts,
+        });
+    }
+    let mut saved_rows = Vec::new();
     for (row_id, batch_row) in rows_by_id {
         let mut edit = load_editable_row_file(&repo_path, &chapter_path, &row_id)?;
+        for (code, flags) in &batch_row.field_flags {
+            for (flag, enabled) in flags {
+                apply_editor_field_flag_update(&mut edit.value, code, flag, *enabled)?;
+            }
+        }
+        if let Some(style) = &batch_row.text_style {
+            apply_editor_text_style_update(&mut edit.value, style)?;
+        }
+        if let Some(lifecycle) = &batch_row.lifecycle_state {
+            if lifecycle != "deleted" {
+                return Err("Only soft deletion is supported for a subtitle group.".into());
+            }
+            edit.value["lifecycle"]["state"] = Value::String(lifecycle.clone());
+        }
         apply_editor_plain_text_updates(&mut edit.value, &batch_row.fields)?;
         apply_editor_footnote_updates(&mut edit.value, &batch_row.footnotes)?;
         apply_editor_image_caption_updates(&mut edit.value, &batch_row.image_captions)?;
+        apply_editor_attribution_updates(&mut edit.value, &batch_row.attributions)?;
         apply_editor_timing_updates(&mut edit.value, &batch_row.timings)?;
         for language_code in &batch_row.remove_images {
             let language_code = language_code.trim();
@@ -1211,7 +1378,7 @@ pub(crate) fn update_gtms_editor_row_fields_batch_sync(
             }
             apply_editor_field_image_update(&mut edit.value, language_code, None)?;
         }
-        finish_editable_row_file(
+        let (_, saved_row) = finish_editable_row_file(
             edit,
             false,
             &languages,
@@ -1219,6 +1386,9 @@ pub(crate) fn update_gtms_editor_row_fields_batch_sync(
             &mut prepared_writes,
             &mut changed_row_ids,
         )?;
+        if batch_row.base_fields.is_some() {
+            saved_rows.push(saved_row);
+        }
     }
 
     let commit_message = input.commit_message.trim();
@@ -1276,6 +1446,11 @@ pub(crate) fn update_gtms_editor_row_fields_batch_sync(
         word_counts,
         commit_sha,
         chapter_base_commit_sha: current_repo_head_sha(&repo_path),
+        rows: saved_rows
+            .into_iter()
+            .map(|row| editor_row_from_stored_row_file_with_update(&repo_path, &chapter_path, row))
+            .collect::<Result<Vec<_>, _>>()?,
+        conflicts: Vec::new(),
     })
 }
 
@@ -1710,6 +1885,11 @@ pub(crate) fn update_gtms_editor_row_text_style_sync(
 
     let chapter_path =
         find_chapter_path_by_id(app, &repo_path.join("chapters"), &input.chapter_id)?;
+    let chapter_file: StoredChapterFile =
+        read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
+    if chapter_has_srt_source(&chapter_file) {
+        return Err("Text styles are not available for SRT files.".to_string());
+    }
     let row_json_path = validated_row_json_path(&chapter_path, &input.row_id)?;
     let relative_row_json = repo_relative_path(&repo_path, &row_json_path)?;
     let original_row_text = fs::read_to_string(&row_json_path).map_err(|error| {
@@ -1753,7 +1933,15 @@ pub(crate) fn update_gtms_editor_row_text_style_sync(
         )?;
     }
 
+    let updated_row: StoredRowFile = serde_json::from_value(row_value)
+        .map_err(|error| format!("Could not read the updated row: {error}"))?;
     Ok(UpdateEditorRowTextStyleResponse {
+        word_counts: load_word_counts(
+            &chapter_path.join("rows"),
+            &sanitize_chapter_languages(&chapter_file.languages),
+        )?,
+        fields: row_plain_text_map(&updated_row),
+        attributions: row_attribution_map(&updated_row),
         row_id: input.row_id,
         text_style,
         last_update: load_latest_row_version_metadata(&repo_path, &relative_row_json)?,
@@ -1946,6 +2134,28 @@ pub(super) fn apply_editor_image_caption_updates(
     Ok(())
 }
 
+pub(super) fn apply_editor_attribution_updates(
+    row_value: &mut Value,
+    attributions: &BTreeMap<String, String>,
+) -> Result<(), String> {
+    let fields_object = row_fields_object_mut(row_value)?;
+    for (code, attribution) in attributions {
+        let field_value = fields_object
+            .entry(code.clone())
+            .or_insert_with(|| json!({}));
+        let field_object = field_value
+            .as_object_mut()
+            .ok_or_else(|| format!("The row field '{code}' is not a JSON object."))?;
+        ensure_editor_field_object_defaults(field_object)?;
+        field_object.insert(
+            "attribution".to_string(),
+            Value::String(attribution.replace("\r\n", "\n").replace('\r', "\n")),
+        );
+    }
+
+    Ok(())
+}
+
 pub(super) fn apply_editor_text_style_update(
     row_value: &mut Value,
     text_style: &str,
@@ -1964,6 +2174,30 @@ pub(super) fn apply_editor_text_style_update(
             .get_mut("fields")
             .and_then(Value::as_object_mut)
             .ok_or_else(|| "The row fields are not a JSON object.".to_string())?;
+        if previous_text_style == "quote" && normalized_text_style != "quote" {
+            for field in fields_object.values_mut() {
+                let field = field
+                    .as_object_mut()
+                    .ok_or_else(|| "The row field is not a JSON object.".to_string())?;
+                let attribution = field
+                    .get("attribution")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if !attribution.is_empty() {
+                    let body = field
+                        .get("plain_text")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    let text = if body.is_empty() {
+                        attribution.to_string()
+                    } else {
+                        format!("{}\n\n{}", body.trim_end(), attribution)
+                    };
+                    field.insert("plain_text".to_string(), Value::String(text));
+                }
+                field.remove("attribution");
+            }
+        }
         clear_editor_html_preview_cache(fields_object)?;
     }
 
@@ -2018,5 +2252,52 @@ fn normalize_editor_field_flag_key(flag: &str) -> Result<&'static str, String> {
         "reviewed" => Ok("reviewed"),
         "please-check" => Ok("please_check"),
         _ => Err("Unknown row field flag.".to_string()),
+    }
+}
+
+#[cfg(test)]
+mod quote_attribution_tests {
+    use super::*;
+
+    #[test]
+    fn quote_attribution_is_a_separate_stored_language_field() {
+        let mut row = json!({"text_style": "quote", "fields": {
+            "en": {"plain_text": "Body"}, "vi": {"plain_text": "Nội dung"}
+        }});
+        apply_editor_attribution_updates(
+            &mut row,
+            &BTreeMap::from([
+                ("en".into(), "Author\r\nWork".into()),
+                ("vi".into(), "Tác giả".into()),
+            ]),
+        )
+        .unwrap();
+        assert_eq!(row["fields"]["en"]["plain_text"], "Body");
+        assert_eq!(row["fields"]["en"]["attribution"], "Author\nWork");
+        assert_eq!(row["fields"]["vi"]["attribution"], "Tác giả");
+        let legacy: StoredFieldValue =
+            serde_json::from_value(json!({"plain_text": "Old quote"})).unwrap();
+        assert!(legacy.attribution.is_empty());
+    }
+
+    #[test]
+    fn leaving_quote_appends_every_language_attribution_once_and_clears_previews() {
+        let mut row = json!({"text_style": "quote", "fields": {
+            "en": {"plain_text": "Body", "attribution": "Author", "html_preview": "cached"},
+            "vi": {"plain_text": "", "attribution": "Tác giả"}
+        }});
+        assert!(
+            apply_editor_text_style_update(&mut row, "heading1")
+                .unwrap()
+                .1
+        );
+        assert_eq!(row["fields"]["en"]["plain_text"], "Body\n\nAuthor");
+        assert_eq!(row["fields"]["vi"]["plain_text"], "Tác giả");
+        assert!(row["fields"]["en"].get("attribution").is_none());
+        assert!(row["fields"]["en"].get("html_preview").is_none());
+        apply_editor_text_style_update(&mut row, "paragraph").unwrap();
+        apply_editor_text_style_update(&mut row, "quote").unwrap();
+        assert_eq!(row["fields"]["en"]["plain_text"], "Body\n\nAuthor");
+        assert!(row["fields"]["en"].get("attribution").is_none());
     }
 }

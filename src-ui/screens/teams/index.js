@@ -4,7 +4,6 @@ import {
   navButton,
   pageShell,
   primaryButton,
-  secondaryButton,
 } from "../../lib/ui.js";
 import { renderTeamLeaveModal } from "./leave-modal.js";
 import { renderTeamRenameModal } from "./rename-modal.js";
@@ -20,14 +19,6 @@ import { anyTeamWriteIsActive } from "../../app/team-write-coordinator.js";
 export function renderTeamsScreen(state) {
   const offlineMode = state.offline?.isEnabled === true;
   const session = state.auth?.session ?? null;
-  const updateAction =
-    state.appUpdate?.available === true
-      ? secondaryButton(
-          state.appUpdate.status === "installing" ? "Installing..." : "Install Update",
-          "install-app-update",
-          { disabled: state.appUpdate.status === "installing" || state.appUpdate.status === "restarting" },
-        )
-      : "";
   const subtitle =
     (typeof session?.name === "string" && session.name.trim())
     || (typeof session?.login === "string" && session.login.trim())
@@ -40,7 +31,7 @@ export function renderTeamsScreen(state) {
       backgroundRefreshing: state.teamsPage?.isRefreshing === true || anyTeamWriteIsActive(),
     }),
     navButtons: buildSectionNav("teams"),
-    tools: [updateAction, primaryButton("+ New Team", "open-new-team", { disabled: offlineMode })]
+    tools: [primaryButton("+ New Team", "open-new-team", { disabled: offlineMode })]
       .filter(Boolean)
       .join(""),
     pageSync: state.pageSync,

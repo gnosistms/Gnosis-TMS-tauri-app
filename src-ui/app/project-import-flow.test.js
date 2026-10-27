@@ -89,6 +89,43 @@ function importFile(name, content = "content") {
   };
 }
 
+test("invalid XLSX upload keeps format recovery visible without a raw error notice", async () => {
+  resetProjectImportTestState();
+  openProjectImportModal(() => {}, "project-1");
+  invokeHandler = async (command) => {
+    if (command === "import_xlsx_to_gtms") {
+      throw "PROJECT_IMPORT_INVALID_FORMAT: unsupported language code Key";
+    }
+    return null;
+  };
+  await importProjectFile(() => {}, importFile("invalid.xlsx"));
+  assert.equal(state.projectImport.isOpen, true);
+  assert.equal(state.projectImport.status, "error");
+  assert.match(state.projectImport.error, /^PROJECT_IMPORT_INVALID_FORMAT:/);
+  assert.equal(state.statusBadges.left.visible, false);
+});
+
+test("batch recovery identifies only format failures and clears them on dismissal", async () => {
+  resetProjectImportTestState();
+  openProjectImportModal(() => {}, "project-1");
+  invokeHandler = async (command) => {
+    if (command === "import_project_files_to_gtms") return {
+      imported: [],
+      failedFileNames: ["invalid.xlsx", "unreadable.xlsx"],
+      failedFiles: [
+        { fileName: "invalid.xlsx", error: "PROJECT_IMPORT_INVALID_FORMAT: invalid.xlsx: invalid headers" },
+        { fileName: "unreadable.xlsx", error: "Could not read the file" },
+      ],
+    };
+    return null;
+  };
+  await importProjectFiles(() => {}, [importFile("invalid.xlsx"), importFile("unreadable.xlsx")]);
+  assert.deepEqual(state.projectImport.formatFailedFileNames, ["invalid.xlsx"]);
+  assert.deepEqual(state.projectImport.failedFileNames, ["invalid.xlsx", "unreadable.xlsx"]);
+  closeProjectImportUploadError(() => {});
+  assert.deepEqual(state.projectImport.formatFailedFileNames, []);
+});
+
 function importedResult(fileName, index = 1) {
   return {
     chapterId: `chapter-${index}`,

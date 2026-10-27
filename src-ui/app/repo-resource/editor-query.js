@@ -58,7 +58,30 @@ export function createRepoResourceEditorQuery(config) {
             repoName: repoName(resource),
           },
         });
-        return withSnapshotContext(payload, team, resource);
+        let resolvedResource = resource;
+        // Chapter links and local content payloads carry no remote identity.
+        // Resolve the exact resource in this installation's metadata, never by name alone.
+        if (!resource?.fullName && config.listLocalMetadataRecords) {
+          const records = await config.listLocalMetadataRecords(team);
+          const record = records.find((entry) => entry.id === resourceId(resource, config));
+          if (record) {
+            if (record.repoName !== repoName(resource)
+              || (Number.isFinite(resource?.repoId) && Number.isFinite(record.githubRepoId)
+                && resource.repoId !== record.githubRepoId)
+              || (record.fullName && (record.fullName.split("/").length !== 2
+                || !record.fullName.split("/")[0]
+                || record.fullName.split("/")[1] !== record.repoName))) {
+              throw new Error("The repository details have changed. Reopen the resource before editing.");
+            }
+            resolvedResource = {
+              ...resource,
+              fullName: record.fullName,
+              repoId: record.githubRepoId ?? resource.repoId,
+              defaultBranchName: record.defaultBranch ?? resource.defaultBranchName,
+            };
+          }
+        }
+        return withSnapshotContext(payload, team, resolvedResource);
       },
     };
   }

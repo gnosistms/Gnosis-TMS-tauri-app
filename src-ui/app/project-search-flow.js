@@ -1,17 +1,12 @@
 import { selectedProjectsTeam } from "./project-chapter-flow.js";
-import { indexProjectSearchResults } from "./project-search-state.js";
-import { invoke, waitForNextPaint } from "./runtime.js";
+import { invoke } from "./runtime.js";
 import { createProjectsSearchState, state } from "./state.js";
-import { skipNextEditorLocationRestore } from "./editor-location.js";
 import {
+  applyProjectSearchToEditor,
   openTranslateChapter,
-  setActiveEditorField,
-  showEditorRowInContext,
-  updateEditorSearchFilterQuery as updateTranslateEditorSearchFilterQuery,
 } from "./translate-flow.js";
 
 const PROJECT_SEARCH_DEBOUNCE_MS = 200;
-const PROJECT_SEARCH_PAGE_SIZE = 50;
 const MIN_PROJECT_SEARCH_QUERY_LENGTH = 2;
 
 let pendingProjectSearchTimeout = null;
@@ -25,20 +20,38 @@ function clearPendingProjectSearchTimeout() {
   }
 }
 
-function setProjectSearchIdle(query = "") {
+function setProjectSearchIdle(query = "", caseSensitive = false) {
   state.projectsSearch = {
     ...createProjectsSearchState(),
+    caseSensitive,
     query,
   };
 }
 
-async function runProjectSearch(render, query, offset, searchVersion, appendResults = false) {
+function projectSearchRequestIsCurrent(selectedTeam, query, searchVersion) {
+  return (
+    searchVersion === activeProjectSearchVersion
+    && state.projectsSearch.query.trim() === query
+    && selectedProjectsTeam()?.installationId === selectedTeam.installationId
+  );
+}
+
+function invokeProjectSearch(installationId, query, caseSensitive) {
+  return invoke("search_projects", {
+    input: {
+      installationId,
+      query,
+      caseSensitive,
+    },
+  });
+}
+
+async function runProjectSearch(render, query, searchVersion, caseSensitive) {
   const selectedTeam = selectedProjectsTeam();
   if (!selectedTeam?.installationId) {
     state.projectsSearch = {
       ...state.projectsSearch,
       status: "error",
-      loadingMore: false,
       error: "Projects search requires a GitHub App-connected team.",
     };
     render();
@@ -47,8 +60,7 @@ async function runProjectSearch(render, query, offset, searchVersion, appendResu
 
   state.projectsSearch = {
     ...state.projectsSearch,
-    status: appendResults ? state.projectsSearch.status : "searching",
-    loadingMore: appendResults,
+    status: "searching",
     error: "",
   };
   render();
@@ -61,43 +73,54 @@ async function runProjectSearch(render, query, offset, searchVersion, appendResu
       } catch {
         // Fall back to whatever index is currently available.
       }
-      if (
-        searchVersion !== activeProjectSearchVersion
-        || state.projectsSearch.query.trim() !== query
-        || selectedProjectsTeam()?.installationId !== selectedTeam.installationId
-      ) {
+      if (!projectSearchRequestIsCurrent(selectedTeam, query, searchVersion)) {
         return;
       }
     }
 
-    const response = await invoke("search_projects", {
-      input: {
-        installationId: selectedTeam.installationId,
-        query,
-        limit: PROJECT_SEARCH_PAGE_SIZE,
-        offset,
-      },
-    });
+    let response = await invokeProjectSearch(selectedTeam.installationId, query, caseSensitive);
 
-    if (searchVersion !== activeProjectSearchVersion || state.projectsSearch.query.trim() !== query) {
+    if (!projectSearchRequestIsCurrent(selectedTeam, query, searchVersion)) {
       return;
     }
 
-    const nextResults = appendResults
-      ? [...state.projectsSearch.results, ...(response?.results ?? [])]
-      : [...(response?.results ?? [])];
+    if (response?.indexStatus === "indexing") {
+      state.projectsSearch = {
+        ...state.projectsSearch,
+        status: "searching",
+        indexStatus: "indexing",
+      };
+      render();
+      await refreshProjectSearchIndex(render, selectedTeam.id);
+      if (!projectSearchRequestIsCurrent(selectedTeam, query, searchVersion)) {
+        return;
+      }
+      response = await invokeProjectSearch(selectedTeam.installationId, query, caseSensitive);
+    }
+
+    if (!projectSearchRequestIsCurrent(selectedTeam, query, searchVersion)) {
+      return;
+    }
+
+    if (response?.indexStatus === "indexing") {
+      throw new Error("The project search index could not be prepared. Please try again.");
+    }
+
+    const nextResults = [...(response?.results ?? [])];
 
     state.projectsSearch = {
       ...state.projectsSearch,
       status: response?.queryTooShort === true ? "too-short" : "ready",
       error: "",
-      loadingMore: false,
       results: nextResults,
-      resultsById: indexProjectSearchResults(nextResults),
       total: Number.isFinite(response?.total) ? response.total : nextResults.length,
+      strongTotal: Number.isFinite(response?.strongTotal)
+        ? response.strongTotal
+        : nextResults.filter((row) => row?.qualityTier !== "weaker").length,
+      weakerTotal: Number.isFinite(response?.weakerTotal)
+        ? response.weakerTotal
+        : nextResults.filter((row) => row?.qualityTier === "weaker").length,
       totalCapped: response?.totalCapped === true,
-      hasMore: response?.hasMore === true,
-      nextOffset: nextResults.length,
       indexStatus: typeof response?.indexStatus === "string" ? response.indexStatus : "ready",
       queryTooShort: response?.queryTooShort === true,
       minimumQueryLength:
@@ -106,6 +129,12 @@ async function runProjectSearch(render, query, offset, searchVersion, appendResu
           : MIN_PROJECT_SEARCH_QUERY_LENGTH,
     };
     render();
+
+    if (response?.indexStatus === "stale") {
+      void refreshProjectSearchIndex(render, selectedTeam.id).catch(() => {
+        // Keep the last usable index and its results available.
+      });
+    }
   } catch (error) {
     if (searchVersion !== activeProjectSearchVersion) {
       return;
@@ -114,7 +143,6 @@ async function runProjectSearch(render, query, offset, searchVersion, appendResu
     state.projectsSearch = {
       ...state.projectsSearch,
       status: "error",
-      loadingMore: false,
       error: error?.message ?? String(error),
     };
     render();
@@ -132,6 +160,11 @@ export function refreshProjectSearchIndex(render, teamId = state.selectedTeamId)
   if (pendingRefresh) {
     return pendingRefresh;
   }
+
+  const hadUsableIndex = (
+    state.projectsSearch?.indexStatus === "stale"
+    || (state.projectsSearch?.results?.length ?? 0) > 0
+  );
 
   if (selectedProjectsTeam()?.installationId === installationId) {
     state.projectsSearch = {
@@ -160,7 +193,7 @@ export function refreshProjectSearchIndex(render, teamId = state.selectedTeamId)
       if (selectedProjectsTeam()?.installationId === installationId) {
         state.projectsSearch = {
           ...state.projectsSearch,
-          indexStatus: "error",
+          indexStatus: hadUsableIndex ? "stale" : "error",
         };
         render?.();
       }
@@ -177,6 +210,7 @@ export function refreshProjectSearchIndex(render, teamId = state.selectedTeamId)
 }
 
 export function updateProjectSearchQuery(render, query) {
+  const caseSensitive = state.projectsSearch?.caseSensitive === true;
   clearPendingProjectSearchTimeout();
   activeProjectSearchVersion += 1;
 
@@ -188,7 +222,7 @@ export function updateProjectSearchQuery(render, query) {
 
   const normalizedQuery = String(query ?? "").trim();
   if (!normalizedQuery) {
-    setProjectSearchIdle("");
+    setProjectSearchIdle("", caseSensitive);
     render();
     return;
   }
@@ -196,6 +230,7 @@ export function updateProjectSearchQuery(render, query) {
   if (Array.from(normalizedQuery).length < MIN_PROJECT_SEARCH_QUERY_LENGTH) {
     state.projectsSearch = {
       ...createProjectsSearchState(),
+      caseSensitive,
       query,
       status: "too-short",
       queryTooShort: true,
@@ -207,6 +242,7 @@ export function updateProjectSearchQuery(render, query) {
 
   state.projectsSearch = {
     ...createProjectsSearchState(),
+    caseSensitive,
     query,
     status: "searching",
     requestId: activeProjectSearchVersion,
@@ -216,14 +252,22 @@ export function updateProjectSearchQuery(render, query) {
   const searchVersion = activeProjectSearchVersion;
   pendingProjectSearchTimeout = window.setTimeout(() => {
     pendingProjectSearchTimeout = null;
-    void runProjectSearch(render, normalizedQuery, 0, searchVersion, false);
+    void runProjectSearch(render, normalizedQuery, searchVersion, caseSensitive);
   }, PROJECT_SEARCH_DEBOUNCE_MS);
+}
+
+export function toggleProjectSearchCaseSensitive(render) {
+  state.projectsSearch = {
+    ...state.projectsSearch,
+    caseSensitive: state.projectsSearch?.caseSensitive !== true,
+  };
+  updateProjectSearchQuery(render, state.projectsSearch.query);
 }
 
 export function clearProjectSearch(render) {
   clearPendingProjectSearchTimeout();
   activeProjectSearchVersion += 1;
-  setProjectSearchIdle("");
+  setProjectSearchIdle("", state.projectsSearch?.caseSensitive === true);
   render();
 }
 
@@ -233,36 +277,58 @@ export function resetProjectSearchState() {
   setProjectSearchIdle("");
 }
 
-export function loadMoreProjectSearchResults(render) {
-  const query = String(state.projectsSearch.query ?? "").trim();
-  if (!query || state.projectsSearch.hasMore !== true || state.projectsSearch.loadingMore === true) {
+function toggleSearchExpansion(render, stateKey, itemId) {
+  const normalizedId = String(itemId ?? "").trim();
+  if (!normalizedId) {
     return;
   }
-
-  const searchVersion = activeProjectSearchVersion;
-  void runProjectSearch(render, query, state.projectsSearch.nextOffset ?? state.projectsSearch.results.length, searchVersion, true);
+  const nextIds = new Set(state.projectsSearch?.[stateKey] ?? []);
+  if (nextIds.has(normalizedId)) {
+    nextIds.delete(normalizedId);
+  } else {
+    nextIds.add(normalizedId);
+  }
+  state.projectsSearch = {
+    ...state.projectsSearch,
+    [stateKey]: nextIds,
+  };
+  render();
 }
 
-export async function openProjectSearchResult(render, resultId) {
-  const result = state.projectsSearch.resultsById?.[String(resultId)] ?? null;
-  if (!result?.chapterId || !result?.rowId || !result?.languageCode) {
-    return;
-  }
+export function toggleProjectSearchProject(render, projectId) {
+  toggleSearchExpansion(render, "expandedProjectIds", projectId);
+}
 
-  if (result.exactPhrase !== true) {
-    skipNextEditorLocationRestore(result.chapterId);
-    await openTranslateChapter(render, result.chapterId);
-    await showEditorRowInContext(render, result.rowId);
-    await setActiveEditorField(render, result.rowId, result.languageCode);
-    return;
+export function toggleProjectSearchChapter(render, chapterId) {
+  toggleSearchExpansion(render, "expandedChapterIds", chapterId);
+}
+
+export function toggleProjectSearchWeakerMatches(render) {
+  state.projectsSearch = {
+    ...state.projectsSearch,
+    includeWeakerMatches: state.projectsSearch?.includeWeakerMatches !== true,
+  };
+  render();
+}
+
+export async function openProjectSearchChapter(render, chapterId, operations = {}) {
+  const normalizedChapterId = String(chapterId ?? "").trim();
+  const chapterExists = (state.projectsSearch?.results ?? [])
+    .some((row) => String(row?.chapterId ?? "") === normalizedChapterId);
+  if (!normalizedChapterId || !chapterExists) {
+    return false;
   }
 
   const searchQuery = typeof state.projectsSearch?.query === "string"
     ? state.projectsSearch.query
     : "";
-  await openTranslateChapter(render, result.chapterId);
-  updateTranslateEditorSearchFilterQuery(render, searchQuery);
-  render();
-  await waitForNextPaint();
-  await setActiveEditorField(render, result.rowId, result.languageCode);
+  const caseSensitive = state.projectsSearch?.caseSensitive === true;
+  const openChapter = operations.openTranslateChapter ?? openTranslateChapter;
+  const applySearch = operations.applyProjectSearchToEditor ?? applyProjectSearchToEditor;
+  const opened = await openChapter(render, normalizedChapterId);
+  if (opened !== true) {
+    return false;
+  }
+  applySearch(render, searchQuery, { caseSensitive });
+  return true;
 }

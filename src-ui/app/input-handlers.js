@@ -76,6 +76,7 @@ import {
   syncEditorGlossaryHighlightRowDom,
   updateEditorConflictResolutionFinalFootnote,
   updateEditorConflictResolutionFinalImageCaption,
+  updateEditorConflictResolutionFinalAttribution,
   updateEditorConflictResolutionFinalImageUrl,
   updateEditorImageUrlDraft,
   updateEditorPreviewSearchQuery,
@@ -83,7 +84,6 @@ import {
   validateEditorLinkUrl,
   toggleEditorReplaceEnabled,
   toggleEditorReplaceRowSelected,
-  scheduleEditorAssistantTranscriptScrollToBottom,
   updateEditorConflictResolutionFinalText,
   updateEditorFontSize,
   updateEditorCommentDraft,
@@ -97,10 +97,12 @@ import {
   updateEditorRowFieldValue,
   updateEditorSearchFilterQuery,
   updateEditorSourceLanguage,
+  updateEditorSrtPauseSettings,
   updateEditorTargetLanguage,
 } from "./translate-flow.js";
 import {
   setWordPressExportMode,
+  updateWordPressConnectionField,
   updateWordPressSearchQuery,
   updateWordPressTitle,
 } from "./editor-export-wordpress-flow.js";
@@ -115,6 +117,7 @@ import {
   updateProjectTransferName,
 } from "./project-transfer-flow.js";
 import { normalizedConfirmationValue } from "./resource-entity-modal.js";
+import { handleGlossaryResearchInput } from "./glossary-research-input.js";
 
 let liveReviewSidebarRenderPending = false;
 
@@ -375,6 +378,17 @@ function handleGlossaryTermVariantInput(event) {
   return true;
 }
 
+function handleGlossaryTermSiblingInput(event) {
+  const input = event.target.closest("[data-glossary-term-sibling-input]");
+  if (!input || !state.glossaryTermEditor) {
+    return false;
+  }
+
+  state.glossaryTermEditor.siblingInput = input.value;
+  state.glossaryTermEditor.siblingError = "";
+  return true;
+}
+
 function handleGlossaryTermNotesInput(event) {
   const input = event.target.closest("[data-glossary-term-notes-input]");
   if (!input) {
@@ -515,6 +529,21 @@ function handleQaTermRegularExpressionInput(event) {
   }
   updateQaTermDraftField("isRegularExpression", input.checked);
   return true;
+}
+
+function handleEditorSrtPauseInput(event, render) {
+  if (event.type !== "change") return false;
+  const toggle = event.target.closest("[data-editor-srt-pause-toggle]");
+  const threshold = event.target.closest("[data-editor-srt-pause-threshold]");
+  if (toggle instanceof HTMLInputElement) {
+    void updateEditorSrtPauseSettings(render, { enabled: toggle.checked });
+    return true;
+  }
+  if (threshold instanceof HTMLSelectElement) {
+    void updateEditorSrtPauseSettings(render, { thresholdMs: Number(threshold.value) });
+    return true;
+  }
+  return false;
 }
 
 function handleEditorSourceLanguageInput(event, render) {
@@ -733,15 +762,30 @@ function handleEditorCommentDraftInput(event, render) {
   return true;
 }
 
-function handleEditorAssistantDraftInput(event, render) {
+function handleEditorAssistantDraftInput(event) {
+  // Replacing the focused composer on send can fire change with its old value.
+  // The draft already tracks input events; a blur commit must not restore it.
+  if (event.type !== "input") {
+    return false;
+  }
+
   const input = event.target.closest("[data-editor-assistant-draft]");
   if (!input) {
     return false;
   }
 
+  const transcript = input.closest(".assistant-pane")?.querySelector(".assistant-transcript");
+  const previousTranscriptHeight = transcript?.clientHeight;
+  const wasAtBottom = transcript
+    && transcript.scrollHeight - transcript.clientHeight - transcript.scrollTop <= 1;
+
   updateEditorAssistantComposerDraft(input.value);
-  syncAutoSizeTextarea(input, { minHeight: 71, maxHeight: 213 });
-  scheduleEditorAssistantTranscriptScrollToBottom();
+  syncAutoSizeTextarea(input, { minHeight: 71, maxHeight: 213, measureOffscreen: true });
+  // Follow an actual resize before paint, without moving readers of older
+  // messages or scheduling a scroll on every keystroke once the height is capped.
+  if (wasAtBottom && transcript.clientHeight !== previousTranscriptHeight) {
+    transcript.scrollTop = transcript.scrollHeight;
+  }
   return true;
 }
 
@@ -834,6 +878,13 @@ function handleEditorConflictResolutionInput(event) {
   if (imageCaptionInput) {
     updateEditorConflictResolutionFinalImageCaption(imageCaptionInput.value);
     syncEditorConflictResolutionTextareaHeight(imageCaptionInput);
+    return true;
+  }
+
+  const attributionInput = event.target.closest("[data-editor-conflict-final-attribution-input]");
+  if (attributionInput) {
+    updateEditorConflictResolutionFinalAttribution(attributionInput.value);
+    syncEditorConflictResolutionTextareaHeight(attributionInput);
     return true;
   }
 
@@ -1000,13 +1051,18 @@ function handleProjectImportPastedTextInput(event, render) {
   return true;
 }
 
-function handleAiKeyInput(event) {
+function handleAiKeyInput(event, render) {
   const input = event.target.closest("[data-ai-key-input]");
   if (!input) {
     return false;
   }
 
+  const wasSaved = state.aiSettings.apiKeyIsSaved;
+  const hadDraft = Boolean(state.aiSettings.apiKey?.trim());
   updateAiProviderSecretDraft(input.value);
+  if (wasSaved || hadDraft !== Boolean(state.aiSettings.apiKey.trim())) {
+    render?.();
+  }
   return true;
 }
 
@@ -1102,6 +1158,23 @@ function handleWordPressModeInput(event, render) {
   return true;
 }
 
+function handleWordPressConnectionInput(event) {
+  const fields = [
+    ["[data-wordpress-site-url-input]", "siteUrl"],
+    ["[data-wordpress-username-input]", "username"],
+    ["[data-wordpress-password-input]", "password"],
+    ["[data-wordpress-insecure-input]", "allowInsecure"],
+  ];
+  for (const [selector, field] of fields) {
+    const input = event.target.closest(selector);
+    if (input) {
+      updateWordPressConnectionField(field, field === "allowInsecure" ? input.checked : input.value);
+      return true;
+    }
+  }
+  return false;
+}
+
 function handleTeamCopyTitleInput(event) {
   const input = event.target.closest("[data-team-copy-title-input]");
   if (!input) {
@@ -1194,7 +1267,9 @@ const inputHandlers = [
   handleGlossaryTermVariantInput,
   handleGlossaryTermVariantNoteInput,
   handleGlossaryTermNotesInput,
+  handleGlossaryTermSiblingInput,
   handleGlossaryTermFootnoteInput,
+  handleGlossaryResearchInput,
   handleQaListTitleInput,
   handleQaListLanguageInput,
   handleQaListRenameInput,
@@ -1204,6 +1279,7 @@ const inputHandlers = [
   handleQaTermNotesInput,
   handleQaTermCaseSensitiveInput,
   handleQaTermRegularExpressionInput,
+  handleEditorSrtPauseInput,
   handleEditorSourceLanguageInput,
   handleEditorTargetLanguageInput,
   handleEditorPreviewLanguageInput,
@@ -1242,6 +1318,7 @@ const inputHandlers = [
   handleWordPressTitleInput,
   handleWordPressSearchInput,
   handleWordPressModeInput,
+  handleWordPressConnectionInput,
   handleTeamCopyTitleInput,
   handleTeamCopyTeamInput,
   handleTeamCopyProjectInput,

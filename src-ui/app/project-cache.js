@@ -111,12 +111,12 @@ function normalizeChapterGlossaryLink(link) {
   };
 }
 
-function loadProjectCacheMap() {
-  return loadTeamScopedCacheMap(PROJECT_CACHE_STORAGE_KEY);
+function loadProjectCacheMap(login) {
+  return loadTeamScopedCacheMap(PROJECT_CACHE_STORAGE_KEY, login);
 }
 
-function saveProjectCacheMap(cacheMap) {
-  saveTeamScopedCacheMap(PROJECT_CACHE_STORAGE_KEY, cacheMap);
+function saveProjectCacheMap(cacheMap, login) {
+  saveTeamScopedCacheMap(PROJECT_CACHE_STORAGE_KEY, cacheMap, login);
 }
 
 function removeScopedMutationEntry(storageKey, cacheKey) {
@@ -144,7 +144,7 @@ function removeScopedMutationEntry(storageKey, cacheKey) {
 
 export const projectCacheKey = teamCacheKey;
 
-export function loadStoredProjectsForTeam(team) {
+export function loadStoredProjectsForTeam(team, login) {
   const cacheKey = projectCacheKey(team);
   if (!cacheKey) {
     return {
@@ -156,7 +156,7 @@ export function loadStoredProjectsForTeam(team) {
     };
   }
 
-  const cacheMap = loadProjectCacheMap();
+  const cacheMap = loadProjectCacheMap(login);
   const entry = cacheMap[cacheKey];
   if (!entry || typeof entry !== "object") {
     return {
@@ -184,19 +184,19 @@ export function loadStoredProjectsForTeam(team) {
   };
 }
 
-export function saveStoredProjectsForTeam(team, { projects = [], deletedProjects = [] }) {
+export function saveStoredProjectsForTeam(team, { projects = [], deletedProjects = [] }, login) {
   const cacheKey = projectCacheKey(team);
   if (!cacheKey) {
     return;
   }
 
-  const cacheMap = loadProjectCacheMap();
+  const cacheMap = loadProjectCacheMap(login);
   cacheMap[cacheKey] = {
     projects: projects.map(normalizeProject).filter(Boolean),
     deletedProjects: deletedProjects.map(normalizeProject).filter(Boolean),
     updatedAt: new Date().toISOString(),
   };
-  saveProjectCacheMap(cacheMap);
+  saveProjectCacheMap(cacheMap, login);
 }
 
 export function removeStoredProjectDataForTeam(team) {
@@ -211,14 +211,14 @@ export function removeStoredProjectDataForTeam(team) {
   removeScopedMutationEntry(CHAPTER_PENDING_MUTATIONS_STORAGE_KEY, cacheKey);
 }
 
-export function loadStoredChapterPendingMutations(team) {
+export function loadStoredChapterPendingMutations(team, login) {
   const cacheKey = projectCacheKey(team);
   if (!cacheKey) {
     return [];
   }
 
   try {
-    const scopedKey = scopedTeamStorageKey(CHAPTER_PENDING_MUTATIONS_STORAGE_KEY);
+    const scopedKey = scopedTeamStorageKey(CHAPTER_PENDING_MUTATIONS_STORAGE_KEY, login);
     const storedValue = scopedKey ? readPersistentValue(scopedKey, null) : null;
     if (!storedValue) {
       return [];
@@ -235,14 +235,14 @@ export function loadStoredChapterPendingMutations(team) {
   }
 }
 
-export function saveStoredChapterPendingMutations(team, mutations) {
+export function saveStoredChapterPendingMutations(team, mutations, login) {
   const cacheKey = projectCacheKey(team);
   if (!cacheKey) {
     return;
   }
 
   try {
-    const scopedKey = scopedTeamStorageKey(CHAPTER_PENDING_MUTATIONS_STORAGE_KEY);
+    const scopedKey = scopedTeamStorageKey(CHAPTER_PENDING_MUTATIONS_STORAGE_KEY, login);
     if (!scopedKey) {
       return;
     }
@@ -252,4 +252,19 @@ export function saveStoredChapterPendingMutations(team, mutations) {
     nextMap[cacheKey] = Array.isArray(mutations) ? mutations : [];
     writePersistentValue(scopedKey, nextMap);
   } catch {}
+}
+
+// A native purge can finish after sign-out. Clean the originating account's
+// latest durable cache without reading or publishing another session's query.
+export function removeStoredProjectCopyForTeam(team, projectId, login) {
+  const cached = loadStoredProjectsForTeam(team, login);
+  if (cached.exists) {
+    saveStoredProjectsForTeam(team, {
+      projects: cached.projects.filter((project) => project.id !== projectId),
+      deletedProjects: cached.deletedProjects.filter((project) => project.id !== projectId),
+    }, login);
+  }
+  saveStoredChapterPendingMutations(team,
+    loadStoredChapterPendingMutations(team, login).filter((mutation) => mutation.projectId !== projectId),
+    login);
 }

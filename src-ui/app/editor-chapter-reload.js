@@ -16,5 +16,5 @@ function editorChapterReloadOperations() {
 }
 
 export async function reloadSelectedChapterEditorData(render, options = {}) {
-  await loadSelectedChapterEditorDataFlow(render, options, editorChapterReloadOperations());
+  return loadSelectedChapterEditorDataFlow(render, options, editorChapterReloadOperations());
 }

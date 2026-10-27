@@ -91,7 +91,7 @@ function renderPasteTextPanel(modal, disabled, config) {
 }
 
 export function renderProjectDocumentInputModal(modal, config) {
-  const inputMode = normalizeProjectDocumentInputMode(modal?.inputMode);
+  const inputMode = config.uploadOnly ? "upload" : normalizeProjectDocumentInputMode(modal?.inputMode);
   const isUploadMode = inputMode === "upload";
   const isPasteLinkMode = inputMode === "pasteLink";
   const isPasteTextMode = inputMode === "pasteText";
@@ -99,7 +99,7 @@ export function renderProjectDocumentInputModal(modal, config) {
   const linkUrl = String(modal?.linkUrl ?? "").trim();
   const pastedText = String(modal?.pastedText ?? "").trim();
   const errorMarkup = modal?.error
-    ? `<div class="project-document-input__error-badge project-import-modal__error-badge" role="alert">${escapeHtml(formatErrorForDisplay(modal.error))}</div>`
+    ? `<div class="project-document-input__error-badge project-import-modal__error-badge" role="alert">${config.renderError ? config.renderError(modal.error) : escapeHtml(formatErrorForDisplay(modal.error))}</div>`
     : "";
   const primaryLabel = isPasteLinkMode
     ? (config.isResolvingLink ? "Opening..." : "Continue")
@@ -126,7 +126,7 @@ export function renderProjectDocumentInputModal(modal, config) {
           <p class="modal__supporting">${escapeHtml(config.supportingText)}</p>
           <div class="modal__form project-document-input project-import-modal">
             ${errorMarkup}
-            ${renderModeControl(inputMode, controlsDisabled, config)}
+            ${config.uploadOnly ? "" : renderModeControl(inputMode, controlsDisabled, config)}
             ${isUploadMode
               ? renderUploadPanel(config)
               : isPasteLinkMode

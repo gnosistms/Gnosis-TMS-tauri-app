@@ -1,3 +1,5 @@
+import { saveBookSettings } from "./project-book-settings.js";
+import { exportDefaultKey, loadProjectExportBlocks } from "./project-export-context.js";
 import { formatErrorForDisplay } from "./error-display.js";
 import { invoke, listen, openExternalUrl } from "./runtime.js";
 import { findChapterContext, selectedProjectsTeam } from "./project-context.js";
@@ -22,9 +24,14 @@ import {
   waitForRepoWriteQueueIdle,
 } from "./repo-write-queue.js";
 import {
+  clearStoredWordPressAssociationsForSite,
+  findStoredWordPressDestination,
+  lastStoredWordPressDestination,
   loadStoredEditorExportDefault,
   saveStoredEditorExportDefault,
+  upsertStoredWordPressDestination,
 } from "./editor-export-defaults.js";
+import { getActiveStorageLogin } from "./team-storage.js";
 
 function currentExportModal() {
   return state.editorChapter?.exportModal ?? null;
@@ -42,6 +49,7 @@ function updateExportModal(patch) {
       ...patch,
     },
   };
+  saveBookSettings(currentExportModal());
 }
 
 function updateWordPressState(patch) {
@@ -68,14 +76,22 @@ function createWordPressJobId() {
 
 // Defaults the pane to overwriting the remembered post from the chapter's
 // last successful WordPress export.
-export function seedWordPressOverwriteDefault(storedWordPress) {
-  const postId = Number.parseInt(String(storedWordPress?.postId ?? ""), 10);
+export function seedWordPressOverwriteDefault(storedDestination, connection = null) {
+  const postId = Number.parseInt(String(storedDestination?.postId ?? ""), 10);
   if (!Number.isFinite(postId) || postId <= 0) {
     return;
   }
 
-  const postTitle = String(storedWordPress?.postTitle ?? "").trim();
+  const postTitle = String(storedDestination?.postTitle ?? "").trim();
+  const siteId = String(storedDestination?.siteId ?? "").trim();
   updateWordPressState({
+    connectionStatus: siteId ? "connected" : "unknown",
+    connection: connection ?? (siteId ? {
+      siteId,
+      kind: String(storedDestination?.siteKind ?? ""),
+      siteUrl: String(storedDestination?.siteUrl ?? ""),
+      displayName: "",
+    } : null),
     mode: "overwrite",
     selectedPostId: postId,
     searchResults: [{
@@ -98,10 +114,9 @@ export function ensureWordPressPaneReady(render, operations = {}) {
   }
 
   if (wordpress.selectedPostId == null) {
-    const stored = loadStoredEditorExportDefault(currentExportModal()?.chapterId);
-    if (stored?.wordpress) {
-      seedWordPressOverwriteDefault(stored.wordpress);
-    }
+    const stored = loadStoredEditorExportDefault(exportDefaultKey());
+    const destination = lastStoredWordPressDestination(stored?.wordpress);
+    if (destination) seedWordPressOverwriteDefault(destination);
   }
 
   if (!wordpress.title) {
@@ -110,7 +125,7 @@ export function ensureWordPressPaneReady(render, operations = {}) {
     const languageCode = selectedEditorPreviewLanguageCode(state.editorChapter);
     const blocks = buildEditorPreviewDocument(state.editorChapter?.rows, languageCode);
     const headingTitle = extractWordPressLeadingHeadingTitle(blocks);
-    const title = headingTitle || String(state.editorChapter?.fileTitle ?? "");
+    const title = currentExportModal()?.projectTitle || headingTitle || String(state.editorChapter?.fileTitle ?? "");
     if (title) {
       updateWordPressState({ title });
     }
@@ -131,12 +146,49 @@ export async function loadWordPressConnection(render, operations = {}) {
   updateWordPressState({ connectionStatus: "loading" });
   render();
   try {
-    const connection = await invokeCommand("get_wordpress_connection");
-    updateWordPressState(connection
-      ? { connectionStatus: "connected", connection }
-      : { connectionStatus: "disconnected", connection: null });
+    const connections = await invokeCommand("list_wordpress_connections", {
+      storageLogin: getActiveStorageLogin() ?? "",
+    });
+    const sortedConnections = Array.isArray(connections) ? connections : [];
+    const current = currentWordPressExportState();
+    const selected = sortedConnections.find((item) => item.siteId === current?.connection?.siteId);
+    if (selected) {
+      updateWordPressState({ connectionStatus: "connected", connection: selected, connections: sortedConnections });
+    } else if (!current?.connection?.siteId) {
+      const stored = loadStoredEditorExportDefault(exportDefaultKey());
+      const legacyDestination = stored?.wordpress?.legacyDestination;
+      if (legacyDestination?.postId && sortedConnections.length === 1) {
+        const connection = sortedConnections[0];
+        const migrated = {
+          ...legacyDestination,
+          siteId: connection.siteId,
+          siteKind: connection.kind,
+          siteUrl: connection.siteUrl,
+        };
+        saveStoredEditorExportDefault(exportDefaultKey(), {
+          ...stored,
+          wordpress: {
+            lastSiteId: connection.siteId,
+            destinations: [
+              ...(stored.wordpress.destinations ?? [])
+                .filter((item) => item.siteId !== connection.siteId),
+              migrated,
+            ],
+          },
+        });
+        seedWordPressOverwriteDefault(migrated, connection);
+        updateWordPressState({ connectionStatus: "connected", connection, connections: sortedConnections });
+      } else {
+        updateWordPressState({ connectionStatus: "disconnected", connection: null, connections: sortedConnections });
+      }
+    } else {
+      // Preserve a remembered destination even if its credential disappeared.
+      updateWordPressState({ connectionStatus: "connected", connections: sortedConnections, reauthRequired: true });
+    }
   } catch (error) {
-    updateWordPressState({ connectionStatus: "disconnected", connection: null });
+    updateWordPressState(currentWordPressExportState()?.connection?.siteId
+      ? { connectionStatus: "connected", reauthRequired: true }
+      : { connectionStatus: "disconnected", connection: null });
     updateExportModal({ error: formatErrorForDisplay(error) });
   }
   render();
@@ -150,38 +202,166 @@ export async function connectWordPress(render, operations = {}) {
     return;
   }
 
+  const wordpress = currentWordPressExportState();
+  const target = wordpress?.connection;
+  const inspection = wordpress?.inspection;
+  const blog = target?.blogId || inspection?.blogId || target?.siteUrl || wordpress?.siteUrl || "";
   updateExportModal({ error: "" });
-  updateWordPressState({ connectionStatus: "connecting" });
+  updateWordPressState(target
+    ? { authInProgress: true }
+    : { connectionStatus: "connecting" });
   render();
   try {
-    const { authUrl } = await invokeCommand("begin_wordpress_auth");
+    const { authUrl } = await invokeCommand("begin_wordpress_auth", {
+      storageLogin: getActiveStorageLogin() ?? "",
+      blog,
+      expectedBlogId: target?.blogId ?? null,
+    });
     openUrl(authUrl);
   } catch (error) {
-    updateWordPressState({ connectionStatus: "disconnected" });
+    updateWordPressState(target
+      ? { connectionStatus: "connected", reauthRequired: true, authInProgress: false }
+      : { connectionStatus: "disconnected" });
     failWordPressAction(render, error);
   }
 }
 
-export async function disconnectWordPress(render, operations = {}) {
-  const invokeCommand = operations.invoke ?? invoke;
-  if (!invokeCommand) {
-    return;
-  }
+export function showWordPressSitePicker(render) {
+  updateWordPressState({
+    connectionStatus: "disconnected", connection: null, reauthRequired: false,
+    searchResults: [], searchStatus: "idle", selectedPostId: null,
+  });
+  updateExportModal({ error: "" });
+  render();
+}
 
+export function selectWordPressSite(render, siteId) {
+  const wordpress = currentWordPressExportState();
+  const connection = wordpress?.connections?.find((item) => item.siteId === siteId);
+  if (!connection) return;
+  const stored = loadStoredEditorExportDefault(exportDefaultKey());
+  const destination = findStoredWordPressDestination(stored?.wordpress, siteId);
+  updateWordPressState({
+    connectionStatus: "connected", connection, reauthRequired: false,
+    mode: "create", searchResults: [], searchStatus: "idle", selectedPostId: null,
+    addStage: "idle", inspection: null, password: "",
+  });
+  if (destination) seedWordPressOverwriteDefault(destination, connection);
+  updateExportModal({ error: "" });
+  render();
+}
+
+export async function forgetWordPressSite(render, siteId, operations = {}) {
+  const invokeCommand = operations.invoke ?? invoke;
+  if (!invokeCommand || !siteId) return;
+  const confirmForget = operations.confirm ?? globalThis.confirm;
+  if (typeof confirmForget === "function" && !confirmForget("Forget this site and unlink every file that uses it?")) return;
   try {
-    await invokeCommand("disconnect_wordpress");
+    await invokeCommand("forget_wordpress_connection", {
+      storageLogin: getActiveStorageLogin() ?? "", siteId,
+    });
+    clearStoredWordPressAssociationsForSite(siteId);
+    const wordpress = currentWordPressExportState();
+    const connections = (wordpress?.connections ?? []).filter((item) => item.siteId !== siteId);
     updateWordPressState({
-      connectionStatus: "disconnected",
-      connection: null,
-      searchResults: [],
-      searchStatus: "idle",
-      selectedPostId: null,
+      connections,
+      ...(wordpress?.connection?.siteId === siteId ? {
+        connectionStatus: "disconnected", connection: null, selectedPostId: null,
+        searchResults: [], searchStatus: "idle", reauthRequired: false,
+      } : {}),
     });
     updateExportModal({ error: "" });
     render();
   } catch (error) {
     failWordPressAction(render, error);
   }
+}
+
+export function showAddWordPressSite(render) {
+  updateWordPressState({ addStage: "address", siteUrl: "", inspection: null, username: "", password: "", allowInsecure: false });
+  updateExportModal({ error: "" });
+  render();
+}
+
+export function cancelAddWordPressSite(render) {
+  updateWordPressState({ addStage: "idle", inspection: null, password: "" });
+  updateExportModal({ error: "" });
+  render();
+}
+
+export function updateWordPressConnectionField(field, value) {
+  if (!["siteUrl", "username", "password", "allowInsecure"].includes(field)) return;
+  updateWordPressState({ [field]: field === "allowInsecure" ? Boolean(value) : String(value ?? "") });
+}
+
+export async function inspectWordPressSite(render, operations = {}) {
+  const invokeCommand = operations.invoke ?? invoke;
+  const wordpress = currentWordPressExportState();
+  if (!invokeCommand || !wordpress?.siteUrl?.trim()) return;
+  updateWordPressState({ addStage: "inspecting" });
+  updateExportModal({ error: "" });
+  render();
+  try {
+    const inspection = await invokeCommand("inspect_wordpress_site", { siteUrl: wordpress.siteUrl.trim() });
+    updateWordPressState({ inspection, siteUrl: inspection.siteUrl || wordpress.siteUrl });
+    if (inspection.kind === "wordpressCom") {
+      updateWordPressState({ addStage: "oauth" });
+      await connectWordPress(render, operations);
+      return;
+    }
+    updateWordPressState({ addStage: "credentials", username: "", password: "", allowInsecure: false });
+    render();
+  } catch (error) {
+    updateWordPressState({ addStage: "inconclusive" });
+    failWordPressAction(render, error);
+  }
+}
+
+export async function saveSelfHostedWordPressSite(render, operations = {}) {
+  const invokeCommand = operations.invoke ?? invoke;
+  const wordpress = currentWordPressExportState();
+  if (!invokeCommand || !wordpress?.inspection) return;
+  updateWordPressState({ addStage: "connecting" });
+  updateExportModal({ error: "" });
+  render();
+  try {
+    const connection = await invokeCommand("save_self_hosted_wordpress_connection", {
+      storageLogin: getActiveStorageLogin() ?? "",
+      siteUrl: wordpress.inspection.siteUrl,
+      apiRoot: wordpress.inspection.apiRoot,
+      username: wordpress.username,
+      password: wordpress.password,
+      allowInsecure: wordpress.allowInsecure,
+    });
+    const connections = [...(wordpress.connections ?? []).filter((item) => item.siteId !== connection.siteId), connection]
+      .sort((a, b) => (a.displayName || a.siteUrl).localeCompare(b.displayName || b.siteUrl));
+    updateWordPressState({
+      connectionStatus: "connected", connection, connections, reauthRequired: false,
+      addStage: "idle", inspection: null, password: "",
+    });
+    render();
+  } catch (error) {
+    updateWordPressState({ addStage: "credentials" });
+    failWordPressAction(render, error);
+  }
+}
+
+export function reconnectWordPress(render) {
+  const connection = currentWordPressExportState()?.connection;
+  if (!connection) return;
+  if (connection.kind === "wordpressCom") {
+    void connectWordPress(render);
+    return;
+  }
+  updateWordPressState({
+    addStage: "credentials",
+    inspection: { kind: "selfHosted", siteUrl: connection.siteUrl, apiRoot: connection.apiRoot },
+    siteUrl: connection.siteUrl,
+    username: connection.username || "",
+    password: "",
+    allowInsecure: connection.siteUrl?.startsWith("http://") || false,
+  });
+  render();
 }
 
 export function setWordPressExportMode(render, mode) {
@@ -213,6 +393,8 @@ export async function searchWordPressPosts(render, operations = {}) {
   render();
   try {
     const results = await invokeCommand("search_wordpress_posts", {
+      storageLogin: getActiveStorageLogin() ?? "",
+      siteId: wordpress.connection?.siteId ?? "",
       search: wordpress.searchQuery ?? "",
     });
     updateWordPressState({
@@ -222,6 +404,9 @@ export async function searchWordPressPosts(render, operations = {}) {
     render();
   } catch (error) {
     updateWordPressState({ searchStatus: "error", searchResults: [] });
+    if (String(error).includes("WORDPRESS_REAUTH_REQUIRED:")) {
+      updateWordPressState({ reauthRequired: true });
+    }
     failWordPressAction(render, error);
   }
 }
@@ -301,8 +486,9 @@ async function prepareWordPressExportSnapshot(render, team, context, operations 
   assertReady();
 }
 
-export async function submitWordPressExport(render, operations = {}) {
+export async function submitWordPressExport(render, operations = {}, options = {}) {
   const invokeCommand = operations.invoke ?? invoke;
+  const refreshWordPressImages = options.refreshWordPressImages === true;
   const modal = currentExportModal();
   const wordpress = currentWordPressExportState();
   if (!modal?.isOpen || modal.status === "exporting" || !wordpress) {
@@ -313,7 +499,7 @@ export async function submitWordPressExport(render, operations = {}) {
     return;
   }
   if (wordpress.connectionStatus !== "connected") {
-    failWordPressAction(render, "Connect your WordPress.com account first.");
+    failWordPressAction(render, "Choose a connected WordPress site first.");
     return;
   }
   if (wordpress.mode === "create" && !String(wordpress.title ?? "").trim()) {
@@ -327,8 +513,8 @@ export async function submitWordPressExport(render, operations = {}) {
   }
 
   const team = selectedProjectsTeam();
-  const context = findChapterContext(state.editorChapter?.chapterId);
-  const languageCode = String(selectedEditorPreviewLanguageCode(state.editorChapter) ?? "").trim();
+  const context = findChapterContext(modal.chapterId);
+  const languageCode = String(modal.projectId ? modal.languageCode : selectedEditorPreviewLanguageCode(state.editorChapter) ?? "").trim();
   if (!Number.isFinite(team?.installationId) || !context?.project || !languageCode) {
     failWordPressAction(render, "Could not find the open file.");
     return;
@@ -338,8 +524,10 @@ export async function submitWordPressExport(render, operations = {}) {
   updateWordPressState({ exportStage: "Preparing the latest saved chapter..." });
   render();
 
+  let projectBlocks = null;
   try {
-    await prepareWordPressExportSnapshot(render, team, context, operations);
+    if (modal.projectId) projectBlocks = await loadProjectExportBlocks(modal, operations);
+    else await prepareWordPressExportSnapshot(render, team, context, operations);
   } catch (error) {
     failWordPressAction(render, error);
     return;
@@ -347,9 +535,9 @@ export async function submitWordPressExport(render, operations = {}) {
 
   const refreshedWordPress = currentWordPressExportState();
   const refreshedTeam = selectedProjectsTeam();
-  const refreshedContext = findChapterContext(state.editorChapter?.chapterId);
+  const refreshedContext = findChapterContext(modal.projectId ? modal.chapterId : state.editorChapter?.chapterId);
   const refreshedLanguageCode = String(
-    selectedEditorPreviewLanguageCode(state.editorChapter) ?? "",
+    modal.projectId ? modal.languageCode : selectedEditorPreviewLanguageCode(state.editorChapter) ?? "",
   ).trim();
   if (
     !refreshedWordPress
@@ -366,7 +554,8 @@ export async function submitWordPressExport(render, operations = {}) {
     return;
   }
 
-  const blocks = buildEditorPreviewDocument(state.editorChapter?.rows, refreshedLanguageCode);
+  const blocks = projectBlocks ?? buildEditorPreviewDocument(state.editorChapter?.rows, refreshedLanguageCode);
+  if (projectBlocks) blocks.unshift({ kind: "text", textStyle: "heading1", text: modal.projectTitle, rowId: `project-title:${modal.projectId}`, languageCode: refreshedLanguageCode, footnotes: [] });
   const { content, footnotes, title: headingTitle } = serializeEditorPreviewWordPress(blocks);
   if (!content.trim()) {
     failWordPressAction(render, "There is nothing to export.");
@@ -380,6 +569,8 @@ export async function submitWordPressExport(render, operations = {}) {
   try {
     await invokeCommand("export_chapter_to_wordpress", {
       input: {
+        storageLogin: getActiveStorageLogin() ?? "",
+        siteId: refreshedWordPress.connection?.siteId ?? "",
         installationId: refreshedTeam.installationId,
         repoName: refreshedContext.project.name,
         projectId: refreshedContext.project.id ?? null,
@@ -393,6 +584,7 @@ export async function submitWordPressExport(render, operations = {}) {
           : headingTitle ?? "",
         content,
         footnotes,
+        refreshWordPressImages,
       },
     });
   } catch (error) {
@@ -405,14 +597,27 @@ export function handleWordPressAuthEvent(payload, render) {
     return;
   }
 
+  if (String(payload?.storageLogin ?? "").toLowerCase() !== String(getActiveStorageLogin() ?? "").toLowerCase()) {
+    return;
+  }
   if (payload?.status === "success" && payload?.connection) {
+    const previous = currentWordPressExportState();
+    const connections = [...(previous?.connections ?? []).filter((item) => item.siteId !== payload.connection.siteId), payload.connection]
+      .sort((a, b) => (a.displayName || a.siteUrl).localeCompare(b.displayName || b.siteUrl));
     updateWordPressState({
       connectionStatus: "connected",
       connection: payload.connection,
+      connections,
+      reauthRequired: false,
+      authInProgress: false,
+      addStage: "idle",
+      inspection: null,
     });
     updateExportModal({ error: "" });
   } else {
-    updateWordPressState({ connectionStatus: "disconnected" });
+    updateWordPressState(currentWordPressExportState()?.connection
+      ? { connectionStatus: "connected", reauthRequired: true, authInProgress: false, addStage: "idle" }
+      : { connectionStatus: "disconnected", authInProgress: false, addStage: "address" });
     updateExportModal({
       error: payload?.message ?? "WordPress.com sign-in did not complete.",
     });
@@ -437,12 +642,12 @@ export function handleWordPressExportProgressEvent(payload, render) {
     updateExportModal({ isOpen: false, status: "idle", error: "" });
     const postId = Number.parseInt(String(payload.postId ?? ""), 10);
     if (Number.isFinite(postId) && postId > 0) {
-      saveStoredEditorExportDefault(state.editorChapter?.chapterId, {
-        optionId: "link:wordpress",
-        wordpress: {
-          postId,
-          postTitle: String(payload.postTitle ?? "").trim(),
-        },
+      upsertStoredWordPressDestination(exportDefaultKey(), {
+        siteId: wordpress.connection?.siteId ?? "",
+        siteKind: wordpress.connection?.kind ?? "",
+        siteUrl: wordpress.connection?.siteUrl ?? "",
+        postId,
+        postTitle: String(payload.postTitle ?? "").trim(),
       });
     }
 
@@ -452,7 +657,7 @@ export function handleWordPressExportProgressEvent(payload, render) {
     const postLink = String(payload.postLink ?? "").trim();
     const editLink = String(payload.postEditLink ?? "").trim();
     const successUrl = isPublished ? (postLink || editLink) : (editLink || postLink);
-    if (successUrl && state.editorChapter?.chapterId) {
+    if (successUrl && (currentExportModal()?.projectId || state.editorChapter?.chapterId)) {
       state.editorChapter = {
         ...state.editorChapter,
         wordpressExportSuccessModal: {
@@ -473,6 +678,9 @@ export function handleWordPressExportProgressEvent(payload, render) {
   }
 
   updateWordPressState({ exportStage: "", jobId: "" });
+  if (payload.errorCode === "reauthRequired") {
+    updateWordPressState({ reauthRequired: true });
+  }
   updateExportModal({ status: "idle", error: formatErrorForDisplay(payload.message ?? "WordPress export failed.") });
   render();
 }

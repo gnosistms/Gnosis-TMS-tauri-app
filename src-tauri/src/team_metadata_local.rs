@@ -24,8 +24,8 @@ use crate::{
         ensure_installation_allows_qa_list_management,
     },
     local_repo_sync_state::{
-        read_local_repo_sync_state, upsert_local_repo_sync_state, LocalRepoSyncState,
-        LocalRepoSyncStateUpdate,
+        inspect_local_repo_sync_state, read_local_repo_sync_state, upsert_local_repo_sync_state,
+        LocalRepoSyncState, LocalRepoSyncStateInspection, LocalRepoSyncStateUpdate,
     },
     repo_sync_shared::{
         abort_rebase_after_failed_pull, git_output, load_git_transport_token,
@@ -39,11 +39,13 @@ use crate::{
 
 const TEAM_METADATA_REPO_NAME: &str = "team-metadata";
 
+mod ai;
 mod mutations;
 mod records;
 mod repair;
 mod repo;
 
+use self::ai::load_local_team_ai_metadata_snapshot as load_local_team_ai_metadata_snapshot_value;
 use self::mutations::{
     actor_login, build_glossary_record_value, build_project_record_value,
     build_qa_list_record_value, delete_local_record, upsert_local_record,
@@ -164,6 +166,19 @@ pub(crate) async fn sync_local_team_metadata_repo(
 }
 
 #[tauri::command]
+pub(crate) async fn load_local_team_ai_metadata_snapshot(
+    app: AppHandle,
+    installation_id: i64,
+) -> Result<ai::LocalTeamAiMetadataSnapshot, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let repo_path = require_local_metadata_repo(&app, installation_id)?;
+        load_local_team_ai_metadata_snapshot_value(&repo_path)
+    })
+    .await
+    .map_err(|error| format!("Could not run the local team AI metadata task: {error}"))?
+}
+
+#[tauri::command]
 pub(crate) async fn list_local_gnosis_project_metadata_records(
     app: AppHandle,
     installation_id: i64,
@@ -275,26 +290,47 @@ pub(crate) async fn lookup_local_team_metadata_tombstone(
 pub(crate) async fn inspect_and_migrate_local_repo_bindings(
     app: AppHandle,
     installation_id: i64,
+    kinds: Option<Vec<String>>,
 ) -> Result<LocalRepoRepairScanResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        // Each kind costs a git scan of all its local repos, so a caller that
+        // only shows glossaries can skip the projects and QA lists.
+        let wants = |kind: &str| {
+            kinds
+                .as_ref()
+                .is_none_or(|kinds| kinds.iter().any(|k| k == kind))
+        };
+        let empty = || LocalRepoRepairScanResult {
+            issues: Vec::new(),
+            auto_repaired_count: 0,
+        };
         let repo_path = require_local_metadata_repo(&app, installation_id)?;
-        let project_listing =
-            list_local_metadata_records::<GithubProjectMetadataRecord>(&repo_path, "project")?;
-        let glossary_listing =
-            list_local_metadata_records::<GithubGlossaryMetadataRecord>(&repo_path, "glossary")?;
-        let qa_list_listing =
-            list_local_metadata_records::<GithubQaListMetadataRecord>(&repo_path, "qaList")?;
-        report_skipped_metadata_records(&app, &project_listing.skipped_record_files);
-        report_skipped_metadata_records(&app, &glossary_listing.skipped_record_files);
-        report_skipped_metadata_records(&app, &qa_list_listing.skipped_record_files);
-        let project_records = project_listing.records;
-        let glossary_records = glossary_listing.records;
-        let qa_list_records = qa_list_listing.records;
 
-        let project_scan = inspect_project_repo_repairs(&app, installation_id, &project_records)?;
-        let glossary_scan =
-            inspect_glossary_repo_repairs(&app, installation_id, &glossary_records)?;
-        let qa_list_scan = inspect_qa_list_repo_repairs(&app, installation_id, &qa_list_records)?;
+        let project_scan = if wants("project") {
+            let listing =
+                list_local_metadata_records::<GithubProjectMetadataRecord>(&repo_path, "project")?;
+            report_skipped_metadata_records(&app, &listing.skipped_record_files);
+            inspect_project_repo_repairs(&app, installation_id, &listing.records)?
+        } else {
+            empty()
+        };
+        let glossary_scan = if wants("glossary") {
+            let listing = list_local_metadata_records::<GithubGlossaryMetadataRecord>(
+                &repo_path, "glossary",
+            )?;
+            report_skipped_metadata_records(&app, &listing.skipped_record_files);
+            inspect_glossary_repo_repairs(&app, installation_id, &listing.records)?
+        } else {
+            empty()
+        };
+        let qa_list_scan = if wants("qaList") {
+            let listing =
+                list_local_metadata_records::<GithubQaListMetadataRecord>(&repo_path, "qaList")?;
+            report_skipped_metadata_records(&app, &listing.skipped_record_files);
+            inspect_qa_list_repo_repairs(&app, installation_id, &listing.records)?
+        } else {
+            empty()
+        };
 
         Ok(LocalRepoRepairScanResult {
             issues: project_scan

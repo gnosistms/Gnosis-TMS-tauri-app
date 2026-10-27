@@ -4,4 +4,9 @@
 @import "./styles/translate.css";
 @import "./styles/alphabet-index-scroll.css";
 @import "./styles/modals.css";
+@import "./styles/project-book.css";
+@import "./styles/money-input.css";
+@import "./styles/glossary-research.css";
+@import "./styles/glossary-research-report.css";
+@import "./styles/glossary-research-studio.css";
 @import "./styles/responsive.css";

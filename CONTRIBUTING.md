@@ -1,36 +1,51 @@
 # Contributing to Gnosis TMS
 
-Thank you for considering a contribution. Before you start, please read this page —
-especially the licensing section, because Gnosis TMS is not a conventional
-open-source project and we want you to know exactly what your contribution funds.
+Thank you for considering a contribution. Before you start, please read the
+licensing terms and development guidance below.
 
-## The licensing model, honestly
+## Licensing
 
-Gnosis TMS is **fair source**: the code is public, and use is free for
-noncommercial purposes (see [LICENSE](LICENSE)). Companies using it commercially
-buy a license (see [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md)), and those
-sales fund the project's development and the free use everyone else enjoys —
-including the translation teams of Gnostic organizations the project was built
-for.
+Gnosis TMS is open-source software under the GNU General Public License,
+version 3 only (`GPL-3.0-only`; see [LICENSE](LICENSE)). Commercial and
+noncommercial use are permitted without a separate paid commercial license.
+By submitting a contribution, you agree to license it under GPL-3.0-only.
+You retain copyright in your contributions. No additional relicensing grant or
+Contributor License Agreement is required for new contributions.
 
-This means the project's maintainer sells commercial licenses covering the whole
-codebase, including contributed code. To make that legally possible, every
-contributor signs a Contributor License Agreement (below). If that model isn't
-something you want to support with your work, we understand — and we'd rather you
-know before you write a patch than after.
+The separate GitHub App broker is licensed under the GNU Affero General Public
+License, version 3 only (`AGPL-3.0-only`). Third-party components retain their own
+licenses and notices.
 
-## Contributor License Agreement
+## Developer Certificate of Origin
 
-All contributions require a signed CLA — see [CLA.md](CLA.md) for the full text.
-In short: you keep ownership of your contribution and can use it however you like,
-and you grant the maintainer the right to distribute and relicense it, including
-commercially.
+Sign off each contribution commit to certify that you have the right to submit
+the work under the project's license. Read the [Developer Certificate of Origin
+1.1](DCO.txt) before adding your sign-off.
 
-Signing is automatic: when you open your first pull request, the CLA Assistant bot
-posts a link, and you sign by authenticating with your GitHub account and
-clicking agree. It takes under a minute and never has to be repeated. A pull
-request cannot be merged until its author has signed (a Developer Certificate of
-Origin `Signed-off-by` line is not a substitute).
+With your name and email configured in Git, use:
+
+```bash
+git commit --signoff -m "Describe your change"
+```
+
+This adds a `Signed-off-by: Your Name <your.email@example.com>` trailer. Sign-off
+is a certification of the DCO, not a cryptographic commit signature. Only add it
+if you can make that certification. GitHub's web editor also requires sign-off.
+
+If you forgot to sign off your latest commit, you can amend it:
+
+```bash
+git commit --amend --no-edit --signoff
+```
+
+Amending changes the commit ID; coordinate before rewriting shared history.
+Command-line contributors must supply their sign-offs themselves; GitHub's web
+sign-off setting does not validate commits pushed from a local checkout.
+Maintainers should check contribution sign-offs before merging pull requests.
+
+The previous [CLA template](CLA.md) is retained for historical reference. New
+contributors do not sign it. Previously executed agreements and their records
+are preserved; this policy change does not rewrite their terms.
 
 ## Development setup
 

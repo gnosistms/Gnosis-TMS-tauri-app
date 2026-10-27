@@ -5,8 +5,8 @@ import {
   normalizeEditorChapterFilterState,
 } from "./editor-filters.js";
 import { loadActiveEditorFieldHistory } from "./editor-history-flow.js";
+import { refreshChangedAfterMyEditRowsAfterSync } from "./editor-changed-after-my-edit-flow.js";
 import {
-  flushDirtyEditorRows as flushDirtyEditorRowsFlow,
   hasPendingEditorWrites as hasPendingEditorWritesFlow,
 } from "./editor-persistence-flow.js";
 import {
@@ -18,7 +18,6 @@ import { reloadSelectedChapterEditorData } from "./editor-chapter-reload.js";
 import { rowHasPersistedChanges } from "./editor-row-persistence-model.js";
 import { markEditorRowsStale, reloadEditorRowFromDisk } from "./editor-row-sync-flow.js";
 import {
-  applyEditorSelectionsToProjectState,
   updateEditorChapterRow,
 } from "./editor-state-flow.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
@@ -47,6 +46,7 @@ const editorBackgroundSyncSession = {
   lastScrollAt: 0,
   lastSyncedHeadSha: null,
   pendingSync: null,
+  pendingReloadReason: null,
 };
 let nextEditorBackgroundSyncSessionId = 1;
 
@@ -79,13 +79,6 @@ function sessionMatchesCurrentEditor(sessionId = null) {
       || editorBackgroundSyncSession.sessionId === sessionId
     )
   );
-}
-
-function persistenceOperations() {
-  return {
-    updateEditorChapterRow,
-    applyEditorSelectionsToProjectState,
-  };
 }
 
 function activeEditorSyncInput() {
@@ -260,6 +253,8 @@ function hasLocalEditorWritesBlockingBackgroundSync(chapterState = state.editorC
   if (chapterState.dirtyRowIds instanceof Set && chapterState.dirtyRowIds.size > 0) {
     return true;
   }
+
+  if (Object.values(chapterState.srtGroupEdits ?? {}).some((edit) => edit.draft !== edit.savedDraft)) return true;
 
   return false;
 }
@@ -437,11 +432,13 @@ async function resolveBackgroundSyncDirtyRows(render, rowIds = []) {
           baseFields: currentRow.baseFields,
           baseFootnotes: currentRow.baseFootnotes,
           baseImageCaptions: currentRow.baseImageCaptions,
+          baseAttributions: currentRow.baseAttributions,
           conflictRemoteVersion: payload?.rowVersion ?? null,
         }, {
           localFields: currentRow.fields,
           localFootnotes: currentRow.footnotes,
           localImageCaptions: currentRow.imageCaptions,
+          localAttributions: currentRow.attributions,
           remoteVersion: payload?.rowVersion ?? null,
         }),
       );
@@ -485,6 +482,7 @@ function createBackgroundSyncResult(overrides = {}) {
     requiresChapterReload: false,
     requiresBlockingReload: false,
     performedBlockingReload: false,
+    reloadDeferred: false,
     blockingReloadReason: null,
     handlingSummary: buildBackgroundSyncHandlingSummary(),
     ...overrides,
@@ -492,7 +490,10 @@ function createBackgroundSyncResult(overrides = {}) {
 }
 
 async function performBlockingChapterReload(render) {
-  if (!sessionMatchesCurrentEditor()) {
+  const sessionId = editorBackgroundSyncSession.sessionId;
+  // Opening the modal moves focus and can trigger a row's blur-save handler.
+  // Check live writes here, after the remote request, before touching the DOM.
+  if (!sessionMatchesCurrentEditor(sessionId) || hasPendingEditorWritesFlow()) {
     return false;
   }
 
@@ -504,13 +505,13 @@ async function performBlockingChapterReload(render) {
   render?.();
 
   try {
-    await reloadSelectedChapterEditorData(render, { preserveVisibleRows: true });
-    if (!sessionMatchesCurrentEditor()) {
+    const loaded = await reloadSelectedChapterEditorData(render, { preserveVisibleRows: true });
+    if (!sessionMatchesCurrentEditor(sessionId)) {
       return false;
     }
 
     await waitForNextPaint();
-    return state.editorChapter?.status === "ready";
+    return loaded === true;
   } finally {
     unlockScreenScrollSnapshot("translate");
     if (hideNavigationLoadingModal(navigationLoadingToken)) {
@@ -519,7 +520,43 @@ async function performBlockingChapterReload(render) {
   }
 }
 
+async function reloadSyncedChapter(render, reason, result, sessionId) {
+  // The next sync may have an unchanged head and no conflict notification.
+  // Keep the reload request until the local chapter has actually been loaded.
+  editorBackgroundSyncSession.pendingReloadReason = reason;
+  const reloadDeferred = hasPendingEditorWritesFlow();
+  const performedBlockingReload = !reloadDeferred && await performBlockingChapterReload(render);
+  if (sessionMatchesCurrentEditor(sessionId)) {
+    if (performedBlockingReload) {
+      editorBackgroundSyncSession.pendingReloadReason = null;
+    }
+    setEditorBackgroundSyncState(
+      reloadDeferred ? "waiting" : performedBlockingReload ? "idle" : "error",
+      !reloadDeferred && !performedBlockingReload ? "The file could not be refreshed. Refresh to try again." : "",
+    );
+    if (!reloadDeferred && !performedBlockingReload) {
+      render?.({ scope: "translate-body" });
+    }
+  }
+  return createBackgroundSyncResult({
+    ...result,
+    requiresChapterReload: true,
+    requiresBlockingReload: true,
+    performedBlockingReload,
+    reloadDeferred,
+    blockingReloadReason: reason,
+  });
+}
+
+// Other people's commits arriving by sync can qualify more rows for the "Changed after
+// my last edit" filter; the refresh only adds rows to the snapshot on screen.
 async function runEditorBackgroundSync(render, options = {}) {
+  const result = await runEditorBackgroundSyncOnce(render, options);
+  refreshChangedAfterMyEditRowsAfterSync(render, result?.payload);
+  return result;
+}
+
+async function runEditorBackgroundSyncOnce(render, options = {}) {
   const sessionId = editorBackgroundSyncSession.sessionId;
   if (!sessionMatchesCurrentEditor(sessionId)) {
     return createBackgroundSyncResult();
@@ -534,13 +571,8 @@ async function runEditorBackgroundSync(render, options = {}) {
     return createBackgroundSyncResult();
   }
 
-  if (options.skipDirtyFlush !== true) {
-    if (await flushDirtyEditorRowsFlow(render, persistenceOperations()) === false) {
-      setEditorBackgroundSyncState("waiting", "");
-      return createBackgroundSyncResult();
-    }
-  }
-
+  // Dirty text is a draft, not permission to commit. Only the user save paths
+  // may enqueue it; sync waits instead of implicitly submitting an open row.
   if (hasLocalEditorWritesBlockingBackgroundSync() || hasBlockingPendingWritesForBackgroundSync()) {
     setEditorBackgroundSyncState("waiting", "");
     return createBackgroundSyncResult();
@@ -604,22 +636,25 @@ async function runEditorBackgroundSync(render, options = {}) {
         ?? editorBackgroundSyncSession.lastSyncedHeadSha;
     }
 
+    const blockingReloadReason = currentChapterHasImportedGitConflicts
+      ? "imported-editor-conflicts"
+      : editorBackgroundSyncSession.pendingReloadReason
+        ?? (matchesCurrentHead && handlingSummary.requiresBlockingReload ? handlingSummary.blockingReloadReason : null);
+    if (blockingReloadReason) {
+      return await reloadSyncedChapter(render, blockingReloadReason, {
+        payload: payload ?? null,
+        matchedCurrentHead: matchesCurrentHead,
+        handlingSummary,
+      }, sessionId);
+    }
+
     if (repoSyncStatus === PROJECT_REPO_SYNC_STATUS_IMPORTED_EDITOR_CONFLICTS) {
-      const performedBlockingReload = currentChapterHasImportedGitConflicts
-        ? await performBlockingChapterReload(render)
-        : false;
       setEditorBackgroundSyncState("idle", "");
       return createBackgroundSyncResult({
         payload: payload ?? null,
         matchedCurrentHead: matchesCurrentHead,
         refreshedRowIds: [],
         shouldRerenderBody: false,
-        requiresChapterReload: currentChapterHasImportedGitConflicts,
-        requiresBlockingReload: currentChapterHasImportedGitConflicts,
-        performedBlockingReload,
-        blockingReloadReason: currentChapterHasImportedGitConflicts
-          ? "imported-editor-conflicts"
-          : null,
         handlingSummary,
       });
     }
@@ -636,22 +671,6 @@ async function runEditorBackgroundSync(render, options = {}) {
         requiresChapterReload: payload !== null,
         requiresBlockingReload: handlingSummary.requiresBlockingReload,
         performedBlockingReload: false,
-        blockingReloadReason: handlingSummary.blockingReloadReason,
-        handlingSummary,
-      });
-    }
-
-    if (handlingSummary.requiresBlockingReload === true) {
-      const performedBlockingReload = await performBlockingChapterReload(render);
-      setEditorBackgroundSyncState("idle", "");
-      return createBackgroundSyncResult({
-        payload: payload ?? null,
-        matchedCurrentHead: true,
-        refreshedRowIds: [],
-        shouldRerenderBody: false,
-        requiresChapterReload: handlingSummary.requiresChapterReload,
-        requiresBlockingReload: true,
-        performedBlockingReload,
         blockingReloadReason: handlingSummary.blockingReloadReason,
         handlingSummary,
       });
@@ -763,7 +782,6 @@ async function syncEditorBackgroundNowInternal(render, options = {}) {
   }
 
   const syncPromise = runEditorBackgroundSync(render, {
-    skipDirtyFlush: options.skipDirtyFlush === true,
     suppressConservativeRerender: options.suppressConservativeRerender === true,
   });
   editorBackgroundSyncSession.pendingSync = syncPromise;
@@ -799,6 +817,7 @@ export function startEditorBackgroundSyncSession(render, options = {}) {
     editorBackgroundSyncSession.lastScrollAt = 0;
     editorBackgroundSyncSession.pendingSync = null;
     editorBackgroundSyncSession.lastSyncedHeadSha = null;
+    editorBackgroundSyncSession.pendingReloadReason = null;
     return;
   }
 
@@ -824,6 +843,7 @@ export function startEditorBackgroundSyncSession(render, options = {}) {
   editorBackgroundSyncSession.lastScrollAt = performance.now();
   editorBackgroundSyncSession.pendingSync = null;
   editorBackgroundSyncSession.lastSyncedHeadSha = currentHeadSha;
+  editorBackgroundSyncSession.pendingReloadReason = null;
 
   if (!key) {
     return;
@@ -852,6 +872,7 @@ export function stopEditorBackgroundSyncSession() {
   editorBackgroundSyncSession.sessionId = 0;
   editorBackgroundSyncSession.lastScrollAt = 0;
   editorBackgroundSyncSession.lastSyncedHeadSha = null;
+  editorBackgroundSyncSession.pendingReloadReason = null;
   editorBackgroundSyncSession.pendingSync = null;
   return pendingSync;
 }

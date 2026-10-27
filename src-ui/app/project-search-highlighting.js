@@ -10,7 +10,7 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
-export function buildProjectSearchSnippetMarkup(text, query, languageCode = "") {
+export function buildProjectSearchSnippetMarkup(text, query, languageCode = "", options = {}) {
   const sourceText = String(text ?? "");
   const normalizedQuery = String(query ?? "").trim();
   if (!sourceText) {
@@ -21,7 +21,7 @@ export function buildProjectSearchSnippetMarkup(text, query, languageCode = "") 
     return escapeHtml(sourceText);
   }
 
-  const matches = findEditorSearchMatches(sourceText, normalizedQuery, languageCode);
+  const matches = findEditorSearchMatches(sourceText, normalizedQuery, languageCode, options);
   const highlight = buildEditorSearchHighlightMarkup(sourceText, matches);
   return highlight.hasMatches ? highlight.html : escapeHtml(sourceText);
 }

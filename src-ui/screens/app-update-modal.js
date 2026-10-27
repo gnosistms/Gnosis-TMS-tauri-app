@@ -34,14 +34,14 @@ export function renderAppUpdateModal(state) {
         <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="app-update-installing-modal-title" aria-busy="true" data-modal-dialog="app-update:installing" tabindex="-1">
           <div class="card__body modal-card__body">
             <p class="card__eyebrow">APP UPDATE</p>
-            <h2 class="modal__title" id="app-update-installing-modal-title">Installing update</h2>
+            <h2 class="modal__title" id="app-update-installing-modal-title">Downloading update</h2>
             <p class="modal__supporting">
-              Downloading and installing the latest version now. The app will restart when it is ready.
+              Downloading the latest version. Choose Restart to update when the download is ready.
             </p>
             <div class="modal__actions">
               ${loadingPrimaryButton({
                 label: "Update now",
-                loadingLabel: "Installing...",
+                loadingLabel: "Downloading...",
                 action: "install-app-update",
                 isLoading: true,
               })}
@@ -52,7 +52,7 @@ export function renderAppUpdateModal(state) {
     `;
   }
 
-  if (update.status === "restarting") {
+  if (update.status === "restarting" || update.status === "preparing") {
     return `
       <div class="modal-backdrop" aria-live="polite">
         <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="app-update-restarting-modal-title" aria-busy="true" data-modal-dialog="app-update:restarting" tabindex="-1">
@@ -60,10 +60,10 @@ export function renderAppUpdateModal(state) {
             <p class="card__eyebrow">APP UPDATE</p>
             <h2 class="modal__title" id="app-update-restarting-modal-title">Restarting to finish update</h2>
             <p class="modal__supporting">
-              The update has been installed. Gnosis TMS is restarting now.
+              Saving changes and installing the verified update before restarting Gnosis TMS.
             </p>
             <div class="modal__actions">
-              ${primaryButton("Restarting...", "noop", { disabled: true })}
+              ${primaryButton(update.status === "preparing" ? "Saving changes..." : "Restarting...", "noop", { disabled: true })}
             </div>
           </div>
         </section>
@@ -89,7 +89,7 @@ export function renderAppUpdateModal(state) {
               `
               : `
                 <p class="modal__supporting">
-                  Update now to download and install it, or choose Later and keep working.
+                  Download the update and keep working. When ready, choose Restart to update to install it.
                 </p>
               `
           }
@@ -98,7 +98,7 @@ export function renderAppUpdateModal(state) {
             ${update.required === true ? "" : secondaryButton("Later", "dismiss-app-update", {
               modalCancel: true,
             })}
-            ${primaryButton("Update now", "install-app-update", {
+            ${primaryButton(update.status === "downloaded" ? "Restart to update" : "Update now", "install-app-update", {
               modalDefault: true,
             })}
           </div>

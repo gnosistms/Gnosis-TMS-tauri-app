@@ -212,6 +212,7 @@ function renderEditorReplaceControls(editorReplace) {
     <label class="replace-toggle${editorReplace.isEnabled ? " replace-toggle--checkbox-only" : ""}">
       <input
         type="checkbox"
+        class="editor-checkbox"
         data-editor-replace-toggle
         aria-label="${editorReplace.isEnabled ? "Hide replace controls" : "Show replace controls"}"
         ${editorReplace.isEnabled ? "checked" : ""}
@@ -482,7 +483,7 @@ export function renderPreviewToolbar({
             data-action="open-editor-export-options"
             ${tooltipAttributes("Export the document shown below to a file, the clipboard, or another destination.", { align: "end", side: "bottom" })}
           >
-            <span class="select-pill__value">Export options</span>
+            <span class="select-pill__value">Export</span>
           </button>
         </div>
       </div>

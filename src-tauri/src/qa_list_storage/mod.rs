@@ -452,7 +452,11 @@ pub(crate) async fn initialize_gtms_qa_list_repo(
     input: InitializeQaListRepoInput,
 ) -> Result<LocalQaListSummary, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_qa_list_management(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_qa_list_management,
+        )?;
         initialize_gtms_qa_list_repo_sync(&app, input)
     })
     .await
@@ -465,7 +469,11 @@ pub(crate) async fn import_tmx_to_gtms_qa_list_repo(
     input: ImportTmxToQaListRepoInput,
 ) -> Result<LocalQaListSummary, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_qa_list_management(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_qa_list_management,
+        )?;
         import_tmx_to_gtms_qa_list_repo_sync(&app, input)
     })
     .await
@@ -507,7 +515,11 @@ pub(crate) async fn rename_gtms_qa_list(
     input: RenameQaListInput,
 ) -> Result<LocalQaListSummary, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_qa_list_management(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_qa_list_management,
+        )?;
         rename_gtms_qa_list_sync(&app, input)
     })
     .await
@@ -520,7 +532,11 @@ pub(crate) async fn soft_delete_gtms_qa_list(
     input: UpdateQaListLifecycleInput,
 ) -> Result<LocalQaListSummary, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_qa_list_management(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_qa_list_management,
+        )?;
         update_gtms_qa_list_lifecycle_sync(&app, input, "deleted")
     })
     .await
@@ -533,7 +549,11 @@ pub(crate) async fn restore_gtms_qa_list(
     input: UpdateQaListLifecycleInput,
 ) -> Result<LocalQaListSummary, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_qa_list_management(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_qa_list_management,
+        )?;
         update_gtms_qa_list_lifecycle_sync(&app, input, "active")
     })
     .await
@@ -556,7 +576,11 @@ pub(crate) async fn upsert_gtms_qa_list_term(
     input: UpsertQaListTermInput,
 ) -> Result<UpsertQaListTermResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_qa_list_writes(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_qa_list_writes,
+        )?;
         upsert_gtms_qa_list_term_sync(&app, input)
     })
     .await
@@ -569,7 +593,11 @@ pub(crate) async fn rollback_gtms_qa_list_term_upsert(
     input: RollbackQaListTermUpsertInput,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_qa_list_writes(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_qa_list_writes,
+        )?;
         rollback_gtms_qa_list_term_upsert_sync(&app, input)
     })
     .await
@@ -582,7 +610,11 @@ pub(crate) async fn delete_gtms_qa_list_term(
     input: DeleteQaListTermInput,
 ) -> Result<DeleteQaListTermResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_installation_allows_qa_list_writes(&app, input.installation_id)?;
+        crate::installation_access::require_command_access(
+            &app,
+            input.installation_id,
+            ensure_installation_allows_qa_list_writes,
+        )?;
         delete_gtms_qa_list_term_sync(&app, input)
     })
     .await

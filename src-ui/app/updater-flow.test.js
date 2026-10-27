@@ -84,19 +84,27 @@ globalThis.window = {
   open() {},
 };
 
-const { resetSessionState, state } = await import("./state.js");
+const { resetSessionState, state, createAppUpdateState, hydratePersistentAppState } = await import("./state.js");
+const { storeKnownAppUpdate, loadKnownAppUpdate } = await import("./app-update-storage.js");
 const {
+  APP_UPDATE_CHECK_INTERVAL_MS,
+  applyAppUpdateDownloadProgress,
   checkForAppUpdate,
+  configureAppUpdateInstallation,
   dismissAppUpdatePrompt,
   installAppUpdate,
   parseRequiredAppUpdateFromError,
   requireAppUpdate,
+  startAppUpdateChecks,
 } = await import("./updater-flow.js");
 
 test.afterEach(() => {
   invokeHandler = async () => null;
   localStorageState.clear();
   resetSessionState();
+  state.appUpdate = createAppUpdateState();
+  storeKnownAppUpdate(state.appUpdate);
+  configureAppUpdateInstallation(async () => {});
 });
 
 test("startup update check opens the global prompt when an update is available", async () => {
@@ -120,6 +128,98 @@ test("startup update check opens the global prompt when an update is available",
   assert.equal(state.appUpdate.promptVisible, true);
   assert.equal(state.appUpdate.dismissedVersion, null);
   assert.ok(renderCount >= 2);
+});
+
+test("manual update checks explain why they are skipped once an update is downloaded", async () => {
+  let invoked = false;
+  invokeHandler = async () => {
+    invoked = true;
+    return null;
+  };
+  state.appUpdate = { ...state.appUpdate, status: "downloaded", available: true, version: "0.2.0" };
+
+  let renderCount = 0;
+  await checkForAppUpdate(() => {
+    renderCount += 1;
+  }, { silent: false });
+
+  assert.equal(invoked, false);
+  assert.equal(state.appUpdate.status, "downloaded");
+  assert.equal(state.statusBadges.left.visible, true);
+  assert.equal(state.statusBadges.left.text, "Update 0.2.0 is downloaded. Restart to install it.");
+  assert.ok(renderCount >= 1);
+});
+
+test("manual update checks explain why they are skipped while an update is downloading", async () => {
+  invokeHandler = async () => {
+    throw new Error("check must not run");
+  };
+  state.appUpdate = { ...state.appUpdate, status: "installing", available: true, version: "0.2.0" };
+
+  await checkForAppUpdate(() => {}, { silent: false });
+
+  assert.equal(state.appUpdate.status, "installing");
+  assert.equal(state.statusBadges.left.text, "Update 0.2.0 is downloading.");
+});
+
+test("manual update checks report saving while an install is preparing", async () => {
+  invokeHandler = async () => {
+    throw new Error("check must not run");
+  };
+  state.appUpdate = { ...state.appUpdate, status: "preparing", available: true, version: "0.2.0" };
+
+  await checkForAppUpdate(() => {}, { silent: false });
+
+  assert.equal(state.appUpdate.status, "preparing");
+  assert.equal(state.statusBadges.left.text, "Saving changes before installing the update.");
+});
+
+test("silent update checks stay silent when skipped", async () => {
+  invokeHandler = async () => {
+    throw new Error("check must not run");
+  };
+  state.appUpdate = { ...state.appUpdate, status: "downloaded", available: true, version: "0.2.0" };
+
+  await checkForAppUpdate(() => {}, { silent: true });
+
+  assert.equal(state.appUpdate.status, "downloaded");
+  assert.equal(state.statusBadges.left.visible, false);
+});
+
+test("installing from the pill clears the persistent checking badge of a superseded manual check", async () => {
+  let resolveCheck = null;
+  invokeHandler = async (command) => {
+    if (command === "check_for_app_update") {
+      return await new Promise((resolve) => {
+        resolveCheck = resolve;
+      });
+    }
+    assert.equal(command, "download_app_update");
+    return null;
+  };
+  state.appUpdate = { ...state.appUpdate, status: "available", available: true, version: "0.2.0" };
+
+  const pendingCheck = checkForAppUpdate(() => {}, { silent: false });
+  assert.equal(state.statusBadges.left.text, "Checking for updates...");
+
+  await installAppUpdate(() => {});
+  assert.equal(state.appUpdate.status, "downloaded");
+  assert.equal(state.statusBadges.left.visible, false);
+
+  resolveCheck({ available: true, version: "0.2.0", currentVersion: "0.1.0", body: null });
+  await pendingCheck;
+  assert.equal(state.appUpdate.status, "downloaded");
+  assert.equal(state.statusBadges.left.visible, false);
+});
+
+test("superseding a check leaves an unrelated notice badge alone", async () => {
+  invokeHandler = async () => null;
+  state.appUpdate = { ...state.appUpdate, status: "available", available: true, version: "0.2.0" };
+  state.statusBadges.left = { visible: true, text: "Saved" };
+
+  await installAppUpdate(() => {});
+
+  assert.equal(state.statusBadges.left.text, "Saved");
 });
 
 test("manual update checks show immediate checking feedback before the result arrives", async () => {
@@ -189,8 +289,14 @@ test("parseRequiredAppUpdateFromError reads the encoded payload", () => {
   );
 });
 
-test("requireAppUpdate opens a non-dismissible required update prompt", () => {
+test("requireAppUpdate opens a required prompt only after a compatible release is confirmed", async () => {
   let renderCount = 0;
+  let finishCheck;
+  invokeHandler = (command, payload) => {
+    assert.equal(command, "check_for_app_update");
+    assert.deepEqual(payload, { requestedVersion: "0.1.36" });
+    return new Promise((resolve) => { finishCheck = resolve; });
+  };
 
   const handled = requireAppUpdate({
     requiredVersion: "0.1.36",
@@ -201,13 +307,18 @@ test("requireAppUpdate opens a non-dismissible required update prompt", () => {
   });
 
   assert.equal(handled, true);
+  assert.equal(state.appUpdate.required, false);
+  assert.equal(state.appUpdate.available, false);
+  assert.equal(state.appUpdate.promptVisible, false);
+  finishCheck({ available: true, version: "0.1.36", currentVersion: "0.1.35" });
+  await new Promise(setImmediate);
   assert.equal(state.appUpdate.required, true);
   assert.equal(state.appUpdate.available, true);
   assert.equal(state.appUpdate.promptVisible, true);
   assert.equal(state.appUpdate.version, "0.1.36");
   assert.equal(state.appUpdate.currentVersion, "0.1.35");
   assert.equal(state.appUpdate.message, "A newer version is required.");
-  assert.equal(renderCount, 1);
+  assert.ok(renderCount > 1);
 });
 
 test("Later suppresses the same version for silent checks but manual checks reopen it", async () => {
@@ -250,12 +361,15 @@ test("required update prompts cannot be dismissed", () => {
   assert.equal(state.appUpdate.dismissedVersion, null);
 });
 
-test("manual update checks do not clear an active required update prompt", async () => {
+test("manual checks release the app-wide requirement when a compatible update is unavailable", async () => {
+  invokeHandler = async () => ({ available: true, version: "0.1.36", currentVersion: "0.1.35" });
   requireAppUpdate({
     requiredVersion: "0.1.36",
     currentVersion: "0.1.35",
     message: "A newer version is required.",
   }, () => {});
+  await new Promise(setImmediate);
+  assert.equal(state.appUpdate.required, true);
 
   invokeHandler = async () => ({
     available: false,
@@ -267,15 +381,15 @@ test("manual update checks do not clear an active required update prompt", async
 
   await checkForAppUpdate(() => {}, { silent: false });
 
-  assert.equal(state.appUpdate.required, true);
-  assert.equal(state.appUpdate.available, true);
-  assert.equal(state.appUpdate.promptVisible, true);
+  assert.equal(state.appUpdate.required, false);
+  assert.equal(state.appUpdate.available, false);
+  assert.equal(state.appUpdate.promptVisible, false);
   assert.equal(state.appUpdate.version, "0.1.36");
   assert.equal(state.appUpdate.currentVersion, "0.1.35");
-  assert.equal(state.appUpdate.message, "A newer version is required.");
+  assert.equal(state.appUpdate.requirement.requiredVersion, "0.1.36");
 });
 
-test("installing an update keeps the prompt open until restart", async () => {
+test("installing an optional update moves progress to the persistent pill", async () => {
   state.appUpdate = {
     ...state.appUpdate,
     status: "available",
@@ -286,34 +400,127 @@ test("installing an update keeps the prompt open until restart", async () => {
   };
 
   invokeHandler = async (command, payload) => {
-    assert.equal(command, "install_app_update");
+    assert.equal(command, "download_app_update");
     assert.deepEqual(payload, { requestedVersion: "0.1.16" });
     return null;
   };
 
   await installAppUpdate(() => {});
 
-  assert.equal(state.appUpdate.status, "restarting");
-  assert.equal(state.appUpdate.promptVisible, true);
+  assert.equal(state.appUpdate.status, "downloaded");
+  assert.equal(state.appUpdate.promptVisible, false);
+  assert.equal(state.appUpdate.downloadPercent, 100);
   assert.equal(state.appUpdate.error, "");
 });
 
+test("native download progress updates the available pill state", () => {
+  state.appUpdate = {
+    ...state.appUpdate,
+    status: "installing",
+    available: true,
+    downloadPercent: 0,
+  };
+  let renderCount = 0;
+
+  const applied = applyAppUpdateDownloadProgress({
+    downloadedBytes: 40,
+    totalBytes: 100,
+    percentage: 40,
+  }, () => {
+    renderCount += 1;
+  });
+
+  assert.equal(applied, true);
+  assert.equal(state.appUpdate.downloadedBytes, 40);
+  assert.equal(state.appUpdate.totalBytes, 100);
+  assert.equal(state.appUpdate.downloadPercent, 40);
+  assert.equal(renderCount, 1);
+});
+
+test("an in-flight background check cannot overwrite an update installation", async () => {
+  state.appUpdate = {
+    ...state.appUpdate,
+    status: "available",
+    available: true,
+    version: "0.1.16",
+    currentVersion: "0.1.15",
+    promptVisible: false,
+  };
+  let resolveCheck = null;
+  invokeHandler = async (command) => {
+    if (command === "check_for_app_update") {
+      return await new Promise((resolve) => {
+        resolveCheck = resolve;
+      });
+    }
+    assert.equal(command, "download_app_update");
+    return null;
+  };
+
+  const pendingCheck = checkForAppUpdate(() => {}, { silent: true, prompt: false });
+  await installAppUpdate(() => {});
+  resolveCheck({
+    available: true,
+    version: "0.1.16",
+    currentVersion: "0.1.15",
+    body: null,
+  });
+  await pendingCheck;
+
+  assert.equal(state.appUpdate.status, "downloaded");
+  assert.equal(state.appUpdate.downloadPercent, 100);
+});
+
+test("update checks schedule a silent background recheck every hour", async () => {
+  const invocations = [];
+  invokeHandler = async (command) => {
+    invocations.push(command);
+    return {
+      available: false,
+      version: null,
+      currentVersion: "0.1.22",
+      body: null,
+    };
+  };
+  let scheduledCallback = null;
+  let scheduledDelay = null;
+
+  const intervalId = startAppUpdateChecks(() => {}, {
+    schedule(callback, delay) {
+      scheduledCallback = callback;
+      scheduledDelay = delay;
+      return 42;
+    },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(intervalId, 42);
+  assert.equal(scheduledDelay, APP_UPDATE_CHECK_INTERVAL_MS);
+  assert.deepEqual(invocations, ["check_for_app_update"]);
+
+  scheduledCallback();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(invocations, ["check_for_app_update", "check_for_app_update"]);
+});
+
 test("required update install passes the required version to native install", async () => {
+  invokeHandler = async () => ({ available: true, version: "0.1.36", currentVersion: "0.1.35" });
   requireAppUpdate({
     requiredVersion: "0.1.36",
     currentVersion: "0.1.35",
     message: "A newer version is required.",
   }, () => {});
+  await new Promise(setImmediate);
 
   invokeHandler = async (command, payload) => {
-    assert.equal(command, "install_app_update");
+    assert.equal(command, "download_app_update");
     assert.deepEqual(payload, { requestedVersion: "0.1.36" });
     return null;
   };
 
   await installAppUpdate(() => {});
 
-  assert.equal(state.appUpdate.status, "restarting");
+  assert.equal(state.appUpdate.status, "downloaded");
   assert.equal(state.appUpdate.required, true);
 });
 
@@ -353,4 +560,250 @@ test("manual update check failures surface a visible error message", async () =>
   assert.equal(state.statusBadges.left.visible, true);
   assert.equal(state.statusBadges.left.text, "Could not check for updates: timeout");
   assert.ok(renderCount >= 3);
+});
+
+test("manual checks and duplicate install clicks cannot replace an active download", async () => {
+  state.appUpdate = { ...state.appUpdate, available: true, version: "1.2.3" };
+  const commands = [];
+  let finishDownload;
+  invokeHandler = (command) => {
+    commands.push(command);
+    return new Promise((resolve) => { finishDownload = resolve; });
+  };
+  const download = installAppUpdate(() => {});
+  await checkForAppUpdate(() => {});
+  await installAppUpdate(() => {});
+  assert.deepEqual(commands, ["download_app_update"]);
+  assert.equal(state.appUpdate.status, "installing");
+  assert.equal(applyAppUpdateDownloadProgress({ percentage: 45 }, () => {}), true);
+  finishDownload();
+  await download;
+  assert.equal(state.appUpdate.status, "downloaded");
+  await checkForAppUpdate(() => {});
+  assert.deepEqual(commands, ["download_app_update"]);
+});
+
+test("a new required-update signal invalidates an older pending check", async () => {
+  let finishCheck;
+  invokeHandler = () => new Promise((resolve) => { finishCheck = resolve; });
+  const check = checkForAppUpdate(() => {}, { silent: true });
+  invokeHandler = async () => ({ available: true, version: "1.2.3", currentVersion: "1.2.2" });
+  requireAppUpdate({ requiredVersion: "1.2.3", currentVersion: "1.2.2" }, () => {});
+  finishCheck({ available: false, currentVersion: "1.2.2" });
+  await check;
+  await new Promise(setImmediate);
+  assert.equal(state.appUpdate.required, true);
+  assert.equal(state.appUpdate.available, true);
+  assert.equal(state.appUpdate.promptVisible, true);
+  assert.equal(state.appUpdate.version, "1.2.3");
+});
+
+test("declined availability survives sign-out, hydration, and failed rechecks", async () => {
+  invokeHandler = async () => ({ available: true, version: "1.2.3", currentVersion: "1.2.2" });
+  await checkForAppUpdate(() => {}, { silent: true });
+  dismissAppUpdatePrompt(() => {});
+  resetSessionState();
+  assert.equal(state.appUpdate.available, true);
+  state.appUpdate = createAppUpdateState();
+  hydratePersistentAppState();
+  assert.equal(state.appUpdate.version, "1.2.3");
+  assert.equal(state.appUpdate.dismissedVersion, "1.2.3");
+  assert.equal(state.appUpdate.promptVisible, false);
+  invokeHandler = async () => { throw new Error("offline"); };
+  await checkForAppUpdate(() => {}, { silent: true });
+  assert.equal(state.appUpdate.available, true);
+  assert.equal(loadKnownAppUpdate().version, "1.2.3");
+});
+
+test("the pending repository requirement clears only when the running version is confirmed current", async () => {
+  invokeHandler = async () => ({ available: false, currentVersion: "1.2.2" });
+  requireAppUpdate({ requiredVersion: "1.2.3", currentVersion: "1.2.2" }, () => {});
+  await checkForAppUpdate(() => {}, { silent: true });
+  assert.equal(state.appUpdate.available, false);
+  assert.equal(state.appUpdate.requirement.requiredVersion, "1.2.3");
+  invokeHandler = async () => ({ available: false, message: "Platform not ready" });
+  await checkForAppUpdate(() => {}, { silent: true });
+  assert.equal(state.appUpdate.available, false);
+  assert.equal(state.appUpdate.requirement.requiredVersion, "1.2.3");
+  invokeHandler = async () => ({ available: false, currentVersion: "1.2.3" });
+  await checkForAppUpdate(() => {}, { silent: true });
+  assert.equal(state.appUpdate.available, false);
+  assert.equal(state.appUpdate.required, false);
+  assert.equal(loadKnownAppUpdate(), null);
+});
+
+for (const required of [false, true]) {
+  test(`installed ${required ? "required" : "optional"} update clears after restart despite a platform message`, async () => {
+    storeKnownAppUpdate({ available: true, required, version: "1.2.3", currentVersion: "1.2.2" });
+    state.appUpdate = createAppUpdateState();
+    hydratePersistentAppState();
+    const message = "A newer release is not available for this platform yet.";
+    invokeHandler = async () => ({ available: false, currentVersion: "1.2.3", message });
+
+    await checkForAppUpdate(() => {}, { silent: true });
+
+    assert.equal(state.appUpdate.available, false);
+    assert.equal(state.appUpdate.required, false);
+    assert.equal(state.appUpdate.promptVisible, false);
+    assert.equal(state.appUpdate.status, "idle");
+    assert.equal(state.appUpdate.currentVersion, "1.2.3");
+    assert.equal(state.appUpdate.message, message);
+    assert.equal(loadKnownAppUpdate(), null);
+  });
+}
+
+test("a newer available release replaces an already installed required update after restart", async () => {
+  storeKnownAppUpdate({ available: true, required: true, version: "1.2.3", currentVersion: "1.2.2" });
+  state.appUpdate = createAppUpdateState();
+  hydratePersistentAppState();
+  invokeHandler = async () => ({ available: true, version: "1.2.5", currentVersion: "1.2.4" });
+
+  await checkForAppUpdate(() => {}, { silent: true });
+
+  assert.equal(state.appUpdate.required, false);
+  assert.equal(state.appUpdate.available, true);
+  assert.equal(state.appUpdate.version, "1.2.5");
+  assert.equal(state.appUpdate.currentVersion, "1.2.4");
+  assert.equal(loadKnownAppUpdate().version, "1.2.5");
+  invokeHandler = async (command, payload) => {
+    assert.equal(command, "download_app_update");
+    assert.equal(payload.requestedVersion, "1.2.5");
+  };
+  await installAppUpdate(() => {});
+  assert.equal(state.appUpdate.status, "downloaded");
+});
+
+test("a missing macOS build stays non-blocking and a later compatible build enables updating", async () => {
+  const payloads = [];
+  invokeHandler = async (command, payload) => {
+    assert.equal(command, "check_for_app_update");
+    payloads.push(payload);
+    return { available: false, currentVersion: "0.8.116", message: "Gnosis TMS 0.8.117 is not available for macOS yet." };
+  };
+  requireAppUpdate({ requiredVersion: "0.8.117", currentVersion: "0.8.116" }, () => {});
+  await new Promise(setImmediate);
+  assert.equal(state.appUpdate.required, false);
+  assert.equal(state.appUpdate.available, false);
+  assert.equal(state.appUpdate.promptVisible, false);
+  assert.match(state.statusBadges.left.text, /not available for macOS/);
+
+  // A stale click must check availability, not try to download an absent build.
+  await installAppUpdate(() => {});
+  assert.deepEqual(payloads, [{ requestedVersion: "0.8.117" }, { requestedVersion: "0.8.117" }]);
+  state.appUpdate = createAppUpdateState();
+  hydratePersistentAppState();
+  assert.equal(state.appUpdate.required, false);
+  assert.equal(state.appUpdate.promptVisible, false);
+  assert.equal(state.appUpdate.requirement.requiredVersion, "0.8.117");
+
+  invokeHandler = async () => ({ available: true, version: "0.8.118", currentVersion: "0.8.116" });
+  await checkForAppUpdate(() => {}, { silent: true, prompt: false });
+  assert.equal(state.appUpdate.required, true);
+  assert.equal(state.appUpdate.promptVisible, true);
+  assert.equal(state.appUpdate.version, "0.8.118");
+  invokeHandler = async (command, payload) => {
+    assert.equal(command, "download_app_update");
+    assert.deepEqual(payload, { requestedVersion: "0.8.118" });
+  };
+  await installAppUpdate(() => {});
+  assert.equal(state.appUpdate.status, "downloaded");
+});
+
+test("legacy persisted required prompts revalidate without locking an offline app", async () => {
+  storeKnownAppUpdate({ available: true, required: true, version: "0.8.117", currentVersion: "0.8.116" });
+  state.appUpdate = createAppUpdateState();
+  hydratePersistentAppState();
+  assert.equal(state.appUpdate.required, false);
+  assert.equal(state.appUpdate.available, false);
+  assert.equal(state.appUpdate.promptVisible, false);
+  invokeHandler = async () => { throw new Error("offline"); };
+  await checkForAppUpdate(() => {}, { silent: true });
+  assert.equal(state.appUpdate.required, false);
+  assert.equal(state.appUpdate.promptVisible, false);
+  assert.equal(loadKnownAppUpdate().requirement.requiredVersion, "0.8.117");
+});
+
+test("a compatible release below the repository minimum cannot lock the app", async () => {
+  invokeHandler = async () => ({ available: true, version: "0.8.116", currentVersion: "0.8.115" });
+  requireAppUpdate({ requiredVersion: "0.8.117", currentVersion: "0.8.115" }, () => {});
+  await new Promise(setImmediate);
+  assert.equal(state.appUpdate.required, false);
+  assert.equal(state.appUpdate.available, false);
+  assert.equal(state.appUpdate.promptVisible, false);
+});
+
+test("stronger repository requirements supersede in-flight checks and are not downgraded", async () => {
+  let finishOldCheck;
+  invokeHandler = () => new Promise((resolve) => { finishOldCheck = resolve; });
+  requireAppUpdate({ requiredVersion: "0.8.117", currentVersion: "0.8.116" }, () => {});
+  invokeHandler = async (command, payload) => {
+    assert.deepEqual(payload, { requestedVersion: "0.8.118" });
+    return { available: false, currentVersion: "0.8.116" };
+  };
+  requireAppUpdate({ requiredVersion: "0.8.118", currentVersion: "0.8.116" }, () => {});
+  finishOldCheck({ available: true, version: "0.8.117", currentVersion: "0.8.116" });
+  await new Promise(setImmediate);
+  requireAppUpdate({ requiredVersion: "0.8.117", currentVersion: "0.8.116" }, () => {});
+  assert.equal(state.appUpdate.requirement.requiredVersion, "0.8.118");
+  assert.equal(state.appUpdate.required, false);
+  assert.equal(state.appUpdate.available, false);
+});
+
+for (const operation of ["check", "download", "install"]) {
+  test(`a required update ${operation} failure releases the global lock`, async () => {
+    invokeHandler = async () => ({ available: true, version: "0.8.117", currentVersion: "0.8.116" });
+    requireAppUpdate({ requiredVersion: "0.8.117", currentVersion: "0.8.116" }, () => {});
+    await new Promise(setImmediate);
+    assert.equal(state.appUpdate.required, true);
+    if (operation === "install") state.appUpdate.status = "downloaded";
+    invokeHandler = async () => { throw new Error("Update server or installer unavailable"); };
+    if (operation === "check") await checkForAppUpdate(() => {}, { silent: true });
+    else await installAppUpdate(() => {});
+    assert.equal(state.appUpdate.required, false);
+    dismissAppUpdatePrompt(() => {});
+    assert.equal(state.appUpdate.promptVisible, false);
+    assert.equal(loadKnownAppUpdate().required, false);
+  });
+}
+
+test("download completion does not install until an explicit second action saves writes", async () => {
+  state.appUpdate = { ...state.appUpdate, available: true, version: "1.2.3" };
+  const events = [];
+  invokeHandler = async (command) => { events.push(command); };
+  configureAppUpdateInstallation(async () => {
+    assert.equal(state.appUpdate.status, "preparing");
+    events.push("save-writes");
+  });
+  await installAppUpdate(() => {});
+  assert.deepEqual(events, ["download_app_update"]);
+  await installAppUpdate(() => {});
+  assert.deepEqual(events, ["download_app_update", "save-writes", "install_app_update"]);
+  assert.equal(state.appUpdate.status, "restarting");
+});
+
+test("failed save readiness blocks native installation and leaves restart retryable", async () => {
+  state.appUpdate = { ...state.appUpdate, status: "downloaded", available: true };
+  const commands = [];
+  invokeHandler = async (command) => { commands.push(command); };
+  configureAppUpdateInstallation(async () => { throw new Error("Unsaved changes"); });
+  await installAppUpdate(() => {});
+  assert.deepEqual(commands, []);
+  assert.equal(state.appUpdate.status, "downloaded");
+  assert.equal(state.appUpdate.promptVisible, true);
+  assert.equal(state.appUpdate.error, "Unsaved changes");
+});
+
+test("restart preparation blocks checks and repeated restart clicks", async () => {
+  state.appUpdate = { ...state.appUpdate, status: "downloaded", available: true };
+  let finishSave;
+  configureAppUpdateInstallation(() => new Promise((resolve) => { finishSave = resolve; }));
+  const commands = [];
+  invokeHandler = async (command) => { commands.push(command); };
+  const restart = installAppUpdate(() => {});
+  await checkForAppUpdate(() => {});
+  await installAppUpdate(() => {});
+  assert.deepEqual(commands, []);
+  finishSave();
+  await restart;
+  assert.deepEqual(commands, ["install_app_update"]);
 });

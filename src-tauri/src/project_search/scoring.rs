@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 
-use super::{CandidateDocument, SearchProjectsResponse, MIN_SEARCH_QUERY_LENGTH};
+use super::{
+    CandidateDocument, ProjectSearchMatchBand, SearchProjectsResponse, MIN_SEARCH_QUERY_LENGTH,
+};
 
 pub(super) const PROJECT_SEARCH_SNIPPET_CHAR_LIMIT: usize = 350;
 
@@ -12,6 +14,22 @@ pub(super) struct SearchScore {
     ordered_tokens: bool,
     prefix_bonus: bool,
     length_penalty: f64,
+}
+
+impl SearchScore {
+    pub(super) fn match_band(self) -> ProjectSearchMatchBand {
+        if self.exact_phrase {
+            ProjectSearchMatchBand::ExactPhrase
+        } else if self.ordered_tokens && self.token_coverage >= 1.0 {
+            ProjectSearchMatchBand::OrderedTokens
+        } else if self.token_coverage >= 1.0 {
+            ProjectSearchMatchBand::FullToken
+        } else if self.token_coverage > 0.0 {
+            ProjectSearchMatchBand::PartialToken
+        } else {
+            ProjectSearchMatchBand::Fuzzy
+        }
+    }
 }
 
 pub(super) fn normalize_search_text(value: &str) -> String {
@@ -155,14 +173,6 @@ fn query_has_prefix_match(document: &str, query_tokens: &[String]) -> bool {
     })
 }
 
-pub(super) fn resolve_match_count(candidate: &CandidateDocument, normalized_query: &str) -> usize {
-    let exact_matches = count_exact_substrings(&candidate.document.search_text, normalized_query);
-    if exact_matches > 0 {
-        return exact_matches;
-    }
-    candidate.token_hits.max(candidate.ngram_hits).max(1)
-}
-
 pub(super) fn empty_search_response(
     query_too_short: bool,
     total_capped: bool,
@@ -170,7 +180,8 @@ pub(super) fn empty_search_response(
     SearchProjectsResponse {
         results: Vec::new(),
         total: 0,
-        has_more: false,
+        strong_total: 0,
+        weaker_total: 0,
         index_status: "ready".to_string(),
         total_capped,
         query_too_short,
@@ -178,29 +189,26 @@ pub(super) fn empty_search_response(
     }
 }
 
-fn count_exact_substrings(document: &str, needle: &str) -> usize {
-    if needle.is_empty() || document.is_empty() {
-        return 0;
-    }
-
-    let mut count = 0usize;
-    let mut from_index = 0usize;
-    while let Some(position) = document[from_index..].find(needle) {
-        count += 1;
-        from_index += position + needle.len();
-    }
-    count
-}
-
-pub(super) fn build_plain_text_snippet(plain_text: &str, normalized_query: &str) -> String {
+pub(super) fn build_plain_text_snippet(
+    plain_text: &str,
+    normalized_query: &str,
+    case_sensitive_query: Option<&str>,
+) -> String {
     let trimmed = plain_text.trim();
     let text_char_count = trimmed.chars().count();
     if text_char_count <= PROJECT_SEARCH_SNIPPET_CHAR_LIMIT {
         return trimmed.to_string();
     }
 
-    let (match_start, match_end) =
-        resolve_plain_text_match_char_range(trimmed, normalized_query).unwrap_or((0, 0));
+    let match_range = if let Some(query) = case_sensitive_query {
+        trimmed.find(query).map(|byte_start| {
+            let start = trimmed[..byte_start].chars().count();
+            (start, start + query.chars().count())
+        })
+    } else {
+        resolve_plain_text_match_char_range(trimmed, normalized_query)
+    };
+    let (match_start, match_end) = match_range.unwrap_or((0, 0));
     let match_center = match_start + (match_end.saturating_sub(match_start) / 2);
     let half_limit = PROJECT_SEARCH_SNIPPET_CHAR_LIMIT / 2;
     let mut start = match_center.saturating_sub(half_limit);

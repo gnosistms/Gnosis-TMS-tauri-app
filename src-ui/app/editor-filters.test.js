@@ -2,8 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  EDITOR_ROW_FILTER_MODE_CHANGED_AFTER_MY_EDIT,
+  EDITOR_ROW_FILTER_MODE_DELETED,
   EDITOR_ROW_FILTER_MODE_HAS_COMMENTS,
   EDITOR_ROW_FILTER_MODE_HAS_CONFLICT,
+  EDITOR_ROW_FILTER_MODE_HAS_GLOSSARY_ERROR,
   EDITOR_ROW_FILTER_MODE_HAS_FOOTNOTE,
   EDITOR_ROW_FILTER_MODE_HAS_IMAGE,
   EDITOR_ROW_FILTER_MODE_HAS_UNREAD_COMMENTS,
@@ -11,6 +14,8 @@ import {
   EDITOR_ROW_FILTER_MODE_PLEASE_CHECK,
   EDITOR_ROW_FILTER_MODE_REVIEWED,
   EDITOR_ROW_FILTER_MODE_TARGET_EMPTY,
+  EDITOR_ROW_FILTER_MODE_QUOTE_BLOCK,
+  EDITOR_ROW_FILTER_MODE_HEADING,
   EDITOR_ROW_FILTER_MODE_HAS_TIMING_ERROR,
   buildEditorFilterResult,
   editorChapterFiltersAreActive,
@@ -56,6 +61,65 @@ function row(rowId, fields, lifecycleState = "active", options = {}) {
     })),
   };
 }
+
+test("glossary error filter combines with search and excludes deleted rows", () => {
+  const options = editorRowFilterOptionsForChapter();
+  const conflictIndex = options.findIndex((option) => option.value === EDITOR_ROW_FILTER_MODE_HAS_CONFLICT);
+  assert.deepEqual(options[conflictIndex + 1], {
+    value: EDITOR_ROW_FILTER_MODE_HAS_GLOSSARY_ERROR,
+    label: "Has glossary error",
+  });
+  const evaluatedRows = [];
+  const input = {
+    rows: [
+      row("error-a", { es: "matching source" }),
+      row("valid", { es: "matching source" }),
+      row("error-deleted", { es: "matching source" }, "deleted"),
+      row("error-b", { es: "other source" }),
+    ],
+    languages: [language("es")],
+    filters: { rowFilterMode: EDITOR_ROW_FILTER_MODE_HAS_GLOSSARY_ERROR },
+    rowHasGlossaryError: (item) => {
+      evaluatedRows.push(item.id);
+      return item.id.startsWith("error-");
+    },
+  };
+  const result = buildEditorFilterResult(input);
+  assert.equal(result.hasActiveFilters, true);
+  assert.equal(result.matchingRowCount, 2);
+  assert.deepEqual(result.filteredRows.map((item) => item.id), ["error-a", "error-b"]);
+  assert.deepEqual(evaluatedRows, ["error-a", "valid", "error-b"]);
+
+  const searched = buildEditorFilterResult({
+    ...input,
+    filters: { ...input.filters, searchQuery: "matching" },
+  });
+  assert.deepEqual(searched.filteredRows.map((item) => item.id), ["error-a"]);
+  assert.equal(searched.matchingRowCount, 1);
+  assert.deepEqual(searched.searchResults.map((match) => match.rowId), ["error-a"]);
+
+  const withoutGlossary = buildEditorFilterResult({ ...input, rowHasGlossaryError: undefined });
+  assert.equal(withoutGlossary.matchingRowCount, 0);
+});
+
+test("glossary matching runs only for the effective glossary error filter", () => {
+  const input = {
+    rows: [row("row-1", { es: "source" })],
+    languages: [language("es")],
+    rowHasGlossaryError: () => assert.fail("Glossary matching should not run"),
+  };
+  for (const rowFilterMode of ["show-all", "target-empty", "has-timing-error"]) {
+    buildEditorFilterResult({ ...input, filters: { rowFilterMode } });
+  }
+  const locked = buildEditorFilterResult({
+    ...input,
+    rows: [row("conflict", { es: "source" }, "active", { hasConflict: true })],
+    filters: { rowFilterMode: EDITOR_ROW_FILTER_MODE_HAS_GLOSSARY_ERROR },
+  });
+  assert.equal(locked.isConflictLocked, true);
+  assert.equal(locked.filters.rowFilterMode, EDITOR_ROW_FILTER_MODE_HAS_CONFLICT);
+  assert.deepEqual(locked.filteredRows.map((item) => item.id), ["conflict"]);
+});
 
 test("editor filters are inactive when the search query is empty and the dropdown is show all", () => {
   assert.equal(editorChapterFiltersAreActive({ searchQuery: "" }), false);
@@ -112,6 +176,39 @@ test("search preserves row ordering and excludes deleted rows by default", () =>
 
   assert.deepEqual(result.filteredRows.map((item) => item.id), ["row-a", "row-d"]);
   assert.equal(result.searchResults.length, 2);
+});
+
+test("deleted rows filter preserves order and combines with search", () => {
+  const rows = [
+    row("active", { es: "matching active" }),
+    row("deleted-a", { es: "matching deleted" }, "deleted"),
+    row("deleted-b", { es: "other text" }, "deleted"),
+    row("deleted-c", { es: "matching again" }, "deleted"),
+  ];
+  const options = {
+    rows,
+    languages: [language("es")],
+    filters: { rowFilterMode: EDITOR_ROW_FILTER_MODE_DELETED },
+  };
+  const result = buildEditorFilterResult(options);
+  assert.equal(result.hasActiveFilters, true);
+  assert.equal(result.matchingRowCount, 3);
+  assert.deepEqual(result.filteredRows.map((item) => item.id), ["deleted-a", "deleted-b", "deleted-c"]);
+
+  const searched = buildEditorFilterResult({
+    ...options,
+    filters: { ...options.filters, searchQuery: "matching" },
+  });
+  assert.deepEqual(searched.filteredRows.map((item) => item.id), ["deleted-a", "deleted-c"]);
+  assert.equal(searched.matchingRowCount, 2);
+  assert.deepEqual(searched.searchResults.map((item) => item.rowId), ["deleted-a", "deleted-c"]);
+
+  const locked = buildEditorFilterResult({
+    ...options,
+    rows: [{ ...rows[0], hasConflict: true }, ...rows.slice(1)],
+  });
+  assert.equal(locked.isConflictLocked, true);
+  assert.deepEqual(locked.filteredRows.map((item) => item.id), ["active"]);
 });
 
 test("search includes visible footnotes and keeps their keys distinct from main text", () => {
@@ -458,3 +555,70 @@ test("the timing-error filter option is only offered for subtitle chapters", () 
   assert.ok(!withoutTiming.some((option) => option.value === EDITOR_ROW_FILTER_MODE_HAS_TIMING_ERROR));
   assert.equal(withTiming.length, withoutTiming.length + 1);
 });
+
+test("changed-after-my-edit filter shows the snapshot's rows, not deleted ones", () => {
+  const option = editorRowFilterOptionsForChapter()
+    .find((candidate) => candidate.value === EDITOR_ROW_FILTER_MODE_CHANGED_AFTER_MY_EDIT);
+  assert.equal(option?.label, "Changed after my last edit");
+
+  const result = buildEditorFilterResult({
+    rows: [
+      row("changed", { es: "uno" }),
+      row("untouched", { es: "dos" }),
+      row("changed-deleted", { es: "tres" }, "deleted"),
+    ],
+    languages: [language("es")],
+    filters: { rowFilterMode: EDITOR_ROW_FILTER_MODE_CHANGED_AFTER_MY_EDIT },
+    changedAfterMyEditRowIds: new Set(["changed", "changed-deleted"]),
+  });
+  assert.deepEqual(result.filteredRows.map((item) => item.id), ["changed"]);
+
+  const beforeLoad = buildEditorFilterResult({
+    rows: [row("changed", { es: "uno" })],
+    languages: [language("es")],
+    filters: { rowFilterMode: EDITOR_ROW_FILTER_MODE_CHANGED_AFTER_MY_EDIT },
+  });
+  assert.equal(beforeLoad.matchingRowCount, 0);
+});
+
+for (const { mode, label, styles } of [
+  { mode: EDITOR_ROW_FILTER_MODE_QUOTE_BLOCK, label: "Quote block", styles: ["quote", "q"] },
+  { mode: EDITOR_ROW_FILTER_MODE_HEADING, label: "Heading", styles: ["heading1", "heading2", "h1", "h2"] },
+]) {
+  test(`${label} filter matches row styles and combines with search`, () => {
+    assert.ok(editorRowFilterOptionsForChapter().some((option) => option.value === mode && option.label === label));
+    const excludedStyles = [
+      "paragraph", "indented", "centered", "custom_html", undefined,
+      ...(mode === EDITOR_ROW_FILTER_MODE_HEADING ? ["quote"] : ["heading1", "heading2"]),
+    ];
+    const rows = [
+      ...styles.map((textStyle, index) => ({
+        ...row(`styled-${index}`, { es: index === 0 ? "matching" : "other" }),
+        textStyle,
+      })),
+      { ...row("deleted", { es: "matching" }, "deleted"), textStyle: styles[0] },
+      ...excludedStyles.map((textStyle, index) => ({
+        ...row(`excluded-${index}`, { es: "matching" }),
+        textStyle,
+      })),
+    ];
+    const input = { rows, languages: [language("es")], filters: { rowFilterMode: mode } };
+    const result = buildEditorFilterResult(input);
+    assert.equal(result.filters.rowFilterMode, mode);
+    assert.equal(result.hasActiveFilters, true);
+    assert.equal(result.matchingRowCount, styles.length);
+    assert.deepEqual(result.filteredRows.map((item) => item.id), styles.map((_, index) => `styled-${index}`));
+    const searched = buildEditorFilterResult({
+      ...input,
+      filters: { rowFilterMode: mode, searchQuery: "matching" },
+    });
+    assert.deepEqual(searched.filteredRows.map((item) => item.id), ["styled-0"]);
+    assert.equal(searched.matchingRowCount, 1);
+    const locked = buildEditorFilterResult({
+      ...input,
+      rows: [...rows, row("conflict", { es: "matching" }, "active", { hasConflict: true })],
+    });
+    assert.equal(locked.isConflictLocked, true);
+    assert.deepEqual(locked.filteredRows.map((item) => item.id), ["conflict"]);
+  });
+}

@@ -2,8 +2,10 @@ import { invoke } from "./runtime.js";
 import { requireBrokerSession } from "./auth-flow.js";
 import {
   loadStoredChapterPendingMutations,
+  saveStoredChapterPendingMutations,
   loadStoredProjectsForTeam,
   saveStoredProjectsForTeam,
+  removeStoredProjectCopyForTeam,
 } from "./project-cache.js";
 import { loadStoredGlossariesForTeam } from "./glossary-cache.js";
 import {
@@ -11,6 +13,7 @@ import {
   buildProjectRepoSyncInput,
 } from "./project-repo-sync-shared.js";
 import {
+  authSessionGeneration,
   createProjectOldLayoutDiscardState,
   createProjectRepoConflictRecoveryState,
   resetProjectCreation,
@@ -37,7 +40,6 @@ import {
   upsertProjectMetadataRecord,
 } from "./team-metadata-flow.js";
 import {
-  guardPermanentDeleteConfirmation,
   guardTopLevelResourceAction,
 } from "./resource-lifecycle-engine.js";
 import {
@@ -50,7 +52,6 @@ import {
 import {
   clearResourcePageDataOwner,
   setResourcePageRefreshing,
-  submitResourcePageWrite,
 } from "./resource-page-controller.js";
 import { addLocalHardDeleteTombstone } from "./local-hard-delete-store.js";
 import {
@@ -61,9 +62,13 @@ import {
   createProjectsQuerySnapshot,
   ensureProjectsQueryObserver,
   seedProjectsQueryFromCache,
+  publishCreatedProjectToQuery,
+  publishLocalProjectRemovalToQuery,
+  cancelProjectDiscoveryForMutation,
 } from "./project-query.js";
 import { createMutationObserver, projectKeys, queryClient } from "./query-client.js";
 import { teamCacheKey } from "./team-cache.js";
+import { getActiveStorageLogin } from "./team-storage.js";
 import {
   applyProjectWriteIntentsToSnapshot,
   anyProjectWriteIsActive,
@@ -110,7 +115,6 @@ import {
   refreshProjectFilesFromDisk,
   removeVisibleProject,
   setProjectUiDebug,
-  updateProjectQueryCache,
   clearProjectUiDebug,
   clearProjectsStatus,
   showProjectsNotice,
@@ -332,21 +336,11 @@ export async function createProjectRepoForTeam(
   }
 }
 
-async function completeProjectCreateSynchronously(selectedTeam, projectTitle, baseRepoName, render) {
-  return createProjectRepoForTeam(selectedTeam, projectTitle, baseRepoName, {
-    onProgress: (message) => showProjectsStatus(render, message),
-  });
-}
-
 const projectPageSyncController = {
   begin: beginProjectsPageSync,
   complete: completeProjectsPageSync,
   fail: failProjectsPageSync,
 };
-
-function setProjectsPageProgress(render, text) {
-  showProjectsStatus(render, text);
-}
 
 export function projectsPageOwnsTeam(team) {
   const expectedCacheKey = teamCacheKey(team);
@@ -394,17 +388,18 @@ export function primeProjectsLoadingState(teamId = state.selectedTeamId, options
     state.selectedTeamId = teamId;
   }
   const team = options.team ?? state.teams.find((item) => item?.id === teamId);
+  const canPreserveTeamContext =
+    projectsPageOwnsTeam(team) || canPreserveActiveEditorProjectContext(team);
   const canPreserveVisibleData =
-    (
-      projectsPageOwnsTeam(team)
-      || canPreserveActiveEditorProjectContext(team)
-    )
+    canPreserveTeamContext
     && (state.projects.length > 0 || state.deletedProjects.length > 0);
 
   if (!canPreserveVisibleData) {
     state.projects = [];
     state.deletedProjects = [];
-    clearResourcePageDataOwner(state.projectsPage);
+    if (!canPreserveTeamContext) {
+      clearResourcePageDataOwner(state.projectsPage);
+    }
   }
   if (!glossariesPageOwnsTeam(team)) {
     state.glossaries = [];
@@ -423,7 +418,9 @@ export function primeProjectsLoadingState(teamId = state.selectedTeamId, options
     recoveryMessage: "",
   };
   setResourcePageRefreshing(state.projectsPage, true);
-  resetProjectSearchState();
+  if (!canPreserveTeamContext) {
+    resetProjectSearchState();
+  }
   resetProjectCreation();
   resetProjectRename();
   resetProjectTransfer();
@@ -471,6 +468,7 @@ export function finishProjectsLoadingForTeam(teamId = state.selectedTeamId, rend
 }
 
 export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
+  const generation = authSessionGeneration;
   const selectedTeam = state.teams.find((team) => team.id === teamId);
   const previousProjectSnapshot = projectsPageOwnsTeam(selectedTeam)
     ? {
@@ -528,9 +526,27 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
     };
 
     ensureProjectsQueryObserver(render, selectedTeam, queryOptionsContext);
-    const querySnapshot = await queryClient.fetchQuery(
-      createProjectsQueryOptions(selectedTeam, queryOptionsContext),
-    );
+    const queryOptions = createProjectsQueryOptions(selectedTeam, queryOptionsContext);
+    let querySnapshot;
+    for (;;) {
+      try {
+        querySnapshot = await queryClient.fetchQuery(queryOptions);
+        break;
+      } catch (error) {
+        // Returning to Projects can join a query already abandoned during
+        // navigation. Once it settles, start a fresh load for this page instead
+        // of treating its stale-result rejection as a completed refresh.
+        if (
+          String(error?.message ?? error) === "Stale project refresh ignored."
+          && generation === authSessionGeneration
+          && state.screen === "projects"
+          && state.selectedTeamId === teamId
+        ) {
+          continue;
+        }
+        throw error;
+      }
+    }
     queryClient.setQueryData(projectKeys.byTeam(selectedTeam.id), querySnapshot);
     persistProjectsForTeam(selectedTeam);
     return [...state.projects, ...state.deletedProjects];
@@ -667,57 +683,52 @@ export async function submitProjectCreation(render) {
   state.projectCreation.status = "loading";
   state.projectCreation.error = "";
   render();
-  await submitResourcePageWrite({
-    pageState: state.projectsPage,
-    syncController: projectPageSyncController,
-    setProgress: (text) => setProjectsPageProgress(render, text),
-    clearProgress: () => clearProjectsStatus(render),
-    render,
-    progressLabels: {
-      submitting: "Creating project...",
-      refreshing: "Refreshing project list...",
-    },
-    onBlocked: async () => {
-      state.projectCreation.status = "idle";
-      state.projectCreation.error = "Wait for the current projects refresh or write to finish.";
-      render();
-    },
-    runMutation: async () =>
-      enqueueRepoWrite({
-        scope: projectRepoScope({ team: selectedTeam }),
-        kind: "projectCreate",
-        sourceScreen: "projects",
-        errorTarget: {
-          kind: "projectCreate",
+  const pageState = state.projectsPage;
+  pageState.writeState = "submitting";
+  const stillOnTeam = () => state.selectedTeamId === selectedTeam.id && state.screen === "projects";
+  try {
+    // Stop pre-create discovery before metadata changes: an older remote list
+    // must never tombstone a repository that this operation is still creating.
+    await cancelProjectDiscoveryForMutation(selectedTeam);
+    const result = await enqueueRepoWrite({
+      scope: projectRepoScope({ team: selectedTeam }),
+      kind: "projectCreate",
+      sourceScreen: "projects",
+      errorTarget: { kind: "projectCreate" },
+      run: () => createProjectRepoForTeam(selectedTeam, projectTitle, repoName, {
+        onProgress: (message) => {
+          if (stillOnTeam()) showProjectsStatus(render, message);
         },
-        run: () => completeProjectCreateSynchronously(selectedTeam, projectTitle, repoName, render),
       }),
-    refreshOptions: {
-      loadData: async () => {
-        showProjectsStatus(render, "Refreshing project list...");
-        return reloadProjectsAfterWrite(render, selectedTeam, { suppressRecoveryWarning: true });
-      },
-    },
-    onSuccess: async (result) => {
-      clearProjectsStatus(render);
-      resetProjectCreation();
-      state.selectedProjectId = result.projectId;
-      showProjectsNotice(
-        render,
-        result.collisionResolved
-          ? `Created project ${result.title} in repo ${result.repoName} because that repo name was already taken.`
-          : `Created project ${result.title}`,
-      );
-    },
-    onError: async (error) => {
-      clearProjectsStatus(render);
-      if (await handleSyncFailure(classifySyncError(error), { render })) {
-        return;
-      }
-      state.projectCreation.status = "idle";
-      state.projectCreation.error = error?.message ?? String(error);
-    },
-  });
+    });
+    const queryData = await publishCreatedProjectToQuery(selectedTeam, result);
+    persistProjectQueryDataForTeam(selectedTeam, queryData);
+    pageState.writeState = "idle";
+    if (!stillOnTeam()) return;
+    clearProjectsStatus(render);
+    resetProjectCreation();
+    state.selectedProjectId = result.projectId;
+    showProjectsNotice(render, result.collisionResolved
+      ? `Created project ${result.title} in repo ${result.repoName} because that repo name was already taken.`
+      : `Created project ${result.title}`);
+    render();
+    // Creation is complete. Discovery/sync has its own progress and must not
+    // keep the modal or local project actions waiting on the network.
+    void reloadProjectsAfterWrite(render, selectedTeam, { suppressRecoveryWarning: true })
+      .catch((error) => {
+        if (stillOnTeam()) showProjectsNotice(render, `Project created. Refresh failed: ${error?.message ?? String(error)}`);
+      });
+  } catch (error) {
+    if (!stillOnTeam()) return;
+    clearProjectsStatus(render);
+    if (await handleSyncFailure(classifySyncError(error), { render })) return;
+    state.projectCreation.status = "idle";
+    state.projectCreation.error = error?.message ?? String(error);
+    render();
+  } finally {
+    pageState.writeState = "idle";
+    if (stillOnTeam()) render();
+  }
 }
 
 export async function submitProjectRename(render) {
@@ -1055,11 +1066,11 @@ export async function deleteProject(render, projectId) {
     ensureNotTombstoned: (currentProject) =>
       ensureProjectNotTombstoned(render, selectedTeam, currentProject),
     onMissing: () => {
-      setProjectDiscoveryState("error", "Could not find the selected project.");
+      showProjectsNotice(render, "Could not find the selected project.");
       render();
     },
     onBlocked: (blockedMessage) => {
-      setProjectDiscoveryState("error", blockedMessage);
+      showProjectsNotice(render, blockedMessage);
       render();
     },
   });
@@ -1094,7 +1105,7 @@ export async function deleteProject(render, projectId) {
     })).mutate();
   } catch (error) {
     clearProjectsStatus(render);
-    setProjectDiscoveryState("error", error?.message ?? String(error));
+    showProjectsNotice(render, `Could not delete project: ${error?.message ?? String(error)}`);
     render();
   }
 }
@@ -1164,52 +1175,43 @@ export async function reloadProjectsAfterWrite(render, selectedTeam, options = {
   return [...state.projects, ...state.deletedProjects];
 }
 
+function localProjectRemovalBlockedMessage(team, project) {
+  if (!Number.isFinite(team?.installationId) || state.selectedTeamId !== team.id
+    || state.projectsPage.visibleTeamId !== team.id) {
+    return "Could not determine the selected team.";
+  }
+  if (!project || project.lifecycleState !== "deleted") {
+    return "Could not find the selected deleted project.";
+  }
+  if (areProjectLocalHardDeleteWritesDisabled() || resourceHasPendingLifecycleMutation(project)) {
+    return projectLifecycleWriteBlockedMessage();
+  }
+  return "";
+}
+
 export function permanentlyDeleteProject(render, projectId) {
+  if (state.projectPermanentDeletion.status === "loading") return;
   const project = state.deletedProjects.find((item) => item.id === projectId);
   const selectedTeam = selectedProjectsTeam();
-  if (areProjectLocalHardDeleteWritesDisabled()) {
-    setProjectDiscoveryState("error", projectWriteBlockedMessage());
-    render();
+  const blockedMessage = localProjectRemovalBlockedMessage(selectedTeam, project);
+  if (blockedMessage) {
+    showProjectsNotice(render, blockedMessage);
     return;
   }
-  if (resourceHasPendingLifecycleMutation(project)) {
-    setProjectDiscoveryState("error", projectLifecycleWriteBlockedMessage());
-    render();
-    return;
-  }
-  void guardTopLevelResourceAction({
-    resource: project,
-    isExpectedResource: (currentProject) =>
-      Boolean(currentProject) && currentProject.lifecycleState === "deleted",
-    getBlockedMessage: () =>
-      selectedTeam ? "" : "Could not determine the selected team.",
-    ensureNotTombstoned: (currentProject) =>
-      ensureProjectNotTombstoned(render, selectedTeam, currentProject),
-    onMissing: () => {
-      setProjectDiscoveryState("error", "Could not find the selected deleted project.");
-      render();
-    },
-    onBlocked: (blockedMessage) => {
-      setProjectDiscoveryState("error", blockedMessage);
-      render();
-    },
-  }).then((allowed) => {
-    if (!allowed) {
-      return;
-    }
 
-    openEntityConfirmationModal({
-      setState: (nextState) => {
-        state.projectPermanentDeletion = nextState;
-      },
-      entityId: projectId,
-      idField: "projectId",
-      nameField: "projectName",
-      confirmationField: "confirmationText",
-      currentName: project.title ?? project.name,
-    });
-    render();
+  // This action only removes local files. Remote tombstone discovery is neither
+  // needed nor allowed to purge a copy before the user confirms this dialog.
+  openEntityConfirmationModal({
+    setState: (nextState) => {
+      state.projectPermanentDeletion = { ...nextState, teamId: selectedTeam.id };
+    },
+    entityId: projectId,
+    idField: "projectId",
+    nameField: "projectName",
+    confirmationField: "confirmationText",
+    currentName: project.title ?? project.name,
   });
+  render();
 }
 
 export function updateProjectPermanentDeletionConfirmation(value) {
@@ -1221,57 +1223,39 @@ export function cancelProjectPermanentDeletion(render) {
 }
 
 export async function confirmProjectPermanentDeletion(render) {
+  const modal = state.projectPermanentDeletion;
+  if (!modal.isOpen || modal.status === "loading") return;
   const selectedTeam = selectedProjectsTeam();
-  const project = state.deletedProjects.find(
-    (item) => item.id === state.projectPermanentDeletion.projectId,
-  );
-  if (areProjectLocalHardDeleteWritesDisabled()) {
-    state.projectPermanentDeletion.status = "idle";
-    state.projectPermanentDeletion.error = projectWriteBlockedMessage();
+  if (modal.teamId !== selectedTeam?.id || state.screen !== "projects") return;
+  const project = state.deletedProjects.find((item) => item.id === modal.projectId);
+  const blockedMessage = localProjectRemovalBlockedMessage(selectedTeam, project);
+  if (blockedMessage) {
+    modal.error = blockedMessage;
     render();
     return;
   }
-  if (resourceHasPendingLifecycleMutation(project)) {
-    state.projectPermanentDeletion.status = "idle";
-    state.projectPermanentDeletion.error = projectLifecycleWriteBlockedMessage();
+  if (!entityConfirmationMatches(modal, {
+    nameField: "projectName",
+    confirmationField: "confirmationText",
+  })) {
+    modal.error = "Project name confirmation does not match.";
     render();
-    return;
-  }
-  const allowed = await guardPermanentDeleteConfirmation({
-    resource: selectedTeam?.installationId ? project : null,
-    modalState: state.projectPermanentDeletion,
-    missingMessage: "Could not find the selected deleted project.",
-    getBlockedMessage: () => {
-      return selectedTeam ? "" : "Could not determine the selected team.";
-    },
-    confirmationMessage: "Project name confirmation does not match.",
-    matchesConfirmation: () => entityConfirmationMatches(state.projectPermanentDeletion, {
-      nameField: "projectName",
-      confirmationField: "confirmationText",
-    }),
-    ensureNotTombstoned: (currentProject) =>
-      ensureProjectNotTombstoned(render, selectedTeam, currentProject),
-    onTombstoned: () => {
-      resetProjectPermanentDeletion();
-      render();
-    },
-    render,
-  });
-  if (!allowed) {
     return;
   }
 
-  state.projectPermanentDeletion.status = "loading";
-  state.projectPermanentDeletion.error = "";
-  showProjectsStatus(render, "Removing local project repo...");
+  const storageLogin = getActiveStorageLogin();
+  const generation = authSessionGeneration;
+  const sameSession = () => generation === authSessionGeneration && getActiveStorageLogin() === storageLogin;
+  const stillCurrent = () => sameSession() && state.selectedTeamId === selectedTeam.id
+    && state.screen === "projects" && state.projectPermanentDeletion === modal;
+  // Validate and claim this submission synchronously, before the first await.
+  modal.status = "loading";
+  modal.error = "";
   render();
 
   try {
-    // Removing the local copy is a purely local, idempotent file deletion. The project is
-    // already soft-deleted, so the transport-eligibility rule guarantees nothing is syncing
-    // this repo — there is no concurrent writer to serialize against. Routing it through the
-    // repo-write queue only let an unrelated stuck remote op on this scope wedge the delete
-    // (the "Deleting…" modal that never finished). Invoke directly so it always settles.
+    // Local removal must not wait behind unrelated network work. Pending
+    // lifecycle changes are guarded above; deleted projects cannot start sync.
     await invoke("purge_local_gtms_project_repo", {
       input: {
         installationId: selectedTeam.installationId,
@@ -1279,21 +1263,25 @@ export async function confirmProjectPermanentDeletion(render) {
         repoName: project.name,
       },
     });
-    addLocalHardDeleteTombstone(selectedTeam, "project", project);
-    removeVisibleProject(project.id);
+    addLocalHardDeleteTombstone(selectedTeam, "project", project, storageLogin);
+    if (!sameSession()) {
+      removeStoredProjectCopyForTeam(selectedTeam, project.id, storageLogin);
+      return;
+    }
+    const queryData = publishLocalProjectRemovalToQuery(selectedTeam, project.id, {
+      reconcileExpandedDeletedFiles,
+    });
+    persistProjectQueryDataForTeam(selectedTeam, queryData);
+    saveStoredChapterPendingMutations(selectedTeam, queryData.pendingChapterMutations);
+    if (!stillCurrent()) return;
     clearSelectedProjectState(project);
-    dropProjectMutationsForProject(selectedTeam, project.id);
-    delete state.projectRepoSyncByProjectId[project.id];
-    persistProjectsForTeam(selectedTeam);
-    updateProjectQueryCache(selectedTeam);
     resetProjectPermanentDeletion();
-    clearProjectsStatus(render);
     showProjectsNotice(render, "Local project copy removed.");
     render();
   } catch (error) {
-    clearProjectsStatus(render);
-    state.projectPermanentDeletion.status = "idle";
-    state.projectPermanentDeletion.error = error?.message ?? String(error);
+    if (!stillCurrent()) return;
+    modal.status = "idle";
+    modal.error = error?.message ?? String(error);
     render();
   }
 }

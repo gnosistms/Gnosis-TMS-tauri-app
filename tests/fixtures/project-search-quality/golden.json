@@ -1,0 +1,45 @@
+{
+  "cases": [
+    {
+      "name": "one exact phrase does not protect a fuzzy tail",
+      "query": "drukpa lineage",
+      "excerpts": [
+        { "rowId": "exact-row", "rowOrderKey": "a0", "languageCode": "en", "languageName": "English", "snippetSource": "field", "text": "The Drukpa lineage flourished throughout the region." },
+        { "rowId": "ordered-row", "rowOrderKey": "b0", "languageCode": "en", "languageName": "English", "snippetSource": "field", "text": "The Drukpa school preserves an ancient lineage." },
+        { "rowId": "partial-row", "rowOrderKey": "c0", "languageCode": "en", "languageName": "English", "snippetSource": "footnote", "text": "This footnote discusses a lineage from another tradition." }
+      ],
+      "strongRowIds": ["exact-row"]
+    },
+    {
+      "name": "ordered complete matches outrank unordered and partial matches",
+      "query": "compassion wisdom",
+      "excerpts": [
+        { "rowId": "ordered-one", "rowOrderKey": "a0", "languageCode": "en", "languageName": "English", "snippetSource": "field", "text": "Compassion joined with profound wisdom guides the practice." },
+        { "rowId": "ordered-two", "rowOrderKey": "b0", "languageCode": "en", "languageName": "English", "snippetSource": "image-caption", "text": "Compassion and patient activity mature into wisdom." },
+        { "rowId": "unordered-row", "rowOrderKey": "c0", "languageCode": "en", "languageName": "English", "snippetSource": "field", "text": "Wisdom must always be accompanied by compassion." },
+        { "rowId": "partial-row", "rowOrderKey": "d0", "languageCode": "en", "languageName": "English", "snippetSource": "field", "text": "Compassion is cultivated through generosity." }
+      ],
+      "strongRowIds": ["ordered-two", "ordered-one"]
+    },
+    {
+      "name": "multilingual excerpts aggregate before row classification",
+      "query": "đức phật",
+      "excerpts": [
+        { "rowId": "multilingual-row", "rowOrderKey": "a0", "languageCode": "vi", "languageName": "Vietnamese", "snippetSource": "field", "text": "Đức Phật giảng dạy con đường trung đạo." },
+        { "rowId": "multilingual-row", "rowOrderKey": "a0", "languageCode": "en", "languageName": "English", "snippetSource": "footnote", "text": "A note about Buddhist teaching and its early transmission." },
+        { "rowId": "other-row", "rowOrderKey": "b0", "languageCode": "vi", "languageName": "Vietnamese", "snippetSource": "image-caption", "text": "Hình tượng Đức trong nghệ thuật Phật giáo." }
+      ],
+      "strongRowIds": ["multilingual-row"]
+    },
+    {
+      "name": "full token coverage remains useful without exact or ordered matches",
+      "query": "source translation review",
+      "excerpts": [
+        { "rowId": "full-one", "rowOrderKey": "a0", "languageCode": "en", "languageName": "English", "snippetSource": "field", "text": "Review the translation carefully against the source." },
+        { "rowId": "full-two", "rowOrderKey": "b0", "languageCode": "en", "languageName": "English", "snippetSource": "footnote", "text": "The review compares a translation with its original source." },
+        { "rowId": "partial-row", "rowOrderKey": "c0", "languageCode": "en", "languageName": "English", "snippetSource": "field", "text": "The translation is ready for publication." }
+      ],
+      "strongRowIds": ["full-one", "full-two"]
+    }
+  ]
+}

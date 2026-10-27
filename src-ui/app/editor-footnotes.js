@@ -32,7 +32,13 @@ export function serializeEditorFootnotesForLegacy(footnotes) {
     return "";
   }
   if (normalized.length === 1) {
-    return normalized[0].marker === 1 ? normalized[0].text : serializeLabeledFootnoteEntry(normalized[0]);
+    const [entry] = normalized;
+    // A non-empty marker-1 note keeps the compact legacy representation. An
+    // empty note needs its label, otherwise serializing it as an empty string
+    // loses the entry and leaves its body marker orphaned after a row reload.
+    return entry.marker === 1 && entry.text
+      ? entry.text
+      : serializeLabeledFootnoteEntry(entry);
   }
   return normalized
     .map(serializeLabeledFootnoteEntry)
@@ -140,11 +146,31 @@ export function nextEditorFootnoteMarker(text, footnotes) {
   return marker;
 }
 
+export function buildEditorFootnoteInsertion(text, footnotes, insertIndex, footnoteText) {
+  const currentText = String(text ?? "");
+  const boundedInsertIndex = Number.isInteger(insertIndex)
+    ? Math.max(0, Math.min(currentText.length, insertIndex))
+    : currentText.length;
+  const marker = nextEditorFootnoteMarker(currentText, footnotes);
+  return {
+    marker,
+    text: `${currentText.slice(0, boundedInsertIndex)}[${marker}]${currentText.slice(boundedInsertIndex)}`,
+    footnotes: applyEditorFootnoteText(
+      footnotes,
+      marker,
+      typeof footnoteText === "string" ? footnoteText : "",
+    ),
+  };
+}
+
 export function applyEditorFootnoteText(footnotes, marker, text) {
+  if (typeof text !== "string") {
+    throw new TypeError("Footnote text must be a string.");
+  }
   const normalizedMarker = normalizeFootnoteMarker(marker, 1);
   const entries = normalizeEditorFootnotes(footnotes);
   const index = entries.findIndex((entry) => entry.marker === normalizedMarker);
-  const nextEntry = { marker: normalizedMarker, text: typeof text === "string" ? text : String(text ?? "") };
+  const nextEntry = { marker: normalizedMarker, text };
   if (index < 0) {
     return [...entries, nextEntry].sort((left, right) => left.marker - right.marker);
   }

@@ -162,7 +162,8 @@ test("buildEditorPreviewDocument skips all deleted-row preview content", () => {
   assert.doesNotMatch(rendered, /deleted\.png/);
 
   const serialized = serializeEditorPreviewHtml(blocks);
-  assert.match(serialized, /<!-- wp:footnotes \/-->/);
+  assert.match(serialized, /Visible footnote/);
+  assert.match(serialized, /role="doc-endnotes"/);
   assert.match(serialized, /Visible caption/);
   assert.match(serialized, /visible\.png/);
   assert.doesNotMatch(serialized, /Deleted text/);
@@ -203,6 +204,54 @@ test("renderEditorPreviewDocumentHtml highlights visible preview text and tracks
   assert.match(html, /translate-preview__search-match is-active/);
 });
 
+test("renderEditorPreviewDocumentHtml numbers a caption match spanning a styled boundary once", () => {
+  const blocks = buildEditorPreviewDocument([
+    {
+      rowId: "row-1",
+      lifecycleState: "active",
+      textStyle: "paragraph",
+      fields: { vi: "" },
+      imageCaptions: { vi: "Al<strong>pha</strong>" },
+      images: {
+        vi: {
+          kind: "url",
+          url: "https://example.com/alpha.png",
+        },
+      },
+    },
+    {
+      rowId: "row-2",
+      lifecycleState: "active",
+      textStyle: "paragraph",
+      fields: { vi: "Alpha body" },
+    },
+  ], "vi");
+
+  const { html, searchState } = renderEditorPreviewDocumentHtml(blocks, {
+    searchState: {
+      query: "alpha",
+      activeMatchIndex: 0,
+      totalMatchCount: 0,
+    },
+    resolveImageSrc: (image) => image?.url ?? "",
+  });
+
+  assert.equal(searchState.totalMatchCount, 2);
+
+  // The caption match is split into two mark segments by <strong>, but both
+  // segments belong to the same logical match: same index, both active.
+  const captionHtml = /<figcaption[^>]*>([\s\S]*?)<\/figcaption>/.exec(html)[1];
+  const captionIndexes = [...captionHtml.matchAll(/data-preview-search-match-index="(\d+)"/g)]
+    .map((match) => match[1]);
+  assert.deepEqual(captionIndexes, ["0", "0"]);
+  assert.equal((captionHtml.match(/translate-preview__search-match is-active/g) ?? []).length, 2);
+
+  // The next match on the page continues from the logical match count, not
+  // from the number of rendered mark segments.
+  const bodyHtml = /<p[^>]*data-row-id="row-2"[^>]*>([\s\S]*?)<\/p>/.exec(html)[1];
+  assert.match(bodyHtml, /data-preview-search-match-index="1"/);
+});
+
 test("renderEditorPreviewDocumentHtml keeps row and language metadata on text blocks", () => {
   const blocks = buildEditorPreviewDocument([{
     rowId: "row-1",
@@ -218,7 +267,7 @@ test("renderEditorPreviewDocumentHtml keeps row and language metadata on text bl
 
   assert.match(
     html,
-    /<p class="translate-preview__block translate-preview__block--paragraph" data-preview-block="paragraph" data-row-id="row-1" lang="vi">Alpha body<\/p>/,
+    /<p class="translate-preview__block translate-preview__block--paragraph" data-preview-block="paragraph" data-row-id="row-1" lang="vi" data-tooltip="Double-click to edit\.">Alpha body<\/p>/,
   );
 });
 
@@ -247,6 +296,34 @@ test("preview rendering and serialization preserve supported inline markup", () 
   assert.match(rendered.html, /<ruby>漢字<rt><mark class="translate-preview__search-match is-active"/);
   assert.match(serialized, /<strong>Alpha<\/strong>/);
   assert.match(serialized, /<ruby>漢字<rt>よみ<\/rt><\/ruby>/);
+});
+
+test("every preview content block carries an edit hint and its own row and language", () => {
+  const blocks = buildEditorPreviewDocument([
+    {
+      rowId: "body-row",
+      fields: { es: "Body [1]<hr>After separator" },
+      footnotes: { es: [{ marker: 1, text: "First note" }] },
+      images: { es: { kind: "url", url: "https://example.com/image.png" } },
+      imageCaptions: { es: "Image caption" },
+    },
+    { rowId: "heading-row", textStyle: "heading1", fields: { es: "Heading" } },
+    { rowId: "html-row", textStyle: "custom_html", fields: { es: "<div>Custom HTML</div>" } },
+    { rowId: "note-only-row", fields: {}, footnotes: { es: [{ marker: 1, text: "Note without body text" }] } },
+  ], "es");
+  const { html } = renderEditorPreviewDocumentHtml(blocks, { resolveImageSrc: (image) => image.url });
+
+  for (const [kind, rowId] of [
+    ["paragraph", "body-row"], ["separator", "body-row"],
+    ["image", "body-row"], ["image-caption", "body-row"],
+    ["footnote", "body-row"], ["footnote", "note-only-row"],
+    ["heading1", "heading-row"], ["custom-html", "html-row"],
+  ]) {
+    assert.ok(html.includes(`data-preview-block="${kind}" data-row-id="${rowId}" lang="es" data-tooltip="Double-click to edit."`), `${kind}: ${rowId}`);
+  }
+  assert.match(html, /href="#fnref-/);
+  assert.doesNotMatch(serializeEditorPreviewHtml(blocks), /data-preview-block=|Double-click to edit/);
+  assert.doesNotMatch(serializeEditorPreviewWordPress(blocks).content, /data-preview-block=|Double-click to edit/);
 });
 
 test("preview rendering and export escape literal quotes only once", () => {
@@ -310,10 +387,34 @@ test("preview footnote refs preserve inline markup when markers are inside tags"
   const html = serializeEditorPreviewHtml(blocks);
 
   assert.match(html, /<!-- wp:paragraph -->/);
-  assert.match(html, /<strong>Alpha <sup data-fn="[0-9a-f-]{36}" class="fn">/);
-  assert.match(html, /<a id="[0-9a-f-]{36}-link" href="#[0-9a-f-]{36}">1<\/a>/);
+  assert.match(html, /<strong>Alpha <sup class="fn">/);
+  assert.match(html, /<a id="[0-9a-f-]{36}-link" href="#[0-9a-f-]{36}" role="doc-noteref" aria-label="Footnote 1">1<\/a>/);
   assert.match(html, /<\/sup> body<\/strong>/);
   assert.doesNotMatch(html, /&lt;\/strong&gt;/);
+});
+
+test("preview renders a footnote ref once when a search match ends inside its marker", () => {
+  const blocks = buildEditorPreviewDocument([{
+    rowId: "row-1",
+    lifecycleState: "active",
+    textStyle: "paragraph",
+    fields: { vi: "foo[1] body" },
+    footnotes: { vi: "Split note" },
+    imageCaptions: {},
+    images: {},
+  }], "vi");
+
+  const { html } = renderEditorPreviewDocumentHtml(blocks, {
+    searchState: {
+      // Matches "o[1", so the search range ends inside the "[1]" marker (3..6).
+      query: "o[1",
+      activeMatchIndex: 0,
+      totalMatchCount: 0,
+    },
+  });
+
+  assert.equal((html.match(/translate-preview__footnote-ref/g) ?? []).length, 1);
+  assert.match(html, /translate-preview__search-match/);
 });
 
 test("preview footnotes do not render an automatic separator", () => {
@@ -351,8 +452,8 @@ test("preview appends footnote refs with no matching marker without changing tex
 
   const html = serializeEditorPreviewHtml(blocks);
 
-  assert.match(html, /Alpha body \[100\]<sup data-fn="[0-9a-f-]{36}" class="fn">/);
-  assert.match(html, /<\/sup><sup class="fn-sep" aria-hidden="true">,<\/sup><sup data-fn="[0-9a-f-]{36}" class="fn"><a id="[0-9a-f-]{36}-link" href="#[0-9a-f-]{36}">2<\/a><\/sup>/);
+  assert.match(html, /Alpha body \[100\]<sup class="fn">/);
+  assert.match(html, /<\/sup><sup class="fn-sep" aria-hidden="true">,<\/sup><sup class="fn"><a id="[0-9a-f-]{36}-link" href="#[0-9a-f-]{36}" role="doc-noteref" aria-label="Footnote 2">2<\/a><\/sup>/);
 });
 
 test("adjacent inline footnote markers separate with a superscript comma", () => {
@@ -373,7 +474,7 @@ test("adjacent inline footnote markers separate with a superscript comma", () =>
 
   const html = serializeEditorPreviewHtml(blocks);
 
-  assert.match(html, /1<\/a><\/sup><sup class="fn-sep" aria-hidden="true">,<\/sup><sup data-fn="[0-9a-f-]{36}" class="fn"><a id="[0-9a-f-]{36}-link" href="#[0-9a-f-]{36}">2<\/a><\/sup> end/);
+  assert.match(html, /1<\/a><\/sup><sup class="fn-sep" aria-hidden="true">,<\/sup><sup class="fn"><a id="[0-9a-f-]{36}-link" href="#[0-9a-f-]{36}" role="doc-noteref" aria-label="Footnote 2">2<\/a><\/sup> end/);
 });
 
 test("adjacent markers across a style boundary still take the comma", () => {
@@ -394,7 +495,7 @@ test("adjacent markers across a style boundary still take the comma", () => {
 
   const html = serializeEditorPreviewHtml(blocks);
 
-  assert.match(html, /1<\/a><\/sup><\/strong><sup class="fn-sep" aria-hidden="true">,<\/sup><sup data-fn="[0-9a-f-]{36}" class="fn"><a id="[0-9a-f-]{36}-link" href="#[0-9a-f-]{36}">2<\/a><\/sup> end/);
+  assert.match(html, /1<\/a><\/sup><\/strong><sup class="fn-sep" aria-hidden="true">,<\/sup><sup class="fn"><a id="[0-9a-f-]{36}-link" href="#[0-9a-f-]{36}" role="doc-noteref" aria-label="Footnote 2">2<\/a><\/sup> end/);
 });
 
 test("space-separated footnote markers keep the space and get no comma", () => {
@@ -415,7 +516,7 @@ test("space-separated footnote markers keep the space and get no comma", () => {
 
   const html = serializeEditorPreviewHtml(blocks);
 
-  assert.match(html, /1<\/a><\/sup> <sup data-fn="[0-9a-f-]{36}" class="fn">/);
+  assert.match(html, /1<\/a><\/sup> <sup class="fn">/);
   assert.doesNotMatch(html, /fn-sep/);
 });
 
@@ -437,7 +538,7 @@ test("an appended footnote ref directly after an inline marker takes the comma",
 
   const html = serializeEditorPreviewHtml(blocks);
 
-  assert.match(html, /End<sup data-fn="[0-9a-f-]{36}" class="fn"><a id="[0-9a-f-]{36}-link" href="#[0-9a-f-]{36}">1<\/a><\/sup><sup class="fn-sep" aria-hidden="true">,<\/sup><sup data-fn="[0-9a-f-]{36}" class="fn">/);
+  assert.match(html, /End<sup class="fn"><a id="[0-9a-f-]{36}-link" href="#[0-9a-f-]{36}" role="doc-noteref" aria-label="Footnote 1">1<\/a><\/sup><sup class="fn-sep" aria-hidden="true">,<\/sup><sup class="fn">/);
 });
 
 test("preview mode separates adjacent footnote markers with a superscript comma", () => {
@@ -476,7 +577,7 @@ test("preview ignores escaped literal markers before footnote refs", () => {
 
   const html = serializeEditorPreviewHtml(blocks);
 
-  assert.match(html, /Literal \[100\] then note <sup data-fn="[0-9a-f-]{36}" class="fn">/);
+  assert.match(html, /Literal \[100\] then note <sup class="fn">/);
   assert.match(html, /<\/sup> end<\/p>/);
   assert.doesNotMatch(html, /\[1<sup/);
 });
@@ -555,10 +656,11 @@ test("serializeEditorPreviewHtml uses semantic tags and repo-relative uploaded i
   assert.match(html, /<!-- wp:quote -->/);
   assert.match(
     html,
-    /<blockquote class="wp-block-quote"><!-- wp:paragraph -->\n<p>Quoted line<sup data-fn="[0-9a-f-]{36}" class="fn">/,
+    /<blockquote class="wp-block-quote"><!-- wp:paragraph -->\n<p>Quoted line<sup class="fn">/,
   );
-  assert.match(html, /<!-- wp:footnotes \/-->/);
-  assert.doesNotMatch(html, /<ol class="wp-block-footnotes">/);
+  assert.doesNotMatch(html, /<!-- wp:footnotes \/-->/);
+  assert.match(html, /role="doc-endnotes"/);
+  assert.match(html, /Footnote line/);
   assert.match(html, /<figure/);
   assert.match(html, /src="chapters\/chapter-1\/images\/row-2\/image.png"/);
   assert.match(html, /<figcaption/);
@@ -666,6 +768,62 @@ test("preview mode constant remains stable", () => {
   assert.equal(EDITOR_MODE_PREVIEW, "preview");
 });
 
+test("HTML exports complete formatted notes with reciprocal links and row-local markers", () => {
+  const blocks = [
+    {
+      kind: "text", rowId: "row-1", languageCode: "vi", textStyle: "paragraph",
+      text: "Literal \\[2\\], first <strong>[2]</strong> then [1].",
+      footnotes: [
+        { marker: 1, text: 'Second <a href="https://example.com/source?a=1&b=2">source</a>' },
+        { marker: 2, text: "Đầu tiên <em>formatted</em> & safe\nNext line" },
+      ],
+    },
+    {
+      kind: "text", rowId: "row-2", languageCode: "vi", textStyle: "paragraph",
+      text: "Another row [1].",
+      footnotes: [{ marker: 1, text: "Distinct row note" }, { marker: 3, text: "Unmarked note" }],
+    },
+  ];
+  const html = serializeEditorPreviewHtml(blocks);
+  const refs = [...html.matchAll(/<a id="([^"]+)" href="#([^"]+)" role="doc-noteref" aria-label="Footnote (\d+)">/g)];
+  assert.deepEqual(refs.map((ref) => ref[3]), ["1", "2", "3", "4"]);
+  for (const [, referenceId, noteId] of refs) {
+    assert.ok(html.includes(`<li id="${noteId}" tabindex="-1">`));
+    assert.ok(html.includes(`<a href="#${referenceId}" role="doc-backlink"`));
+  }
+  assert.match(html, /Literal \[2\], first <strong><sup/);
+  assert.match(html, /Đầu tiên <em>formatted<\/em> &amp; safe<br>Next line/);
+  assert.match(html, /Second <a href="https:\/\/example.com\/source\?a=1&amp;b=2">source<\/a>/);
+  assert.match(html, /Distinct row note/);
+  assert.match(html, /Unmarked note/);
+  assert.match(html, /<h2 id="[^"]+">Footnotes<\/h2>\n<ol>/);
+  assert.doesNotMatch(html, /data-fn=|wp:footnotes/);
+});
+
+test("HTML repeated citations share one note and return to each occurrence across separators", () => {
+  const html = serializeEditorPreviewHtml([{
+    kind: "text", rowId: "repeated", languageCode: "en", textStyle: "paragraph",
+    text: "First [1], again <em>[1]</em>.<hr>Last [1].",
+    footnotes: [{ marker: 1, text: "One shared note" }],
+  }]);
+  const refs = [...html.matchAll(/<a id="([^"]+)" href="#([^"]+)" role="doc-noteref"/g)];
+  assert.equal(refs.length, 3);
+  assert.equal(new Set(refs.map((ref) => ref[1])).size, 3);
+  assert.equal(new Set(refs.map((ref) => ref[2])).size, 1);
+  assert.equal((html.match(/One shared note/g) ?? []).length, 1);
+  assert.equal((html.match(/<li /g) ?? []).length, 1);
+  refs.forEach((ref, index) => {
+    assert.ok(html.includes(`<a href="#${ref[1]}" role="doc-backlink" aria-label="Back to reference ${index + 1} for footnote 1">`));
+  });
+  assert.doesNotMatch(html, /\[1\]/);
+});
+
+test("HTML without footnotes has no empty notes section", () => {
+  for (const blocks of [[], [{ kind: "text", text: "No notes [1].", textStyle: "paragraph" }]]) {
+    assert.doesNotMatch(serializeEditorPreviewHtml(blocks), /Footnotes|doc-endnotes|doc-noteref|wp:footnotes/);
+  }
+});
+
 test("serializeEditorPreviewWordPress returns content plus matching footnote meta", () => {
   const blocks = buildEditorPreviewDocument([{
     rowId: "row-1",
@@ -689,6 +847,7 @@ test("serializeEditorPreviewWordPress returns content plus matching footnote met
   assert.doesNotMatch(content, /<meta charset/);
   assert.match(content, /^<!-- wp:paragraph -->/);
   assert.match(content, /<!-- wp:footnotes \/-->/);
+  assert.doesNotMatch(content, /doc-endnotes|doc-noteref|Footnote <strong>/);
   assert.doesNotMatch(
     content,
     /<!-- wp:separator -->\n<hr class="wp-block-separator has-alpha-channel-opacity"\/>\n<!-- \/wp:separator -->\n\n<!-- wp:footnotes \/-->/,
@@ -878,4 +1037,40 @@ test("serializeEditorPreviewWordPress does not promote H1s that are not first or
   const imageFirstResult = serializeEditorPreviewWordPress(imageFirst);
   assert.equal(imageFirstResult.title, null);
   assert.match(imageFirstResult.content, /Not a title/);
+});
+
+test("quote attribution stays attached in preview, WordPress, HTML and plain text", () => {
+  const blocks = buildEditorPreviewDocument([{ rowId: "q", textStyle: "quote", fields: { en: "Body" }, attributions: { en: 'Author & <b>Source</b>' } }], "en");
+  const preview = renderEditorPreviewDocumentHtml(blocks, { searchState: { query: "Source" } });
+  assert.match(preview.html, /<blockquote[\s\S]*<cite class="translate-preview__attribution"[\s\S]*Author &amp; <strong>[\s\S]*Source[\s\S]*<\/cite><\/blockquote>/);
+  assert.equal(countEditorPreviewSearchMatches(blocks, "Source"), 1);
+  const wp = serializeEditorPreviewWordPress(blocks).content;
+  assert.match(wp, /<cite>Author &amp; <strong>Source<\/strong><\/cite><\/blockquote>/);
+  assert.doesNotMatch(wp, /font-size|text-align/);
+  assert.match(serializeEditorPreviewHtml(blocks), /<cite style="display:block;font-size:90%;text-align:right;font-style:normal">/);
+  assert.match(serializeEditorPreviewHtml(blocks), /<blockquote class="wp-block-quote">/);
+  assert.equal(serializeEditorPreviewPlainText(blocks), "Body\n\nAuthor & Source");
+});
+
+test("an attribution-only quote and quotes with separators retain their source once", () => {
+  for (const text of ["", "First<hr>Second", "First<hr>"]) {
+    const blocks = buildEditorPreviewDocument([{ textStyle: "quote", fields: { en: text }, attributions: { en: "Author" } }], "en");
+    assert.equal((serializeEditorPreviewWordPress(blocks).content.match(/<cite>Author<\/cite>/g) ?? []).length, 1);
+    assert.equal((renderEditorPreviewDocumentHtml(blocks).html.match(/>Author<\/cite>/g) ?? []).length, 1);
+    assert.match(serializeEditorPreviewPlainText(blocks), /Author$/);
+  }
+});
+
+test("blank quote attribution is absent from preview and all clipboard formats", () => {
+  for (const attribution of ["", " \n\t"]) {
+    const blocks = buildEditorPreviewDocument([{ textStyle: "quote", fields: { en: "Body" }, attributions: { en: attribution } }], "en");
+    assert.equal(blocks[0].attribution, undefined);
+    // Also tolerate callers supplying their own blocks without normalization.
+    for (const input of [blocks, [{ ...blocks[0], attribution }]]) {
+      assert.doesNotMatch(renderEditorPreviewDocumentHtml(input).html, /<cite/);
+      assert.doesNotMatch(serializeEditorPreviewHtml(input), /<cite/);
+      assert.doesNotMatch(serializeEditorPreviewWordPress(input).content, /<cite/);
+    }
+    assert.equal(serializeEditorPreviewPlainText(blocks), "Body");
+  }
 });

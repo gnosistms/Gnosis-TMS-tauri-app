@@ -15,9 +15,11 @@
 // already-occupied token. This is the historical longest-first rule applied
 // globally, NOT maximum-coverage interval scheduling.
 
-// Bumped whenever compiled-matcher or selection semantics change; asserted
-// against the shared golden fixture so JS and Rust stay in lockstep.
-export const GLOSSARY_MATCHER_POLICY_VERSION = 1;
+// Bumped whenever compiled-matcher, tokenizer, or selection semantics change;
+// asserted against the shared golden fixture so JS and Rust stay in lockstep.
+// v2: quotes, dots, and hyphens are tokens, not separators (see
+// plans/glossary-punctuation-tokens-plan.md).
+export const GLOSSARY_MATCHER_POLICY_VERSION = 2;
 
 // The single active selection policy. The legacy left-to-right scan was
 // removed after the v0.8.86 bake, so rollback is now a git revert rather than

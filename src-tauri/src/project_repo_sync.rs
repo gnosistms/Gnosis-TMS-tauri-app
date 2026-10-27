@@ -28,7 +28,7 @@ use crate::{
         encode_repo_app_update_requirement, parse_repo_app_update_requirement_error,
         remote_ref_requires_newer_app,
     },
-    repo_layout_metadata::{RepoKind, STORAGE_LAYOUT_VERSION_V2},
+    repo_layout_metadata::{RepoKind, REPO_METADATA_RELATIVE_PATH, STORAGE_LAYOUT_VERSION_V2},
     repo_migrations::{
         discard_local_old_layout_changes_and_adopt_remote, head_requires_0810_migration,
         is_remote_migrated_local_old_layout_changes_error,
@@ -37,9 +37,10 @@ use crate::{
     },
     repo_sync_shared::{
         abort_in_progress_git_operations, abort_rebase_after_failed_pull, acquire_repo_sync_lock,
-        ensure_repo_local_git_identity, git_error_indicates_missing_remote_ref, git_output,
-        load_git_transport_token, read_current_head_oid, repo_has_git_state_path,
-        repo_has_rebase_in_progress_local, repo_sync_lock, GitTransportAuth,
+        ensure_repo_local_git_identity, format_git_spawn_error, git_command,
+        git_error_indicates_missing_remote_ref, git_output, load_git_transport_token,
+        read_current_head_oid, repo_has_git_state_path, repo_has_rebase_in_progress_local,
+        repo_sync_lock, GitTransportAuth,
     },
 };
 
@@ -1164,18 +1165,9 @@ pub(crate) fn sync_project_repo(
         .map(|state| !state.has_ever_synced)
         .unwrap_or(false)
     {
-        let current_head_oid = attach_unsynced_local_project_repo_to_remote(
-            repo_path,
-            branch_name,
-            &git_transport_auth,
-        )?;
-        mark_project_repo_synced(project, repo_path)?;
-        return Ok(ProjectRepoSyncOutcome {
-            current_head_oid,
-            repo_sync_status: PROJECT_REPO_SYNC_STATUS_UP_TO_DATE.to_string(),
-            message: None,
-            imported_conflicts: Vec::new(),
-        });
+        attach_unsynced_local_project_repo_to_remote(repo_path, branch_name, &git_transport_auth)?;
+        // Continue through normal pull/push. Attachment may have replayed work
+        // added locally since creation; it is not synced until the push succeeds.
     }
 
     let imported_conflicts =
@@ -1704,20 +1696,143 @@ fn attach_unsynced_local_project_repo_to_remote(
     )?;
 
     let remote_tracking_ref = format!("origin/{branch_name}");
+    let local_branch = git_output(repo_path, &["symbolic-ref", "--short", "HEAD"], None)?;
+    if local_branch != branch_name {
+        // Initialization uses main; the organization may use a different default.
+        // Never force over a pre-existing local branch.
+        git_output(repo_path, &["branch", "-m", branch_name], None)?;
+    }
+    // A previous attempt may have attached successfully but failed to push.
+    // Once histories are related, normal synchronization owns reconciliation.
+    if git_output(
+        repo_path,
+        &["merge-base", "HEAD", &remote_tracking_ref],
+        None,
+    )
+    .is_ok()
+    {
+        return Ok(read_current_head_oid(repo_path));
+    }
+    let initialization_head =
+        read_local_repo_sync_state(repo_path)?.and_then(|state| state.initialization_head_oid);
     let local_head_oid = read_current_head_oid(repo_path);
     let remote_head_oid = git_output(repo_path, &["rev-parse", &remote_tracking_ref], None).ok();
     if local_head_oid.is_some() && local_head_oid != remote_head_oid {
         create_project_head_backup_branch(repo_path, "first-sync-backup")?;
     }
 
-    git_output(
+    let rebase_base = match initialization_head.as_deref() {
+        Some(initialization_head) => {
+            git_output(
+                repo_path,
+                &["merge-base", "--is-ancestor", initialization_head, "HEAD"],
+                None,
+            )?;
+            project_first_sync_rebase_base(repo_path, &remote_tracking_ref, initialization_head)?
+        }
+        None => remote_tracking_ref.clone(),
+    };
+    let mut rebase_args = vec!["rebase", "--onto", &rebase_base];
+    if let Some(initialization_head) = initialization_head.as_deref() {
+        // Skip only the known bootstrap, never user work added after creation.
+        rebase_args.push(initialization_head);
+    } else {
+        // Older projects have no marker: retain their entire local history.
+        // A conflicting bootstrap is safer to report than to silently discard.
+        rebase_args.push("--root");
+    }
+    rebase_args.push(branch_name);
+    if let Err(error) = git_output(repo_path, &rebase_args, None) {
+        if repo_has_rebase_in_progress_local(repo_path) {
+            git_output(repo_path, &["rebase", "--abort"], None)?;
+        }
+        return Err(format!(
+            "Could not sync the new project. Your local work has been kept: {error}"
+        ));
+    }
+    Ok(read_current_head_oid(repo_path))
+}
+
+/// The broker bootstraps project.json and .gitattributes, but not layout metadata.
+/// Keep that local bootstrap file as a commit on the remote history so subsequent
+/// migration commits can modify it. Build the commit with a separate index: a
+/// failed rebase must still be able to restore the untouched local checkout.
+fn project_first_sync_rebase_base(
+    repo_path: &Path,
+    remote_ref: &str,
+    initialization_head: &str,
+) -> Result<String, String> {
+    let remote_metadata = git_output(
         repo_path,
-        &["checkout", "-B", branch_name, &remote_tracking_ref],
+        &["ls-tree", remote_ref, "--", REPO_METADATA_RELATIVE_PATH],
         None,
     )?;
-    git_output(repo_path, &["reset", "--hard", &remote_tracking_ref], None)?;
-
-    Ok(Some(git_output(repo_path, &["rev-parse", "HEAD"], None)?))
+    let initial_metadata = git_output(
+        repo_path,
+        &[
+            "ls-tree",
+            initialization_head,
+            "--",
+            REPO_METADATA_RELATIVE_PATH,
+        ],
+        None,
+    )?;
+    if !remote_metadata.is_empty() || initial_metadata.is_empty() {
+        return Ok(remote_ref.to_string());
+    }
+    let blob = git_output(
+        repo_path,
+        &[
+            "rev-parse",
+            &format!("{initialization_head}:{REPO_METADATA_RELATIVE_PATH}"),
+        ],
+        None,
+    )?;
+    let index_path =
+        std::env::temp_dir().join(format!("gnosis-first-sync-{}", uuid::Uuid::now_v7()));
+    let indexed_git = |args: &[&str]| -> Result<String, String> {
+        let output = git_command()?
+            .current_dir(repo_path)
+            .env("GIT_INDEX_FILE", &index_path)
+            .args(args)
+            .output()
+            .map_err(|error| format_git_spawn_error(args, &error))?;
+        if !output.status.success() {
+            return Err(format!(
+                "Could not preserve project initialization metadata: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    };
+    let result = (|| {
+        indexed_git(&["read-tree", remote_ref])?;
+        indexed_git(&[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            "100644",
+            &blob,
+            REPO_METADATA_RELATIVE_PATH,
+        ])?;
+        let tree = indexed_git(&["write-tree"])?;
+        git_output(
+            repo_path,
+            &[
+                "commit-tree",
+                &tree,
+                "-p",
+                remote_ref,
+                "-m",
+                "Preserve project layout metadata",
+                "-m",
+                &crate::repo_app_version::git_commit_app_version_trailer(),
+            ],
+            None,
+        )
+    })();
+    let _ = fs::remove_file(index_path);
+    result
 }
 
 fn detect_unresolved_project_repo_conflict(
@@ -1978,6 +2093,7 @@ fn mark_project_repo_synced(
             current_repo_name: Some(project.repo_name.clone()),
             kind: Some("project".to_string()),
             has_ever_synced: Some(true),
+            initialization_head_oid: None,
             last_known_github_repo_id: project.repo_id,
             last_known_full_name: Some(project.full_name.clone()),
             touch_success_timestamp: true,
@@ -2611,7 +2727,7 @@ mod tests {
     }
 
     #[test]
-    fn attach_unsynced_local_project_repo_preserves_divergent_committed_head() {
+    fn attach_unsynced_legacy_project_repo_keeps_conflicting_local_work_visible() {
         let parent = env::temp_dir().join(format!(
             "gnosis-project-first-sync-backup-{}",
             Uuid::now_v7()
@@ -2652,11 +2768,11 @@ mod tests {
             "main",
             &git_transport_auth,
         )
-        .expect("attach never-synced repo");
+        .expect_err("report conflict without discarding local work");
 
         assert_eq!(
             fs::read_to_string(local_path.join("chapter.txt")).expect("read attached file"),
-            "remote text\n",
+            "local committed text\n",
         );
         let backup_branch = git_stdout(
             &local_path,
@@ -2676,6 +2792,278 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(&parent);
+    }
+
+    fn new_project_first_sync_fixture(
+    ) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
+        let parent = env::temp_dir().join(format!("gnosis-new-project-sync-{}", Uuid::now_v7()));
+        fs::create_dir_all(&parent).expect("create parent");
+        run_git(
+            &parent,
+            &["init", "--bare", "--initial-branch", "main", "remote.git"],
+        );
+        let remote = parent.join("remote.git").to_string_lossy().to_string();
+        for name in ["seed", "local"] {
+            let path = parent.join(name);
+            fs::create_dir_all(&path).expect("create repo");
+            run_git(&path, &["init", "--initial-branch", "main"]);
+            run_git(&path, &["config", "user.email", "test@example.com"]);
+            run_git(&path, &["config", "user.name", "Test User"]);
+            let project = if name == "seed" {
+                serde_json::json!({
+                    "project_id": "project-1", "title": "Project",
+                    "lifecycle": {"state": "active"},
+                    "chapter_order": [], "deleted_chapter_order": [],
+                })
+            } else {
+                crate::repo_layout_metadata::write_repo_layout_metadata(
+                    &path,
+                    &crate::repo_layout_metadata::new_v2_repo_layout_metadata(
+                        crate::repo_layout_metadata::RepoKind::Project,
+                    ),
+                )
+                .expect("local layout bootstrap");
+                serde_json::json!({"title": "Project"})
+            };
+            fs::write(
+                path.join("project.json"),
+                serde_json::to_string_pretty(&project).unwrap(),
+            )
+            .expect("write bootstrap");
+            fs::write(
+                path.join(".gitattributes"),
+                "*.json text eol=lf\nassets/** binary\n",
+            )
+            .expect("git attributes");
+            run_git(&path, &["add", "."]);
+            run_git(&path, &["commit", "-m", "Initialize project"]);
+            run_git(&path, &["remote", "add", "origin", &remote]);
+        }
+        let seed = parent.join("seed");
+        let local = parent.join("local");
+        run_git(&seed, &["push", "-u", "origin", "main"]);
+        crate::local_repo_sync_state::upsert_local_repo_sync_state(
+            &local,
+            crate::local_repo_sync_state::LocalRepoSyncStateUpdate {
+                initialization_head_oid: Some(git_stdout(&local, &["rev-parse", "HEAD"])),
+                ..Default::default()
+            },
+        )
+        .expect("save initialization head");
+        (parent, seed, local)
+    }
+
+    #[test]
+    fn new_project_first_sync_keeps_local_work_and_retries_without_replaying_it() {
+        let (parent, _seed, local) = new_project_first_sync_fixture();
+        fs::create_dir_all(local.join("chapters")).expect("chapters");
+        fs::write(local.join("chapters/local.txt"), "local work\n").expect("write chapter");
+        run_git(&local, &["add", "."]);
+        run_git(&local, &["commit", "-m", "Import chapter"]);
+        let auth = GitTransportAuth::from_token("test-token").expect("auth");
+        super::attach_unsynced_local_project_repo_to_remote(&local, "main", &auth).expect("attach");
+        let attached_head = git_stdout(&local, &["rev-parse", "HEAD"]);
+        // Simulate a failed push: retry attachment while has_ever_synced is false.
+        super::attach_unsynced_local_project_repo_to_remote(&local, "main", &auth).expect("retry");
+        assert_eq!(git_stdout(&local, &["rev-parse", "HEAD"]), attached_head);
+        assert_eq!(
+            fs::read_to_string(local.join("chapters/local.txt")).expect("local work"),
+            "local work\n"
+        );
+        assert_eq!(
+            git_stdout(&local, &["rev-list", "--count", "origin/main..HEAD"]),
+            "2"
+        );
+        run_git(&local, &["push", "origin", "main"]);
+        assert_eq!(
+            git_stdout(
+                &parent.join("remote.git"),
+                &["show", "main:chapters/local.txt"]
+            ),
+            "local work"
+        );
+        fs::remove_dir_all(parent).expect("cleanup");
+    }
+
+    #[test]
+    fn new_project_first_sync_conflict_restores_local_work() {
+        let (parent, seed, local) = new_project_first_sync_fixture();
+        let original_metadata = fs::read(local.join(".gtms/repo.json")).unwrap();
+        for path in [&seed, &local] {
+            fs::write(
+                path.join("chapter.txt"),
+                if path == &seed { "remote" } else { "local" },
+            )
+            .expect("write chapter");
+            run_git(path, &["add", "."]);
+            run_git(path, &["commit", "-m", "Import chapter"]);
+        }
+        run_git(&seed, &["push", "origin", "main"]);
+        let original_head = git_stdout(&local, &["rev-parse", "HEAD"]);
+        let auth = GitTransportAuth::from_token("test-token").expect("auth");
+        let error = super::attach_unsynced_local_project_repo_to_remote(&local, "main", &auth)
+            .expect_err("conflict");
+        assert!(error.contains("Your local work has been kept"));
+        assert_eq!(git_stdout(&local, &["rev-parse", "HEAD"]), original_head);
+        assert_eq!(
+            fs::read_to_string(local.join("chapter.txt")).expect("local work"),
+            "local"
+        );
+        assert_eq!(git_stdout(&local, &["status", "--porcelain"]), "");
+        assert_eq!(
+            fs::read(local.join(".gtms/repo.json")).unwrap(),
+            original_metadata
+        );
+        fs::remove_dir_all(parent).expect("cleanup");
+    }
+
+    #[test]
+    fn legacy_project_first_sync_keeps_work_in_the_initial_commit() {
+        let (parent, seed, local) = new_project_first_sync_fixture();
+        fs::write(local.join(".git/gnosis-sync-state.json"), "{}").expect("legacy sync state");
+        fs::copy(seed.join("project.json"), local.join("project.json"))
+            .expect("matching bootstrap");
+        fs::write(local.join("chapter.txt"), "legacy local work").expect("write chapter");
+        run_git(&local, &["add", "."]);
+        run_git(&local, &["commit", "--amend", "--no-edit"]);
+        let auth = GitTransportAuth::from_token("test-token").expect("auth");
+        super::attach_unsynced_local_project_repo_to_remote(&local, "main", &auth)
+            .expect("attach legacy");
+        assert_eq!(
+            fs::read_to_string(local.join("chapter.txt")).expect("local work"),
+            "legacy local work"
+        );
+        run_git(&local, &["push", "origin", "main"]);
+        assert_eq!(
+            git_stdout(&parent.join("remote.git"), &["show", "main:chapter.txt"]),
+            "legacy local work"
+        );
+        fs::remove_dir_all(parent).expect("cleanup");
+    }
+
+    #[test]
+    fn new_empty_project_first_sync_adopts_remote_bootstrap_and_keeps_layout() {
+        let (parent, seed, local) = new_project_first_sync_fixture();
+        let auth = GitTransportAuth::from_token("test-token").expect("auth");
+        super::attach_unsynced_local_project_repo_to_remote(&local, "main", &auth)
+            .expect("attach empty");
+        assert_eq!(
+            fs::read(local.join("project.json")).unwrap(),
+            fs::read(seed.join("project.json")).unwrap()
+        );
+        assert!(local.join(".gtms/repo.json").exists());
+        assert_eq!(git_stdout(&local, &["status", "--porcelain"]), "");
+        run_git(&local, &["push", "origin", "main"]);
+        fs::remove_dir_all(parent).expect("cleanup");
+    }
+
+    #[test]
+    fn new_project_first_sync_replays_layout_migrations() {
+        for branch in ["main", "trunk"] {
+            for import_chapter in [false, true] {
+                let (parent, seed, local) = new_project_first_sync_fixture();
+                if branch != "main" {
+                    run_git(&seed, &["branch", "-m", branch]);
+                    run_git(&seed, &["push", "origin", branch]);
+                }
+                let mut metadata = crate::repo_layout_metadata::new_v2_repo_layout_metadata(
+                    crate::repo_layout_metadata::RepoKind::Project,
+                );
+                for migration in ["0.8.56", "0.8.75"] {
+                    // Empty-project migrations still update this file before first sync.
+                    metadata.applied_migrations.push(migration.to_string());
+                    crate::repo_layout_metadata::write_repo_layout_metadata(&local, &metadata)
+                        .expect("migration metadata");
+                    run_git(&local, &["add", "."]);
+                    run_git(&local, &["commit", "-m", migration]);
+                }
+                if import_chapter {
+                    fs::create_dir_all(local.join("chapters/aaaaaaaa")).unwrap();
+                    fs::write(
+                        local.join("chapters/aaaaaaaa/chapter.json"),
+                        "{\"title\":\"Local chapter\"}\n",
+                    )
+                    .unwrap();
+                    run_git(&local, &["add", "."]);
+                    run_git(&local, &["commit", "-m", "Import chapter"]);
+                }
+                let original_metadata = fs::read(local.join(".gtms/repo.json")).unwrap();
+                let auth = GitTransportAuth::from_token("test-token").expect("auth");
+                super::attach_unsynced_local_project_repo_to_remote(&local, branch, &auth)
+                    .expect("attach");
+                assert_eq!(git_stdout(&local, &["branch", "--show-current"]), branch);
+                assert_eq!(
+                    fs::read(local.join(".gtms/repo.json")).unwrap(),
+                    original_metadata
+                );
+                assert_eq!(
+                    fs::read(local.join("project.json")).unwrap(),
+                    fs::read(seed.join("project.json")).unwrap()
+                );
+                assert_eq!(
+                    local.join("chapters/aaaaaaaa/chapter.json").exists(),
+                    import_chapter
+                );
+                assert_eq!(git_stdout(&local, &["status", "--porcelain"]), "");
+                let attached_head = git_stdout(&local, &["rev-parse", "HEAD"]);
+                super::attach_unsynced_local_project_repo_to_remote(&local, branch, &auth)
+                    .expect("retry");
+                assert_eq!(git_stdout(&local, &["rev-parse", "HEAD"]), attached_head);
+                run_git(&local, &["push", "origin", branch]);
+                assert_eq!(
+                    git_stdout(&parent.join("remote.git"), &["rev-parse", branch]),
+                    attached_head
+                );
+                fs::remove_dir_all(parent).expect("cleanup");
+            }
+        }
+    }
+
+    #[test]
+    fn new_project_first_sync_keeps_existing_remote_layout_metadata() {
+        let (parent, seed, local) = new_project_first_sync_fixture();
+        let mut metadata = crate::repo_layout_metadata::new_v2_repo_layout_metadata(
+            crate::repo_layout_metadata::RepoKind::Project,
+        );
+        metadata.applied_migrations.push("0.8.56".to_string());
+        crate::repo_layout_metadata::write_repo_layout_metadata(&seed, &metadata).unwrap();
+        run_git(&seed, &["add", "."]);
+        run_git(&seed, &["commit", "-m", "Remote migrations"]);
+        run_git(&seed, &["push", "origin", "main"]);
+        let auth = GitTransportAuth::from_token("test-token").expect("auth");
+        super::attach_unsynced_local_project_repo_to_remote(&local, "main", &auth).expect("attach");
+        assert_eq!(
+            fs::read(local.join(".gtms/repo.json")).unwrap(),
+            fs::read(seed.join(".gtms/repo.json")).unwrap()
+        );
+        assert_eq!(
+            git_stdout(&local, &["rev-parse", "HEAD"]),
+            git_stdout(&seed, &["rev-parse", "HEAD"])
+        );
+        fs::remove_dir_all(parent).expect("cleanup");
+    }
+
+    #[test]
+    fn new_project_first_sync_does_not_overwrite_existing_destination_branch() {
+        let (parent, seed, local) = new_project_first_sync_fixture();
+        run_git(&seed, &["push", "origin", "main:trunk"]);
+        run_git(&local, &["branch", "trunk"]);
+        fs::write(local.join("local.txt"), "local work").unwrap();
+        run_git(&local, &["add", "."]);
+        run_git(&local, &["commit", "-m", "Local work"]);
+        let original_head = git_stdout(&local, &["rev-parse", "HEAD"]);
+        let destination_head = git_stdout(&local, &["rev-parse", "trunk"]);
+        let auth = GitTransportAuth::from_token("test-token").expect("auth");
+        super::attach_unsynced_local_project_repo_to_remote(&local, "trunk", &auth)
+            .expect_err("existing local branch");
+        assert_eq!(git_stdout(&local, &["rev-parse", "HEAD"]), original_head);
+        assert_eq!(
+            git_stdout(&local, &["rev-parse", "trunk"]),
+            destination_head
+        );
+        assert_eq!(git_stdout(&local, &["branch", "--show-current"]), "main");
+        assert_eq!(git_stdout(&local, &["status", "--porcelain"]), "");
+        fs::remove_dir_all(parent).expect("cleanup");
     }
 
     #[test]

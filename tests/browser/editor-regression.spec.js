@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./test.js";
 
 async function installMockTauri(page) {
   await page.addInitScript(() => {
@@ -9,6 +9,7 @@ async function installMockTauri(page) {
     const rowFieldsByChapterId = new Map();
     const rowFootnotesByChapterId = new Map();
     const rowImageCaptionsByChapterId = new Map();
+    const rowAttributionsByChapterId = new Map();
     const rowTimingsByChapterId = new Map();
     const rowTextStylesByChapterId = new Map();
     const fieldStatesByChapterId = new Map();
@@ -98,6 +99,7 @@ async function installMockTauri(page) {
         chapterId,
         new Map(rows.map((row) => [row.rowId, clone(row.imageCaptions ?? {})])),
       );
+      rowAttributionsByChapterId.set(chapterId, new Map(rows.map((row) => [row.rowId, clone(row.attributions ?? {})])));
       rowTimingsByChapterId.set(
         chapterId,
         new Map(rows.map((row) => [row.rowId, clone(row.timings ?? {})])),
@@ -183,6 +185,7 @@ async function installMockTauri(page) {
         fields: clone(fields),
         footnotes: clone(footnotes),
         imageCaptions: clone(imageCaptions),
+        attributions: clone(rowAttributionsByChapterId.get(chapterId)?.get(rowId) ?? {}),
         images: clone(fixtureRow.images ?? {}),
         fieldStates: clone(fieldStates),
         timings: clone(rowTimingsByChapterId.get(chapterId)?.get(rowId) ?? {}),
@@ -320,6 +323,7 @@ async function installMockTauri(page) {
         rowFieldsByChapterId.get(input.chapterId).set(input.rowId, nextFields);
         rowFootnotesByChapterId.get(input.chapterId).set(input.rowId, nextFootnotes);
         rowImageCaptionsByChapterId.get(input.chapterId).set(input.rowId, nextImageCaptions);
+        if (input.attributions) rowAttributionsByChapterId.get(input.chapterId).set(input.rowId, clone(input.attributions));
         rowTimingsByChapterId.get(input.chapterId)?.set(input.rowId, nextTimings);
         pushHistoryEntriesWithCommit(input.chapterId, input.rowId, nextFields, nextFootnotes, storedFieldStates, {
           operationType: input.operation ?? "editor-update",
@@ -343,6 +347,13 @@ async function installMockTauri(page) {
         }
 
         const nextTextStyle = String(input.textStyle ?? "paragraph");
+        const attributions = rowAttributionsByChapterId.get(input.chapterId)?.get(input.rowId) ?? {};
+        if (findRowTextStyle(input.chapterId, input.rowId) === "quote" && nextTextStyle !== "quote") {
+          for (const [code, text] of Object.entries(attributions)) {
+            if (text) storedFields[code] = storedFields[code] ? `${storedFields[code].trimEnd()}\n\n${text}` : text;
+            attributions[code] = "";
+          }
+        }
         chapterTextStyles.set(input.rowId, nextTextStyle);
         pushHistoryEntries(
           input.chapterId,
@@ -356,6 +367,8 @@ async function installMockTauri(page) {
         return {
           rowId: input.rowId,
           textStyle: nextTextStyle,
+          fields: clone(storedFields),
+          attributions: clone(attributions),
         };
       }
 
@@ -1097,6 +1110,7 @@ async function readEditorFieldMetrics(page, rowId, languageCode, contentKind = "
       fontSizePx: Number.parseFloat(styles.fontSize),
       fontWeight: styles.fontWeight,
       fontStyle: styles.fontStyle,
+      opacity: Number(styles.opacity),
       paddingLeftPx: Number.parseFloat(styles.paddingLeft),
     };
   }, { rowId, languageCode, contentKind });
@@ -1541,6 +1555,337 @@ async function openPlatformEditorFixture(page, platform) {
 }
 
 test.describe("editor regressions", () => {
+  for (const kind of ["paragraph", "heading1", "image", "image-caption", "footnote", "separator", "custom-html"]) {
+    test(`preview ${kind} double-click returns to its editor row and language`, async ({ page }) => {
+      const rowId = "fixture-row-0020";
+      await mountEditorFixture(page, { rowCount: 40, chapterStatus: "ready" }, { mockTauri: true });
+      await patchFixtureRow(page, rowId, {
+        fields: { es: kind === "custom-html" ? "<div>Custom preview content</div>" : "Preview body [1]<hr>After separator" },
+        textStyle: kind === "heading1" ? "heading1" : kind === "custom-html" ? "custom_html" : "paragraph",
+      });
+      await page.evaluate(async (targetRowId) => {
+        const { state } = await import(new URL("/app/state.js", window.location.href).href);
+        const row = state.editorChapter.rows.find((row) => row.rowId === targetRowId);
+        row.footnotes.es = [{ marker: 1, text: "A preview footnote" }];
+        row.images.es = { kind: "url", url: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80'%3E%3Crect width='80' height='80' fill='orange'/%3E%3C/svg%3E" };
+        row.imageCaptions.es = "Preview image caption";
+      }, rowId);
+      await page.locator('[data-action="set-editor-mode:preview"]').click();
+      await page.locator("[data-editor-preview-language-select]").selectOption("es");
+      const block = page.locator(`[data-editor-preview-document] [data-preview-block="${kind}"][data-row-id="${rowId}"]`).first();
+      await expect(block).toHaveAttribute("data-tooltip", "Double-click to edit.");
+      await expect(block).toHaveAttribute("lang", "es");
+      // A preview jump must reveal its source even when translate-mode filters
+      // would otherwise hide that row.
+      await page.evaluate(async () => {
+        const { state } = await import(new URL("/app/state.js", window.location.href).href);
+        state.editorChapter.filters.searchQuery = "no rows match this filter";
+        state.editorChapter.filters.rowFilterMode = "needs-review";
+      });
+      const target = kind === "image" ? block.locator("img") : block;
+      await expect(block).not.toHaveAttribute("title");
+      await target.hover();
+      await expect.poll(() => block.evaluate((element) => getComputedStyle(element, "::before").content)).toBe('"Double-click to edit."');
+      await expect.poll(() => block.evaluate((element) => getComputedStyle(element, "::before").opacity)).toBe("1");
+      if (kind === "image-caption") {
+        const figure = block.locator("..");
+        await expect.poll(() => figure.evaluate((element) => getComputedStyle(element, "::before").content)).toBe("none");
+      }
+      await target.dblclick();
+      await expect(page.locator(".translate-layout--preview")).toHaveCount(0);
+      await expect(page.locator(`[data-editor-language-panel][data-row-id="${rowId}"][data-language-code="es"]`)).toBeInViewport();
+      await expect(page.locator("[data-editor-search-input]")).toHaveValue("");
+    });
+  }
+
+  for (const platform of ["macos", "windows"]) {
+    test(`card whitespace selects through edges and dividers without editing (${platform})`, async ({ page }) => {
+      await mountEditorFixture(page, { rowCount: 6, chapterStatus: "ready" }, {
+        mockTauri: true, path: `/?platform=${platform}`,
+      });
+      const first = page.locator('[data-editor-row-card][data-row-id="fixture-row-0001"]');
+      const card = first.locator(".card--translation");
+      const selected = page.locator("[data-editor-language-panel].is-active");
+      await page.locator('[data-action="switch-editor-sidebar-tab:history"]').click();
+
+      for (const [edge, language] of [
+        ["top", "es"], ["bottom", "vi"], ["left-upper", "es"], ["right-lower", "vi"],
+        ["above-divider", "es"], ["below-divider", "vi"], ["right-upper", "es"], ["left-lower", "vi"],
+      ]) {
+        const point = await card.evaluate((element, edge) => {
+          const bounds = element.getBoundingClientRect();
+          const panels = [...element.querySelectorAll("[data-editor-language-panel]")]
+            .map((panel) => panel.getBoundingClientRect());
+          const divider = panels[1].top;
+          const x = edge.startsWith("left") ? bounds.left + 1
+            : edge.startsWith("right") ? bounds.right - 1 : (bounds.left + bounds.right) / 2;
+          const y = edge === "top" ? bounds.top + 1
+            : edge === "bottom" ? bounds.bottom - 1
+            : edge === "above-divider" ? divider - 1
+            : edge === "below-divider" ? divider + 1
+            : edge.endsWith("upper") ? panels[0].top + 5 : panels[1].top + 5;
+          return { x, y };
+        }, edge);
+        await page.mouse.click(point.x, point.y);
+        await expect(selected).toHaveCount(1);
+        await expect(selected).toHaveAttribute("data-row-id", "fixture-row-0001");
+        await expect(selected).toHaveAttribute("data-language-code", language);
+        await expect(first).toHaveClass(/is-connected/);
+        await expect(page.locator("[data-editor-row-field]")).toHaveCount(0);
+        await expect(page.locator('[data-action="switch-editor-sidebar-tab:history"]')).toHaveAttribute("aria-pressed", "true");
+      }
+
+      // Collapsing is still its own action; reordered sections keep full hit areas.
+      await first.locator('[data-editor-language-toggle][data-language-code="es"]').click();
+      await expect(selected).toHaveAttribute("data-language-code", "vi");
+      await expect(first.locator('[data-editor-language-panel][data-language-code="es"]')).toHaveClass(/is-collapsed/);
+      const collapsedBounds = await card.boundingBox();
+      await page.mouse.click(collapsedBounds.x + collapsedBounds.width / 2, collapsedBounds.y + collapsedBounds.height - 1);
+      await expect(selected).toHaveAttribute("data-language-code", "es");
+      await expect(page.locator("[data-editor-row-field]")).toHaveCount(0);
+
+      // Text still opens for editing; selecting another card preserves its draft.
+      await first.locator('[data-editor-language-toggle][data-language-code="es"]').click();
+      const field = await activateMainEditorField(page, "fixture-row-0001", "vi");
+      await field.fill("Draft preserved when selecting card whitespace");
+      const second = page.locator('[data-editor-row-card][data-row-id="fixture-row-0002"] .card--translation');
+      await second.scrollIntoViewIfNeeded();
+      const secondBounds = await second.boundingBox();
+      await page.mouse.click(secondBounds.x + secondBounds.width / 2, secondBounds.y + 1);
+      await expect(selected).toHaveAttribute("data-row-id", "fixture-row-0002");
+      await expect(selected).toHaveAttribute("data-language-code", "es");
+      await expect(page.locator("[data-editor-row-field]")).toHaveCount(0);
+      await expect.poll(async () => (await readMockTauriState(page)).invocations.filter(
+        (entry) => entry.command === "update_gtms_editor_row_fields",
+      ).length).toBeGreaterThan(0);
+      await expect(first.locator('[data-editor-display-field][data-language-code="vi"]'))
+        .toHaveText("Draft preserved when selecting card whitespace");
+    });
+  }
+
+  for (const platform of ["macos", "windows"]) {
+    test(`selected language pill follows selection and persists in the sidebar (${platform})`, async ({ page }) => {
+      await mountEditorFixture(page, { rowCount: 6, chapterStatus: "ready" }, {
+        mockTauri: true, path: `/?platform=${platform}`,
+      });
+      const selected = page.locator("[data-editor-language-panel].is-active");
+      await expect(selected).toHaveCount(1);
+      await expect(selected).toHaveAttribute("data-row-id", "fixture-row-0001");
+      await expect(selected).toHaveAttribute("data-language-code", "vi");
+      await expect(selected.locator(".translation-language-panel__label"))
+        .toHaveCSS("background-color", "rgba(243, 156, 24, 0.2)");
+
+      await activateMainEditorField(page, "fixture-row-0001", "es");
+      await expect(selected).toHaveCount(1);
+      await expect(selected).toHaveAttribute("data-language-code", "es");
+      await page.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
+      await page.locator("[data-editor-assistant-draft]").focus();
+      await expect(page.locator("[data-editor-assistant-draft]")).toBeFocused();
+      await expect(selected).toHaveAttribute("data-language-code", "es");
+
+      await activateMainEditorField(page, "fixture-row-0002", "vi");
+      await expect(selected).toHaveCount(1);
+      await expect(selected).toHaveAttribute("data-row-id", "fixture-row-0002");
+      await expect(selected).toHaveAttribute("data-language-code", "vi");
+      await page.locator("[data-editor-search-input]").fill("no matching translation for language pill");
+      await expect(selected).toHaveCount(0);
+      await page.locator("[data-editor-search-input]").fill("");
+      await expect(selected).toHaveCount(0);
+    });
+  }
+
+  test("sidebar tabs stay clickable and compact without a selected row", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 6, chapterStatus: "ready" }, { mockTauri: true });
+    const search = page.locator("[data-editor-search-input]");
+    await search.fill("no matching translation for sidebar regression");
+    const sidebar = page.locator(".translate-sidebar");
+    await expect(sidebar.locator(".history-empty")).toHaveText("Select a translation to view review tools.");
+    const reviewHeight = (await sidebar.boundingBox()).height;
+    const callsBefore = (await readMockTauriState(page)).invocations.length;
+
+    for (const [tab, message] of [
+      ["history", "Select a translation to view History."],
+      ["comments", "Select a translation to view Comments."],
+      ["translate", "Select a translation to use the AI Assistant."],
+      ["review", "Select a translation to view review tools."],
+      ["comments", "Select a translation to view Comments."],
+      ["history", "Select a translation to view History."],
+    ]) {
+      const button = sidebar.locator(`[data-action="switch-editor-sidebar-tab:${tab}"]`);
+      await button.click();
+      await expect(button).toHaveAttribute("aria-pressed", "true");
+      await expect(sidebar.locator(".history-empty")).toHaveText(message);
+      await expect(sidebar.locator("textarea, .translate-ai-tools, .history-stack")).toHaveCount(0);
+      expect((await sidebar.boundingBox()).height).toBeCloseTo(reviewHeight, 0);
+    }
+    const newCalls = (await readMockTauriState(page)).invocations.slice(callsBefore);
+    expect(newCalls.filter((entry) => [
+      "load_gtms_editor_field_history", "load_gtms_editor_row_comments",
+    ].includes(entry.command))).toHaveLength(0);
+
+    await search.fill("");
+    await activateMainEditorField(page, "fixture-row-0001", "vi");
+    await sidebar.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
+    await expect(sidebar.locator("[data-editor-assistant-draft]")).toBeEnabled();
+    await expect(sidebar).toHaveClass(/translate-sidebar--assistant/);
+  });
+
+  test("background sync does not commit a focused draft while History is open", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 6 }, { mockTauri: true });
+    const field = await activateMainEditorField(page, "fixture-row-0001", "vi");
+    await field.fill("unfinished draft that has never been saved");
+    await page.locator('[data-action="switch-editor-sidebar-tab:history"]').click();
+    await expect(field).toBeFocused();
+    const before = await readMockTauriState(page);
+    await runEditorBackgroundSync(page);
+    await expect(field).toBeFocused();
+    await expect(field).toHaveValue("unfinished draft that has never been saved");
+    const after = await readMockTauriState(page);
+    expect(after.histories).toEqual(before.histories);
+    expect(after.invocations.filter((entry) => entry.command === "update_gtms_editor_row_fields")).toHaveLength(0);
+    // The normal deliberate save remains available after sync deferred.
+    await field.press("Shift+Enter");
+    await expect.poll(async () => (await readMockTauriState(page)).invocations.filter(
+      (entry) => entry.command === "update_gtms_editor_row_fields",
+    ).length).toBe(1);
+  });
+
+  for (const trigger of ["background sync", "manual refresh"]) {
+    test(`${trigger} defers conflict reload when typing starts during sync`, async ({ page }) => {
+      await mountEditorFixture(page, { rowCount: 6 }, { mockTauri: true });
+      const field = await activateMainEditorField(page, "fixture-row-0001", "vi");
+      await field.focus();
+      await installImportedConflictBackgroundReloadMock(page, {
+        targetRowId: "fixture-row-0002",
+        localRowPatch: { targetText: "conflicted local text" },
+        remoteRowPatch: { targetText: "conflicted remote text" },
+      });
+      await page.evaluate(() => {
+        const handlers = globalThis.__gnosisMockTauriHandlers;
+        const originalSync = handlers.sync_gtms_project_editor_repo;
+        const conflictLoad = handlers.load_gtms_chapter_editor_data;
+        delete handlers.load_gtms_chapter_editor_data;
+        const pending = new Promise((resolve) => { globalThis.__releaseDraftSync = resolve; });
+        handlers.sync_gtms_project_editor_repo = async () => {
+          globalThis.__draftSyncStarted = true;
+          await pending;
+          handlers.load_gtms_chapter_editor_data = conflictLoad;
+          return originalSync();
+        };
+      });
+      const syncing = trigger === "manual refresh" ? runEditorRefresh(page) : runEditorBackgroundSync(page);
+      await page.waitForFunction(() => globalThis.__draftSyncStarted);
+      const loadsBefore = (await readMockTauriState(page)).invocations.filter(
+        (entry) => entry.command === "load_gtms_chapter_editor_data",
+      ).length;
+      await field.fill("unsubmitted text typed while sync was pending");
+      await page.evaluate(() => globalThis.__releaseDraftSync());
+      await syncing;
+      await expect(field).toBeFocused();
+      await expect(field).toHaveValue("unsubmitted text typed while sync was pending");
+      const calls = (await readMockTauriState(page)).invocations;
+      expect(calls.filter((entry) => entry.command === "update_gtms_editor_row_fields")).toHaveLength(0);
+      expect(calls.filter((entry) => entry.command === "load_gtms_chapter_editor_data")).toHaveLength(loadsBefore);
+      await expect(page.locator(".modal-card--navigation-loading")).toHaveCount(0);
+      // A deliberate save releases the deferred conflict reload.
+      await field.press("Shift+Enter");
+      await expect.poll(async () => (await readMockTauriState(page)).invocations.filter(
+        (entry) => entry.command === "update_gtms_editor_row_fields",
+      ).length).toBe(1);
+      await runEditorBackgroundSync(page);
+      await expect(page.locator('[data-action="open-editor-conflict-resolution:fixture-row-0002:vi"]')).toBeVisible();
+    });
+  }
+
+  test("an earlier save can finish without committing newer focused draft text", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 6 }, { mockTauri: true });
+    await page.evaluate(() => {
+      const pending = new Promise((resolve) => { globalThis.__finishEarlierSave = resolve; });
+      let savedText = null;
+      globalThis.__gnosisMockTauriHandlers = {
+        async update_gtms_editor_row_fields({ input }) {
+          globalThis.__earlierSaveStarted = true;
+          await pending;
+          savedText = input.fields.vi;
+          return { status: "saved", row: {
+            rowId: input.rowId, lifecycleState: "active", textStyle: "paragraph",
+            fields: input.fields, footnotes: input.footnotes, imageCaptions: input.imageCaptions,
+            images: {}, fieldStates: {},
+          } };
+        },
+        load_gtms_editor_field_history() {
+          return { entries: savedText === null ? [] : [{
+            commitSha: "earlier-save", plainText: savedText,
+            authorName: "Mock Backend", operationType: "editor-update",
+          }] };
+        },
+      };
+    });
+    let field = await activateMainEditorField(page, "fixture-row-0001", "vi");
+    await field.fill("earlier deliberate save");
+    await field.press("Shift+Enter");
+    await page.waitForFunction(() => globalThis.__earlierSaveStarted === true);
+    field = await activateMainEditorField(page, "fixture-row-0001", "vi");
+    await field.fill("newer unsaved draft");
+    await page.locator('[data-action="switch-editor-sidebar-tab:history"]').click();
+    await page.evaluate(() => globalThis.__finishEarlierSave());
+    await expect(page.locator(".history-item__content").first()).toContainText("earlier deliberate save");
+    await expect(field).toHaveValue("newer unsaved draft");
+    await expect(field).toBeFocused();
+    const saves = (await readMockTauriState(page)).invocations.filter(
+      (entry) => entry.command === "update_gtms_editor_row_fields",
+    );
+    expect(saves).toHaveLength(1);
+    expect(saves[0].payload.input.fields.vi).toBe("earlier deliberate save");
+  });
+
+  for (const platform of ["mac", "windows"]) {
+    test(`refresh preserves an open draft without committing it (${platform})`, async ({ page }) => {
+      await mountEditorFixture(page, { rowCount: 6 }, { mockTauri: true, path: `/?platform=${platform}` });
+      const field = await activateMainEditorField(page, "fixture-row-0001", "vi");
+      await field.fill("draft retained across refresh");
+      const before = await readMockTauriState(page);
+      await page.locator('[data-action="refresh-page"]').click();
+      await expect.poll(async () => (await readMockTauriState(page)).invocations.filter(
+        (entry) => entry.command === "load_gtms_chapter_editor_data",
+      ).length).toBeGreaterThan(0);
+      // Await a complete refresh too, checking repeated reloads and shortcut/API use.
+      await runEditorRefresh(page);
+      await expect(field).toHaveValue("draft retained across refresh");
+      await expect(field).toBeFocused();
+      const after = await readMockTauriState(page);
+      expect(after.histories).toEqual(before.histories);
+      expect(after.invocations.filter((entry) => entry.command === "update_gtms_editor_row_fields")).toHaveLength(0);
+    });
+  }
+
+  test("failed refresh retains the latest open draft and allows retry", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 6 }, { mockTauri: true });
+    const field = await activateMainEditorField(page, "fixture-row-0001", "vi");
+    await field.fill("draft survives a read failure");
+    await page.evaluate(() => {
+      globalThis.__gnosisMockTauriHandlers = {
+        load_gtms_chapter_editor_data() { throw new Error("Fixture read failure"); },
+      };
+    });
+    await runEditorRefresh(page);
+    await expect(page.getByText("Up to date", { exact: true })).toHaveCount(0);
+    expect((await readMockTauriState(page)).invocations.filter(
+      (entry) => entry.command === "sync_gtms_project_editor_repo",
+    )).toHaveLength(0);
+
+    await expect(field).toHaveValue("draft survives a read failure");
+    await expect(field).toBeFocused();
+    await field.fill("latest draft after read failure");
+    await page.evaluate(() => { delete globalThis.__gnosisMockTauriHandlers.load_gtms_chapter_editor_data; });
+    await runEditorRefresh(page);
+    await expect(field).toHaveValue("latest draft after read failure");
+    await expect(field).toBeFocused();
+    expect((await readMockTauriState(page)).invocations.filter(
+      (entry) => entry.command === "update_gtms_editor_row_fields",
+    )).toHaveLength(0);
+  });
+
   test("mounting the editor fixture renders one translate action in unified AI settings mode", async ({ page }) => {
     await mountEditorFixture(page, {
       rowCount: 6,
@@ -1648,6 +1993,204 @@ test.describe("editor regressions", () => {
     await expect(page.locator("[data-editor-assistant-draft]")).toBeVisible();
     // The composer sends via Shift+Return; there is no separate send button.
     await expect(page.locator(".assistant-composer__hint")).toContainText("Shift + Return to send");
+  });
+
+  test("sending assistant messages clears the composer and preserves the next draft", async ({ page }) => {
+    await page.addInitScript(() => {
+      const replies = [];
+      globalThis.__releaseAssistantReply = () => replies.shift()?.();
+      globalThis.__gnosisMockTauriHandlers = {
+        load_ai_provider_secret() {
+          return "mock-key";
+        },
+        async run_ai_assistant_turn() {
+          await new Promise((resolve) => replies.push(resolve));
+          return { assistantText: "Mock assistant reply" };
+        },
+      };
+    });
+    await mountEditorFixture(page, {
+      rowCount: 1,
+      aiActionConfig: {
+        detailedConfiguration: false,
+        unified: { providerId: "openai", modelId: "gpt-5.4" },
+      },
+    }, { mockTauri: true });
+    await page.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
+    const composer = page.locator("[data-editor-assistant-draft]");
+
+    for (const message of ["Explain the first sentence.", "Explain the second sentence."]) {
+      await composer.fill(message);
+      await composer.press("Shift+Enter");
+      await expect(page.locator(".assistant-item").filter({ hasText: message })).toHaveCount(1);
+      await expect(composer).toHaveValue("");
+      await expect(composer).toBeFocused();
+      await expect.poll(async () => {
+        const mock = await readMockTauriState(page);
+        return mock.invocations.filter((entry) => entry.command === "run_ai_assistant_turn").length;
+      }).toBe(message.includes("first") ? 1 : 2);
+
+      await composer.fill("Next unsent question");
+      await page.evaluate(() => window.__releaseAssistantReply());
+      await expect(page.locator(".assistant-item").filter({ hasText: "Mock assistant reply" })).toHaveCount(
+        message.includes("first") ? 1 : 2,
+      );
+      await expect(composer).toHaveValue("Next unsent question");
+    }
+  });
+
+  for (const position of ["bottom", "middle"]) {
+    test(`typing in a full assistant composer preserves transcript scroll at the ${position}`, async ({ page }) => {
+      await mountEditorFixture(page, {
+        rowCount: 1,
+        assistant: {
+          activeThreadKey: "fixture-row-0001::es::vi",
+          threadsByKey: {
+            "fixture-row-0001::es::vi": {
+              rowId: "fixture-row-0001",
+              sourceLanguageCode: "es",
+              targetLanguageCode: "vi",
+              items: Array.from({ length: 28 }, (_, index) => ({
+                id: `assistant-${index}`,
+                type: "assistant-message",
+                text: `Conversation entry ${index}. A translation explanation to fill the transcript.`,
+                sourceLanguageCode: "es",
+                targetLanguageCode: "vi",
+              })),
+            },
+          },
+        },
+      });
+      await page.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
+      const composer = page.locator("[data-editor-assistant-draft]");
+      await composer.fill("Short question");
+      await expect(composer).toHaveCSS("height", "71px");
+      await page.evaluate(() => new Promise((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+      }));
+      const growthStart = await page.evaluate((position) => {
+        const transcript = document.querySelector(".assistant-transcript");
+        transcript.scrollTop = position === "bottom"
+          ? transcript.scrollHeight
+          : (transcript.scrollHeight - transcript.clientHeight) / 2;
+        return transcript.scrollTop;
+      }, position);
+      const expectGrowthScrollPreserved = async () => {
+        const distance = await page.evaluate(({ position, growthStart }) => {
+          const transcript = document.querySelector(".assistant-transcript");
+          return position === "bottom"
+            ? transcript.scrollHeight - transcript.clientHeight - transcript.scrollTop
+            : transcript.scrollTop - growthStart;
+        }, { position, growthStart });
+        expect(Math.abs(distance)).toBeLessThanOrEqual(1);
+      };
+      await composer.fill("Question\n".repeat(3));
+      await expect(composer).toHaveCSS("height", "124px");
+      await expectGrowthScrollPreserved();
+      await composer.fill("A long question about the translation.\n".repeat(20));
+      await expect(composer).toHaveCSS("height", "213px");
+      await expectGrowthScrollPreserved();
+      await composer.press("ControlOrMeta+End");
+      // Let tab-entry scrolling settle before choosing the reader's position.
+      await page.evaluate(() => new Promise((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+      }));
+      const before = await page.evaluate((position) => {
+        const transcript = document.querySelector(".assistant-transcript");
+        transcript.scrollTop = position === "bottom"
+          ? transcript.scrollHeight
+          : (transcript.scrollHeight - transcript.clientHeight) / 2;
+        const top = transcript.scrollTop;
+        window.__assistantScrollSamples = [];
+        window.__assistantHeightSamples = [];
+        window.__assistantScrollWrites = [];
+        const scrollTopProperty = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop");
+        Object.defineProperty(transcript, "scrollTop", {
+          configurable: true,
+          get() { return scrollTopProperty.get.call(this); },
+          set(value) {
+            window.__assistantScrollWrites.push(value);
+            scrollTopProperty.set.call(this, value);
+          },
+        });
+        const scrollHeightGetter = Object.getOwnPropertyDescriptor(Element.prototype, "scrollHeight").get;
+        Object.defineProperty(HTMLTextAreaElement.prototype, "scrollHeight", {
+          configurable: true,
+          get() {
+            const height = scrollHeightGetter.call(this);
+            if (this.matches(".assistant-composer__field")) {
+              window.__assistantHeightSamples.push(transcript.clientHeight);
+            }
+            return height;
+          },
+        });
+        // Sample synchronously after input handlers, before any deferred scroll
+        // could mask the temporary jump caused by measuring the live textarea.
+        window.addEventListener("input", () => {
+          window.__assistantScrollSamples.push(transcript.scrollTop);
+        });
+        return { top, height: transcript.clientHeight };
+      }, position);
+      expect(before.top).toBeGreaterThan(0);
+      await composer.pressSequentially("Another sentence", { delay: 20 });
+      await page.evaluate(() => new Promise((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+      }));
+      const after = await page.evaluate(() => ({
+        top: document.querySelector(".assistant-transcript").scrollTop,
+        samples: window.__assistantScrollSamples,
+        heights: window.__assistantHeightSamples,
+        writes: window.__assistantScrollWrites,
+      }));
+      expect(after.samples.length).toBeGreaterThan(0);
+      expect(after.writes).toEqual([]);
+      for (const top of [...after.samples, after.top]) {
+        expect(Math.abs(top - before.top)).toBeLessThanOrEqual(1);
+      }
+      for (const height of after.heights) {
+        expect(height).toBe(before.height);
+      }
+      await expect(composer).toBeFocused();
+      await expect(composer).toHaveCSS("height", "213px");
+      await composer.fill("Short question");
+      await expect(composer).toHaveCSS("height", "71px");
+      await expect(composer).toHaveCSS("overflow-y", "hidden");
+      const shrinkDistance = await page.evaluate(({ position, top }) => {
+        const transcript = document.querySelector(".assistant-transcript");
+        return position === "bottom"
+          ? transcript.scrollHeight - transcript.clientHeight - transcript.scrollTop
+          : transcript.scrollTop - top;
+      }, { position, top: before.top });
+      expect(Math.abs(shrinkDistance)).toBeLessThanOrEqual(1);
+    });
+  }
+
+  test("assistant composer measures fractional wrapping widths without clipping", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 1 });
+    await page.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
+    const composer = page.locator("[data-editor-assistant-draft]");
+    await composer.evaluate((element) => {
+      // A fractional width just below a wrap boundary: rounding it to 298px
+      // makes the measurement fit two lines when the visible field needs three.
+      element.parentElement.style.width = "299.703125px";
+      element.style.font = "16px / 24px Arial";
+    });
+    await page.addStyleTag({ content: ".assistant-composer__field::-webkit-scrollbar { width: 16px; }" });
+    for (const initiallyOverflowing of [false, true]) {
+      if (initiallyOverflowing) {
+        await composer.fill("Long question\n".repeat(20));
+        await expect(composer).toHaveCSS("height", "213px");
+        await expect(composer).toHaveCSS("overflow-y", "auto");
+      }
+      await composer.fill("w".repeat(46));
+      await expect(composer).toHaveCSS("height", "100px");
+      const geometry = await composer.evaluate((element) => ({
+        height: element.clientHeight,
+        contentHeight: element.scrollHeight,
+      }));
+      expect(geometry.contentHeight).toBeLessThanOrEqual(geometry.height);
+      await expect(composer).toHaveCSS("overflow-y", "hidden");
+    }
   });
 
   test("selecting assistant transcript text preserves assistant transcript scroll", async ({ page }) => {
@@ -2287,6 +2830,32 @@ test.describe("editor regressions", () => {
     );
   });
 
+  test("deleted rows filter reveals collapsed rows and combines with search", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 12 });
+    await softDeleteFixtureRow(page, "fixture-row-0003");
+    await softDeleteFixtureRow(page, "fixture-row-0008");
+
+    const filter = page.locator("[data-editor-filter-select]");
+    await filter.selectOption({ label: "Deleted rows" });
+    await expect(page.locator("[data-editor-row-card]")).toHaveCount(2);
+    await expect(page.locator("[data-editor-deleted-group]")).toHaveCount(0);
+    await expect(page.locator(".translation-results-banner__text")).toHaveText("Showing 2 matching rows");
+
+    const search = page.locator("[data-editor-search-input]");
+    await search.fill("0003");
+    await expect(page.locator("[data-editor-row-card]")).toHaveCount(1);
+    await expect(page.locator('[data-editor-row-card][data-row-id="fixture-row-0003"]')).toBeVisible();
+    await search.fill("");
+
+    await restoreFixtureRow(page, "fixture-row-0003");
+    await expect(page.locator("[data-editor-row-card]")).toHaveCount(1);
+    await expect(page.locator('[data-editor-row-card][data-row-id="fixture-row-0008"]')).toBeVisible();
+
+    await filter.selectOption("show-all");
+    await expect(page.locator("[data-editor-deleted-group]")).toHaveCount(1);
+    await expect(page.locator('[data-editor-row-card][data-row-id="fixture-row-0008"]')).toHaveCount(0);
+  });
+
   test("a new deleted section starts closed even after restoring a previously opened one", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 12 });
 
@@ -2391,6 +2960,145 @@ test.describe("editor regressions", () => {
     await expect(page.locator("[data-editor-search-input]")).toBeVisible();
   });
 
+  test("glossary popovers follow every source and target occurrence with the standard cursor", async ({ page }) => {
+    await mountEditorFixture(page, {
+      rowCount: 1,
+      fieldsByRowId: {
+        "fixture-row-0001": {
+          es: "Kabalistas",
+          vi: "nhà Kabbalah học, học giả Kabbalah, Kabbalah",
+        },
+      },
+      glossaryTerms: [{
+        termId: "term-kabbalists",
+        sourceTerms: ["Kabalistas"],
+        targetTerms: ["nhà Kabbalah học", "học giả Kabbalah", "Kabbalah"],
+        footnote: "Kabbalah glossary footnote",
+      }],
+    });
+
+    const row = page.locator('[data-editor-row-card][data-row-id="fixture-row-0001"]');
+    const sourceMarks = row.locator(
+      '[data-editor-display-field][data-language-code="es"] [data-editor-glossary-mark]',
+    );
+    const targetMarks = row.locator(
+      '[data-editor-display-field][data-language-code="vi"] [data-editor-glossary-mark]',
+    );
+    await expect(sourceMarks).toHaveCount(1);
+    await expect(targetMarks).toHaveCount(3);
+
+    const expectedTitles = [
+      "Kabalistas",
+      "nhà Kabbalah học",
+      "học giả Kabbalah",
+      "Kabbalah",
+    ];
+    const marks = [sourceMarks.first(), ...[0, 1, 2].map((index) => targetMarks.nth(index))];
+    for (let index = 0; index < marks.length; index += 1) {
+      await expect(marks[index]).toHaveCSS("cursor", "default");
+      await marks[index].hover();
+      await expect(page.locator(".editor-glossary-tooltip")).toBeVisible();
+      await expect(page.locator(".editor-glossary-info-card__title")).toHaveText(expectedTitles[index]);
+      await expect(page.locator(".editor-glossary-info-card__footnote")).toHaveText("Kabbalah glossary footnote");
+      await expect(page.locator(".editor-glossary-info-card__hint--insert")).toHaveCount(index === 0 ? 0 : 1);
+    }
+
+  });
+
+  test("target footnote popovers follow formatted glossary terms across rows", async ({ page }) => {
+    await mountEditorFixture(page, {
+      rowCount: 3,
+      fieldsByRowId: {
+        "fixture-row-0001": { es: "Kabalistas", vi: "<strong>nhà Kabbalah học</strong>" },
+        "fixture-row-0002": { es: "Gnosis", vi: "<em>ngộ đạo</em>" },
+        "fixture-row-0003": { es: "Absoluto", vi: "<u>Tuyệt Đối</u>" },
+      },
+      glossaryTerms: [
+        {
+          termId: "term-kabbalists",
+          sourceTerms: ["Kabalistas"],
+          targetTerms: ["nhà Kabbalah học"],
+          footnote: "Kabbalah glossary footnote",
+        },
+        {
+          termId: "term-gnosis",
+          sourceTerms: ["Gnosis"],
+          targetTerms: ["ngộ đạo"],
+          footnote: "Gnosis glossary footnote",
+        },
+        {
+          termId: "term-absolute",
+          sourceTerms: ["Absoluto"],
+          targetTerms: ["Tuyệt Đối"],
+          footnote: "Absolute glossary footnote",
+        },
+      ],
+    });
+
+    const expectedTitles = ["nhà Kabbalah học", "ngộ đạo", "Tuyệt Đối"];
+    for (let index = 0; index < expectedTitles.length; index += 1) {
+      const rowId = `fixture-row-${String(index + 1).padStart(4, "0")}`;
+      const mark = page.locator(
+        `[data-editor-row-card][data-row-id="${rowId}"] `
+        + '[data-editor-display-field][data-language-code="vi"] [data-editor-glossary-mark]',
+      );
+      await expect(mark).toHaveCount(1);
+      await mark.hover();
+      await expect(page.locator(".editor-glossary-tooltip")).toBeVisible();
+      await expect(page.locator(".editor-glossary-info-card__title")).toHaveText(expectedTitles[index]);
+    }
+  });
+
+  test("closed target fields keep ordinary glossary popovers for terms without footnotes", async ({ page }) => {
+    await mountEditorFixture(page, {
+      rowCount: 1,
+      fieldsByRowId: {
+        "fixture-row-0001": {
+          es: "Kabalistas Lilith Nahemah Lilith",
+          vi: "Kabbalah Li-lit Na-hê-ma Li-lit",
+        },
+      },
+      glossaryTerms: [
+        {
+          termId: "term-kabbalists",
+          sourceTerms: ["Kabalistas"],
+          targetTerms: ["Kabbalah"],
+          footnote: "Kabbalah glossary footnote",
+        },
+        {
+          termId: "term-lilith",
+          sourceTerms: ["Lilith"],
+          targetTerms: ["Li-lit"],
+          notesToTranslators: "Translator guidance",
+          footnote: "",
+        },
+        {
+          termId: "term-nahemah",
+          sourceTerms: ["Nahemah"],
+          targetTerms: ["Na-hê-ma"],
+          footnote: "",
+        },
+      ],
+    });
+
+    const targetMarks = page.locator(
+      '[data-editor-row-card][data-row-id="fixture-row-0001"] '
+      + '[data-editor-display-field][data-language-code="vi"] [data-editor-glossary-mark]',
+    );
+    await expect(targetMarks).toHaveCount(4);
+
+    const expectedTitles = ["Kabbalah", "Li-lit", "Na-hê-ma", "Li-lit"];
+    for (let index = 0; index < expectedTitles.length; index += 1) {
+      await targetMarks.nth(index).hover();
+      await expect(page.locator(".editor-glossary-tooltip")).toBeVisible();
+      await expect(page.locator(".editor-glossary-info-card__title")).toHaveText(expectedTitles[index]);
+      await expect(page.locator(".editor-glossary-info-card__label")).toHaveText(
+        index === 1 || index === 3 ? ["Note to Translators:"] : [],
+      );
+      await expect(page.locator(".editor-glossary-info-card__hint--insert")).toHaveCount(index === 0 ? 1 : 0);
+    }
+  });
+
   test("editor glossary header action opens the linked glossary and shows editor-first glossary navigation", async ({ page }) => {
     await page.addInitScript(() => {
       globalThis.__gnosisMockTauriHandlers = {
@@ -2433,6 +3141,110 @@ test.describe("editor regressions", () => {
     await expect(page.locator('[data-nav-target="translate"]')).toHaveText("Editor Regression Fixture");
     await expect(page.locator('[data-nav-target="glossaries"]')).toHaveCount(0);
     await expect(page.locator('[data-nav-target="projects"]')).toHaveCount(0);
+  });
+
+  for (const destination of ["Projects", "glossary header", "glossary term"]) {
+    test(`leaving through ${destination} saves the focused row without Shift+Enter`, async ({ page }) => {
+      await page.addInitScript(() => {
+        globalThis.__gnosisMockTauriHandlers = {
+          async load_gtms_glossary_editor_data() {
+            return {
+              glossaryId: "fixture-glossary", title: "Fixture Glossary",
+              sourceLanguage: { code: "es", name: "Spanish" },
+              targetLanguage: { code: "vi", name: "Vietnamese" },
+              termCount: 1,
+              terms: [{ termId: "term-1", sourceTerms: ["alpha"], targetTerms: ["alpha"],
+                notesToTranslators: "", footnote: "" }],
+            };
+          },
+        };
+      });
+      await mountEditorFixture(page, { rowCount: 6, glossary: true }, { mockTauri: true });
+      const field = await activateMainEditorField(page, "fixture-row-0001", "vi");
+      const draft = `draft saved when leaving through ${destination}`;
+      await field.fill(draft);
+      await expect(field).toBeFocused();
+      expect((await readMockTauriState(page)).invocations.filter(
+        (entry) => entry.command === "update_gtms_editor_row_fields",
+      )).toHaveLength(0);
+
+      if (destination === "Projects") {
+        await page.locator('[data-nav-target="projects"]').click();
+      } else if (destination === "glossary header") {
+        await page.locator('[data-action="open-editor-glossary"]').click();
+      } else {
+        const mark = page.locator(
+          '[data-editor-row-card][data-row-id="fixture-row-0001"] [data-editor-display-field][data-language-code="es"] [data-editor-glossary-mark]',
+        ).first();
+        const bounds = await mark.boundingBox();
+        expect(bounds).not.toBeNull();
+        // The first click replaces the mark with a textarea; click the same
+        // coordinates twice to exercise the real pointer-based term shortcut.
+        await page.mouse.dblclick(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+      }
+
+      await expect(page.locator("h1.page-header__title")).toHaveText(
+        destination === "Projects" ? "Projects" : "Fixture Glossary",
+      );
+      await expect.poll(async () => (
+        await readMockTauriState(page)
+      ).histories["fixture-chapter::fixture-row-0001::vi"]?.[0]?.plainText).toBe(draft);
+      const saves = (await readMockTauriState(page)).invocations.filter(
+        (entry) => entry.command === "update_gtms_editor_row_fields",
+      );
+      expect(saves).toHaveLength(1);
+    });
+  }
+
+  test("active search highlights keep the textarea text geometry after resize", async ({ page }) => {
+    const targetText = [
+      "Một samyama bao gồm ba bước: quán tưởng, thiền và định.[1] Đầu tiên, người yogi chú tâm vào cơ thể vật chất của mình.",
+      "Tiếp theo, người ấy thiền và tập trung vào thân thể, khiến nó dần rơi vào trạng thái ngủ.[2] Cuối cùng, trong trạng thái định,",
+      "người yogi ngồi dậy, rời khỏi giường với cơ thể vật lý trong trạng thái Jinn. Khi đó, người ấy có thể thâm nhập vào siêu không gian,",
+      "thoát khỏi luật hấp dẫn và lơ lửng trong không trung.",
+    ].join(" ");
+    await page.setViewportSize({ width: 1500, height: 900 });
+    await mountEditorFixture(page, {
+      rowCount: 1,
+      fieldsByRowId: {
+        "fixture-row-0001": { vi: targetText },
+      },
+    });
+
+    await page.locator("[data-editor-search-input]").fill("siêu không gian");
+    const textarea = await activateMainEditorField(page, "fixture-row-0001", "vi");
+    await expect(page.locator(
+      '[data-editor-row-card][data-row-id="fixture-row-0001"] [data-editor-search-highlight]',
+    )).toBeVisible();
+    await textarea.evaluate((element) => {
+      const matchStart = element.value.indexOf("siêu không gian");
+      element.focus();
+      element.setSelectionRange(matchStart, matchStart);
+    });
+    await page.setViewportSize({ width: 980, height: 900 });
+
+    await expect.poll(async () => {
+      return await textarea.evaluate((element) => element.scrollHeight - element.clientHeight);
+    }).toBeLessThanOrEqual(2);
+    const geometry = await textarea.evaluate((element) => {
+      const stack = element.closest("[data-editor-glossary-field-stack]");
+      const overlay = stack?.querySelector("[data-editor-search-highlight]");
+      return overlay instanceof HTMLElement
+        ? {
+            textareaClientWidth: element.clientWidth,
+            overlayClientWidth: overlay.clientWidth,
+            textareaScrollHeight: element.scrollHeight,
+            overlayScrollHeight: overlay.scrollHeight,
+            textareaScrollTop: element.scrollTop,
+            overlayScrollTop: overlay.scrollTop,
+          }
+        : null;
+    });
+
+    expect(geometry).not.toBeNull();
+    expect(geometry.overlayClientWidth).toBe(geometry.textareaClientWidth);
+    expect(geometry.overlayScrollHeight).toBe(geometry.textareaScrollHeight);
+    expect(geometry.overlayScrollTop).toBe(geometry.textareaScrollTop);
   });
 
   test("inactive glossary highlights render in the display text while the search overlay stays transparent", async ({ page }) => {
@@ -3365,6 +4177,31 @@ test.describe("editor regressions", () => {
     }
   });
 
+  test("pasting multiline text keeps native undo and redo across virtual range changes", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 80 });
+    const field = await activateMainEditorField(page, "fixture-row-0001", "vi");
+    const originalText = await field.inputValue();
+    await field.evaluate((element) => {
+      element.setSelectionRange(0, element.value.length);
+      window.__fieldBeforePaste = element;
+    });
+    const mountedCount = await page.locator("[data-editor-row-card]").count();
+    const pastedText = Array.from({ length: 30 }, (_, index) => `Pasted line ${index + 1}`).join("\n");
+    // Insert in one native editing transaction, as plain-text paste does. Unlike
+    // fill()/assigning .value, this populates the browser's native undo history.
+    await page.keyboard.insertText(pastedText);
+    await expect(field).toHaveValue(pastedText);
+    await expect.poll(() => page.locator("[data-editor-row-card]").count()).toBeLessThan(mountedCount);
+
+    await field.press("ControlOrMeta+z");
+    await expect(field).toHaveValue(originalText);
+    await expect.poll(() => page.locator("[data-editor-row-card]").count()).toBe(mountedCount);
+    await field.press("ControlOrMeta+Shift+z");
+    await expect(field).toHaveValue(pastedText);
+    expect(await field.evaluate((element) => element === window.__fieldBeforePaste)).toBe(true);
+    await expect(field).toBeFocused();
+  });
+
   test("patching the focused row keeps the textarea node and its native undo stack", async ({ page }) => {
     const targetRowId = "fixture-row-0005";
     await mountEditorFixture(page, { rowCount: 12 });
@@ -3379,14 +4216,16 @@ test.describe("editor regressions", () => {
     await page.keyboard.type(" edited");
     await expect(field).toHaveValue(`${originalText} edited`);
 
+    // Use an editable row update. A stale row intentionally cancels beforeinput,
+    // including native historyUndo in WebKit, so it cannot test undo retention.
     const patchResult = await patchFixtureRow(page, targetRowId, {
-      freshness: "stale",
+      textStyle: "heading2",
     });
     expect(patchResult?.patchedVisible).toBe(true);
     expect(patchResult?.patchedRowIds).toEqual([targetRowId]);
-    await expect(
-      page.locator(`[data-editor-row-card][data-row-id="${targetRowId}"]`),
-    ).toContainText("Needs refresh");
+    expect(await field.evaluate((element) =>
+      element.closest("[data-row-text-style]")?.dataset.rowTextStyle,
+    )).toBe("heading2");
 
     const preservation = await field.evaluate((element) => ({
       sameNode: element === window.__focusedFieldBeforePatch,
@@ -3397,11 +4236,9 @@ test.describe("editor regressions", () => {
 
     // Typing may span several native undo groups; undoing them all must land
     // back on the original text. A recreated textarea has nothing to undo.
-    await field.evaluate(() => {
-      for (let step = 0; step < 8; step += 1) {
-        document.execCommand("undo");
-      }
-    });
+    for (let step = 0; step < 8 && await field.inputValue() !== originalText; step += 1) {
+      await field.press("ControlOrMeta+z");
+    }
     await expect(field).toHaveValue(originalText);
   });
 
@@ -4558,7 +5395,8 @@ test.describe("editor regressions", () => {
     await expect(reviewStyleNote.locator(".history-diff__delete")).toHaveText("P");
     await expect(reviewStyleNote.locator(".history-diff__insert")).toHaveText("H1");
     await expect(reviewFootnoteContent).toContainText("Grouped footnote");
-    await expect(reviewFootnoteContent).toHaveCSS("font-style", "italic");
+    await expect(reviewFootnoteContent).toHaveCSS("font-style", "normal");
+    await expect(reviewFootnoteContent).toHaveCSS("opacity", "0.7");
 
     await page.getByRole("button", { name: "History" }).click();
     await expect(page.locator(".history-tabs__item--active")).toHaveText("History");
@@ -4569,7 +5407,8 @@ test.describe("editor regressions", () => {
     await expect(historyStyleNote.locator(".history-diff__delete")).toHaveText("P");
     await expect(historyStyleNote.locator(".history-diff__insert")).toHaveText("H1");
     await expect(historyFootnoteContent).toContainText("Grouped footnote");
-    await expect(historyFootnoteContent).toHaveCSS("font-style", "italic");
+    await expect(historyFootnoteContent).toHaveCSS("font-style", "normal");
+    await expect(historyFootnoteContent).toHaveCSS("opacity", "0.7");
   });
 
   test("row text styles update editor typography and return to paragraph styling", async ({ page }) => {
@@ -4616,6 +5455,7 @@ test.describe("editor regressions", () => {
     }).toBe("italic");
     const quoteMetrics = await readEditorFieldMetrics(page, "fixture-row-0001", "vi");
     expect(quoteMetrics.paddingLeftPx).toBeGreaterThan(paragraphMetrics.paddingLeftPx);
+    expect(quoteMetrics.fontSizePx).toBeCloseTo(paragraphMetrics.fontSizePx, 2);
 
     await clickLocatorCenter(page, indentedButton);
     await expect.poll(async () => {
@@ -4731,7 +5571,8 @@ test.describe("editor regressions", () => {
 
     const baselineFootnoteMetrics = await readEditorFieldMetrics(page, "fixture-row-0001", "vi", "footnote");
     expect(baselineFootnoteMetrics).not.toBeNull();
-    expect(baselineFootnoteMetrics.fontStyle).toBe("italic");
+    expect(baselineFootnoteMetrics.fontStyle).toBe("normal");
+    expect(baselineFootnoteMetrics.opacity).toBe(0.7);
 
     await clickLocatorCenter(page, heading1Button);
     await expect.poll(async () => {
@@ -4739,7 +5580,8 @@ test.describe("editor regressions", () => {
     }).toBeGreaterThan(paragraphMetrics.fontSizePx);
 
     const headingFootnoteMetrics = await readEditorFieldMetrics(page, "fixture-row-0001", "vi", "footnote");
-    expect(headingFootnoteMetrics.fontStyle).toBe("italic");
+    expect(headingFootnoteMetrics.fontStyle).toBe("normal");
+    expect(headingFootnoteMetrics.opacity).toBe(0.7);
     expect(headingFootnoteMetrics.fontSizePx).toBeCloseTo(baselineFootnoteMetrics.fontSizePx, 3);
     expect(headingFootnoteMetrics.paddingLeftPx).toBeCloseTo(baselineFootnoteMetrics.paddingLeftPx, 3);
 
@@ -4749,7 +5591,8 @@ test.describe("editor regressions", () => {
     }).toBeGreaterThan(paragraphMetrics.paddingLeftPx);
 
     const quoteFootnoteMetrics = await readEditorFieldMetrics(page, "fixture-row-0001", "vi", "footnote");
-    expect(quoteFootnoteMetrics.fontStyle).toBe("italic");
+    expect(quoteFootnoteMetrics.fontStyle).toBe("normal");
+    expect(quoteFootnoteMetrics.opacity).toBe(0.7);
     expect(quoteFootnoteMetrics.fontSizePx).toBeCloseTo(baselineFootnoteMetrics.fontSizePx, 3);
     expect(quoteFootnoteMetrics.paddingLeftPx).toBeCloseTo(baselineFootnoteMetrics.paddingLeftPx, 3);
   });
@@ -4817,6 +5660,39 @@ test.describe("editor regressions", () => {
       });
     }).toBe("heading2");
   });
+
+  for (const editBody of [false, true]) {
+    test(`body blur converts smart quotes with ${editBody ? "edited" : "unchanged"} wording and preserves other languages`, async ({ page }) => {
+      const rowId = "fixture-row-0001";
+      const source = 'Dice: "yo vi".';
+      const target = 'Nói rằng: "Tôi đã nhìn thấy...".';
+      await mountEditorFixture(page, {
+        rowCount: 18,
+        fieldsByRowId: { [rowId]: { es: source, vi: target } },
+      }, { mockTauri: true });
+      const field = await activateMainEditorField(page, rowId, "vi");
+      await expect(field).toBeFocused();
+      if (editBody) await field.fill(`${target} Thêm câu.`);
+      await page.locator("[data-editor-search-input]").click();
+
+      const expected = `Nói rằng: “Tôi đã nhìn thấy...”.${editBody ? " Thêm câu." : ""}`;
+      await expect.poll(async () => (await readMockTauriState(page))
+        ?.histories?.[`fixture-chapter::${rowId}::vi`]?.[0]?.plainText).toBe(expected);
+      expect((await readMockTauriState(page))
+        ?.histories?.[`fixture-chapter::${rowId}::es`]?.[0]?.plainText).toBe(source);
+      expect((await readMockTauriState(page))
+        ?.histories?.[`fixture-chapter::${rowId}::vi`]?.[0]?.reviewed).toBe(false);
+      await expect(page.locator(
+        `[data-editor-display-field][data-row-id="${rowId}"][data-language-code="vi"]`,
+      )).toContainText(expected);
+      const reopened = await activateMainEditorField(page, rowId, "vi");
+      await expect(reopened).toHaveValue(expected);
+      const saves = (await readMockTauriState(page)).invocations.filter(
+        (entry) => entry.command === "update_gtms_editor_row_fields" && entry.payload.input.rowId === rowId,
+      );
+      expect(saves).toHaveLength(1);
+    });
+  }
 
   test("inline formatting buttons keep the editor open, target the selected word, and render sanitized markup after blur", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 40 }, { mockTauri: true });
@@ -5351,7 +6227,8 @@ test.describe("editor regressions", () => {
     // Rows support multiple footnotes now, so the add button stays available
     // while a footnote editor is open.
     await expect(footnoteButton).toBeVisible();
-    await expect(footnoteField).toHaveCSS("font-style", "italic");
+    await expect(footnoteField).toHaveCSS("font-style", "normal");
+    await expect(footnoteField).toHaveCSS("opacity", "0.7");
 
     await page.keyboard.type("Saved footnote text");
     await expect.poll(async () => {
@@ -5387,14 +6264,178 @@ test.describe("editor regressions", () => {
     await page.locator('[data-action="switch-editor-sidebar-tab:review"]').click();
     const reviewFootnoteContent = page.locator(".history-item__content--footnote").first();
     await expect(reviewFootnoteContent).toContainText("Saved footnote text");
-    await expect(reviewFootnoteContent).toHaveCSS("font-style", "italic");
+    await expect(reviewFootnoteContent).toHaveCSS("font-style", "normal");
+    await expect(reviewFootnoteContent).toHaveCSS("opacity", "0.7");
 
     await page.getByRole("button", { name: "History" }).click();
     await expect(page.locator(".history-tabs__item--active")).toHaveText("History");
     const historyFootnoteContent = page.locator(".history-item__content--footnote").first();
     await expect(historyFootnoteContent).toContainText("Saved footnote text");
-    await expect(historyFootnoteContent).toHaveCSS("font-style", "italic");
+    await expect(historyFootnoteContent).toHaveCSS("font-style", "normal");
+    await expect(historyFootnoteContent).toHaveCSS("opacity", "0.7");
   });
+
+  test("glossary-error filtering preserves scroll when a footnote closes into body editing", async ({ page }) => {
+    const rowId = "fixture-row-0010";
+    const languageCode = "vi";
+    await mountEditorFixture(page, {
+      rowCount: 18,
+      glossary: true,
+      fieldsByRowId: Object.fromEntries(Array.from({ length: 18 }, (_, index) => [
+        `fixture-row-${String(index + 1).padStart(4, "0")}`,
+        { es: "alpha source", vi: "Body text without the glossary translation. ".repeat(12) },
+      ])),
+    }, { mockTauri: true });
+    const body = page.locator(
+      `[data-editor-display-field][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+    );
+    await body.click();
+    await page.locator(
+      `[data-editor-footnote-button][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+    ).click();
+    const footnote = page.locator(
+      `[data-editor-row-field][data-row-id="${rowId}"][data-language-code="${languageCode}"][data-content-kind="footnote"]`,
+    );
+    await expect(footnote).toBeFocused();
+    await footnote.fill("A footnote to preserve while switching editors.");
+    await page.locator("[data-editor-search-input]").click();
+    await expect.poll(async () => (await readMockTauriState(page))
+      ?.footnotes?.["fixture-chapter"]?.[rowId]?.vi).toBe("A footnote to preserve while switching editors.");
+    await page.locator("[data-editor-filter-select]").selectOption("has-glossary-error");
+    await expect(page.locator("[data-editor-row-card]")).toHaveCount(18);
+    const footnoteDisplay = page.locator(
+      `[data-editor-footnote-display][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+    );
+    await footnoteDisplay.click();
+    await expect(footnote).toBeFocused();
+    await footnote.fill("Edited footnote to preserve while switching editors.");
+    await body.evaluate(async (element) => {
+      const container = element.closest(".translate-main-scroll");
+      container.scrollTop += element.getBoundingClientRect().top
+        - container.getBoundingClientRect().top - 80;
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    });
+    const before = await readTranslateScrollTop(page);
+    expect(before).toBeGreaterThan(100);
+    const box = await body.boundingBox();
+    // Use a physical click so the test cannot scroll a remounted field into view.
+    await page.mouse.click(box.x + 50, box.y + 20);
+    const mainField = page.locator(
+      `[data-editor-row-field][data-row-id="${rowId}"][data-language-code="${languageCode}"]:not([data-content-kind])`,
+    );
+    await expect(mainField).toBeFocused();
+    await expect(footnote).toHaveCount(0);
+    await expect(footnoteDisplay).toContainText("Edited footnote");
+    await expect.poll(async () => Math.abs((await readTranslateScrollTop(page)) - before)).toBeLessThan(4);
+    await page.locator("[data-editor-search-input]").click();
+    await expect.poll(async () => (await readMockTauriState(page))
+      ?.footnotes?.["fixture-chapter"]?.[rowId]?.vi).toBe("Edited footnote to preserve while switching editors.");
+  });
+
+  test("a referenced empty footnote survives blur, save, and reopen", async ({ page }) => {
+    const rowId = "fixture-row-0001";
+    const languageCode = "vi";
+    await mountEditorFixture(page, { rowCount: 18 }, { mockTauri: true });
+
+    await activateMainEditorField(page, rowId, languageCode);
+    await page.locator(
+      `[data-editor-footnote-button][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+    ).click();
+
+    const footnoteField = page.locator(
+      `[data-editor-row-field][data-row-id="${rowId}"][data-language-code="${languageCode}"][data-content-kind="footnote"][data-footnote-marker="1"]`,
+    );
+    await expect(footnoteField).toBeFocused();
+    await expect(footnoteField).toHaveValue("");
+
+    await page.locator("[data-editor-search-input]").click();
+    await expect.poll(async () => {
+      const mockState = await readMockTauriState(page);
+      return mockState?.footnotes?.["fixture-chapter"]?.[rowId]?.[languageCode] ?? null;
+    }).toBe("[1]");
+
+    await setTranslateScrollTop(page, 0);
+    await expect(page.locator(`[data-editor-row-card][data-row-id="${rowId}"]`)).toBeVisible();
+    await activateMainEditorField(page, rowId, languageCode);
+
+    const closedFootnote = page.locator(
+      `[data-editor-footnote-display][data-row-id="${rowId}"][data-language-code="${languageCode}"][data-footnote-marker="1"]`,
+    );
+    await expect(closedFootnote).toBeVisible();
+    // Hold through a frame so blur cannot replace the pressed marker before mouseup.
+    await closedFootnote.locator(".translation-language-panel__footnote-marker").click({ delay: 150 });
+    await expect(footnoteField).toBeFocused();
+    await expect(footnoteField).toHaveValue("");
+  });
+
+  for (const firstClick of ["whitespace", "text"]) {
+    for (const reselectCurrentRow of [false, true]) {
+      test(`delayed ${firstClick} activation yields to ${reselectCurrentRow ? "reselecting the current row" : "a newer row selection"}`, async ({ page }) => {
+        await page.addInitScript(() => {
+          let releaseRowLoad;
+          const rowLoadGate = new Promise((resolve) => { releaseRowLoad = resolve; });
+          window.__releaseMockRowLoad = releaseRowLoad;
+          window.__gnosisMockTauriHandlers = {
+            async load_gtms_editor_row(payload) {
+              window.__mockRowLoadStarted = true;
+              await rowLoadGate;
+              return {
+                row: {
+                  rowId: payload.input.rowId,
+                  orderKey: "00001",
+                  lifecycleState: "active",
+                  commentCount: 0,
+                  commentsRevision: 0,
+                  textStyle: "paragraph",
+                  fields: { es: "reloaded source text", vi: "reloaded target text" },
+                  footnotes: { es: "", vi: "" },
+                  fieldStates: {
+                    es: { reviewed: false, pleaseCheck: false },
+                    vi: { reviewed: false, pleaseCheck: false },
+                  },
+                },
+              };
+            },
+          };
+        });
+        await mountEditorFixture(page, { rowCount: 6, chapterStatus: "ready" }, { mockTauri: true });
+        const clickCardWhitespace = async (rowId) => {
+          const card = page.locator(`[data-editor-row-card][data-row-id="${rowId}"] .card--translation`);
+          await card.scrollIntoViewIfNeeded();
+          const bounds = await card.boundingBox();
+          await page.mouse.click(bounds.x + bounds.width / 2, bounds.y + 1);
+        };
+        if (reselectCurrentRow) {
+          await clickCardWhitespace("fixture-row-0002");
+          await expect.poll(() => page.evaluate(() => window.__gnosisDebug.readEditorState().activeRowId))
+            .toBe("fixture-row-0002");
+        }
+        await page.evaluate(() => window.__gnosisDebug.setEditorRowSyncState("fixture-row-0001", { freshness: "stale" }));
+        if (firstClick === "whitespace") {
+          await clickCardWhitespace("fixture-row-0001");
+        } else {
+          await page.locator('[data-editor-display-field][data-row-id="fixture-row-0001"][data-language-code="vi"]').click();
+        }
+        await page.waitForFunction(() => window.__mockRowLoadStarted === true);
+        await clickCardWhitespace("fixture-row-0002");
+        await expect.poll(() => page.evaluate(() => window.__gnosisDebug.readEditorState().activeRowId))
+          .toBe("fixture-row-0002");
+        await page.evaluate(() => window.__releaseMockRowLoad());
+        await expect.poll(() => page.evaluate(() => window.__gnosisDebug.readEditorState().rows
+          .find((row) => row.rowId === "fixture-row-0001").fields.vi)).toBe("reloaded target text");
+        await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+
+        const snapshot = await page.evaluate(() => window.__gnosisDebug.readEditorState());
+        expect(snapshot.activeRowId).toBe("fixture-row-0002");
+        expect(snapshot.activeLanguageCode).toBe("es");
+        expect(snapshot.mainFieldEditor.rowId).toBeNull();
+        const selected = page.locator("[data-editor-language-panel].is-active");
+        await expect(selected).toHaveCount(1);
+        await expect(selected).toHaveAttribute("data-row-id", "fixture-row-0002");
+        await expect(page.locator("[data-editor-row-field]")).toHaveCount(0);
+      });
+    }
+  }
 
   test("footnote controls hide on blur even if row activation finishes later", async ({ page }) => {
     await page.addInitScript(() => {
@@ -5865,3 +6906,710 @@ test.describe("subtitle timing", () => {
     }).toBeGreaterThan(0);
   });
 });
+
+// Persistent sidebar connection: mounted and unmounted rows share the same UI.
+for (const rowCount of [6, 200]) {
+  test(`connected row outline and offscreen reveal (${rowCount} rows)`, async ({ page }) => {
+    await mountEditorFixture(page, { rowCount, chapterStatus: "ready" });
+    const notice = page.locator("[data-editor-row-connection]");
+    const first = page.locator('[data-editor-row-card][data-row-id="fixture-row-0001"]');
+    await expect(first).toHaveClass(/is-connected/);
+    await expect(notice).toBeHidden();
+    const background = await first.locator(".card--translation").evaluate((el) => getComputedStyle(el).background);
+    await expect.poll(() => page.locator('[data-editor-row-card]:not(.is-connected) .card--translation').first()
+      .evaluate((el) => getComputedStyle(el).background)).toBe(background);
+    await setTranslateScrollTop(page, 1000000);
+    await expect(notice).toContainText("Selected row is above the visible area");
+    await expect(notice).toBeVisible();
+    if (rowCount === 200) await expect(first).toHaveCount(0);
+    await notice.click();
+    await expect(first).toHaveClass(/is-connected/);
+    await expect(notice).toBeHidden();
+    await expect.poll(() => first.evaluate((el) => {
+      const row = el.getBoundingClientRect(), pane = document.querySelector(".translate-main-scroll").getBoundingClientRect();
+      return row.bottom > pane.top && row.top < pane.bottom;
+    })).toBe(true);
+
+    // Select a different row near the bottom, then leave it unmounted below.
+    await setTranslateScrollTop(page, 1000000);
+    // The virtual window updates asynchronously after scrolling. Keep the
+    // locator tied to the intended row instead of reading a stale last card.
+    const lastId = `fixture-row-${String(rowCount).padStart(4, "0")}`;
+    const last = page.locator(`[data-editor-row-card][data-row-id="${lastId}"]`);
+    await expect(last).toBeVisible();
+    await last.locator('[data-editor-display-field][data-language-code="vi"]').click();
+    await page.locator('[data-action="switch-editor-sidebar-tab:history"]').click();
+    await page.locator("[data-editor-search-input]").focus();
+    // Blurring the field closes its editor on the next animation frame, and
+    // that re-render restores a viewport anchor captured at the bottom. A raw
+    // scrollTop write is not user scroll intent (editor-scroll-session.js), so
+    // scrolling before the anchored render lands lets the restore drag the
+    // viewport back down and the row stays visible. Wait for the editor to
+    // close, then express intent the way a user would before scrolling.
+    await expect.poll(() => page.evaluate(() => window.__gnosisDebug.readEditorState().mainFieldEditor.rowId)).toBeNull();
+    await page.locator(".translate-main-scroll").dispatchEvent("wheel", { deltaY: -1000 });
+    await setTranslateScrollTop(page, 0);
+    await expect(notice).toContainText("Selected row is below the visible area");
+    await expect(notice).toBeVisible();
+    await notice.focus();
+    await page.keyboard.press("Enter");
+    await expect(notice).toBeHidden();
+    await expect(page.locator(`[data-editor-row-card][data-row-id="${lastId}"]`)).toHaveClass(/is-connected/);
+    await expect(page.locator('[data-action="switch-editor-sidebar-tab:history"]')).toHaveClass(/active/);
+    await expect.poll(() => page.evaluate(() => document.activeElement?.closest("[data-editor-row-card]")?.dataset.rowId)).toBe(lastId);
+
+    await page.locator("[data-editor-search-input]").fill("no possible match 123456789");
+    await expect(notice).toBeHidden();
+    await expect(page.locator("[data-editor-row-card].is-connected")).toHaveCount(0);
+    await page.locator("[data-editor-search-input]").fill("");
+    await expect(page.locator("[data-editor-row-card].is-connected")).toHaveCount(0);
+    await expect(notice).toBeHidden();
+  });
+}
+
+test("connected row notice follows actual intersection even when editing pins the row", async ({ page }) => {
+  await mountEditorFixture(page, { rowCount: 200, chapterStatus: "ready" });
+  const notice = page.locator("[data-editor-row-connection]");
+  const row = page.locator('[data-editor-row-card][data-row-id="fixture-row-0001"]');
+  await row.locator('[data-editor-display-field][data-language-code="vi"]').click();
+  const field = row.locator('[data-editor-row-field][data-language-code="vi"]');
+  await expect(field).toBeFocused();
+  const rowBottom = await row.evaluate((el) => {
+    const pane = document.querySelector(".translate-main-scroll");
+    return el.getBoundingClientRect().bottom - pane.getBoundingClientRect().top + pane.scrollTop;
+  });
+  await setTranslateScrollTop(page, rowBottom - 3);
+  await expect(notice).toBeHidden();
+  await setTranslateScrollTop(page, rowBottom + 3);
+  await expect(notice).toContainText("Selected row is above");
+  await expect(field).toBeFocused();
+  await expect(row).toHaveCount(1); // pinned DOM presence is not visibility
+  await notice.click();
+  await expect(notice).toBeHidden();
+  await expect(field).toBeFocused();
+  await expect(row).toHaveClass(/is-connected/);
+  await page.setViewportSize({ width: 1100, height: 620 });
+  await expect(row).toHaveClass(/is-connected/);
+  await expect(notice).toBeHidden();
+});
+
+test("connected row disconnects when a content change removes it from the active filter", async ({ page }) => {
+  await mountEditorFixture(page, {
+    rowCount: 6, chapterStatus: "ready", searchQuery: "unique connection token",
+    fieldsByRowId: { "fixture-row-0001": { vi: "unique connection token" } },
+  });
+  await expect(page.locator("[data-editor-row-card].is-connected")).toHaveCount(1);
+  await patchFixtureRow(page, "fixture-row-0001", { fields: { vi: "replacement without match" } });
+  await expect.poll(() => page.evaluate(() => window.__gnosisDebug.readEditorState().activeRowId)).toBeNull();
+  await expect(page.locator("[data-editor-row-connection]")).toBeHidden();
+  await page.locator("[data-editor-search-input]").fill("");
+  await expect(page.locator("[data-editor-row-card].is-connected")).toHaveCount(0);
+});
+
+test("connected row reveal yields to newer scroll input", async ({ page }) => {
+  await mountEditorFixture(page, { rowCount: 200, chapterStatus: "ready" });
+  await setTranslateScrollTop(page, 1000000);
+  await expect(page.locator("[data-editor-row-connection]")).toBeVisible();
+  const top = await page.evaluate(() => new Promise((resolve) => {
+    const pane = document.querySelector(".translate-main-scroll");
+    // The delegated click action is async. Wait for its first scroll before
+    // expressing newer intent, but do so before the next animation frame.
+    pane.addEventListener("scroll", () => {
+      pane.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: 500 }));
+      pane.scrollTop = 1500;
+      resolve(pane.scrollTop);
+    }, { once: true });
+    document.querySelector("[data-editor-row-connection]").click();
+  }));
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await expect.poll(() => page.locator(".translate-main-scroll").evaluate((el) => el.scrollTop)).toBeGreaterThan(top / 2);
+  await expect(page.locator("[data-editor-row-connection]")).toBeVisible();
+});
+
+test("connected deleted rows disconnect on section close and permanent deletion", async ({ page }) => {
+  await mountEditorFixture(page, { rowCount: 200, chapterStatus: "ready" });
+  const rowId = "fixture-row-0002";
+  await softDeleteFixtureRow(page, rowId);
+  const group = page.locator(`[data-editor-deleted-group][data-row-id="deleted-group:${rowId}"]`);
+  await group.locator(".section-separator").click();
+  const row = page.locator(`[data-editor-row-card][data-row-id="${rowId}"]`);
+  await row.locator('[data-editor-display-field][data-language-code="vi"]').click();
+  await expect(row).toHaveClass(/is-connected/);
+  await page.locator('[data-action="switch-editor-sidebar-tab:history"]').click();
+  await page.locator("[data-editor-search-input]").focus();
+  await expect.poll(() => page.evaluate(() => window.__gnosisDebug.readEditorState().mainFieldEditor.rowId)).toBeNull();
+  await page.locator(".translate-main-scroll").dispatchEvent("wheel", { deltaY: 1000 });
+  await setTranslateScrollTop(page, 1000000);
+  const notice = page.locator("[data-editor-row-connection]");
+  await expect(notice).toBeVisible();
+  // A selected row can remain mounted outside the virtual window. The
+  // connection notice tracks viewport intersection, not DOM eviction.
+  await expect(row).not.toBeInViewport();
+  await notice.click();
+  await expect(row).toHaveClass(/is-connected/);
+  await expect(notice).toBeHidden();
+  await group.locator(".section-separator").click();
+  await expect(row).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => window.__gnosisDebug.readEditorState().activeRowId)).toBeNull();
+  await expect(notice).toBeHidden();
+  await group.locator(".section-separator").click();
+  await expect(row).not.toHaveClass(/is-connected/);
+  await row.locator('[data-editor-display-field][data-language-code="vi"]').click();
+  await expect(row).toHaveClass(/is-connected/);
+  await page.locator(`[data-action="open-editor-row-permanent-delete:${rowId}"]`).click();
+  await page.locator('[data-action="confirm-editor-row-permanent-delete"]').click();
+  await expect(row).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => window.__gnosisDebug.readEditorState().activeRowId)).toBeNull();
+  await expect(notice).toBeHidden();
+});
+
+test("connected row remains selected when soft deletion joins an expanded section", async ({ page }) => {
+  await mountEditorFixture(page, { rowCount: 6, chapterStatus: "ready" });
+  await softDeleteFixtureRow(page, "fixture-row-0002");
+  await page.locator("[data-editor-deleted-group] .section-separator").click();
+  const rowId = "fixture-row-0003";
+  const row = page.locator(`[data-editor-row-card][data-row-id="${rowId}"]`);
+  await row.locator('[data-editor-display-field][data-language-code="vi"]').click();
+  await row.locator(`[data-action="soft-delete-editor-row:${rowId}"]`).click();
+  await expect(row).toHaveClass(/is-deleted/);
+  await expect(row).toHaveClass(/is-connected/);
+  await expect.poll(() => page.evaluate(() => window.__gnosisDebug.readEditorState().activeRowId)).toBe(rowId);
+  await page.locator("[data-editor-deleted-group] .section-separator").click();
+  await expect.poll(() => page.evaluate(() => window.__gnosisDebug.readEditorState().activeRowId)).toBeNull();
+});
+
+test("AI review remains visible and diffs successive editor edits", async ({ page }) => {
+  await mountEditorFixture(page, { rowCount: 6, chapterStatus: "ready" }, { mockTauri: true });
+  const rowId = "fixture-row-0001";
+  await activateMainEditorField(page, rowId, "vi");
+  await page.evaluate(async (activeRowId) => {
+    const { state } = await import(new URL("/app/state.js", window.location.href).href);
+    state.editorChapter.aiReview = {
+      status: "ready", rowId: activeRowId, languageCode: "vi",
+      sourceText: state.editorChapter.rows.find((row) => row.rowId === activeRowId).fields.vi,
+      suggestedText: "Reviewed translation",
+      promptText: "Review this translation",
+    };
+  }, rowId);
+  await page.locator('[data-action="switch-editor-sidebar-tab:review"]').click();
+  const review = page.locator('[data-editor-review-section="ai-review"]');
+  await expect(review.locator('[data-action="apply-editor-ai-review"]')).toBeVisible();
+  await activateMainEditorField(page, rowId, "vi");
+  const input = page.locator(`[data-editor-row-field][data-row-id="${rowId}"][data-language-code="vi"]`);
+  for (const addition of [" edited", " edited again"]) {
+    await input.fill(`Reviewed translation${addition}`);
+    await expect(review.locator(".history-diff__delete")).toHaveText(addition);
+    await expect(review.locator(".history-item__content")).toContainText("Reviewed translation");
+    await expect(review.getByText("Compared with the current text in the editor.", { exact: true })).toBeVisible();
+    await expect(review.getByText("The text changed since the last AI review.")).toHaveCount(0);
+    await expect(input).toBeFocused();
+  }
+  await expect(review.locator('[data-action="apply-editor-ai-review"]')).toHaveCount(0);
+  await expect(review.locator('[data-action="review-editor-text-now:meaning"]')).toBeVisible();
+});
+
+test("changed-after-my-edit filter shows other people's changes as diffs on the static fields", async ({ page }) => {
+  const svgImage = (color) =>
+    `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="120" height="80"><rect width="120" height="80" fill="${color}"/></svg>`)}`;
+  await mountEditorFixture(page, {
+    rowCount: 4,
+    chapterStatus: "ready",
+    languages: [
+      { code: "es", name: "Spanish", role: "source" },
+      { code: "fa", name: "Persian", role: "target" },
+    ],
+    fieldsByRowId: {
+      "fixture-row-0001": { es: "Yo leí el artículo", fa: "من مقاله را خواندم" },
+      "fixture-row-0002": { es: "El <strong>gato</strong> negro", fa: "گربه سیاه" },
+      "fixture-row-0003": { es: "Una imagen", fa: "یک تصویر" },
+    },
+    imagesByRowId: {
+      "fixture-row-0003": { fa: { kind: "url", url: svgImage("#6aa84f") } },
+    },
+  }, { mockTauri: true });
+
+  const oldImage = svgImage("#cc4125");
+  await page.evaluate((previousImageUrl) => {
+    const field = (plainText, extra = {}) => ({ plainText, footnote: "", imageCaption: "", image: null, imageDataUrl: null, ...extra });
+    globalThis.__gnosisMockTauriHandlers = {
+      ...(globalThis.__gnosisMockTauriHandlers ?? {}),
+      async load_gtms_editor_changed_after_my_edit() {
+        return {
+          chapterId: "fixture-chapter",
+          rows: [
+            {
+              rowId: "fixture-row-0001",
+              baselineCommitSha: "base-1",
+              baselineIsMine: true,
+              baselineTextStyle: "paragraph",
+              baselineFields: { es: field("Yo leí el artículo"), fa: field("من کتاب را خواندم") },
+              edits: [],
+            },
+            {
+              rowId: "fixture-row-0002",
+              baselineCommitSha: "base-2",
+              baselineIsMine: true,
+              baselineTextStyle: "heading1",
+              baselineFields: { es: field("El gato blanco"), fa: field("گربه سیاه") },
+              edits: [],
+            },
+            {
+              rowId: "fixture-row-0003",
+              baselineCommitSha: "base-3",
+              baselineIsMine: false,
+              baselineTextStyle: "paragraph",
+              baselineFields: {
+                es: field("Una imagen"),
+                fa: field("یک تصویر", { image: { kind: "url", url: previousImageUrl } }),
+              },
+              edits: [],
+            },
+          ],
+        };
+      },
+    };
+  }, oldImage);
+
+  await page.locator("[data-editor-filter-select]").selectOption("changed-after-my-edit");
+  await expect(page.locator("[data-editor-row-card]")).toHaveCount(3);
+  await expect(page.locator('[data-editor-row-card][data-row-id="fixture-row-0004"]')).toHaveCount(0);
+
+  const persianRow = page.locator('[data-editor-row-card][data-row-id="fixture-row-0001"]');
+  await expect(persianRow.locator(".history-diff__delete")).toHaveText("کتاب");
+  await expect(persianRow.locator(".history-diff__insert")).toHaveText("مقاله");
+
+  const spanishRow = page.locator('[data-editor-row-card][data-row-id="fixture-row-0002"]');
+  await expect(spanishRow.locator("strong .history-diff__format")).toHaveText("gato");
+  await expect(spanishRow.locator(".history-diff__delete")).toHaveText("blanco");
+  await expect(spanishRow.locator(".history-diff__insert")).toHaveText("negro");
+  const styleButtons = spanishRow.locator('[data-language-code="es"] [data-editor-row-text-style-button]');
+  await expect(styleButtons.locator('xpath=self::*[@data-text-style="paragraph"]')).toHaveClass(/change-insert/);
+  await expect(styleButtons.locator('xpath=self::*[@data-text-style="heading1"]')).toHaveClass(/change-delete/);
+  await expect(spanishRow.locator('[data-language-code="es"] [data-editor-row-text-style-button]').first()).toBeVisible();
+
+  const imageRow = page.locator('[data-editor-row-card][data-row-id="fixture-row-0003"]');
+  await expect(imageRow.locator(".translation-language-panel__image-preview--change-insert")).toHaveCount(1);
+  await expect(imageRow.locator(".translation-language-panel__image-preview--change-previous img"))
+    .toHaveAttribute("src", oldImage);
+
+  // Clicking a changed field opens the normal editor on the current text.
+  await persianRow.locator('[data-editor-display-field][data-language-code="fa"]').click();
+  const editor = persianRow.locator('[data-editor-row-field][data-language-code="fa"]');
+  await expect(editor).toBeFocused();
+  await expect(editor).toHaveValue("من مقاله را خواندم");
+
+  await page.locator("[data-editor-filter-select]").selectOption("show-all");
+  await expect(page.locator(".history-diff__insert")).toHaveCount(0);
+});
+
+test("quote attribution saves separately, previews at 90%, and appends when leaving Quote", async ({ page }) => {
+  await mountEditorFixture(page, { rowCount: 8, chapterStatus: "ready" }, { mockTauri: true });
+  const rowId = "fixture-row-0001";
+  const style = (value) => page.locator(`[data-editor-row-text-style-button][data-row-id="${rowId}"][data-language-code="vi"][data-text-style="${value}"]`);
+  await activateMainEditorField(page, rowId, "vi");
+  const body = page.locator(`[data-editor-row-field][data-row-id="${rowId}"][data-language-code="vi"]:not([data-content-kind])`);
+  const original = await body.inputValue();
+  const normalSize = parseFloat(await body.evaluate((field) => getComputedStyle(field).fontSize));
+  await style("quote").click();
+  await expect(body).toHaveCSS("text-align", "left");
+  expect(parseFloat(await body.evaluate((field) => getComputedStyle(field).fontSize))).toBeCloseTo(normalSize, 2);
+  const attribution = page.locator(`[data-editor-row-field][data-content-kind="attribution"][data-row-id="${rowId}"][data-language-code="vi"]`);
+  await expect(attribution).toBeHidden();
+  const prompt = attribution.locator("..").getByText("Click here to enter attribution.", { exact: true });
+  await expect(prompt).toBeVisible();
+  await prompt.click();
+  await expect(attribution).toBeFocused();
+  await expect(attribution).toHaveAttribute("placeholder", "Enter attribution here.");
+  await expect(attribution).toHaveValue("");
+  await attribution.fill("Quote source author");
+  await expect(attribution).toHaveCSS("text-align", "right");
+  expect(parseFloat(await attribution.evaluate((field) => getComputedStyle(field).fontSize))).toBeCloseTo(normalSize * .9, 2);
+  await expect(prompt).toBeHidden();
+  await page.locator("[data-editor-search-input]").focus();
+  await flushDirtyRows(page);
+  await expect.poll(async () => {
+    const mock = await readMockTauriState(page);
+    return mock.invocations.some((entry) => entry.command === "update_gtms_editor_row_fields"
+      && entry.payload.input.attributions?.vi === "Quote source author");
+  }).toBe(true);
+  await expect(attribution).toHaveValue("Quote source author");
+  await page.screenshot({ path: "/tmp/gnosis-quote-editor.png" });
+  await page.locator('[data-action="set-editor-mode:preview"]').click();
+  const citation = page.locator('.translate-preview__attribution').first();
+  await expect(citation).toHaveText("Quote source author");
+  await expect(citation).toHaveCSS("text-align", "right");
+  const sizes = await citation.evaluate((cite) => ({
+    citation: parseFloat(getComputedStyle(cite).fontSize),
+    quote: parseFloat(getComputedStyle(cite.parentElement).fontSize),
+    normal: parseFloat(getComputedStyle(document.querySelector(".translate-preview__block--paragraph")).fontSize),
+  }));
+  expect(sizes.quote).toBeCloseTo(sizes.normal, 2);
+  expect(sizes.citation).toBeCloseTo(sizes.normal * .9, 2);
+  await expect(citation.locator("..")).toHaveCSS("text-align", "left");
+  await page.screenshot({ path: "/tmp/gnosis-quote-preview.png" });
+  await page.locator('[data-action="set-editor-mode:translate"]').click();
+  await activateMainEditorField(page, rowId, "vi");
+  await body.focus();
+  await style("paragraph").click();
+  await expect(attribution).toHaveCount(0);
+  await activateMainEditorField(page, rowId, "vi");
+  await expect(body).toHaveValue(`${original}\n\nQuote source author`);
+  await page.screenshot({ path: "/tmp/gnosis-quote-editor-converted.png" });
+});
+
+test("SRT rows hide style and inline formatting controls", async ({ page }) => {
+  await mountEditorFixture(page, { rowCount: 8, srt: true }, { mockTauri: true });
+  await activateMainEditorField(page, "fixture-row-0001", "vi");
+  await expect(page.locator("[data-editor-row-text-style-button], [data-editor-inline-style-button], [data-editor-separator-button]")).toHaveCount(0);
+  await expect(page.locator('[data-editor-timing-field]').first()).toBeVisible();
+});
+
+test("empty quote attribution opens on click, keeps undo, and collapses again on blur", async ({ page }) => {
+  await mountEditorFixture(page, { rowCount: 8, chapterStatus: "ready" }, { mockTauri: true });
+  const rowId = "fixture-row-0001";
+  await activateMainEditorField(page, rowId, "vi");
+  await page.locator(`[data-editor-row-text-style-button][data-row-id="${rowId}"][data-language-code="vi"][data-text-style="quote"]`).click();
+  await page.locator('[data-action="set-editor-mode:preview"]').click();
+  await expect(page.locator(".translate-preview__attribution")).toHaveCount(0);
+  await page.locator('[data-action="set-editor-mode:translate"]').click();
+  const field = page.locator(`[data-content-kind="attribution"][data-row-id="${rowId}"][data-language-code="vi"]`);
+  const prompt = field.locator("..").getByText("Click here to enter attribution.", { exact: true });
+  await expect(prompt).toBeVisible();
+  await expect(field).toBeHidden();
+  await prompt.click();
+  await expect(field).toBeFocused();
+  await expect(field).toBeVisible();
+  await expect(field).toHaveValue("");
+  await field.press("Shift+Tab");
+  await page.keyboard.press("Tab");
+  await expect(field).toBeFocused();
+  await field.pressSequentially("Author");
+  await expect(field).toHaveValue("Author");
+  expect(await field.evaluate((node) => node.matches(":placeholder-shown"))).toBe(false);
+  await field.press(process.platform === "darwin" ? "Meta+z" : "Control+z");
+  await expect(field).not.toHaveValue("Author");
+  await field.fill("");
+  await expect(field).toBeVisible();
+  await page.locator("[data-editor-search-input]").focus();
+  await expect(field).toBeHidden();
+  await expect(prompt).toBeVisible();
+  await flushDirtyRows(page);
+  const mock = await readMockTauriState(page);
+  for (const entry of mock.invocations.filter((item) => item.command === "update_gtms_editor_row_fields")) {
+    expect(JSON.stringify(entry.payload)).not.toMatch(/Click here to enter attribution|Enter attribution here/);
+  }
+  await page.screenshot({ path: "/tmp/gnosis-quote-empty-prompt.png" });
+});
+
+test("Quote block and Heading filters select styles and update when a style changes", async ({ page }) => {
+  await mountEditorFixture(page, { rowCount: 4 }, { mockTauri: true });
+  const setStyle = async (rowId, textStyle) => {
+    const field = await activateMainEditorField(page, rowId, "vi");
+    await field.focus();
+    await page.locator(`[data-editor-row-text-style-button][data-row-id="${rowId}"][data-language-code="vi"][data-text-style="${textStyle}"]`).click();
+  };
+  await setStyle("fixture-row-0001", "heading1");
+  await setStyle("fixture-row-0002", "quote");
+  await setStyle("fixture-row-0003", "heading2");
+
+  const filter = page.locator("[data-editor-filter-select]");
+  const cards = page.locator("[data-editor-row-card]");
+  await filter.selectOption({ label: "Quote block" });
+  await expect(cards).toHaveCount(1);
+  await expect(cards).toHaveAttribute("data-row-id", "fixture-row-0002");
+  await filter.selectOption({ label: "Heading" });
+  await expect(cards).toHaveCount(2);
+  await expect(cards.nth(0)).toHaveAttribute("data-row-id", "fixture-row-0001");
+  await expect(cards.nth(1)).toHaveAttribute("data-row-id", "fixture-row-0003");
+
+  const search = page.locator("[data-editor-search-input]");
+  await search.fill("0003");
+  await expect(cards).toHaveCount(1);
+  await expect(cards).toHaveAttribute("data-row-id", "fixture-row-0003");
+  await search.fill("");
+  await setStyle("fixture-row-0003", "paragraph");
+  await expect(cards).toHaveCount(1);
+  await expect(cards).toHaveAttribute("data-row-id", "fixture-row-0001");
+  await filter.selectOption({ label: "Show all" });
+  await expect(cards).toHaveCount(4);
+});
+
+for (const { platform, modifier } of [
+  { platform: "mac", modifier: "Meta" },
+  { platform: "windows", modifier: "Control" },
+]) {
+  test(`formatting shortcuts match bold italic and underline buttons (${platform})`, async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 4 }, { mockTauri: true, path: `/?platform=${platform}` });
+    const rowId = "fixture-row-0001";
+    const field = await activateMainEditorField(page, rowId, "vi");
+    for (const { key, style, tag } of [
+      { key: "b", style: "bold", tag: "strong" },
+      { key: "i", style: "italic", tag: "em" },
+      { key: "u", style: "underline", tag: "u" },
+    ]) {
+      const button = page.locator(`[data-editor-inline-style-button][data-row-id="${rowId}"][data-language-code="vi"][data-inline-style="${style}"]`);
+      await field.fill("alpha beta gamma");
+      await setEditorSelectionRange(page, rowId, "vi", 6, 10);
+      await field.press(`${modifier}+${key}`);
+      await expect(field).toHaveValue(`alpha <${tag}>beta</${tag}> gamma`);
+      await expect(field).toBeFocused();
+      await expect(button).toHaveAttribute("aria-pressed", "true");
+      await field.press(`${modifier}+${key}`);
+      await expect(field).toHaveValue("alpha beta gamma");
+      await expect(button).toHaveAttribute("aria-pressed", "false");
+
+      await setEditorSelectionRange(page, rowId, "vi", 1, 1);
+      await field.press(`${modifier}+${key}`);
+      await expect(field).toHaveValue(`<${tag}>alpha</${tag}> beta gamma`);
+      await clickLocatorCenter(page, button);
+      await expect(field).toHaveValue("alpha beta gamma");
+    }
+
+    await clickLocatorCenter(page, page.locator(`[data-editor-footnote-button][data-row-id="${rowId}"][data-language-code="vi"]`));
+    const footnote = page.locator(`[data-editor-row-field][data-row-id="${rowId}"][data-language-code="vi"][data-content-kind="footnote"]`);
+    await footnote.fill("foot note");
+    const bodyWithMarker = await field.inputValue();
+    await setEditorSelectionRange(page, rowId, "vi", 6, 6, "footnote");
+    await footnote.press(`${modifier}+i`);
+    await expect(footnote).toHaveValue("foot <em>note</em>");
+    await expect(footnote).toBeFocused();
+    await expect(field).toHaveValue(bodyWithMarker);
+  });
+}
+
+test("formatting shortcuts leave SRT and custom HTML text unchanged", async ({ page }) => {
+  for (const srt of [false, true]) {
+    await mountEditorFixture(page, { rowCount: 4, srt }, { mockTauri: true, path: "/?platform=mac" });
+    const rowId = "fixture-row-0001";
+    const field = await activateMainEditorField(page, rowId, "vi");
+    if (!srt) {
+      await page.locator(`[data-editor-row-text-style-button][data-row-id="${rowId}"][data-language-code="vi"][data-text-style="custom_html"]`).click();
+    }
+    await field.fill("alpha beta gamma");
+    for (const key of ["b", "i", "u"]) {
+      const prevented = await field.evaluate((node, key) => {
+        node.focus();
+        node.setSelectionRange(6, 10);
+        return !node.dispatchEvent(new KeyboardEvent("keydown", { key, metaKey: true, bubbles: true, cancelable: true }));
+      }, key);
+      expect(prevented).toBe(false);
+      await expect(field).toHaveValue("alpha beta gamma");
+    }
+  }
+});
+
+test("footnotes edit one at a time without a surrounding focus surface", async ({ page }) => {
+  const rowId = "fixture-row-0001";
+  await mountEditorFixture(page, { rowCount: 2, chapterStatus: "ready" }, { mockTauri: true });
+  await page.evaluate(async (rowId) => {
+    const { state } = await import("/app/state.js");
+    const row = state.editorChapter.rows.find((entry) => entry.rowId === rowId);
+    row.footnotes.vi = [
+      { marker: 1, text: "First independent footnote." },
+      { marker: 2, text: "Second independent footnote." },
+    ];
+    row.persistedFootnotes = structuredClone(row.footnotes);
+    state.editorChapter.rows = [...state.editorChapter.rows];
+  }, rowId);
+  await patchFixtureRow(page, rowId, { fields: { vi: "Body text with footnotes[1][2]." } });
+  const panel = page.locator(`[data-editor-language-panel][data-row-id="${rowId}"][data-language-code="vi"]`);
+  const notes = panel.locator(".translation-language-panel__field-stack--footnote");
+  const fields = notes.locator('textarea[data-content-kind="footnote"]');
+  await expect(fields).toHaveCount(0);
+  const secondButton = panel.getByRole("button", { name: "Edit footnote 2", exact: true });
+  await secondButton.focus();
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Shift+Tab");
+  await expect(secondButton).toBeFocused();
+  await expect(secondButton).toHaveCSS("outline-style", "solid");
+  await expect(notes).toHaveCSS("box-shadow", "none");
+  await panel.getByRole("button", { name: "Edit footnote 1", exact: true }).click();
+  await expect(fields).toHaveCount(1);
+  const firstField = notes.locator('textarea[data-footnote-marker="1"]');
+  await expect(firstField).toBeFocused();
+  await expect(notes).toHaveCSS("box-shadow", "none");
+  await expect(notes).toHaveCSS("border-top-color", "rgba(0, 0, 0, 0)");
+  await expect(notes).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(firstField.locator("..")).toHaveCSS("border-top-color", "rgba(236, 134, 9, 0.52)");
+  await firstField.fill("Edited first independent footnote.");
+  await panel.getByRole("button", { name: "Edit footnote 2", exact: true }).click();
+  await expect(fields).toHaveCount(1);
+  await expect(notes.locator('textarea[data-footnote-marker="2"]')).toBeFocused();
+  await expect(panel.getByRole("button", { name: "Edit footnote 1", exact: true })).toHaveText("Edited first independent footnote.");
+  await expect(notes).toHaveCSS("box-shadow", "none");
+  await expect(notes).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await panel.screenshot({ path: "/tmp/gnosis-individual-footnote-editing.png" });
+});
+
+for (const canEdit of [false, true]) {
+  for (const fontSize of [20, 28]) {
+    test(`closed footnotes keep compact spacing (${canEdit ? "editable" : "read-only"}, ${fontSize}px)`, async ({ page }) => {
+      await mountEditorFixture(page, { rowCount: 2 });
+      await page.evaluate(async ({ fontSize, canEdit }) => {
+        const { renderTranslationContentRow } = await import("/app/editor-row-render.js");
+        const host = document.createElement("div");
+        host.dataset.footnoteSpacingFixture = "true";
+        host.style.cssText = `position:fixed;top:20px;left:20px;z-index:100;width:800px;max-width:calc(100% - 40px);background:#fff7e5;--translation-editor-font-size:${fontSize}px;`;
+        host.innerHTML = renderTranslationContentRow({
+          kind: "row", id: "spacing-fixture", rowId: "spacing-fixture",
+          lifecycleState: "active", textStyle: "paragraph", canEdit,
+          sections: [{
+            code: "vi", baseCode: "vi", name: "Vietnamese", canEdit,
+            text: "Body text above the footnotes.",
+            hasVisibleFootnote: true,
+            footnotes: [
+              { marker: 1, text: 'First paragraph.\nSecond paragraph with <a href="https://example.com">a link</a>.' },
+              { marker: 2, text: "Another footnote." },
+            ],
+          }],
+        });
+        document.body.append(host);
+      }, { fontSize, canEdit });
+      const host = page.locator("[data-footnote-spacing-fixture]");
+      const footnote = host.locator(canEdit
+        ? ".translation-language-panel__field-stack--footnote"
+        : ".translation-language-panel__field-static--footnote");
+      const gaps = await footnote.evaluate((node) => {
+        const outer = node.getBoundingClientRect();
+        const children = [...node.children];
+        const first = children[0].getBoundingClientRect();
+        const last = children.at(-1).getBoundingClientRect();
+        return { top: first.top - outer.top, bottom: outer.bottom - last.bottom };
+      });
+      expect(gaps.top).toBeLessThanOrEqual(4);
+      expect(gaps.bottom).toBeLessThanOrEqual(4);
+      const entries = footnote.locator(canEdit
+        ? ".translation-language-panel__footnote-display-text"
+        : ".translation-language-panel__footnote-static");
+      await expect(entries).toHaveCount(2);
+      await expect(footnote.locator("a")).toHaveAttribute("href", "https://example.com");
+      expect(await entries.first().textContent()).toContain("First paragraph.\nSecond paragraph");
+      await expect(entries.first()).toHaveCSS("white-space", "pre-wrap");
+      await host.screenshot({ path: `/tmp/footnote-spacing-${canEdit ? "editable" : "read-only"}-${fontSize}.png` });
+    });
+  }
+}
+
+for (const canEdit of [false, true]) {
+  test(`search highlights all editor text fields (${canEdit ? "editable" : "read-only"})`, async ({ page }) => {
+    const rowId = "fixture-row-0001";
+    await mountEditorFixture(page, {
+      rowCount: 2, chapterStatus: "ready",
+      fieldsByRowId: { [rowId]: { vi: "Needle body[2][7]" } },
+      imagesByRowId: { [rowId]: { vi: { kind: "url", url: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80'%3E%3Crect width='80' height='80' fill='orange'/%3E%3C/svg%3E" } } },
+    }, { mockTauri: true });
+    await page.evaluate(async ({ rowId, canEdit }) => {
+      const { state } = await import("/app/state.js");
+      const row = state.editorChapter.rows.find((row) => row.rowId === rowId);
+      row.footnotes.vi = [
+        { marker: 2, text: 'A longer first note with <em>Needle</em> and <a href="https://example.com">a link</a>.' },
+        { marker: 7, text: "Needle begins the second note." },
+      ];
+      row.imageCaptions.vi = "Picture <u>Needle</u> caption";
+      row.persistedFootnotes = structuredClone(row.footnotes);
+      row.persistedImageCaptions = { ...row.imageCaptions };
+      // Publish new rows as a normal editor update would, invalidating its model cache.
+      state.editorChapter.rows = [...state.editorChapter.rows];
+      if (!canEdit) {
+        state.editorChapter.writePermissionSnapshot = {
+          ...state.editorChapter.writePermissionSnapshot, source: "test", canEditProjectFiles: false,
+        };
+      }
+    }, { rowId, canEdit });
+    const search = page.locator("[data-editor-search-input]");
+    await search.fill("needle");
+    const panel = page.locator(`[data-editor-language-panel][data-row-id="${rowId}"][data-language-code="vi"]`);
+    const marks = panel.locator("mark.translation-language-panel__search-match");
+    await expect(marks).toHaveCount(4);
+    await expect(panel.locator("em mark")).toHaveText("Needle");
+    await expect(panel.locator("u mark")).toHaveText("Needle");
+    await expect(panel.locator('.translation-language-panel__footnote-marker').filter({ hasText: "[7]" })).toBeVisible();
+    await expect(panel.locator('a[href="https://example.com"]')).toHaveText("a link");
+    await panel.screenshot({ path: `/tmp/editor-search-highlighting-${canEdit ? "editable" : "read-only"}.png` });
+
+    // A query found only in an attachment must retain the row and highlight it.
+    for (const query of ["second note", "Picture", "body"]) {
+      await search.fill(query);
+      await expect(panel).toBeVisible();
+      await expect(marks).toHaveCount(1);
+      await expect(marks).toHaveText(query);
+    }
+    await search.fill("needle");
+    await page.locator('[data-action="toggle-editor-search-case-sensitive"]').click();
+    await expect(page.locator("[data-editor-row-card]")).toHaveCount(0);
+    await page.locator('[data-action="toggle-editor-search-case-sensitive"]').click();
+    await expect(marks).toHaveCount(4);
+
+    if (canEdit) {
+      await panel.locator('[data-editor-footnote-display][data-footnote-marker="7"]').click();
+      const footnote = panel.locator('textarea[data-content-kind="footnote"][data-footnote-marker="7"]');
+      await expect(footnote).toBeFocused();
+      const footnoteLayer = footnote.locator("..").locator("[data-editor-search-highlight]");
+      await expect(footnoteLayer.locator("mark")).toHaveText("Needle");
+      await expect(footnoteLayer).toBeVisible();
+      await footnote.fill("   Needle changed, needle again.");
+      await expect.poll(() => footnoteLayer.textContent()).toBe("   Needle changed, needle again.");
+      await expect(footnoteLayer.locator("mark")).toHaveCount(2);
+      await expect(footnote).toBeFocused();
+      await footnote.locator("..").screenshot({ path: "/tmp/editor-search-footnote-editing.png" });
+
+      await panel.locator("[data-editor-image-caption-button]").click();
+      const caption = panel.locator('textarea[data-content-kind="image-caption"]');
+      await expect(caption).toBeFocused();
+      const captionLayer = caption.locator("..").locator("[data-editor-search-highlight]");
+      await expect(captionLayer.locator("mark")).toHaveText("Needle");
+      await expect(captionLayer).toBeVisible();
+      await caption.fill("Needle changed caption, needle again.");
+      await expect(captionLayer.locator("mark")).toHaveCount(2);
+      await expect(caption).toBeFocused();
+      await caption.locator("..").screenshot({ path: "/tmp/editor-search-caption-editing.png" });
+
+      const body = await activateMainEditorField(page, rowId, "vi");
+      await expect(body.locator("..").locator("[data-editor-search-highlight] mark")).toHaveText("Needle");
+    }
+    await search.fill("");
+    await expect(marks).toHaveCount(0);
+  });
+}
+
+for (const tab of ["review", "translate", "history", "comments"]) {
+  test(`row selection preserves the ${tab === "translate" ? "assistant" : tab} sidebar tab`, async ({ page }) => {
+    await mountEditorFixture(page, {
+      rowCount: 4, chapterStatus: "ready",
+      fieldsByRowId: {
+        "fixture-row-0002": { vi: "" },
+        "fixture-row-0003": { vi: "  \n  " },
+      },
+    }, { mockTauri: true });
+    await activateMainEditorField(page, "fixture-row-0001", "vi");
+    const tabButton = page.locator(`[data-action="switch-editor-sidebar-tab:${tab}"]`);
+    await tabButton.click();
+    await expect(tabButton).toHaveAttribute("aria-pressed", "true");
+    for (const [rowId, languageCode] of [
+      ["fixture-row-0002", "vi"], // empty
+      ["fixture-row-0003", "vi"], // whitespace only
+      ["fixture-row-0004", "vi"], // filled
+      ["fixture-row-0002", "es"], // change language
+      ["fixture-row-0001", "es"],
+    ]) {
+      await activateMainEditorField(page, rowId, languageCode);
+      await expect(tabButton).toHaveAttribute("aria-pressed", "true");
+      await expect(page.locator("[data-editor-language-panel].is-active")).toHaveAttribute("data-row-id", rowId);
+      await expect(page.locator("[data-editor-language-panel].is-active")).toHaveAttribute("data-language-code", languageCode);
+    }
+    const search = page.locator("[data-editor-search-input]");
+    await search.fill("no matching row for tab preservation 123456789");
+    await expect(page.locator("[data-editor-row-card]")).toHaveCount(0);
+    await expect(tabButton).toHaveAttribute("aria-pressed", "true");
+    await search.fill("");
+    await activateMainEditorField(page, "fixture-row-0002", "vi");
+    await expect(tabButton).toHaveAttribute("aria-pressed", "true");
+    if (tab === "comments") {
+      await expect.poll(() => page.evaluate(async () => (await import("/app/state.js")).state.editorChapter.comments.rowId)).toBe("fixture-row-0002");
+    }
+    // Direct tab navigation remains available after ordinary row selection.
+    const otherTab = page.locator(`[data-action="switch-editor-sidebar-tab:${tab === "history" ? "review" : "history"}"]`);
+    await otherTab.click();
+    await expect(otherTab).toHaveAttribute("aria-pressed", "true");
+  });
+}

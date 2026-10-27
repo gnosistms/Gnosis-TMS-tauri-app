@@ -6,9 +6,16 @@ import {
 import {
   setActiveStorageLogin,
 } from "./team-storage.js";
-import { hydrateStoredEditorPreferences, hydrateStoredTeamState, state } from "./state.js";
+import {
+  authSessionGeneration,
+  hydrateStoredEditorPreferences,
+  hydrateStoredTeamState,
+  invalidateAuthSession,
+  state,
+} from "./state.js";
 import { handleSyncFailure } from "./sync-recovery.js";
 import { classifySyncError } from "./sync-error.js";
+import { showNoticeBadge } from "./status-feedback.js";
 
 function setAuthState(nextAuth, render) {
   state.auth = {
@@ -21,7 +28,7 @@ function setAuthState(nextAuth, render) {
 export function requireBrokerSession() {
   const sessionToken = state.auth.session?.sessionToken;
   if (!sessionToken) {
-    throw new Error("Sign in with GitHub to connect to the broker first.");
+    throw new Error("AUTH_REQUIRED:Sign in with GitHub to connect to the broker first.");
   }
 
   return sessionToken;
@@ -31,9 +38,25 @@ export async function handleBrokerAuthExpired(render, error) {
   return handleSyncFailure(classifySyncError(error), { render });
 }
 
-export function applyBrokerAuthResult(payload, render, loadUserTeams) {
-  if (payload?.status === "success" && payload?.session?.sessionToken) {
+export async function applyBrokerAuthResult(payload, render, loadUserTeams) {
+  if (payload?.status === "success" && payload?.session?.sessionToken && payload.session.login) {
     const session = payload.session;
+    invalidateAuthSession();
+    const generation = authSessionGeneration;
+    try {
+      await saveStoredAuthSession(session);
+    } catch {
+      if (generation === authSessionGeneration) {
+        setAuthState({
+          status: "error",
+          message: "Could not save your GitHub login on this computer. Please try signing in again.",
+        }, render);
+      }
+      return;
+    }
+    if (generation !== authSessionGeneration) {
+      return;
+    }
     setActiveStorageLogin(session.login);
     hydrateStoredDataForActiveUser();
     state.auth = {
@@ -42,7 +65,6 @@ export function applyBrokerAuthResult(payload, render, loadUserTeams) {
       session,
       pendingAutoOpenSingleTeam: true,
     };
-    void saveStoredAuthSession(session);
     state.screen = "teams";
     render();
     void loadUserTeams(render);
@@ -60,8 +82,9 @@ export function applyBrokerAuthResult(payload, render, loadUserTeams) {
 }
 
 export async function prepareStoredBrokerSessionRestore() {
+  const generation = authSessionGeneration;
   const session = await loadStoredAuthSession();
-  if (!session) {
+  if (!session || generation !== authSessionGeneration) {
     return null;
   }
 
@@ -72,6 +95,21 @@ export async function prepareStoredBrokerSessionRestore() {
     session,
   };
   return session;
+}
+
+// Start the broker session inspection immediately so it runs concurrently with
+// the startup connectivity probe instead of after it. The returned promise is
+// consumed by restoreStoredBrokerSession() through `options.inspection`.
+export function beginStoredBrokerSessionInspection(session) {
+  if (!invoke || !session?.sessionToken) {
+    return null;
+  }
+  const inspection = invoke("inspect_broker_auth_session", {
+    sessionToken: session.sessionToken,
+  });
+  // Mark the rejection as observed; the consumer awaits and handles the failure.
+  inspection.catch(() => {});
+  return inspection;
 }
 
 function shouldPreserveCurrentScreen(options = {}) {
@@ -90,7 +128,11 @@ export async function restoreStoredBrokerSession(
   storedSession = null,
   options = {},
 ) {
+  const generation = authSessionGeneration;
   const session = storedSession ?? await loadStoredAuthSession();
+  if (generation !== authSessionGeneration) {
+    return;
+  }
   if (!session) {
     state.auth = {
       ...state.auth,
@@ -117,9 +159,15 @@ export async function restoreStoredBrokerSession(
   }
 
   try {
+    // An early inspection started from the prepared restoring state, and may
+    // already have refreshed the token in state.auth.session. Do not reset the
+    // session to the stored token in that case.
     if (
-      state.auth.status !== "restoring"
-      || state.auth.session?.sessionToken !== session.sessionToken
+      !options.inspection
+      && (
+        state.auth.status !== "restoring"
+        || state.auth.session?.sessionToken !== session.sessionToken
+      )
     ) {
       setAuthState(
         {
@@ -130,11 +178,18 @@ export async function restoreStoredBrokerSession(
         render,
       );
     }
-    const profile = await invoke("inspect_broker_auth_session", {
-      sessionToken: session.sessionToken,
-    });
+    const profile = await (
+      options.inspection
+      ?? invoke("inspect_broker_auth_session", {
+        sessionToken: session.sessionToken,
+      })
+    );
+    if (generation !== authSessionGeneration || !state.auth.session) {
+      return;
+    }
     const verifiedSession = {
-      sessionToken: session.sessionToken,
+      // Inspection may have refreshed and persisted the token through invoke().
+      sessionToken: state.auth.session.sessionToken,
       login: profile.login,
       name: profile.name ?? null,
       avatarUrl: profile.avatarUrl ?? null,
@@ -149,24 +204,31 @@ export async function restoreStoredBrokerSession(
       session: verifiedSession,
       pendingAutoOpenSingleTeam: !shouldPreserveCurrentScreen(options),
     };
-    void saveStoredAuthSession(verifiedSession);
     applyRestoredOnlineScreen(options);
     render();
     void loadUserTeams(render);
   } catch (error) {
-    setActiveStorageLogin(session.login);
+    if (generation !== authSessionGeneration || !state.auth.session) {
+      return;
+    }
+    const retainedSession = state.auth.session;
+    setActiveStorageLogin(retainedSession.login);
     hydrateStoredDataForActiveUser({
       preserveResourceContext: shouldPreserveCurrentScreen(options),
     });
     state.auth = {
       status: "success",
-      message: `Signed in as @${session.login}.`,
-      session,
+      message: `Signed in as @${retainedSession.login}.`,
+      session: retainedSession,
       pendingAutoOpenSingleTeam: !shouldPreserveCurrentScreen(options),
     };
     applyRestoredOnlineScreen(options);
     render();
-    void loadUserTeams(render);
+    if (error?.code === "AUTH_STORAGE_FAILED") {
+      showNoticeBadge(error.message, render, null);
+    } else {
+      void loadUserTeams(render);
+    }
   }
 }
 
@@ -195,7 +257,7 @@ export async function registerBrokerAuthListener(render, loadUserTeams) {
   }
 
   await listen("broker-auth-callback", (event) => {
-    applyBrokerAuthResult(event.payload, render, loadUserTeams);
+    void applyBrokerAuthResult(event.payload, render, loadUserTeams);
   });
 }
 

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { applyEditorRegressionFixture } from "./editor-regression-fixture.js";
 import { buildEditorScreenViewModel } from "./editor-screen-model.js";
+import { buildEditorGlossaryModel } from "./editor-glossary-highlighting.js";
 import { state } from "./state.js";
 
 function snapshotSharedState() {
@@ -42,6 +43,55 @@ function restoreSharedState(snapshot) {
   state.auth = snapshot.auth;
   state.offline = snapshot.offline;
 }
+
+test("glossary error filtering covers unmounted rows and refreshes after text and glossary changes", () => {
+  const snapshot = snapshotSharedState();
+  try {
+    applyEditorRegressionFixture(state, { rowCount: 450, glossary: true });
+    const errorRowId = state.editorChapter.rows[449].rowId;
+    state.editorChapter.rows = state.editorChapter.rows.map((row, index) => index === 449
+      ? { ...row, fields: { ...row.fields, vi: "missing variant" } }
+      : row);
+    state.editorChapter.filters = { rowFilterMode: "has-glossary-error" };
+    const ids = () => buildEditorScreenViewModel(state).contentRows.map((row) => row.id);
+    assert.deepEqual(ids(), [errorRowId]);
+
+    state.editorChapter.rows = state.editorChapter.rows.map((row) => row.rowId === errorRowId
+      ? { ...row, fields: { ...row.fields, vi: "alpha" } }
+      : row);
+    assert.deepEqual(ids(), []);
+
+    const glossary = {
+      ...state.editorChapter.glossary,
+      terms: [{ termId: "changed", sourceTerms: ["alpha"], targetTerms: ["new variant"] }],
+    };
+    state.editorChapter.glossary = { ...glossary, matcherModel: buildEditorGlossaryModel(glossary) };
+    assert.equal(ids().length, 450);
+
+    state.editorChapter.glossary = null;
+    assert.deepEqual(ids(), []);
+  } finally {
+    restoreSharedState(snapshot);
+  }
+});
+
+test("glossary error filtering excludes custom HTML and responds to text-style changes", () => {
+  const snapshot = snapshotSharedState();
+  try {
+    applyEditorRegressionFixture(state, {
+      rowCount: 1, glossary: true,
+      fieldsByRowId: { "fixture-row-0001": { es: "<p>alpha</p>", vi: "<p>missing</p>" } },
+    });
+    state.editorChapter.filters = { rowFilterMode: "has-glossary-error" };
+    assert.equal(buildEditorScreenViewModel(state).contentRows.length, 1);
+    state.editorChapter.rows = state.editorChapter.rows.map((row) => ({ ...row, textStyle: "custom_html" }));
+    assert.equal(buildEditorScreenViewModel(state).contentRows.length, 0);
+    state.editorChapter.rows = state.editorChapter.rows.map((row) => ({ ...row, textStyle: "paragraph" }));
+    assert.equal(buildEditorScreenViewModel(state).contentRows.length, 1);
+  } finally {
+    restoreSharedState(snapshot);
+  }
+});
 
 test("buildEditorScreenViewModel exposes showContextAction only when user filters are active", () => {
   const snapshot = snapshotSharedState();

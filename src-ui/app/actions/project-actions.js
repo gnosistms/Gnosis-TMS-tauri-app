@@ -1,3 +1,4 @@
+import { downloadProjectImportSample } from "../project-import-sample-flow.js";
 import { state } from "../state.js";
 import { anchorProjectsSessionToItem } from "../projects-scroll-session.js";
 import { projectHeaderItemKey } from "../projects-list-model.js";
@@ -5,8 +6,11 @@ import { showNoticeBadge } from "../status-feedback.js";
 import { getProjectWritePolicy } from "../resource-write-policy.js";
 import {
   clearProjectSearch,
-  loadMoreProjectSearchResults,
-  openProjectSearchResult,
+  openProjectSearchChapter,
+  toggleProjectSearchChapter,
+  toggleProjectSearchCaseSensitive,
+  toggleProjectSearchProject,
+  toggleProjectSearchWeakerMatches,
 } from "../project-search-flow.js";
 import {
   cancelProjectCreation,
@@ -63,13 +67,14 @@ import {
   continueProjectAddTranslationWithExistingText,
   openProjectAddTranslation,
   retryProjectAddTranslationLink,
+  retryProjectAddTranslationApply,
   selectProjectAddTranslationFile,
   selectProjectAddTranslationInputMode,
   selectProjectAddTranslationLanguage,
   submitProjectAddTranslationLink,
   submitProjectAddTranslationPaste,
 } from "../project-add-translation-flow.js";
-import { openChapterExportOptions } from "../editor-export-flow.js";
+import { openChapterExportOptions, openProjectExportOptions } from "../editor-export-flow.js";
 import {
   cancelProjectTransfer,
   openProjectTransfer,
@@ -86,6 +91,7 @@ const READ_ONLY_PROJECT_WRITE_ACTIONS = new Set([
   "continue-project-add-translation-language",
   "continue-project-add-translation-existing",
   "continue-project-add-translation-mismatch",
+  "retry-project-add-translation-apply",
   "overwrite-conflicted-project-repos",
   "submit-project-creation",
   "confirm-project-permanent-deletion",
@@ -249,13 +255,16 @@ export function createProjectActions(render) {
     "cancel-project-transfer": () => cancelProjectTransfer(render),
     "cancel-chapter-permanent-deletion": () => cancelChapterPermanentDeletion(render),
     "cancel-chapter-rename": () => cancelChapterRename(render),
+    "toggle-project-search-case-sensitive": () => toggleProjectSearchCaseSensitive(render),
     "clear-project-search": () => clearProjectSearch(render),
+    "toggle-project-search-weaker": () => toggleProjectSearchWeakerMatches(render),
     "cancel-project-import": () => cancelProjectImportModal(render),
     "cancel-project-add-translation": () => cancelProjectAddTranslation(render),
     "close-project-add-translation-link-error": () => closeProjectAddTranslationLinkError(render),
     "close-project-old-layout-discard": () => closeProjectOldLayoutDiscard(render),
     "confirm-project-old-layout-discard": () => confirmProjectOldLayoutDiscard(render),
     "close-project-import-link-error": () => closeProjectImportLinkError(render),
+    "download-project-import-sample": () => downloadProjectImportSample(render),
     "close-project-import-upload-error": () => closeProjectImportUploadError(render),
     "continue-project-import-text": () => continueProjectImportText(render),
     "retry-project-import-link": () => retryProjectImportLink(render),
@@ -265,7 +274,6 @@ export function createProjectActions(render) {
     "submit-project-import-link": () => submitProjectImportLink(render),
     "submit-project-add-translation-link": () => submitProjectAddTranslationLink(render),
     "submit-project-import-pasted-text": () => submitProjectImportPastedText(render),
-    "load-more-project-search-results": () => loadMoreProjectSearchResults(render),
     "overwrite-conflicted-project-repos": () => overwriteConflictedProjectRepos(render),
     "toggle-deleted-projects": () => toggleDeletedProjects(render),
     "submit-project-transfer": () => submitProjectTransfer(render),
@@ -281,8 +289,16 @@ export function createProjectActions(render) {
       handler: (mode) => selectProjectAddTranslationInputMode(render, mode),
     },
     {
-      prefix: "open-project-search-result:",
-      handler: async (resultId) => openProjectSearchResult(render, resultId),
+      prefix: "open-project-search-chapter:",
+      handler: async (chapterId) => openProjectSearchChapter(render, chapterId),
+    },
+    {
+      prefix: "toggle-project-search-project:",
+      handler: (projectId) => toggleProjectSearchProject(render, projectId),
+    },
+    {
+      prefix: "toggle-project-search-chapter:",
+      handler: (chapterId) => toggleProjectSearchChapter(render, chapterId),
     },
     {
       prefix: "toggle-project:",
@@ -310,6 +326,10 @@ export function createProjectActions(render) {
     {
       prefix: "add-project-files:",
       handler: async (projectId) => addFilesToProject(render, projectId),
+    },
+    {
+      prefix: "export-project:",
+      handler: (projectId) => openProjectExportOptions(render, projectId),
     },
     {
       prefix: "export-file:",
@@ -396,6 +416,10 @@ export function createProjectActions(render) {
       await runWithImmediateLoading(event, "Continue...", () =>
         submitProjectAddTranslationPaste(render),
       );
+      return true;
+    }
+    if (action === "retry-project-add-translation-apply") {
+      await runWithImmediateLoading(event, "Retrying...", () => retryProjectAddTranslationApply(render));
       return true;
     }
     if (action === "continue-project-add-translation-language") {

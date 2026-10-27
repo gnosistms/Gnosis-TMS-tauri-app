@@ -38,6 +38,12 @@ const {
   getRepoWriteQueueSnapshot,
   resetRepoWriteQueue,
 } = await import("./repo-write-queue.js");
+const {
+  deferProjectsRenderWhileSelectEngaged,
+  flushProjectsHeldRender,
+  resetProjectsRenderHoldForTests,
+} = await import("./projects-render-hold.js");
+const { clearNoticeBadge } = await import("./status-feedback.js");
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -93,6 +99,50 @@ test.afterEach(() => {
   resetRepoWriteQueue();
   resetSessionState();
 });
+
+for (const status of ["upToDate", "syncError"]) {
+  test(`sync completion preserves the held full render for ${status}`, async (t) => {
+    setupProjectRepoSyncTest();
+    state.screen = "projects";
+    const previousSelectElement = globalThis.HTMLSelectElement;
+    class ChapterSelect {
+      matches(selector) {
+        return selector.includes("[data-chapter-status-select]");
+      }
+    }
+    globalThis.HTMLSelectElement = ChapterSelect;
+    document.activeElement = new ChapterSelect();
+    t.after(() => {
+      document.activeElement = null;
+      if (previousSelectElement === undefined) delete globalThis.HTMLSelectElement;
+      else globalThis.HTMLSelectElement = previousSelectElement;
+      resetProjectsRenderHoldForTests();
+      clearNoticeBadge();
+    });
+    invokeHandler = async () => [{ projectId: "project-1", repoName: "repo-one", status }];
+    const performed = [];
+    const render = (options = {}) => {
+      const perform = () => performed.push({
+        scope: options.scope ?? "full",
+        status: state.projectRepoSyncByProjectId["project-1"]?.status,
+        syncBadgeVisible: state.statusBadges.right.visible,
+        noticeVisible: state.statusBadges.left.visible,
+      });
+      if (!deferProjectsRenderWhileSelectEngaged(state, perform)) perform();
+    };
+
+    await reconcileProjectRepoSyncStates(render, team(), [project()]);
+    assert.deepEqual(performed, [], "keep the dropdown intact during sync");
+    document.activeElement = null;
+    flushProjectsHeldRender();
+    assert.deepEqual(performed, [{
+      scope: "full",
+      status,
+      syncBadgeVisible: false,
+      noticeVisible: status === "syncError",
+    }]);
+  });
+}
 
 test("project repo sync waits behind an existing repo queue write for the same repo", async () => {
   const events = [];
@@ -274,48 +324,139 @@ test("project repo sync does not report its own sync operation as a waiting repo
   await sync;
 });
 
-test("project repo sync polling exits and marks a repo stalled after no progress", async () => {
-  const events = [];
-  setupProjectRepoSyncTest(events);
-  let nowMs = 1_000;
-  __setProjectRepoSyncTiming({
-    now: () => nowMs,
-    delay: async (delayMs) => {
-      nowMs += delayMs;
-    },
-  });
-  invokeHandler = async (command, payload) => {
-    const projectId = payload?.input?.projects?.[0]?.projectId ?? "unknown";
-    events.push(`${command}:${projectId}`);
-    return [{
-      projectId,
-      repoName: payload?.input?.projects?.[0]?.repoName ?? "",
-      status: "syncing",
-      message: "Syncing project repo...",
-    }];
+for (const stallReason of ["noProgress", "maxDuration"]) {
+  for (const cancelDiscovery of [false, true]) {
+    test(`slow sync retains queued writes after ${stallReason}, canceled=${cancelDiscovery}`, async () => {
+      setupProjectRepoSyncTest();
+      const beyondStall = deferred();
+      const finishSync = deferred();
+      let nowMs = 1_000;
+      let polls = 0;
+      let canceled = false;
+      let imported = false;
+      __setProjectRepoSyncTiming({
+        now: () => nowMs,
+        delay: async (delayMs) => {
+          nowMs += stallReason === "maxDuration" ? 30_000 : delayMs;
+        },
+      });
+      invokeHandler = async (command) => {
+        let status = "syncing";
+        if (command === "list_project_repo_sync_states" && ++polls === 10) {
+          beyondStall.resolve();
+          await finishSync.promise;
+          status = "upToDate";
+        }
+        return [{ projectId: "project-1", repoName: "repo-one", status }];
+      };
+      const published = [];
+      const sync = reconcileProjectRepoSyncStates(() => {}, team(), [project()], {
+        shouldAbort: () => canceled,
+        onSnapshots: (snapshots) => published.push(snapshots[0]),
+      });
+      await beyondStall.promise;
+      assert.equal(published.at(-1).status, "syncStalled");
+      assert.equal(published.at(-1).stallReason, stallReason);
+      assert.equal(published.length, 2, "unchanged stalled polls do not keep rendering");
+      canceled = cancelDiscovery;
+      const localWrite = enqueueRepoWrite({
+        scope: "1:project-1:repo-one",
+        kind: "projectImport",
+        run: async () => { imported = true; },
+      });
+      await delay(0);
+      assert.equal(imported, false, "a stall or cancellation must not release native queue ownership");
+      finishSync.resolve();
+      const [snapshots] = await Promise.all([sync, localWrite]);
+      assert.equal(imported, true);
+      assert.equal(snapshots[0].status, "upToDate", "terminal status wins even after the timeout");
+      assert.deepEqual(published.map((snapshot) => snapshot.status), cancelDiscovery
+        ? ["syncing", "syncStalled"]
+        : ["syncing", "syncStalled", "upToDate"]);
+    });
+  }
+}
+
+test("unchanged repo polls skip publication and rendering but changed details still publish", async () => {
+  setupProjectRepoSyncTest();
+  let polls = 0;
+  let fullRenders = 0;
+  let rendersAfterPreviousUpdate = 0;
+  const publications = [];
+  const initial = {
+    projectId: "project-1",
+    repoName: "repo-one",
+    status: "syncing",
+    message: "Syncing project repo...",
   };
-  const appliedSnapshots = [];
+  __setProjectRepoSyncTiming({ delay: async () => {} });
+  invokeHandler = async (command) => {
+    if (command === "reconcile_project_repo_sync_states") return [{ ...initial }];
+    assert.equal(command, "list_project_repo_sync_states");
+    polls += 1;
+    if (polls === 1) rendersAfterPreviousUpdate = fullRenders;
+    if (polls === 3) {
+      assert.equal(fullRenders, rendersAfterPreviousUpdate, "identical polls must not render");
+      assert.equal(publications.length, 1);
+      // A field outside the stall-detection signature must still be delivered.
+      return [{ ...initial, localPath: "/updated/project/path" }];
+    }
+    if (polls === 4) {
+      assert.equal(fullRenders, rendersAfterPreviousUpdate + 1);
+      assert.equal(publications.at(-1).localPath, "/updated/project/path");
+      return [{ ...initial, status: "clean" }];
+    }
+    return [{ ...initial }];
+  };
 
-  const snapshots = await reconcileProjectRepoSyncStates(() => {}, team(), [project()], {
-    applySnapshots: (nextSnapshots) => {
-      appliedSnapshots.push(nextSnapshots);
-      state.projectRepoSyncByProjectId = Object.fromEntries(
-        (nextSnapshots || []).map((snapshot) => [snapshot.projectId, snapshot]),
-      );
-    },
+  const result = await reconcileProjectRepoSyncStates((options) => {
+    if (!options?.scope) fullRenders += 1;
+  }, team(), [project()], {
+    onSnapshots: (snapshots) => publications.push(snapshots[0]),
   });
 
-  assert.equal(
-    events.filter((event) => event === "list_project_repo_sync_states:project-1").length,
-    8,
-  );
-  assert.equal(snapshots[0].status, "syncStalled");
-  assert.equal(snapshots[0].syncStalled, true);
-  assert.equal(appliedSnapshots.at(-1)[0].status, "syncStalled");
-  assert.equal(state.projectRepoSyncByProjectId["project-1"].syncStalled, true);
-  assert.equal(state.statusBadges.right.visible, false);
-  assert.equal(
-    state.statusBadges.left.text,
-    "1 project repo sync is taking longer than expected; try refreshing again",
-  );
+  assert.equal(polls, 4);
+  assert.deepEqual(publications.map((snapshot) => snapshot.status), ["syncing", "syncing", "clean"]);
+  assert.equal(fullRenders, 4, "three changed snapshots plus final reconciliation");
+  assert.equal(result[0].status, "clean");
+  assert.equal(state.projectRepoSyncByProjectId["project-1"].status, "clean");
+});
+
+test("canceling discovery keeps local writes queued until the native sync finishes", async () => {
+  setupProjectRepoSyncTest();
+  const pollStarted = deferred();
+  const syncFinished = deferred();
+  let canceled = false;
+  let imported = false;
+  let publicationsAfterCancel = 0;
+  __setProjectRepoSyncTiming({ delay: async () => {} });
+  invokeHandler = async (command) => {
+    if (command === "reconcile_project_repo_sync_states") {
+      canceled = true;
+      return [{ projectId: "project-1", repoName: "repo-one", status: "syncing" }];
+    }
+    if (command === "list_project_repo_sync_states") {
+      pollStarted.resolve();
+      await syncFinished.promise;
+      return [{ projectId: "project-1", repoName: "repo-one", status: "upToDate" }];
+    }
+    return [];
+  };
+  const sync = reconcileProjectRepoSyncStates(() => {}, team(), [project()], {
+    shouldAbort: () => canceled,
+    mergeSnapshots: () => { if (canceled) publicationsAfterCancel += 1; },
+    applySnapshots: () => { if (canceled) publicationsAfterCancel += 1; },
+  });
+  await pollStarted.promise;
+  const localWrite = enqueueRepoWrite({
+    scope: "1:project-1:repo-one",
+    kind: "projectImport",
+    run: async () => { imported = true; },
+  });
+  await delay(0);
+  assert.equal(imported, false);
+  syncFinished.resolve();
+  await Promise.all([sync, localWrite]);
+  assert.equal(imported, true);
+  assert.equal(publicationsAfterCancel, 0);
 });

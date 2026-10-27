@@ -115,7 +115,7 @@ test("translate refresh reloads local editor data before optional background syn
   const sourceSyncIndex = source.indexOf("const syncResult = await syncEditorBackgroundNowWithSummary", refreshBodyStart);
   const translateStart = source.lastIndexOf('if (screen === "translate") {', sourceSyncIndex);
   const translateBlock = source.slice(translateStart, source.indexOf("await completePageSync(render);", translateStart));
-  const firstReloadIndex = translateBlock.indexOf("await loadSelectedChapterEditorData(render, { preserveVisibleRows: true });");
+  const firstReloadIndex = translateBlock.indexOf("await loadSelectedChapterEditorData(render, { preserveVisibleRows: true })");
   const syncIndex = translateBlock.indexOf("const syncResult = await syncEditorBackgroundNowWithSummary");
   const conditionalReloadIndex = translateBlock.indexOf("if (syncSummaryNeedsLocalEditorReload(syncResult))");
 

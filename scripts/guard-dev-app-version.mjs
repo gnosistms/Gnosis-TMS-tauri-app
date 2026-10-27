@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
+import { syncDevVersionMetadata } from "./sync-dev-version-metadata.mjs";
 
 const VERSION_FILES = [
   {
@@ -152,10 +153,25 @@ export function runDevVersionGuard(cwd = process.cwd()) {
   const tags = commandOutput("git", tagArgs, repositoryRoot)
     .split("\n")
     .filter(Boolean);
-  const result = evaluateDevVersion({
+  let result = evaluateDevVersion({
     declaredVersions: declaredVersions(repositoryRoot),
     releaseTag: newestStableTag(tags),
   });
+
+  if (result.reason === "stale" && process.env.GNOSIS_SYNC_DEV_VERSION === "1") {
+    try {
+      const version = syncDevVersionMetadata(repositoryRoot, result.declaredVersion, result.releaseTag);
+      console.log(`Updated app version metadata to ${version}; verified release changes are already in your working code.`);
+      result = evaluateDevVersion({
+        declaredVersions: declaredVersions(repositoryRoot),
+        releaseTag: result.releaseTag,
+      });
+    } catch (error) {
+      console.error(`Automatic development version repair stopped: ${error.message}`);
+      console.error("Your source files were not changed. Review the local release changes before raising the app version.");
+      return 1;
+    }
+  }
 
   if (result.ok) {
     console.log(
@@ -166,11 +182,14 @@ export function runDevVersionGuard(cwd = process.cwd()) {
     return 0;
   }
 
-  printFailure(result);
-  if (process.env.GNOSIS_ALLOW_STALE_DEV_VERSION === "1") {
-    console.warn("Continuing because the stale development version override is set.");
+  if (result.reason === "stale" && process.env.GNOSIS_ALLOW_STALE_DEV_VERSION === "1") {
+    console.warn(
+      `Working checkout version ${result.declaredVersion}; latest local release ${result.releaseTag}. ` +
+      "Starting this checkout because local development versions are allowed.",
+    );
     return 0;
   }
+  printFailure(result);
   return 1;
 }
 

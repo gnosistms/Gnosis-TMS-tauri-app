@@ -1,10 +1,13 @@
+import { registerProjectBookEvents } from "./events/project-book.js";
 import { handleInputEvent, handlePasteEvent } from "./input-handlers.js";
+import { updateStudioInput } from "./glossary-research-studio-flow.js";
 import { handleNavigation } from "./navigation.js";
 import { createActionDispatcher } from "./action-dispatcher.js";
 import { checkForAppUpdate } from "./updater-flow.js";
 import { listen } from "./runtime.js";
 import { syncGlossaryTermInlineStyleButtons } from "./glossary-term-inline-markup-flow.js";
 import { syncQaTermInlineStyleButtons } from "./qa-term-inline-markup-flow.js";
+import { syncEditorGlossaryEntryButtons } from "./editor-glossary-entry-selection.js";
 import { registerKeyboardShortcutEvents } from "./events/keyboard-shortcuts.js";
 import { registerListboxControlEvents } from "./events/listbox-control.js";
 import { registerModalDialogEvents } from "./events/modal-dialog.js";
@@ -31,11 +34,13 @@ import {
   updateTargetLanguageManagerDrag,
 } from "./events/target-language-drag.js";
 import { registerProjectAddTranslationProgress } from "./project-add-translation-flow.js";
+import { installImeCompositionHold } from "./ime-composition-hold.js";
 import {
   installProjectsRenderHold,
   isProjectsSelectCommitTarget,
   withProjectsSelectCommit,
 } from "./projects-render-hold.js";
+import { registerMoneyInputEvents } from "./money-input.js";
 
 const SYNC_WITH_SERVER_EVENT = "sync-with-server";
 const ERROR_REPORTING_EVENT = "open-error-reporting";
@@ -45,17 +50,28 @@ export function registerAppEvents(render) {
   const dispatchAction = createActionDispatcher(render);
 
   registerNativeDropEvents(render);
+  registerProjectBookEvents(render);
   registerKeyboardShortcutEvents(dispatchAction);
   registerListboxControlEvents();
   registerRovingChoiceEvents();
   registerModalDialogEvents();
+  registerMoneyInputEvents();
   registerGlossaryTooltipEvents();
   registerProjectAddTranslationProgress(render);
 
   installProjectsRenderHold();
-  document.addEventListener("input", (event) => handleInputEvent(event, render));
+  installImeCompositionHold(render);
+  document.addEventListener("input", (event) => {
+    if (event.target instanceof Element && event.target.closest("[data-studio-field], [data-studio-decision]")) {
+      updateStudioInput(event.target); return;
+    }
+    handleInputEvent(event, render);
+  });
   document.addEventListener("change", (event) => {
-    // A chapter-select commit must render its optimistic update immediately,
+    if (event.target instanceof Element && event.target.closest("[data-studio-field], [data-studio-decision], [data-studio-branch], [data-studio-merge], [data-studio-collision]")) {
+      updateStudioInput(event.target); return;
+    }
+    // A protected select commit must render its state update immediately,
     // so its change handling runs with the projects render hold bypassed.
     if (isProjectsSelectCommitTarget(event.target)) {
       withProjectsSelectCommit(() => handleInputEvent(event, render));
@@ -64,6 +80,13 @@ export function registerAppEvents(render) {
     handleInputEvent(event, render);
   });
   document.addEventListener("paste", (event) => handlePasteEvent(event, render));
+  for (const eventName of ["copy", "cut", "dragstart"]) {
+    document.addEventListener(eventName, (event) => {
+      if (event.target instanceof Element && event.target.closest("[data-ai-key-input][data-ai-key-saved]")) {
+        event.preventDefault();
+      }
+    });
+  }
 
   document.addEventListener("mousedown", (event) => {
     if (event.target instanceof Element && event.target.closest("[data-glossary-inline-style-button]")) {
@@ -86,6 +109,13 @@ export function registerAppEvents(render) {
       return;
     }
 
+    // The glossary entry button works on the highlighted text; pressing it
+    // must not move focus off the text box or clear the highlight.
+    if (event.target instanceof Element && event.target.closest("[data-editor-glossary-entry-button]")) {
+      event.preventDefault();
+      return;
+    }
+
     focusEditorFieldFromGlossaryMark(event);
   });
 
@@ -100,12 +130,14 @@ export function registerAppEvents(render) {
     window.requestAnimationFrame(() => {
       syncGlossaryTermInlineStyleButtons();
       syncQaTermInlineStyleButtons();
+      syncEditorGlossaryEntryButtons();
     });
   });
 
   document.addEventListener("selectionchange", () => {
     syncGlossaryTermInlineStyleButtons();
     syncQaTermInlineStyleButtons();
+    syncEditorGlossaryEntryButtons();
   });
 
 

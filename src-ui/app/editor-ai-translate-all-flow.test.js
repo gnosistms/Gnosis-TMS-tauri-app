@@ -415,12 +415,184 @@ test("AI Translate All batches consecutive same-pair rows into one request", asy
 
   assert.equal(batchCalls.length, 1);
   assert.equal(batchCalls[0].rows.length, 3);
+  assert.equal(batchCalls[0].subtitleCues, undefined);
   assert.deepEqual(
     state.editorChapter.rows.map((row) => row.fields.vi),
     ["vi:Hola", "vi:Adios", "vi:Gracias"],
   );
   assert.equal(state.editorChapter.aiTranslateAllModal.isOpen, false);
   assert.equal(state.statusBadges.left.text, "AI translated 3 fields.");
+});
+
+function cueChapter(count, rowOverrides = () => ({})) {
+  const chapterState = batchChapter();
+  chapterState.sourceFormats = ["srt"];
+  chapterState.rows = Array.from({ length: count }, (_, index) => ({
+    rowId: `r${index}`,
+    lifecycleState: "active",
+    srtTiming: { startMs: index * 1000, endMs: index * 1000 + 900 },
+    fields: { es: `linea ${index}`, vi: "" },
+    ...rowOverrides(index),
+  }));
+  return chapterState;
+}
+
+function echoTranslation(rows) {
+  return {
+    rows: rows.map((row) => ({
+      rowId: row.rowId,
+      translatedText: `vi:${row.sourceText}`,
+      translatedFootnote: "",
+      translatedImageCaption: "",
+    })),
+    promptText: "P",
+  };
+}
+
+function sortedByFirstRow(requests) {
+  const firstIndex = (request) => Number(request.rows[0].rowId.slice(1));
+  return [...requests].sort((left, right) => firstIndex(left) - firstIndex(right));
+}
+
+test("AI Translate All batches adjacent subtitle cues up to 30 and flags them as cues", async () => {
+  resetSessionState();
+  editorAiTranslateAllTestApi.resetActiveBatchRunId();
+  // r5 is already translated (a gap in the work), r20 is deleted (not a gap:
+  // r19 and r21 are adjacent cues).
+  state.editorChapter = cueChapter(45, (index) => ({
+    lifecycleState: index === 20 ? "deleted" : "active",
+    fields: { es: `linea ${index}`, vi: index === 5 ? "đã dịch" : "" },
+  }));
+  const batchCalls = [];
+
+  await confirmEditorAiTranslateAll(
+    () => {},
+    batchOperations({
+      runAiTranslationBatch: async (request) => {
+        batchCalls.push(request);
+        return echoTranslation(request.rows);
+      },
+    }),
+  );
+
+  const batches = sortedByFirstRow(batchCalls);
+  assert.deepEqual(
+    batches.map((request) => [request.rows[0].rowId, request.rows.length, request.subtitleCues]),
+    [["r0", 5, true], ["r6", 30, true], ["r37", 8, true]],
+  );
+  assert.ok(!batches[1].rows.some((row) => row.rowId === "r20"));
+});
+
+test("AI Translate All splits subtitle batches at rows without SRT timing", async () => {
+  resetSessionState();
+  editorAiTranslateAllTestApi.resetActiveBatchRunId();
+  // A mixed chapter: r2 came from another source file and has no timing.
+  state.editorChapter = cueChapter(5, (index) => (index === 2 ? { srtTiming: null } : {}));
+  const batchCalls = [];
+
+  await confirmEditorAiTranslateAll(
+    () => {},
+    batchOperations({
+      runAiTranslationBatch: async (request) => {
+        batchCalls.push(request);
+        return echoTranslation(request.rows);
+      },
+    }),
+  );
+
+  assert.deepEqual(
+    sortedByFirstRow(batchCalls).map((request) => request.rows.map((row) => row.rowId)),
+    [["r0", "r1"], ["r3", "r4"]],
+  );
+});
+
+test("AI Translate All applies none of an incomplete subtitle response and retries the whole stretch", async () => {
+  resetSessionState();
+  editorAiTranslateAllTestApi.resetActiveBatchRunId();
+  state.editorChapter = cueChapter(4);
+  const batchCalls = [];
+  const writesBeforeRetry = [];
+
+  await confirmEditorAiTranslateAll(
+    () => {},
+    batchOperations({
+      runAiTranslationBatch: async (request) => {
+        batchCalls.push(request);
+        if (batchCalls.length === 1) {
+          // r0 is missing and r2 is blank (its words moved to a neighbour).
+          const response = echoTranslation(request.rows.filter((row) => row.rowId !== "r0"));
+          response.rows.find((row) => row.rowId === "r2").translatedText = "  ";
+          return response;
+        }
+        writesBeforeRetry.push(...state.editorChapter.rows.map((row) => row.fields.vi));
+        return echoTranslation(request.rows);
+      },
+    }),
+  );
+
+  assert.equal(batchCalls.length, 2);
+  assert.deepEqual(batchCalls[1].rows.map((row) => row.rowId), ["r0", "r1", "r2", "r3"]);
+  assert.equal(batchCalls[1].subtitleCues, true);
+  assert.deepEqual(writesBeforeRetry, ["", "", "", ""]);
+  assert.deepEqual(
+    state.editorChapter.rows.map((row) => row.fields.vi),
+    ["vi:linea 0", "vi:linea 1", "vi:linea 2", "vi:linea 3"],
+  );
+});
+
+test("AI Translate All retries a failed subtitle batch on the batch path before single rows", async () => {
+  resetSessionState();
+  editorAiTranslateAllTestApi.resetActiveBatchRunId();
+  state.editorChapter = cueChapter(3);
+  const batchCalls = [];
+  let singleRowCalls = 0;
+
+  await confirmEditorAiTranslateAll(
+    () => {},
+    batchOperations({
+      runAiTranslationBatch: async (request) => {
+        batchCalls.push(request);
+        if (batchCalls.length === 1) {
+          throw new Error("The AI translation returned an incomplete or extra-row batch.");
+        }
+        return echoTranslation(request.rows);
+      },
+      runEditorAiTranslateForContext: async () => {
+        singleRowCalls += 1;
+        return { ok: true };
+      },
+    }),
+  );
+
+  assert.equal(batchCalls.length, 2);
+  assert.equal(batchCalls[1].subtitleCues, true);
+  assert.equal(singleRowCalls, 0);
+  assert.deepEqual(
+    state.editorChapter.rows.map((row) => row.fields.vi),
+    ["vi:linea 0", "vi:linea 1", "vi:linea 2"],
+  );
+});
+
+test("AI Translate All leaves the neighbours of a subtitle cue changed mid-flight untranslated", async () => {
+  resetSessionState();
+  editorAiTranslateAllTestApi.resetActiveBatchRunId();
+  state.editorChapter = cueChapter(5);
+
+  await confirmEditorAiTranslateAll(
+    () => {},
+    batchOperations({
+      runAiTranslationBatch: async (request) => {
+        // The user types a translation into r2 while the call is in flight.
+        state.editorChapter.rows[2].fields.vi = "người dùng gõ";
+        return echoTranslation(request.rows);
+      },
+    }),
+  );
+
+  assert.deepEqual(
+    state.editorChapter.rows.map((row) => row.fields.vi),
+    ["vi:linea 0", "", "người dùng gõ", "", "vi:linea 4"],
+  );
 });
 
 test("AI Translate All saves each batch response as one grouped save, not per row", async () => {
@@ -816,6 +988,93 @@ test("AI Translate All generates missing pivot texts in batch instead of single-
   );
 });
 
+test("AI Translate All derives a whole language pair concurrently before its batches translate", async () => {
+  resetSessionState();
+  editorAiTranslateAllTestApi.resetActiveBatchRunId();
+  // 20 rows -> two translate batches (15 + 5) and two derivation chunks. The
+  // pre-pass must issue both derivation calls, overlapping, before the first
+  // translation call, and the per-batch derivation must then be cache hits.
+  const chapterState = batchChapter();
+  const rows = Array.from({ length: 20 }, (_, index) => ({
+    rowId: `row-${index + 1}`,
+    lifecycleState: "active",
+    fields: { es: `Texto ${index + 1}`, en: `text ${index + 1}`, vi: "" },
+  }));
+  state.editorChapter = {
+    ...chapterState,
+    languages: [
+      { code: "es", name: "Spanish", role: "source" },
+      { code: "en", name: "English", role: "target" },
+      { code: "vi", name: "Vietnamese", role: "target" },
+    ],
+    rows,
+    glossary: {
+      sourceLanguage: { code: "en" },
+      targetLanguage: { code: "vi" },
+      glossaryId: "g1",
+      repoName: "repo",
+      title: "Glossary",
+      matcherModel: {},
+      terms: [
+        {
+          lifecycleState: "active",
+          sourceTerms: ["text"],
+          targetTerms: ["van ban"],
+        },
+      ],
+    },
+  };
+
+  const events = [];
+  let derivationsInFlight = 0;
+  let maxDerivationsInFlight = 0;
+
+  await confirmEditorAiTranslateAll(
+    () => {},
+    batchOperations({
+      persistEditorRowsBatch: async () => {},
+      prepareEditorAiTranslatedGlossaryBatch: async (request) => {
+        derivationsInFlight += 1;
+        maxDerivationsInFlight = Math.max(maxDerivationsInFlight, derivationsInFlight);
+        events.push(`derive:${request.translationSourceTexts.length}`);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        derivationsInFlight -= 1;
+        return { glossarySourceText: request.glossarySourceText, entries: [] };
+      },
+      runAiTranslationBatch: async (request) => {
+        events.push(`translate:${request.rows.length}`);
+        return {
+          rows: request.rows.map((row) => ({
+            rowId: row.rowId,
+            translatedText: `vi:${row.sourceText}`,
+          })),
+          promptText: "P",
+        };
+      },
+    }),
+  );
+
+  const deriveEvents = events.filter((event) => event.startsWith("derive:"));
+  const translateEvents = events.filter((event) => event.startsWith("translate:"));
+  assert.deepEqual(deriveEvents, ["derive:15", "derive:5"]);
+  assert.deepEqual(translateEvents.sort(), ["translate:15", "translate:5"]);
+  assert.equal(maxDerivationsInFlight, 2, "both derivation chunks overlap");
+  // Every derivation call precedes every translation call.
+  const lastDerive = events.lastIndexOf("derive:5") > events.lastIndexOf("derive:15")
+    ? events.lastIndexOf("derive:5")
+    : events.lastIndexOf("derive:15");
+  const firstTranslate = events.findIndex((event) => event.startsWith("translate:"));
+  assert.equal(lastDerive < firstTranslate, true, events.join(", "));
+  assert.equal(
+    state.editorChapter.rows.every((row) => row.fields.vi === `vi:${row.fields.es}`),
+    true,
+  );
+  assert.equal(
+    rows.every((row) => state.editorChapter.derivedGlossariesByRowId?.[row.rowId]?.status === "ready"),
+    true,
+  );
+});
+
 test("AI Translate All skips applying a batch result when the source changed mid-flight", async () => {
   resetSessionState();
   editorAiTranslateAllTestApi.resetActiveBatchRunId();
@@ -1037,7 +1296,9 @@ test("glossaryUsageKindForPair classifies none/direct/derived from the chapter g
   };
   assert.equal(editorAiTranslateAllTestApi.glossaryUsageKindForPair(chapterState, "es", "vi"), "direct");
 
-  const derivedChapter = {
+  // Glossary source (en) differs from the chapter source (es), but the chapter
+  // has no en column to pivot through: nothing can be derived, so "none".
+  const pivotlessChapter = {
     ...chapterState,
     glossary: {
       sourceLanguage: { code: "en" },
@@ -1049,7 +1310,101 @@ test("glossaryUsageKindForPair classifies none/direct/derived from the chapter g
       { code: "vi", name: "Vietnamese", role: "target" },
     ],
   };
+  assert.equal(editorAiTranslateAllTestApi.glossaryUsageKindForPair(pivotlessChapter, "es", "vi"), "none");
+
+  // With an en column present (any suffix, matched by base code) it derives.
+  const derivedChapter = {
+    ...pivotlessChapter,
+    languages: [
+      ...pivotlessChapter.languages,
+      { code: "en-x-2", baseCode: "en", name: "English 2", role: "target" },
+    ],
+  };
   assert.equal(editorAiTranslateAllTestApi.glossaryUsageKindForPair(derivedChapter, "es", "vi"), "derived");
+});
+
+test("AI Translate All skips derivation when the glossary source language is not a chapter column", async () => {
+  resetSessionState();
+  editorAiTranslateAllTestApi.resetActiveBatchRunId();
+  // en-source chapter linked to an es -> vi glossary, with no es column: the
+  // field case that generated pivot text for every row. The run must make one
+  // translation call and never generate, persist, or align pivot text.
+  const chapterState = batchChapter();
+  state.editorChapter = {
+    ...chapterState,
+    selectedSourceLanguageCode: "en",
+    languages: [
+      { code: "en", name: "English", role: "source" },
+      { code: "vi", name: "Vietnamese", role: "target" },
+    ],
+    rows: [
+      { rowId: "row-a", lifecycleState: "active", fields: { en: "Hello", vi: "" } },
+      { rowId: "row-b", lifecycleState: "active", fields: { en: "World", vi: "" } },
+      { rowId: "row-c", lifecycleState: "active", fields: { en: "Again", vi: "" } },
+    ],
+    glossary: {
+      sourceLanguage: { code: "es" },
+      targetLanguage: { code: "vi" },
+      glossaryId: "g1",
+      repoName: "repo",
+      title: "Glossary",
+      matcherModel: {},
+      terms: [
+        {
+          lifecycleState: "active",
+          sourceTerms: ["hola"],
+          targetTerms: ["xin chao"],
+        },
+      ],
+    },
+  };
+
+  const batchCalls = [];
+  const persistedRowIds = [];
+  const batchSaves = [];
+  let alignmentCalls = 0;
+
+  await confirmEditorAiTranslateAll(
+    () => {},
+    batchOperations({
+      // Per-row saves are what pivot-text generation uses; the translations
+      // themselves land in one grouped save.
+      persistEditorRowOnBlur: async (_render, rowId) => {
+        persistedRowIds.push(rowId);
+      },
+      persistEditorRowsBatch: async (_render, items) => {
+        batchSaves.push(items.map((item) => item.rowId));
+      },
+      prepareEditorAiTranslatedGlossaryBatch: async () => {
+        alignmentCalls += 1;
+        return { glossarySourceText: "", entries: [] };
+      },
+      runAiTranslationBatch: async (request) => {
+        batchCalls.push(request);
+        return {
+          rows: request.rows.map((row) => ({
+            rowId: row.rowId,
+            translatedText: `vi:${row.sourceText}`,
+          })),
+          promptText: "P",
+        };
+      },
+    }),
+  );
+
+  assert.equal(batchCalls.length, 1);
+  assert.equal(batchCalls[0].targetLanguageCode, "vi");
+  assert.equal(alignmentCalls, 0);
+  assert.deepEqual(persistedRowIds, []);
+  assert.deepEqual(batchSaves, [["row-a", "row-b", "row-c"]]);
+  assert.deepEqual(
+    state.editorChapter.rows.map((row) => row.fields),
+    [
+      { en: "Hello", vi: "vi:Hello" },
+      { en: "World", vi: "vi:World" },
+      { en: "Again", vi: "vi:Again" },
+    ],
+  );
 });
 
 test("AI Translate All refreshes stale derived glossaries once for the whole run when restoring the glossary's own source language", async () => {
@@ -1284,4 +1639,101 @@ test("AI Translate All still refreshes pivot rows when the whole run took the si
 
   assert.equal(refreshPrepareCalls.length, 1);
   assert.equal(state.editorChapter.derivedGlossariesByRowId["row-1"].glossarySourceText, "es:solo");
+});
+
+test("AI Translate All retries rows missing from the batch response on the batch path before single-row", async () => {
+  resetSessionState();
+  editorAiTranslateAllTestApi.resetActiveBatchRunId();
+  state.editorChapter = batchChapter();
+  const batchCalls = [];
+  const fallbackRows = [];
+
+  await confirmEditorAiTranslateAll(
+    () => {},
+    batchOperations({
+      runAiTranslationBatch: async (request) => {
+        batchCalls.push(request.rows.map((row) => row.rowId));
+        const isRetry = batchCalls.length > 1;
+        return {
+          rows: request.rows
+            // The first call drops row-b (a merged/reformatted id); the retry
+            // for just that row succeeds.
+            .filter((row) => isRetry || row.rowId !== "row-b")
+            .map((row) => ({ rowId: row.rowId, translatedText: `vi:${isRetry ? "retry:" : ""}${row.sourceText}` })),
+          promptText: "P",
+          unknownRowIds: isRetry ? [] : ["row-b-merged"],
+        };
+      },
+      runEditorAiTranslateForContext: async (_render, _actionId, context) => {
+        fallbackRows.push(context.rowId);
+        return { ok: true };
+      },
+    }),
+  );
+
+  assert.deepEqual(batchCalls, [["row-a", "row-b", "row-c"], ["row-b"]]);
+  assert.deepEqual(fallbackRows, []);
+  assert.deepEqual(
+    state.editorChapter.rows.map((row) => row.fields.vi),
+    ["vi:Hola", "vi:retry:Adios", "vi:Gracias"],
+  );
+  assert.equal(state.statusBadges.left.text, "AI translated 3 fields.");
+});
+
+test("AI Translate All sends later language pairs the translations earlier pairs just wrote", async () => {
+  resetSessionState();
+  editorAiTranslateAllTestApi.resetActiveBatchRunId();
+  const chapterState = batchChapter();
+  state.editorChapter = {
+    ...chapterState,
+    languages: [
+      { code: "es", name: "Spanish", role: "source" },
+      { code: "vi", name: "Vietnamese", role: "target" },
+      { code: "fr", name: "French", role: "target" },
+    ],
+    rows: chapterState.rows.map((row) => ({ ...row, fields: { ...row.fields, fr: "" } })),
+    aiTranslateAllModal: {
+      ...createEditorAiTranslateAllModalState(),
+      isOpen: true,
+      selectedLanguageCodes: ["vi", "fr"],
+    },
+  };
+  const batchCalls = [];
+
+  await confirmEditorAiTranslateAll(
+    () => {},
+    batchOperations({
+      // Immutable row updates, like the real editor state layer: a run-start
+      // row snapshot would never see these writes.
+      updateEditorRowFieldValue: (rowId, languageCode, value) => {
+        state.editorChapter = {
+          ...state.editorChapter,
+          rows: state.editorChapter.rows.map((row) =>
+            row.rowId === rowId ? { ...row, fields: { ...row.fields, [languageCode]: value } } : row),
+        };
+      },
+      runAiTranslationBatch: async (request) => {
+        batchCalls.push(request);
+        return {
+          rows: request.rows.map((row) => ({
+            rowId: row.rowId,
+            translatedText: `${request.targetLanguageCode}:${row.sourceText}`,
+          })),
+          promptText: "P",
+        };
+      },
+    }),
+  );
+
+  assert.deepEqual(batchCalls.map((call) => call.targetLanguageCode), ["vi", "fr"]);
+  // The fr batch carries the vi translations written moments earlier as
+  // reference translations.
+  assert.deepEqual(
+    batchCalls[1].rows.map((row) => row.alternateLanguageTexts),
+    [
+      [{ languageCode: "vi", languageLabel: "Vietnamese", text: "vi:Hola" }],
+      [{ languageCode: "vi", languageLabel: "Vietnamese", text: "vi:Adios" }],
+      [{ languageCode: "vi", languageLabel: "Vietnamese", text: "vi:Gracias" }],
+    ],
+  );
 });

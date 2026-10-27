@@ -1,4 +1,5 @@
 import refreshIconSvg from "../assets/icons/refresh.svg?raw";
+import downloadIconSvg from "../assets/icons/download.svg?raw";
 
 export function escapeHtml(value) {
   return String(value)
@@ -92,9 +93,12 @@ export function actionNavButton(label, action, isGhost = false, options = {}) {
 }
 
 export function primaryButton(label, action, options = {}) {
+  const tooltip = options.tooltip
+    ? tooltipAttributes(options.tooltip, options.tooltipOptions)
+    : "";
   return `<button class="button button--primary${options.disabled ? " is-disabled" : ""}" data-action="${escapeHtml(
     action,
-  )}"${modalControlAttributes(options)}${disabledActionAttributes(options)}>${escapeHtml(label)}</button>`;
+  )}"${modalControlAttributes(options)}${tooltip}${disabledActionAttributes(options)}>${escapeHtml(label)}</button>`;
 }
 
 export function errorButton(label, action, options = {}) {
@@ -108,6 +112,16 @@ export function loadingSpinnerKeyAttribute(key) {
   return normalizedKey
     ? ` data-loading-spinner-key="${escapeHtml(normalizedKey)}"`
     : "";
+}
+
+// Standalone spinner (no button chrome) for waits that have no action to attach
+// to, such as the startup session restore. `key` opts into animation-phase
+// continuity across re-renders; `label` is announced to assistive technology.
+export function loadingSpinner({ key = "", className = "", label = "Loading" } = {}) {
+  const classes = ["button__spinner", String(className ?? "").trim()]
+    .filter(Boolean)
+    .join(" ");
+  return `<span class="${escapeHtml(classes)}"${loadingSpinnerKeyAttribute(key)} role="status" aria-label="${escapeHtml(label)}"></span>`;
 }
 
 export function loadingButton({
@@ -490,10 +504,47 @@ export function renderFloatingStatusSurface({ pageSync, syncBadgeText, noticeTex
   return renderFloatingSyncBadge(pageSync, syncBadgeText);
 }
 
+export function renderAppUpdatePill(update) {
+  if (update?.available !== true) {
+    return "";
+  }
+
+  const installing = update.status === "installing";
+  const restarting = update.status === "restarting";
+  const preparing = update.status === "preparing";
+  const downloaded = update.status === "downloaded";
+  const progress = update.downloadPercent;
+  const hasProgress = installing && typeof progress === "number" && Number.isFinite(progress);
+  const label = preparing ? "Saving..." : downloaded ? "Restart to update" : restarting
+    ? "Restarting..."
+    : hasProgress
+      ? `${Math.max(0, Math.min(100, Math.round(progress)))}%`
+      : installing
+        ? "Downloading..."
+        : update.status === "installError"
+          ? "Retry update"
+          : "Update";
+  const version = String(update.version ?? "").trim();
+  const action = installing || restarting || preparing ? "noop" : "install-app-update";
+  const title = preparing ? "Saving changes before installing" : downloaded ? "Install the downloaded update and restart Gnosis TMS" : restarting
+    ? "Restarting Gnosis TMS"
+    : installing
+      ? `Downloading Gnosis TMS update${hasProgress ? `: ${label}` : ""}`
+      : `Download and install Gnosis TMS${version ? ` ${version}` : " update"}`;
+
+  return `
+    <button class="app-update-pill" type="button" data-action="${action}" aria-label="${escapeHtml(title)}"${installing || restarting || preparing ? ' aria-disabled="true"' : ""}${installing ? ' aria-busy="true"' : ""}>
+      <span class="app-update-pill__icon" aria-hidden="true">${downloadIconSvg}</span>
+      <span>${escapeHtml(label)}</span>
+    </button>
+  `;
+}
+
 export function pageShell({
   title,
   titleTooltip = "",
   subtitle = "",
+  subtitleAction = "",
   titleAction = "",
   headerClass = "",
   bodyClass = "",
@@ -537,7 +588,7 @@ export function pageShell({
             <h1 class="page-header__title">${escapeHtml(title)}</h1>
             ${titleAction}
           </div>
-          ${subtitle ? `<p class="page-header__subtitle">${escapeHtml(subtitle)}</p>` : ""}
+          ${subtitle || subtitleAction ? `<div class="page-header__subtitle-row">${subtitle ? `<p class="page-header__subtitle">${escapeHtml(subtitle)}</p>` : ""}${subtitleAction}</div>` : ""}
         </div>
         <div class="page-header__tools">${tools}</div>
         ${headerBody ? `<div class="page-header__detail">${headerBody}</div>` : ""}

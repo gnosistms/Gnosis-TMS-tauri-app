@@ -151,6 +151,47 @@ test("recovers from a stale store resource id and reports it non-fatally", async
   assert.equal(freshStore.data.get("k2"), "v2");
 });
 
+test("a delayed failure from the stale handle does not discard its replacement", async () => {
+  const writeRejections = [];
+  const staleStore = createFakeTauriStore({
+    set() {
+      return new Promise((_resolve, reject) => {
+        writeRejections.push(reject);
+      });
+    },
+  });
+  const freshStore = createFakeTauriStore();
+  let loadCount = 0;
+  const loader = async () => {
+    loadCount += 1;
+    return loadCount === 1 ? staleStore : freshStore;
+  };
+
+  const module = await bootTauriStore(loader);
+  module.writePersistentValue("first", "value-1");
+  module.writePersistentValue("second", "value-2");
+
+  // Let the newer write fail first and complete recovery while the older write remains
+  // pending against the stale handle.
+  writeRejections[1]("The resource id 61 is invalid.");
+  await tick();
+  await tick();
+
+  assert.equal(loadCount, 2);
+  assert.equal(freshStore.data.get("first"), "value-1");
+  assert.equal(freshStore.data.get("second"), "value-2");
+
+  // The old rejection must be reported without clearing the replacement or reloading.
+  writeRejections[0]("The resource id 61 is invalid.");
+  await tick();
+  await tick();
+
+  assert.equal(loadCount, 2, "a superseded handle must not trigger another reload");
+  module.writePersistentValue("third", "value-3");
+  await tick();
+  assert.equal(freshStore.data.get("third"), "value-3");
+});
+
 test("recovers from a stale store resource id on delete and reports it non-fatally", async () => {
   const staleStore = createFakeTauriStore({
     // Mirror of the set-path test: the delete write is floated the same way, so a dropped
@@ -244,4 +285,106 @@ test("a failing store reload does not produce a new unhandled rejection", async 
   } finally {
     process.removeListener("unhandledRejection", onRejection);
   }
+});
+
+test("a later write retries a failed stale-handle reload and persists all memory state", async () => {
+  const staleStore = createFakeTauriStore({
+    set() {
+      return Promise.reject("The resource id 31 is invalid.");
+    },
+  });
+  const recoveredStore = createFakeTauriStore();
+  let loadCount = 0;
+  const loader = async () => {
+    loadCount += 1;
+    if (loadCount === 1) {
+      return staleStore;
+    }
+    if (loadCount === 2) {
+      throw new Error("replacement handle temporarily unavailable");
+    }
+    return recoveredStore;
+  };
+
+  const module = await bootTauriStore(loader);
+  module.writePersistentValue("before-retry", "preserved");
+  await tick();
+  await tick();
+
+  assert.equal(loadCount, 2, "the first recovery attempt should fail once");
+
+  module.writePersistentValue("retry-trigger", "persisted");
+  await tick();
+
+  assert.equal(loadCount, 3, "a later write should trigger a new recovery attempt");
+  assert.equal(recoveredStore.data.get("before-retry"), "preserved");
+  assert.equal(recoveredStore.data.get("retry-trigger"), "persisted");
+});
+
+test("writes during recovery stay memory-only until the replacement handle catches up", async () => {
+  const staleStore = createFakeTauriStore({
+    set() {
+      return Promise.reject("The resource id 41 is invalid.");
+    },
+  });
+  let releaseFirstFlush;
+  const firstFlushStarted = new Promise((resolve) => {
+    releaseFirstFlush = resolve;
+  });
+  let notifyFirstFlush;
+  const firstFlushObserved = new Promise((resolve) => {
+    notifyFirstFlush = resolve;
+  });
+  let setCount = 0;
+  const recoveredStore = createFakeTauriStore({
+    async set(key, value) {
+      setCount += 1;
+      if (setCount === 1) {
+        notifyFirstFlush();
+        await firstFlushStarted;
+      }
+      recoveredStore.data.set(key, value);
+    },
+  });
+  let loadCount = 0;
+  const loader = async () => {
+    loadCount += 1;
+    return loadCount === 1 ? staleStore : recoveredStore;
+  };
+
+  const module = await bootTauriStore(loader);
+  module.writePersistentValue("k", "old");
+  await firstFlushObserved;
+
+  module.writePersistentValue("k", "new");
+  module.writePersistentValue("another", "value");
+  releaseFirstFlush();
+  await tick();
+  await tick();
+
+  assert.equal(loadCount, 2, "concurrent writes should share the in-flight reload");
+  assert.equal(recoveredStore.data.get("k"), "new");
+  assert.equal(recoveredStore.data.get("another"), "value");
+});
+
+test("recovery replays a delete that failed on the stale handle", async () => {
+  const staleStore = createFakeTauriStore({
+    data: new Map([["removed", "old"]]),
+    delete() {
+      return Promise.reject("The resource id 51 is invalid.");
+    },
+  });
+  const recoveredStore = createFakeTauriStore();
+  recoveredStore.data.set("removed", "old");
+  let loadCount = 0;
+  const loader = async () => {
+    loadCount += 1;
+    return loadCount === 1 ? staleStore : recoveredStore;
+  };
+
+  const module = await bootTauriStore(loader);
+  module.removePersistentValue("removed");
+  await tick();
+
+  assert.equal(recoveredStore.data.has("removed"), false);
 });

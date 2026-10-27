@@ -29,6 +29,48 @@ function glossaryPayload(overrides = {}) {
   };
 }
 
+test("hasErrors follows red glossary marks for required variants and exemptions", () => {
+  const model = buildEditorGlossaryModel(glossaryPayload({
+    terms: [
+      { termId: "t1", sourceTerms: ["sala"], targetTerms: ["phong", "gian"] },
+      { termId: "t2", sourceTerms: ["meditacion"], targetTerms: ["thien"] },
+      { termId: "t3", sourceTerms: ["opcional"], targetTerms: [""] },
+      { termId: "t4", sourceTerms: ["sala grande"], targetTerms: ["dai sanh"] },
+    ],
+  }));
+  for (const [name, source, target, expected] of [
+    ["missing", "sala", "otro", true],
+    ["alternative", "sala", "gian", false],
+    ["empty target", "sala", "", true],
+    ["mixed matches", "sala meditacion", "phong", true],
+    ["no translation", "opcional", "", false],
+    ["longest match only", "sala grande", "dai sanh", false],
+    ["markup and case", "<b>SALA</b>", "GIAN", false],
+    ["markup error", "<ruby>sala<rt>sa</rt></ruby>", "otro", true],
+    ["no target column", "sala", null, false],
+    ["no source match", "nada", "", false],
+  ]) {
+    const sections = [{ code: "es", text: source }];
+    if (target !== null) sections.push({ code: "vi", text: target });
+    const highlights = buildEditorRowGlossaryHighlights(sections, model);
+    const diagnostics = buildEditorRowGlossaryHighlights(sections, model, { includeMarkup: false });
+    assert.deepEqual([...diagnostics], [...highlights].map(([code, highlight]) => [
+      code, { ...highlight, html: "" },
+    ]), name);
+    assert.equal(highlights.get("es")?.hasErrors ?? false, expected, name);
+    assert.equal(/glossary-match-error/.test(highlights.get("es")?.html ?? ""), expected, name);
+    for (const highlight of highlights.values()) {
+      assert.equal(typeof highlight.hasErrors, "boolean", name);
+    }
+    if (highlights.has("vi")) assert.equal(highlights.get("vi").hasErrors, false, name);
+  }
+  assert.equal(buildEditorRowGlossaryHighlights([{ code: "es", text: "sala" }], null).size, 0);
+  const sourceOnly = buildEditorRowSourceGlossaryHighlights([
+    { code: "es", text: "sala" }, { code: "vi", text: "" },
+  ], model);
+  assert.equal(sourceOnly.get("es").hasErrors, false);
+});
+
 test("glossary matching prefers the longest source term", () => {
   const model = buildEditorGlossaryModel(glossaryPayload({
     terms: [
@@ -871,10 +913,21 @@ test("glossaryTermMatchesTokenSequence enforces token boundaries", () => {
   assert.equal(glossaryTermMatchesTokenSequence("astrally projected", "astral", "en"), false);
   assert.equal(glossaryTermMatchesTokenSequence("he said", "he", "en"), true);
 
-  // Punctuation and hyphens are separators, not match characters.
-  assert.equal(glossaryTermMatchesTokenSequence("the astral-plane rises", "astral plane", "en"), true);
+  // Quotes, dots, and hyphens are match tokens (policy v2); em dash, comma,
+  // and whitespace remain separators.
+  assert.equal(glossaryTermMatchesTokenSequence("the astral-plane rises", "astral plane", "en"), false);
   assert.equal(glossaryTermMatchesTokenSequence("the astral—plane rises", "astral plane", "en"), true);
-  assert.equal(glossaryTermMatchesTokenSequence("an astral plane appears", "astral-plane", "en"), true);
+  assert.equal(glossaryTermMatchesTokenSequence("an astral plane appears", "astral-plane", "en"), false);
+  assert.equal(glossaryTermMatchesTokenSequence("an astral–plane appears", "astral-plane", "en"), true);
+  assert.equal(glossaryTermMatchesTokenSequence("el «Yo» habla", 'el "Yo"', "es"), true);
+  assert.equal(glossaryTermMatchesTokenSequence("el yo habla", 'el "Yo"', "es"), false);
+  assert.equal(glossaryTermMatchesTokenSequence("el «Yo» habla", "yo", "es"), true);
+  assert.equal(glossaryTermMatchesTokenSequence("談「存在」與", "“存在”", "zh-Hant"), true);
+  assert.equal(glossaryTermMatchesTokenSequence("談『存在』與", '"存在"', "zh-Hant"), true);
+  assert.equal(glossaryTermMatchesTokenSequence("談存在與", "“存在”", "zh-Hant"), false);
+  assert.equal(glossaryTermMatchesTokenSequence("canta I… A… O… ahora", "I.A.O.", "es"), true);
+  assert.equal(glossaryTermMatchesTokenSequence("canta I A O ahora", "I.A.O.", "es"), false);
+  assert.equal(glossaryTermMatchesTokenSequence("wait... now", "...", "en"), false);
 
   // Case-insensitive under the language's case rules.
   assert.equal(glossaryTermMatchesTokenSequence("The Astral Plane", "astral plane", "en"), true);

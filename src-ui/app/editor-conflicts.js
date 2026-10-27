@@ -37,15 +37,18 @@ export function conflictedLanguageCodesForRow(row, languages = []) {
   const remoteFields = row?.conflictState?.remoteRow?.fields;
   const remoteFootnotes = row?.conflictState?.remoteRow?.footnotes;
   const remoteImageCaptions = row?.conflictState?.remoteRow?.imageCaptions;
+  const remoteAttributions = row?.conflictState?.remoteRow?.attributions;
   const remoteImages = row?.conflictState?.remoteRow?.images;
   const localFields = row?.fields;
   const localFootnotes = row?.footnotes;
   const localImageCaptions = row?.imageCaptions;
+  const localAttributions = row?.attributions;
   const localImages = row?.images;
   const hasConflictPayload =
     (remoteFields && typeof remoteFields === "object")
     || (remoteFootnotes && typeof remoteFootnotes === "object")
     || (remoteImageCaptions && typeof remoteImageCaptions === "object")
+    || (remoteAttributions && typeof remoteAttributions === "object")
     || (remoteImages && typeof remoteImages === "object");
   if (!hasConflictPayload) {
     return new Set();
@@ -60,7 +63,9 @@ export function conflictedLanguageCodesForRow(row, languages = []) {
       ...Object.keys(localFootnotes && typeof localFootnotes === "object" ? localFootnotes : {}),
       ...Object.keys(remoteFootnotes && typeof remoteFootnotes === "object" ? remoteFootnotes : {}),
       ...Object.keys(localImageCaptions && typeof localImageCaptions === "object" ? localImageCaptions : {}),
+      ...Object.keys(localAttributions && typeof localAttributions === "object" ? localAttributions : {}),
       ...Object.keys(remoteImageCaptions && typeof remoteImageCaptions === "object" ? remoteImageCaptions : {}),
+      ...Object.keys(remoteAttributions && typeof remoteAttributions === "object" ? remoteAttributions : {}),
       ...Object.keys(localImages && typeof localImages === "object" ? localImages : {}),
       ...Object.keys(remoteImages && typeof remoteImages === "object" ? remoteImages : {}),
     ].filter(Boolean))];
@@ -70,6 +75,7 @@ export function conflictedLanguageCodesForRow(row, languages = []) {
       normalizeConflictText(localFields?.[code]) !== normalizeConflictText(remoteFields?.[code])
       || !rowFootnotesEqual({ [code]: localFootnotes?.[code] }, { [code]: remoteFootnotes?.[code] })
       || normalizeConflictText(localImageCaptions?.[code]) !== normalizeConflictText(remoteImageCaptions?.[code])
+      || normalizeConflictText(localAttributions?.[code]) !== normalizeConflictText(remoteAttributions?.[code])
       || imageUrlConflicted(localImages?.[code], remoteImages?.[code])
     ) {
       codes.add(code);

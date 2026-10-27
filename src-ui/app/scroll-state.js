@@ -67,6 +67,7 @@ function buildTranslateAnchorSnapshotForElement(container, element, type, langua
         : null;
   const footnoteMarker =
     contentKind === "footnote" ? (element.dataset.footnoteMarker ?? "") : "";
+  const row = type === "field" ? element.closest("[data-editor-row-card]") : null;
   return {
     type,
     rowId: element.dataset.rowId ?? "",
@@ -74,6 +75,7 @@ function buildTranslateAnchorSnapshotForElement(container, element, type, langua
     ...(contentKind ? { contentKind } : {}),
     ...(footnoteMarker ? { footnoteMarker } : {}),
     offsetTop: elementRect.top - containerRect.top,
+    ...(isHtmlElement(row) ? { rowOffsetTop: row.getBoundingClientRect().top - containerRect.top } : {}),
   };
 }
 
@@ -268,23 +270,7 @@ export function resolveTranslateRowAnchor(target = null) {
 
   const field = source.closest("[data-editor-row-field]");
   if (isHtmlElement(field)) {
-    const fieldRect = field.getBoundingClientRect();
-    const contentKind =
-      field.dataset.contentKind === "footnote"
-        ? "footnote"
-        : field.dataset.contentKind === "image-caption"
-          ? "image-caption"
-          : null;
-    const footnoteMarker =
-      contentKind === "footnote" ? (field.dataset.footnoteMarker ?? "") : "";
-    return {
-      type: "field",
-      rowId: field.dataset.rowId ?? "",
-      languageCode: field.dataset.languageCode ?? "",
-      ...(contentKind ? { contentKind } : {}),
-      ...(footnoteMarker ? { footnoteMarker } : {}),
-      offsetTop: fieldRect.top - containerRect.top,
-    };
+    return buildTranslateAnchorSnapshotForElement(container, field, "field", field.dataset.languageCode);
   }
 
   const row = source.closest("[data-editor-row-card]");
@@ -339,6 +325,12 @@ export function findTranslateAnchorElement(snapshot) {
   if (!isHtmlElement(anchor)) {
     anchor = document.querySelector(`[data-editor-row-card][data-row-id="${CSS.escape(snapshot.rowId)}"]`);
   }
+  if (!isHtmlElement(anchor)) {
+    const group = document.querySelector(`[data-editor-row-card][data-srt-member-ids~="${CSS.escape(snapshot.rowId)}"]`);
+    anchor = snapshot.languageCode && isHtmlElement(group)
+      ? group.querySelector(`[data-editor-language-panel][data-language-code="${CSS.escape(snapshot.languageCode)}"]`) ?? group
+      : group;
+  }
 
   return isHtmlElement(anchor) ? anchor : null;
 }
@@ -363,7 +355,13 @@ export function restoreTranslateRowAnchor(snapshot) {
   const containerRect = container.getBoundingClientRect();
   const anchorRect = anchor.getBoundingClientRect();
   const currentOffsetTop = anchorRect.top - containerRect.top;
-  const scrollDelta = currentOffsetTop - snapshot.offsetTop;
+  // Closing a text editor removes its field anchor. The row-card fallback must
+  // keep the row's former position, not move its top to the former field's top.
+  const usesRowFallback = snapshot.type === "field"
+    && Number.isFinite(snapshot.rowOffsetTop)
+    && anchor === document.querySelector(`[data-editor-row-card][data-row-id="${CSS.escape(snapshot.rowId)}"]`);
+  const offsetTop = usesRowFallback ? snapshot.rowOffsetTop : snapshot.offsetTop;
+  const scrollDelta = currentOffsetTop - offsetTop;
   if (!Number.isFinite(scrollDelta) || Math.abs(scrollDelta) < 1) {
     pendingTranslateAnchor = null;
     return false;
@@ -387,6 +385,7 @@ export function centerTranslateRowInView(rowId) {
   }
 
   let row = document.querySelector(`[data-editor-row-card][data-row-id="${CSS.escape(rowId)}"]`);
+  if (!isHtmlElement(row)) row = document.querySelector(`[data-editor-row-card][data-srt-member-ids~="${CSS.escape(rowId)}"]`);
   if (!isHtmlElement(row)) {
     row = document.querySelector(`[data-editor-deleted-group][data-row-id="${CSS.escape(rowId)}"]`);
   }
@@ -462,6 +461,7 @@ export function queueTranslateRowAnchor(snapshot) {
     offsetTop: Number.isFinite(Number(snapshot.offsetTop))
       ? Number(snapshot.offsetTop)
       : 0,
+    ...(Number.isFinite(snapshot.rowOffsetTop) ? { rowOffsetTop: snapshot.rowOffsetTop } : {}),
     type,
   };
 }

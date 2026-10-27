@@ -18,6 +18,11 @@ pub(super) enum ColumnBinding {
 }
 
 pub(super) fn parse_xlsx_workbook(input: ImportXlsxInput) -> Result<ParsedWorkbook, String> {
+    parse_xlsx_workbook_contents(input)
+        .map_err(|error| format!("PROJECT_IMPORT_INVALID_FORMAT: {error}"))
+}
+
+fn parse_xlsx_workbook_contents(input: ImportXlsxInput) -> Result<ParsedWorkbook, String> {
     if input.bytes.is_empty() {
         return Err("The selected workbook is empty.".to_string());
     }
@@ -308,6 +313,92 @@ mod tests {
 
     fn headers(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| value.to_string()).collect()
+    }
+
+    fn sample_input() -> super::ImportXlsxInput {
+        super::ImportXlsxInput {
+            installation_id: 1,
+            repo_name: "sample".to_string(),
+            project_id: None,
+            file_name: "Gnosis TMS Import Sample.xlsx".to_string(),
+            bytes: include_bytes!("../../../resources/gnosis-tms-import-sample.xlsx").to_vec(),
+        }
+    }
+
+    #[test]
+    fn bundled_sample_imports_all_examples_without_the_conversion_guide() {
+        let parsed = super::parse_xlsx_workbook(sample_input()).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(parsed.worksheet_name, "Import sample");
+        assert_eq!(parsed.header_blob, headers(&["en", "vi", "zh-Hans", "en"]));
+        assert_eq!(
+            parsed
+                .languages
+                .iter()
+                .map(|l| l.code.as_str())
+                .collect::<Vec<_>>(),
+            ["en", "vi", "zh-Hans", "en-x-2"]
+        );
+        assert_eq!(parsed.languages[0].role, "source");
+        assert_eq!(parsed.languages[3].role, "target");
+        assert_eq!(parsed.languages[3].base_code.as_deref(), Some("en"));
+        assert_eq!(parsed.rows.len(), 15);
+        let row = |number| {
+            parsed
+                .rows
+                .iter()
+                .find(|row| row.source_row_number == number)
+                .expect("sample row")
+        };
+        assert!(row(3).fields["en"]
+            .plain_text
+            .contains("<strong>carefully</strong>"));
+        assert!(row(3).fields["en-x-2"]
+            .plain_text
+            .contains("<b>carefully</b>"));
+        assert!(row(4).fields["en"].plain_text.contains("<em>reflect</em>"));
+        assert!(row(5).fields["en"].plain_text.contains("<u>"));
+        assert!(row(6).fields["en"].plain_text.contains("<strong><em>"));
+        assert!(row(7).fields["en"]
+            .plain_text
+            .contains("<a href=\"https://example.com/\">"));
+        assert!(row(8).fields["zh-Hans"]
+            .plain_text
+            .contains("<ruby>学习<rt>xué xí</rt></ruby>"));
+        assert_eq!(row(9).fields["en"].plain_text, "First line.\nSecond line.");
+        assert!(row(2).fields["en-x-2"]
+            .plain_text
+            .contains("English 1 and English 2"));
+        let numbered_example = &row(10).fields["en"];
+        assert!(numbered_example.plain_text.contains("[1]"));
+        assert!(numbered_example.plain_text.contains("[2]"));
+        assert!(!numbered_example.plain_text.contains("***"));
+        assert!(numbered_example.footnote.starts_with("[1] "));
+        assert!(numbered_example.footnote.contains("\n\n[2] "));
+        assert!(numbered_example.footnote.contains("<em>footnote text</em>"));
+        assert!(!row(11).fields["en"].footnote.is_empty());
+        assert!(row(12).fields["en"].plain_text.is_empty());
+        assert!(!row(12).fields["en"].footnote.is_empty());
+        assert!(row(13).fields["vi"].plain_text.is_empty());
+        assert!(!parsed.rows.iter().any(|row| row.source_row_number == 14));
+        assert_eq!(row(16).fields["en"].plain_text, "2026");
+        assert!(row(17).fields["en"]
+            .plain_text
+            .starts_with("Literal brackets: \\[1\\]."));
+    }
+
+    #[test]
+    fn unreadable_workbook_errors_are_classified_as_format_failures() {
+        for bytes in [vec![], b"not an XLSX workbook".to_vec()] {
+            let mut input = sample_input();
+            input.bytes = bytes;
+            let error = super::parse_xlsx_workbook(input)
+                .err()
+                .expect("format failure");
+            assert!(error.starts_with("PROJECT_IMPORT_INVALID_FORMAT:"));
+        }
+        assert!(classify_header_row(&headers(&["Key", "es", "en", "vi"]))
+            .expect_err("Lokalise key column is invalid")
+            .contains("unsupported language code \"Key\""));
     }
 
     #[test]

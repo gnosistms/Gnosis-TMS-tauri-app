@@ -459,6 +459,21 @@ test("buildVellumTextEditorContentDecodedXml writes images as Vellum image attac
   assert.ok(byteValues.some((value) => value.equals(Buffer.from([13, 0, 1, 1, 13, 0]))));
 });
 
+test("Vellum image requests derive filenames from URL paths and preserve download parameters", () => {
+  const cases = [
+    ["https://i0.wp.com/example.com/ladder.webp?w=1538&ssl=1", "ladder.webp", "org.webmproject.webp"],
+    ["https://i0.wp.com/example.com/diagram.png?resize=1536%2C1131&ssl=1", "diagram.png", "public.png"],
+    ["https://example.com/Plate%201.jpg?redirect=/other.png#detail", "Plate 1.jpg", "public.jpeg"],
+    ["https://example.com/diagram.png#detail", "diagram.png", "public.png"],
+  ];
+  for (const [source, fileName, uti] of cases) {
+    for (const caption of ["", "Caption added in TMS"]) {
+      const blocks = [{ kind: "image", image: { kind: "url", url: source }, caption }];
+      assert.deepEqual(buildVellumImageResourceRequests(blocks), [{ index: 1, source, fileName, uti }]);
+    }
+  }
+});
+
 test("buildVellumTextEditorContentDecodedXml uses prepared local Vellum image resources", () => {
   const blocks = [
     {
@@ -513,4 +528,52 @@ test("buildVellumTextEditorContentDecodedXml uses prepared local Vellum image re
   assert.match(xml, /<false\/>/);
   assert.match(xml, /<string>canUpsize<\/string>/);
   assert.match(xml, /<string>Diogenes\.webp\n3840 × 2920 px<\/string>/);
+});
+
+test("Vellum quote attribution uses its native attachment linked to the quote format", () => {
+  const blocks = [{ kind: "text", textStyle: "quote", text: "Body", attribution: "Author" }];
+  for (const build of [buildVellumTextEditorContentDecodedXml, buildVellumOgElementPrivateDecodedXml]) {
+    const xml = build(blocks);
+    assert.match(xml, /<string>blockquoteAttribution<\/string>/);
+    assert.match(xml, /<string>OGAttributionAttachmentCell<\/string>/);
+    assert.match(xml, /<string>Author<\/string>/);
+    assert.match(xml, /<key>OGParagraphFormat|<string>OGParagraphFormat/);
+    assert.doesNotMatch(xml, /font-size:90%/);
+  }
+});
+
+test("a composed book archives separate ordered Vellum elements and their front-matter types", () => {
+  const block = (text, textStyle = "paragraph") => ({ kind: "text", rowId: text, languageCode: "en", textStyle, text, footnotes: [] });
+  const xml = buildVellumOgElementPrivateDecodedXml([], { elements: [
+    { id: "title", title: "A Book", kind: "title", blocks: [block("A Book", "heading1"), block("An Author")] },
+    { id: "copyright", title: "Copyright", kind: "copyright", blocks: [block("© Example")] },
+    { id: "one", title: "Chapter One", kind: "chapter", blocks: [block("Opening one")] },
+    { id: "two", title: "Chapter Two", kind: "chapter", blocks: [block("Opening two")] },
+    { id: "contents", title: "Contents", kind: "contents", blocks: [] },
+  ] });
+  for (const value of ["none", "copyright", "chapter", "OGTableOfContents", "An Author", "Opening one", "Opening two"]) assert.ok(xml.includes(value), value);
+  assert.equal((xml.match(/<key>typeName<\/key>/g) || []).length, 4);
+  assert.ok(xml.indexOf("Chapter One") < xml.indexOf("Chapter Two"));
+});
+
+
+test("book contents use Vellum's native generator and title pages retain their heading in the body", () => {
+  const xml = buildVellumOgElementPrivateDecodedXml([], { elements: [
+    { id: "title", title: "Exported Book", kind: "title", blocks: [
+      { kind: "text", textStyle: "heading1", text: "Exported Book" },
+      { kind: "text", textStyle: "centered", text: "Exported Author" },
+    ] },
+    { id: "contents", title: "Mục lục", kind: "contents", blocks: [
+      { kind: "text", text: "Stale contents must not be pasted as text" },
+    ] },
+  ] });
+  assert.match(xml, /<string>OGTableOfContents<\/string>/);
+  assert.match(xml, /<key>includeInPrint<\/key><true\/>/);
+  assert.match(xml, /<string>Mục lục<\/string>/);
+  assert.doesNotMatch(xml, /Stale contents/);
+  assert.doesNotMatch(xml, /<string>titlepage<\/string>|<string>tableOfContents<\/string>/);
+  // A body subhead attachment carries the title; the element's hidden title alone
+  // would disappear from Vellum's output.
+  assert.match(xml, /<string>OGSubheadAttachmentCell<\/string>/);
+  assert.match(xml, /Exported Author/);
 });

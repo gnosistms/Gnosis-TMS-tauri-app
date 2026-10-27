@@ -1,3 +1,7 @@
+import { handleProjectBookAction } from "../project-book-flow.js";
+import { reconcileEditorRowConnection } from "../editor-row-connection.js";
+import { forgetPdfFontApproval, togglePdfSavedFonts } from "../editor-export-flow.js";
+import { revealConnectedEditorRow } from "../editor-virtualization.js";
 import { actionSuffix } from "../action-helpers.js";
 import {
   assertEditorSessionWritePermission,
@@ -6,11 +10,16 @@ import {
 } from "../editor-write-permission.js";
 import { waitForNextPaint } from "../runtime.js";
 import { state } from "../state.js";
+import { dismissSrtMarkerModal } from "../editor-srt-group-edit-flow.js";
 import {
   forceCloseFromEditorCloseWait,
   keepAppOpenFromEditorCloseWait,
 } from "../editor-close-wait-flow.js";
 import { showNoticeBadge } from "../status-feedback.js";
+import {
+  activeGlossaryFootnoteInsertionRequest,
+  deactivateGlossaryTooltipMark,
+} from "../events/glossary-tooltip.js";
 import {
   captureLanguageToggleVisibilityAnchor,
   captureTranslateRowAnchor,
@@ -82,9 +91,16 @@ import {
   insertEditorSeparator,
   closeWordPressExportSuccessModal,
   connectWordPress,
-  disconnectWordPress,
+  forgetWordPressSite,
+  inspectWordPressSite,
+  reconnectWordPress,
+  saveSelfHostedWordPressSite,
   searchWordPressPosts,
+  selectWordPressSite,
   selectWordPressPost,
+  showAddWordPressSite,
+  showWordPressSitePicker,
+  cancelAddWordPressSite,
   applyEditorAiReview,
   continueEditorAiReviewAllPreflight,
   dismissEditorAiReviewAllFilterModal,
@@ -103,6 +119,9 @@ import {
   selectTargetLanguageManagerPickerLanguage,
   selectAllEditorReplaceRows,
   setEditorMode,
+  setEditorSrtView,
+  setActiveEditorField,
+  flushDirtyEditorRows,
   showEditorRowInContext,
   softDeleteEditorRow,
   submitTargetLanguageManager,
@@ -152,6 +171,7 @@ const SESSION_WRITE_ACTIONS = new Set([
   "submit-editor-insert-link",
   "open-editor-footnote",
   "open-editor-footnote-entry",
+  "insert-hovered-glossary-footnote",
   "open-editor-image-caption",
   "open-editor-image-url",
   "open-editor-image-upload",
@@ -633,7 +653,21 @@ export function createTranslateActions(render) {
       dismissActiveIdleEditorImageUpload(render);
       const rowId = button?.dataset.rowId ?? null;
       const languageCode = button?.dataset.languageCode ?? null;
-      openEditorFootnote(render, rowId, languageCode, { target: event?.target ?? null });
+      await openEditorFootnote(render, rowId, languageCode, { target: event?.target ?? null });
+      return true;
+    }
+
+    if (action === "insert-hovered-glossary-footnote") {
+      const request = activeGlossaryFootnoteInsertionRequest();
+      if (!request) {
+        return true;
+      }
+      dismissActiveIdleEditorImageUpload(render);
+      deactivateGlossaryTooltipMark();
+      await openEditorFootnote(render, request.rowId, request.languageCode, {
+        visibleInsertIndex: request.visibleInsertIndex,
+        footnoteText: request.footnoteText,
+      });
       return true;
     }
 
@@ -756,6 +790,8 @@ export function createTranslateActions(render) {
       return true;
     }
 
+    if (await handleProjectBookAction(action, render)) return true;
+
     if (action === "open-editor-export-options") {
       openEditorExportOptions(render);
       return true;
@@ -771,13 +807,44 @@ export function createTranslateActions(render) {
       return true;
     }
 
+    if (action === "toggle-pdf-saved-fonts") {
+      togglePdfSavedFonts(render);
+      return true;
+    }
+
+    if (action.startsWith("forget-pdf-font-approval:")) {
+      await forgetPdfFontApproval(render, action.slice("forget-pdf-font-approval:".length));
+      return true;
+    }
+
     if (action === "connect-wordpress") {
       await connectWordPress(render);
       return true;
     }
 
-    if (action === "disconnect-wordpress") {
-      await disconnectWordPress(render);
+    if (action === "show-wordpress-site-picker") {
+      showWordPressSitePicker(render);
+      return true;
+    }
+
+    if (action === "show-add-wordpress-site") {
+      showAddWordPressSite(render);
+      return true;
+    }
+    if (action === "cancel-add-wordpress-site") {
+      cancelAddWordPressSite(render);
+      return true;
+    }
+    if (action === "inspect-wordpress-site") {
+      await inspectWordPressSite(render);
+      return true;
+    }
+    if (action === "save-self-hosted-wordpress-site") {
+      await saveSelfHostedWordPressSite(render);
+      return true;
+    }
+    if (action === "reconnect-wordpress") {
+      reconnectWordPress(render);
       return true;
     }
 
@@ -814,6 +881,17 @@ export function createTranslateActions(render) {
       return true;
     }
 
+    const wordpressSiteId = actionSuffix(action, "select-wordpress-site:");
+    if (wordpressSiteId !== null) {
+      selectWordPressSite(render, wordpressSiteId);
+      return true;
+    }
+    const forgottenWordPressSiteId = actionSuffix(action, "forget-wordpress-site:");
+    if (forgottenWordPressSiteId !== null) {
+      await forgetWordPressSite(render, forgottenWordPressSiteId);
+      return true;
+    }
+
     const historyCommitSha = actionSuffix(action, "restore-editor-history:");
     if (historyCommitSha !== null) {
       await restoreEditorFieldHistory(render, historyCommitSha);
@@ -845,6 +923,15 @@ export function createTranslateActions(render) {
     if (deletedRowGroupKey !== null) {
       const scrollAnchor = captureTranslateRowAnchor(event?.target ?? null);
       toggleDeletedEditorRowGroup(render, deletedRowGroupKey, scrollAnchor);
+      return true;
+    }
+
+    if (action === "show-connected-editor-row") {
+      if (reconcileEditorRowConnection(state)) {
+        render?.({ scope: "translate-body" });
+        return true;
+      }
+      revealConnectedEditorRow();
       return true;
     }
 
@@ -947,9 +1034,25 @@ export function createTranslateActions(render) {
       return true;
     }
 
+    const srtView = actionSuffix(action, "set-editor-srt-view:");
+    if (srtView !== null) {
+      await setEditorSrtView(render, srtView);
+      return true;
+    }
+    const historyFragment = actionSuffix(action, "select-editor-srt-history:");
+    if (historyFragment !== null) {
+      if (await flushDirtyEditorRows(render)) await setActiveEditorField(render, historyFragment, state.editorChapter.activeLanguageCode);
+      return true;
+    }
+    if (action === "dismiss-editor-srt-marker-modal") { dismissSrtMarkerModal(render); return true; }
+    if (action === "save-editor-srt-drafts") {
+      if (await flushDirtyEditorRows(render, { confirmSrtMarkerRepair: true })) render?.({ scope: "translate-body" });
+      return true;
+    }
+
     const editorMode = actionSuffix(action, "set-editor-mode:");
     if (editorMode !== null) {
-      setEditorMode(render, editorMode);
+      await setEditorMode(render, editorMode);
       return true;
     }
 

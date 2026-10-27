@@ -18,6 +18,7 @@ import { loadStoredEditorFontSizePx } from "./editor-preferences.js";
 import { createResourcePageState } from "./resource-page-controller.js";
 import { createSyncState } from "./sync-state.js";
 import { DEFAULT_PDF_PAPER_SIZE } from "./editor-export-options.js";
+import { loadKnownAppUpdate } from "./app-update-storage.js";
 
 export const DEFAULT_EDITOR_FONT_SIZE_PX = 20;
 export const EDITOR_FONT_SIZE_OPTIONS = [16, 18, 20, 22, 24, 26, 28];
@@ -26,6 +27,19 @@ export function coerceEditorFontSizePx(value) {
   const nextValue = Number.parseInt(String(value ?? ""), 10);
   return EDITOR_FONT_SIZE_OPTIONS.includes(nextValue) ? nextValue : DEFAULT_EDITOR_FONT_SIZE_PX;
 }
+
+// Changes only when login intent changes, never for an automatic token refresh.
+export let authSessionGeneration = 0;
+
+export function invalidateAuthSession() {
+  authSessionGeneration += 1;
+}
+
+import {
+  createEditorGlossaryEntryState,
+  createGlossaryResearchReportState,
+  createGlossaryResearchState,
+} from "./glossary-research-state.js";
 
 export const state = {
   screen: "start",
@@ -118,6 +132,9 @@ export const state = {
   glossaryPermanentDeletion: createGlossaryPermanentDeletionState(),
   qaListPermanentDeletion: createQaListPermanentDeletionState(),
   glossaryTermEditor: createGlossaryTermEditorState(),
+  glossaryResearch: createGlossaryResearchState(),
+  editorGlossaryEntry: createEditorGlossaryEntryState(),
+  glossaryResearchReport: createGlossaryResearchReportState(),
   qaTermEditor: createQaTermEditorState(),
   aiReviewMissingKeyModal: createAiReviewMissingKeyModalState(),
   showDeletedProjects: false,
@@ -127,6 +144,8 @@ export const state = {
 };
 
 export function hydratePersistentAppState() {
+  const knownUpdate = loadKnownAppUpdate();
+  if (knownUpdate) state.appUpdate = { ...createAppUpdateState(), ...knownUpdate };
   hydrateStoredTeamState();
   hydrateStoredEditorPreferences();
   hydrateStoredAiSettingsPreferences();
@@ -207,11 +226,15 @@ export function createAppUpdateState() {
     message: "",
     available: false,
     required: false,
+    requirement: null,
     version: null,
     currentVersion: null,
     body: null,
     promptVisible: false,
     dismissedVersion: null,
+    downloadPercent: null,
+    downloadedBytes: 0,
+    totalBytes: null,
   };
 }
 
@@ -245,15 +268,17 @@ export function createRepoOldLayoutDiscardState() {
 export function createProjectsSearchState() {
   return {
     query: "",
+    caseSensitive: false,
     status: "idle",
     error: "",
     results: [],
-    resultsById: {},
     total: 0,
+    strongTotal: 0,
+    weakerTotal: 0,
     totalCapped: false,
-    hasMore: false,
-    nextOffset: 0,
-    loadingMore: false,
+    includeWeakerMatches: false,
+    expandedProjectIds: new Set(),
+    expandedChapterIds: new Set(),
     indexStatus: "idle",
     requestId: 0,
     queryTooShort: false,
@@ -345,6 +370,7 @@ export function createProjectImportState() {
     pendingFiles: [],
     pendingFileName: "",
     failedFileNames: [],
+    formatFailedFileNames: [],
     isBatch: false,
     batchId: "",
     uploadProgress: null,
@@ -359,9 +385,15 @@ export function createProjectAddTranslationState() {
     isOpen: false,
     step: "input",
     inputMode: "upload",
+    requiresSrtFile: false,
     linkUrl: "",
     linkErrorModal: null,
     inputRequestId: 0,
+    alignmentRequestId: "",
+    subtitleFile: null,
+    subtitleMismatch: null,
+    subtitleConfirmations: [],
+    subtitleMeaningCheckReady: false,
     pendingFileName: "",
     chapterId: "",
     projectId: "",
@@ -370,6 +402,9 @@ export function createProjectAddTranslationState() {
     chapterName: "",
     pastedText: "",
     targetLanguageCode: "",
+    targetBaseLanguageCode: "",
+    applyErrorKind: "",
+    applyContinueOnMismatch: false,
     sourceLanguageCode: "",
     providerId: "",
     modelId: "",
@@ -410,6 +445,11 @@ export function createEditorChapterState() {
     chapterBaseCommitSha: null,
     fileTitle: "",
     sourceFormats: [],
+    srtViewMode: "standard",
+    srtPauseSplitEnabled: false,
+    srtPauseThresholdMs: 500,
+    srtGroupEdits: {},
+    srtMarkerModal: null,
     languages: [],
     wordCounts: {},
     selectedSourceLanguageCode: null,
@@ -690,7 +730,6 @@ export function createEditorAssistantThreadState() {
     sourceLanguageCode: null,
     targetLanguageCode: null,
     items: [],
-    providerContinuityByModelKey: {},
     lastPromptedSourceText: "",
     lastPromptedTargetText: "",
     hasPromptedRowTextSnapshot: false,
@@ -724,6 +763,7 @@ export function createAiSettingsState() {
     successMessage: "",
     providerId: DEFAULT_AI_PROVIDER_ID,
     apiKey: "",
+    apiKeyIsSaved: false,
     hasLoaded: false,
     returnScreen: "teams",
     modelValidationRequestId: 0,
@@ -766,6 +806,8 @@ export function createAiSettingsAboutModalState() {
 
 export function createAiModelErrorModalState() {
   return createEntityModalState({
+    eyebrow: "AI MODEL ERROR",
+    title: "The AI model you selected is not working",
     banner: "",
     message: "",
   });
@@ -828,6 +870,10 @@ export function createEditorExportModalState() {
     // the chapter is not open in the editor (the editor follows the preview
     // toolbar language).
     chapterId: "",
+    projectId: "",
+    chapterIds: [],
+    projectTitle: "",
+    languages: [],
     languageCode: "",
     // Print-oriented option for formats where a hyperlink cannot be clicked: append
     // each footnote link's URL as plain text after the link. On by default — a bare
@@ -855,6 +901,11 @@ export function createEditorExportModalState() {
     pdfFontMissingBytes: 0,
     pdfFontFamilies: [],
     pdfFontMessage: "",
+    pdfFontReview: null,
+    pdfSavedFallbackFonts: [],
+    pdfSavedFontsExpanded: false,
+    pdfForgettingFontId: "",
+    pdfFontInspectionRequestId: 0,
     wordpress: createEditorExportWordPressState(),
     teamCopy: createEditorExportTeamCopyState(),
   });
@@ -876,6 +927,15 @@ export function createEditorExportWordPressState() {
   return {
     connectionStatus: "unknown",
     connection: null,
+    connections: [],
+    reauthRequired: false,
+    authInProgress: false,
+    addStage: "idle",
+    siteUrl: "",
+    inspection: null,
+    username: "",
+    password: "",
+    allowInsecure: false,
     mode: "create",
     title: "",
     searchQuery: "",
@@ -1199,6 +1259,7 @@ export function resetInviteUser() {
 
 export function createProjectPermanentDeletionState() {
   return createEntityModalState({
+    teamId: null,
     projectId: null,
     projectName: "",
     confirmationText: "",
@@ -1318,6 +1379,7 @@ export function resetQaListPermanentDeletion() {
 }
 
 export function resetSessionState() {
+  invalidateAuthSession();
   clearActiveStorageLogin();
   const offlineState = {
     ...state.offline,
@@ -1330,7 +1392,7 @@ export function resetSessionState() {
     session: null,
     pendingAutoOpenSingleTeam: false,
   };
-  state.appUpdate = createAppUpdateState();
+  // Updates belong to the installed app, not the signed-in account.
   state.teams = [];
   state.deletedTeams = [];
   state.selectedTeamId = null;

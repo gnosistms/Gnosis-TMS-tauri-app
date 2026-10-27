@@ -12,12 +12,16 @@ import { invoke } from "./runtime.js";
 const INSTALLATION_RESOURCES_STALE_MS = 30_000;
 
 async function fetchInstallationResources(installationId) {
+  // Resolve auth before entering TanStack's cache boundary. A navigation or refresh
+  // can race sign-out/session cleanup; that expected state should follow the normal
+  // AUTH_REQUIRED recovery path without leaving a failed installation query cached.
+  const sessionToken = requireBrokerSession();
   const resources = await queryClient.fetchQuery({
     queryKey: installationResourceKeys.byInstallation(installationId),
     queryFn: () =>
       invoke("list_gnosis_resources_for_installation", {
         installationId,
-        sessionToken: requireBrokerSession(),
+        sessionToken,
       }),
     staleTime: INSTALLATION_RESOURCES_STALE_MS,
   });

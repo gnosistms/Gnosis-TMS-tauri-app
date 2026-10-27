@@ -97,22 +97,22 @@ test("assistant source context uses the shared token-budget window builder", () 
 test("assistant composer grows to three times the default prompt box height", () => {
   assert.match(translateCssSource, /\.assistant-composer__field-shell\s*{[\s\S]*min-height: 71px;/);
   assert.equal(
-    inputHandlersSource.includes("syncAutoSizeTextarea(input, { minHeight: 71, maxHeight: 213 });"),
+    inputHandlersSource.includes("syncAutoSizeTextarea(input, { minHeight: 71, maxHeight: 213, measureOffscreen: true });"),
     true,
   );
   assert.equal(
-    autosizeSource.includes("syncAutoSizeTextarea(element, { minHeight: 71, maxHeight: 213 })"),
+    autosizeSource.includes("minHeight: 71, maxHeight: 213, measureOffscreen: true,"),
     true,
   );
 });
 
 test("assistant composer input does not rerender the sidebar on every keystroke", () => {
   const handlerMatch = inputHandlersSource.match(
-    /function handleEditorAssistantDraftInput\(event, render\) \{[\s\S]*?\n\}/,
+    /function handleEditorAssistantDraftInput\(event\) \{[\s\S]*?\n\}/,
   );
   assert.ok(handlerMatch);
   assert.equal(handlerMatch[0].includes("render?.({ scope: \"translate-sidebar\" });"), false);
-  assert.equal(handlerMatch[0].includes("scheduleEditorAssistantTranscriptScrollToBottom();"), true);
+  assert.equal(handlerMatch[0].includes("scheduleEditorAssistantTranscriptScrollToBottom();"), false);
 });
 
 test("opening the assistant tab schedules the transcript to scroll down", () => {

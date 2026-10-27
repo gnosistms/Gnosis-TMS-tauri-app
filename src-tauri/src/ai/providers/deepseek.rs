@@ -133,7 +133,8 @@ pub(crate) fn run_prompt(
         crate::ai::types::AiPromptOutputFormat::JsonSchema { .. }
     ) {
         return Err(
-            "Strict JSON schema output is only available with OpenAI in this version.".to_string(),
+            "Strict JSON schema output is only available with OpenAI and Claude in this version."
+                .to_string(),
         );
     }
 
@@ -190,10 +191,7 @@ pub(crate) fn run_prompt(
         return Err("DeepSeek returned an empty response.".to_string());
     }
 
-    Ok(AiPromptResponse {
-        text,
-        provider_response_id: None,
-    })
+    Ok(AiPromptResponse { text })
 }
 
 pub(crate) fn probe_model(model_id: &str, api_key: &str) -> Result<(), String> {

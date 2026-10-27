@@ -81,6 +81,7 @@ export function mergeEditorRowContent(previousRow, nextRow) {
   const fields = {};
   const footnotes = {};
   const imageCaptions = {};
+  const attributions = {};
   const images = {};
   const movedImageLanguages = [];
 
@@ -91,7 +92,15 @@ export function mergeEditorRowContent(previousRow, nextRow) {
     const nextEntries = normalizeEditorFootnotes(nextRow?.footnotes?.[code]);
     const offset = maxEditorFootnoteMarker(previousText, previousEntries);
 
-    fields[code] = joinParagraphs(previousText, shiftEditorFootnoteMarkers(nextText, offset));
+    const isQuote = previousRow?.textStyle === "quote";
+    const previousAttribution = previousRow?.attributions?.[code] ?? "";
+    const nextAttribution = nextRow?.attributions?.[code] ?? "";
+    const shiftedText = shiftEditorFootnoteMarkers(nextText, offset);
+    fields[code] = joinParagraphs(
+      isQuote ? previousText : joinParagraphs(previousText, previousAttribution),
+      isQuote ? shiftedText : joinParagraphs(shiftedText, nextAttribution),
+    );
+    attributions[code] = isQuote ? joinParagraphs(previousAttribution, nextAttribution) : "";
     footnotes[code] = [
       ...previousEntries,
       ...nextEntries.map((entry) => ({ marker: entry.marker + offset, text: entry.text })),
@@ -122,6 +131,7 @@ export function mergeEditorRowContent(previousRow, nextRow) {
     fields,
     footnotes,
     imageCaptions,
+    attributions,
     images,
     movedImageLanguages,
   };

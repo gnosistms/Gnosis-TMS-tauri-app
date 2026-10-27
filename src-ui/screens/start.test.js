@@ -41,6 +41,20 @@ test("start screen renders the hero logo in idle, restoring, and offline states"
   );
 });
 
+test("start screen shows a spinner instead of the login button while restoring", () => {
+  for (const status of ["booting", "restoring"]) {
+    const html = renderStartScreen(startState({ auth: { status, message: "" } }));
+    // Spinner sits inline, directly after the wait sentence.
+    assert.match(html, /Please wait while we log you in\.<span class="button__spinner start-hero__spinner" data-loading-spinner-key="startup-auth"/);
+    assert.match(html, /aria-label="Logging in"/);
+    assert.doesNotMatch(html, /login-with-github/);
+  }
+
+  const idleHtml = renderStartScreen(startState());
+  assert.doesNotMatch(idleHtml, /start-hero__spinner/);
+  assert.match(idleHtml, /login-with-github/);
+});
+
 test("start screen keeps GitHub login progress in the logo hero", () => {
   const html = renderStartScreen(startState({
     auth: {

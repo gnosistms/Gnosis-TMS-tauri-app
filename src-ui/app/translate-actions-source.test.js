@@ -44,6 +44,11 @@ test("target language selection dispatch accepts supported language codes with s
   );
 });
 
+test("WordPress site switching routes to the non-destructive picker action", () => {
+  assert.match(source, /if \(action === "show-wordpress-site-picker"\)[\s\S]*showWordPressSitePicker\(render\)/);
+  assert.doesNotMatch(source, /action === "disconnect-wordpress"/);
+});
+
 test("editor permission guard keeps setup actions session-scoped and writes current-scoped", () => {
   assertBodyContains(
     extractSetBody("SESSION_WRITE_ACTIONS"),

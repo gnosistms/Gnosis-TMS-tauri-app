@@ -19,7 +19,7 @@ globalThis.window.addEventListener = globalThis.window.addEventListener ?? (() =
 globalThis.window.removeEventListener = globalThis.window.removeEventListener ?? (() => {});
 
 const { createResourcePageState } = await import("./resource-page-controller.js");
-const { resetSessionState, state } = await import("./state.js");
+const { createProjectsSearchState, resetSessionState, state } = await import("./state.js");
 const {
   addLocalHardDeleteTombstone,
   isLocalHardDeletedResource,
@@ -34,6 +34,8 @@ const {
   preserveProjectLifecyclePatchesInProjectSnapshot,
   preservePendingProjectLifecyclePatches,
   seedProjectsQueryFromCache,
+  publishCreatedProjectToQuery,
+  publishLocalProjectRemovalToQuery,
   upsertProjectChapterInQueryData,
 } = await import("./project-query.js");
 const { glossaryKeys, projectKeys, queryClient } = await import("./query-client.js");
@@ -344,7 +346,8 @@ test("project loading prime clears stale visible projects before team render", (
     query: "old",
     status: "ready",
     results: [{ id: "old-result" }],
-    resultsById: { "old-result": {} },
+    expandedProjectIds: new Set(["old-project"]),
+    expandedChapterIds: new Set(["old-chapter"]),
   };
   state.projectRepoConflictRecovery = {
     teamId: "team-1",
@@ -364,11 +367,13 @@ test("project loading prime clears stale visible projects before team render", (
   assert.equal(state.projectRepoConflictRecovery.teamId, null);
   assert.equal(state.projectsSearch.query, "");
   assert.deepEqual(state.projectsSearch.results, []);
+  assert.deepEqual(state.projectsSearch.expandedProjectIds, new Set());
+  assert.deepEqual(state.projectsSearch.expandedChapterIds, new Set());
   assert.equal(state.projectDiscovery.status, "loading");
   assert.equal(state.projectsPage.isRefreshing, true);
 });
 
-test("project loading prime preserves selected-team visible projects while refreshing", () => {
+test("returning from the editor preserves selected-team projects and search while refreshing", () => {
   resetSessionState();
   const team = { id: "team-1", installationId: 1 };
   state.teams = [team];
@@ -378,13 +383,35 @@ test("project loading prime preserves selected-team visible projects while refre
     visibleCacheKey: teamCacheKey(team),
   });
   state.projects = [project({ id: "team-1-project", title: "Team 1 Project" })];
+  const search = {
+    ...createProjectsSearchState(),
+    query: " Raw Query ",
+    caseSensitive: true,
+    status: "ready",
+    results: [{ projectId: "team-1-project", chapterId: "chapter-1", rowId: "row-1" }],
+    expandedProjectIds: new Set(["team-1-project"]),
+    expandedChapterIds: new Set(["chapter-1"]),
+    includeWeakerMatches: true,
+  };
+  state.projectsSearch = search;
+  state.screen = "translate";
 
+  // Navigation primes before rendering Projects; its async loader primes again.
+  state.screen = "projects";
   const result = primeProjectsLoadingState(team.id);
+  primeProjectsLoadingState(team.id);
 
   assert.equal(result.preservedVisibleData, true);
+  assert.equal(state.projectsSearch, search);
   assert.equal(state.projects[0].title, "Team 1 Project");
   assert.equal(state.projectDiscovery.status, "ready");
   assert.equal(state.projectsPage.isRefreshing, true);
+
+  // Same-team search also survives repeated refreshes of an empty collection.
+  state.projects = [];
+  primeProjectsLoadingState(team.id, { seedFromCache: false });
+  primeProjectsLoadingState(team.id, { seedFromCache: false });
+  assert.equal(state.projectsSearch, search);
 });
 
 test("project loading prime preserves the active editor chapter context", () => {
@@ -1115,4 +1142,63 @@ test("project mutation settle invalidates active project query once without expl
 
   assert.equal(invalidateCount, 1);
   assert.equal(fetchCount, 0);
+});
+
+
+test("created projects stay in stale snapshots until metadata discovery observes them", () => {
+  const created = project({ id: "new", fileLoadState: "ready", localLifecycleIntent: "create" });
+  const previous = { items: [created], deletedItems: [] };
+  const stale = preserveProjectLifecyclePatchesInProjectSnapshot({ items: [], deletedItems: [] }, previous);
+  assert.deepEqual(stale.items, [created]);
+  const discovered = project({ id: "new", fileLoadState: "ready" });
+  const settled = preserveProjectLifecyclePatchesInProjectSnapshot({ items: [discovered], deletedItems: [] }, previous);
+  assert.equal(settled.items[0].localLifecycleIntent, undefined);
+  const deleted = { ...discovered, lifecycleState: "deleted" };
+  const deletion = preserveProjectLifecyclePatchesInProjectSnapshot({ items: [], deletedItems: [deleted] }, previous);
+  assert.deepEqual(deletion.items, []);
+  assert.deepEqual(deletion.deletedItems, [deleted]);
+});
+
+test("creation finishing after a team switch updates only its team's query", async () => {
+  resetSessionState();
+  state.selectedTeamId = "other-team";
+  state.projects = [project({ id: "other-project" })];
+  await publishCreatedProjectToQuery({ id: "original-team", installationId: 42 }, {
+    projectId: "new", title: "New", repoName: "new", remoteProject: { name: "new" },
+  });
+  assert.deepEqual(state.projects.map((item) => item.id), ["other-project"]);
+  assert.equal(queryClient.getQueryData(projectKeys.byTeam("original-team")).snapshot.items[0].id, "new");
+});
+
+test("explicit local removal publishes an empty collection without ending refresh", () => {
+  const team = { id: "local-remove-team", installationId: 78 };
+  state.teams = [team];
+  state.selectedTeamId = team.id;
+  state.projectsPage = createResourcePageState();
+  const removed = project({ id: "remove-me", lifecycleState: "deleted" });
+  const snapshot = createProjectsQuerySnapshot({
+    deletedItems: [removed],
+    repoSyncByProjectId: { "remove-me": { status: "upToDate" } },
+    pendingChapterMutations: [{ projectId: "remove-me" }, { projectId: "other-project" }],
+    discovery: { status: "ready", glossaryWarning: "Preserve warning" },
+  });
+  const key = projectKeys.byTeam(team.id);
+  queryClient.setQueryData(key, snapshot);
+  applyProjectsQuerySnapshotToState(snapshot, { teamId: team.id, isFetching: true });
+  const observer = new QueryObserver(queryClient, { queryKey: key, enabled: false });
+  const unsubscribe = observer.subscribe(({ data }) => {
+    applyProjectsQuerySnapshotToState(data, { teamId: team.id, isFetching: true });
+  });
+  try {
+    const next = publishLocalProjectRemovalToQuery(team, removed.id);
+    assert.deepEqual(next.snapshot.deletedItems, []);
+    assert.deepEqual(state.deletedProjects, []);
+    assert.deepEqual(state.projectRepoSyncByProjectId, {});
+    assert.deepEqual(state.pendingChapterMutations, [{ projectId: "other-project" }]);
+    assert.equal(state.projectsPage.isRefreshing, true);
+    assert.equal(state.projectDiscovery.glossaryWarning, "Preserve warning");
+    assert.deepEqual(queryClient.getQueryData(key), next);
+  } finally {
+    unsubscribe();
+  }
 });

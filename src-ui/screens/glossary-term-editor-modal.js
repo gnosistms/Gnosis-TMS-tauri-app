@@ -7,6 +7,7 @@ import {
 import { formatErrorForDisplay } from "../app/error-display.js";
 import { rubyButtonConfig } from "../app/editor-inline-markup.js";
 import { isGlossaryEmptyTargetVariant } from "../app/glossary-shared.js";
+import { siblingSummaries } from "../app/glossary-term-siblings.js";
 
 const EMPTY_TARGET_VARIANT_TOOLTIP =
   "Add an empty variant to indicated that it's ok to omit this word from the translation.";
@@ -84,6 +85,7 @@ function renderVariantRow(
           class="${inputClasses.join(" ")}"
           aria-label="${escapeHtml(inputLabel)}"
           placeholder="Enter term..."
+          aria-invalid="${isRedundant}"
           rows="1"
           data-glossary-term-variant-input
           data-variant-side="${escapeHtml(side)}"
@@ -203,6 +205,46 @@ function renderVariantLane(
   `;
 }
 
+/**
+ * Related entries (kept apart because they take other translations, linked so a
+ * change to one is a reminder to check the others). Mostly set by the glossary
+ * research, so only a small button at the bottom; its panel opens on click.
+ */
+function relatedEntriesButton(editor, terms, isSubmitting) {
+  if (!editor.termId) return "";
+  const siblings = siblingSummaries(editor.siblingTermIds, terms);
+  const tooltip = siblings.length
+    ? `Related entries, kept separate because they take other translations: ${siblings.map((s) => s.label).join("; ")}. Check them when you change this entry.`
+    : "Link entries that are kept separate but should be checked when this one changes.";
+  return `<button type="button" class="glossary-term-modal__related-button${editor.relatedOpen ? " is-open" : ""}" data-action="toggle-glossary-term-related"
+      aria-expanded="${editor.relatedOpen ? "true" : "false"}" ${isSubmitting ? "disabled" : ""}${tooltipAttributes(tooltip, { side: "top", align: "start" })}>
+      Related${siblings.length ? ` (${siblings.length})` : ""}</button>`;
+}
+
+function renderRelatedEntries(editor, terms, isSubmitting) {
+  if (!editor.termId || !editor.relatedOpen) return "";
+  const siblings = siblingSummaries(editor.siblingTermIds, terms);
+  const options = terms
+    .filter((term) => term.termId !== editor.termId && !(editor.siblingTermIds ?? []).includes(term.termId))
+    .flatMap((term) => term.sourceTerms ?? [])
+    .slice(0, 2000);
+  return `
+    <section class="glossary-term-modal__related">
+      ${siblings.length ? `<ul class="glossary-term-modal__related-list">${siblings.map((sibling) => `
+        <li class="glossary-term-modal__related-item">
+          <span><strong>${escapeHtml(sibling.label)}</strong>${sibling.targets ? ` <span class="glossary-term-modal__related-targets">→ ${escapeHtml(sibling.targets)}</span>` : ""}</span>
+          <button type="button" class="text-action" data-action="unlink-glossary-term-sibling:${escapeHtml(sibling.termId)}" ${isSubmitting ? "disabled" : ""}>Unlink</button>
+        </li>`).join("")}</ul>` : ""}
+      <div class="glossary-term-modal__related-add">
+        <input class="field__input" type="text" list="glossary-term-sibling-options" placeholder="Source term of another entry" aria-label="Link a related entry by its source term"
+          value="${escapeHtml(editor.siblingInput ?? "")}" data-glossary-term-sibling-input ${isSubmitting ? "disabled" : ""} />
+        <datalist id="glossary-term-sibling-options">${options.map((form) => `<option value="${escapeHtml(form)}"></option>`).join("")}</datalist>
+        <button type="button" class="button button--secondary button--compact" data-action="link-glossary-term-sibling" ${isSubmitting ? "disabled" : ""}>Link</button>
+      </div>
+      ${editor.siblingError ? `<p class="form-error" role="alert">${escapeHtml(editor.siblingError)}</p>` : ""}
+    </section>`;
+}
+
 export function renderGlossaryTermEditorModal(state) {
   const editor = state.glossaryTermEditor;
   if (!editor?.isOpen) {
@@ -214,6 +256,8 @@ export function renderGlossaryTermEditorModal(state) {
     disabled: isSubmitting,
     modalCancel: true,
   });
+  const researchBack = editor.researchOrigin
+    ? secondaryButton("Back to research", "studio:editor-back", { disabled: isSubmitting }) : "";
   const sourceLanguageName = state.glossaryEditor?.sourceLanguage?.name ?? "Source";
   const sourceLanguageCode = state.glossaryEditor?.sourceLanguage?.code ?? "";
   const targetLanguageName = state.glossaryEditor?.targetLanguage?.name ?? "Target";
@@ -225,6 +269,7 @@ export function renderGlossaryTermEditorModal(state) {
   const duplicateWarningMarkup = `
     <p
       class="glossary-term-modal__warning"
+      role="alert"
       data-glossary-term-duplicate-warning
       ${editor.sourceTermDuplicateWarning ? "" : "hidden"}
     >${escapeHtml(editor.sourceTermDuplicateWarning ?? "")}</p>
@@ -233,7 +278,7 @@ export function renderGlossaryTermEditorModal(state) {
     ? `<p class="modal__error">${escapeHtml(formatErrorForDisplay(editor.error))}</p>`
     : "";
   const submitButton = loadingPrimaryButton({
-    label: editor.termId ? "Save Term" : "Add Term",
+    label: editor.researchOrigin ? "Save entry" : editor.termId ? "Save Term" : "Add Term",
     loadingLabel: "Saving...",
     action: "submit-glossary-term-editor",
     isLoading: isSubmitting,
@@ -281,10 +326,14 @@ export function renderGlossaryTermEditorModal(state) {
             </div>
           </section>
 
+          ${renderRelatedEntries(editor, state.glossaryEditor?.terms ?? [], isSubmitting)}
+
           ${errorMarkup}
 
           <div class="modal__actions">
+            ${relatedEntriesButton(editor, state.glossaryEditor?.terms ?? [], isSubmitting)}
             ${cancelButton}
+            ${researchBack}
             ${submitButton}
           </div>
         </div>

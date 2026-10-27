@@ -1,7 +1,8 @@
 [package]
 name = "gnosis-tms"
-version = "0.8.87"
+version = "0.8.134"
 description = "Gnosis TMS"
+license = "GPL-3.0-only"
 authors = ["you"]
 edition = "2021"
 publish = false
@@ -47,6 +48,8 @@ scraper = "0.25"
 plist = "1.8"
 tokio = { version = "1", features = ["time"] }
 ttf-parser = "0.25"
+unicode-normalization = "0.1"
+unicode-segmentation = "1.12"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSPasteboard"] }

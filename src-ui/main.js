@@ -1,4 +1,6 @@
+import { reconcileEditorRowConnection } from "./app/editor-row-connection.js";
 import {
+  beginStoredBrokerSessionInspection,
   prepareStoredBrokerSessionRestore,
   registerBrokerAuthListener,
   registerGithubAppInstallListener,
@@ -12,9 +14,11 @@ import { registerChapterPdfExportListeners } from "./app/editor-export-flow.js";
 import { registerEditorImageCaptionListeners } from "./app/editor-image-flow.js";
 import {
   initializeEditorVirtualization,
+  syncEditorRowConnection,
 } from "./app/editor-virtualization.js";
 import { loadUserTeams, setGithubAppInstallation } from "./app/team-setup-flow.js";
 import { syncLanguagePickerAlphabetIndexes } from "./app/language-picker-alphabet-index.js";
+import { renderResearchModals, researchModalHostContains, researchModalOpen } from "./app/research-modal-host.js";
 import { initializeConnectivity } from "./app/offline-connectivity.js";
 import { registerLoadingSpinnerContinuity } from "./app/loading-spinner-continuity.js";
 import {
@@ -113,7 +117,12 @@ import {
   toggleEditorReplaceEnabled,
 } from "./app/translate-flow.js";
 import { registerTranslateEditorDomEvents } from "./app/translate-editor-dom-events.js";
-import { checkForAppUpdate } from "./app/updater-flow.js";
+import {
+  configureAppUpdateInstallation,
+  registerAppUpdateProgressListener,
+  startAppUpdateChecks,
+} from "./app/updater-flow.js";
+import { renderAppUpdateSurface } from "./app/app-update-surface.js";
 import { renderAppUpdateModal } from "./screens/app-update-modal.js";
 import { renderConnectionFailureModal } from "./screens/connection-failure-modal.js";
 import { renderEditorAiTranslateAllModal } from "./screens/editor-ai-translate-all-modal.js";
@@ -122,6 +131,9 @@ import { renderEditorImagePreviewOverlay } from "./screens/editor-image-preview-
 import { renderEditorInsertLinkModal } from "./screens/editor-insert-link-modal.js";
 import { renderGlossariesScreen } from "./screens/glossaries.js";
 import { renderGlossaryEditorScreen } from "./screens/glossary-editor.js";
+import { renderGlossaryResearchReportScreen } from "./screens/glossary-research-report.js";
+import { renderGlossaryResearchStudio } from "./screens/glossary-research-studio.js";
+import { captureStudioDisclosures, restoreStudioDisclosures } from "./app/glossary-research-studio-disclosures.js";
 import { renderNavigationLoadingModal } from "./screens/navigation-loading-modal.js";
 import { buildProjectsScreenListState, renderProjectsScreen } from "./screens/projects.js";
 import { renderProjectsListItemsRange } from "./screens/project-list-flat-render.js";
@@ -133,6 +145,7 @@ import {
   deferProjectsRenderWhileSelectEngaged,
   installProjectsRenderHold,
 } from "./app/projects-render-hold.js";
+import { deferRenderWhileComposing } from "./app/ime-composition-hold.js";
 import { reconcileProjectsScrollOnRender } from "./app/projects-scroll-store.js";
 import { renderQaListEditorScreen } from "./screens/qa-list-editor.js";
 import { renderQaScreen } from "./screens/qa.js";
@@ -182,6 +195,8 @@ const screenRenderers = {
   qa: () => renderQaScreen(state),
   qaListEditor: () => renderQaListEditorScreen(state),
   glossaryEditor: () => renderGlossaryEditorScreen(state),
+  glossaryResearchReport: () => renderGlossaryResearchReportScreen(state),
+  glossaryResearchStudio: () => renderGlossaryResearchStudio(state),
   translate: () => renderTranslateScreen(state),
 };
 
@@ -195,6 +210,8 @@ const titles = {
   qa: "QA Lists - Gnosis TMS",
   qaListEditor: "QA List Editor - Gnosis TMS",
   glossaryEditor: "Glossary Editor - Gnosis TMS",
+  glossaryResearchReport: "Research Report - Gnosis TMS",
+  glossaryResearchStudio: "Glossary Research Studio - Gnosis TMS",
   translate: "Translate - Gnosis TMS",
 };
 
@@ -353,7 +370,13 @@ function patchFixtureEditorRowState(rowId, updates = {}) {
 }
 
 function render(options = {}) {
-  // While a projects-page chapter select is engaged, full renders defer so
+  // While an input method is composing a word in a field, renders defer so
+  // the field isn't replaced mid-word (scrambled Telex/IME text); the hold
+  // flushes when the composition ends. See ime-composition-hold.js.
+  if (deferRenderWhileComposing(options)) {
+    return undefined;
+  }
+  // While a protected projects-page select is engaged, full renders defer so
   // the open dropdown isn't destroyed mid-selection; the hold flushes on
   // commit/disengage. See projects-render-hold.js.
   if (deferProjectsRenderWhileSelectEngaged(state, () => renderWithOptions(options))) {
@@ -692,6 +715,23 @@ function renderTranslateImagePreviewOverlayOnly() {
 }
 
 function renderWithOptions(options = {}) {
+  const disconnected = reconcileEditorRowConnection(state);
+  try {
+    // A partial refresh must remove the excluded row and empty its sidebar.
+    if (disconnected && ["translate-visible-rows", "translate-header", "translate-sidebar"].includes(options.scope)) {
+      return renderWithOptionsImpl({ ...options, scope: "translate-body" });
+    }
+    return renderWithOptionsImpl(options);
+  } finally {
+    syncEditorRowConnection();
+  }
+}
+
+function renderWithOptionsImpl(options = {}) {
+  if (options?.scope === "app-update-progress") {
+    renderAppUpdateSurface(app, state.appUpdate);
+    return;
+  }
   if (options?.scope === "status-surface") {
     if (!renderStatusSurfaceOnly()) {
       renderWithOptions();
@@ -754,7 +794,8 @@ function renderWithOptions(options = {}) {
   // Must run before the screen renderer: the projects initial window is
   // computed from the session anchor this reconciliation seeds or clears.
   reconcileProjectsScrollOnRender(previousScreen, state);
-  const focusSnapshot = captureFocusedInputState();
+  // Focus inside a research window stays where it is: that window is not rebuilt.
+  const focusSnapshot = researchModalHostContains(document.activeElement) ? null : captureFocusedInputState();
   const {
     anchor: translateAnchor,
     hadPendingAnchor,
@@ -771,6 +812,7 @@ function renderWithOptions(options = {}) {
       ? captureAssistantTranscriptScrollTop(app)
       : null;
   const modalSnapshot = captureModalRenderState(app);
+  const studioDisclosures = captureStudioDisclosures(app);
   app.innerHTML =
     renderScreen()
     + renderAppUpdateModal(state)
@@ -778,6 +820,11 @@ function renderWithOptions(options = {}) {
     + renderTeamResourceMigrationModal(state)
     + renderTelemetryDisclosureModal(state)
     + renderConnectionFailureModal(state);
+  restoreStudioDisclosures(app, studioDisclosures);
+  renderAppUpdateSurface(app, state.appUpdate);
+  if (app.firstElementChild instanceof HTMLElement) {
+    app.firstElementChild.inert = ["preparing", "restarting"].includes(state.appUpdate.status);
+  }
   syncGlossaryVariantTextareaHeights(app);
   if (app.firstElementChild instanceof HTMLElement) {
     app.firstElementChild.dataset.screen = state.screen;
@@ -811,7 +858,10 @@ function renderWithOptions(options = {}) {
   const restoredFocus = shouldRestoreFocusedInputStateForScope(focusSnapshot, "full")
     ? restoreFocusedInputState(focusSnapshot)
     : false;
-  reconcileModalRenderState(app, modalSnapshot);
+  // An open research window owns the dialog focus; see research-modal-host.js.
+  if (!researchModalOpen()) {
+    reconcileModalRenderState(app, modalSnapshot);
+  }
   if (focusSnapshot?.kind === "editor-row-field" && !restoredFocus && focusSnapshot.rowId) {
     scheduleDirtyEditorRowScan(render, focusSnapshot.rowId);
   }
@@ -823,6 +873,7 @@ function renderWithOptions(options = {}) {
   restoreAssistantTranscriptScrollTop(assistantTranscriptScrollTop, app);
   scrollActivePreviewSearchMatchIntoView(app);
   syncLanguagePickerAlphabetIndexes(app);
+  renderResearchModals(state);
   restoreTargetLanguageManagerPickerScrollTop(targetLanguageManagerPickerScrollTop);
   refreshTranslateSessionAnchorAfterRender();
   document.title = titles[state.screen] ?? "Gnosis TMS";
@@ -846,6 +897,9 @@ app.addEventListener("scroll", (event) => {
   scheduleEditorLocationSave(state);
 }, true);
 
+// Stricter than the Restart-to-update guard below on purpose: a running remote
+// sync blocks a close, but the close wait has a force-close escape, while the
+// update guard has none. Keep the two in step when either changes.
 function editorHasPendingDurableWrites() {
   const repoWriteSnapshot = getRepoWriteQueueSnapshot();
   return (
@@ -858,6 +912,20 @@ function editorHasPendingDurableWrites() {
     )
   );
 }
+
+// Block on every active repo operation except remote sync. Imports, project
+// creates, renames and rebuilds land in the repoMaintenance bucket and can be
+// lost mid-commit if the process dies. A remote sync only pushes or pulls
+// already-committed state and resumes on the next launch, so a stalled one must
+// never hold the update hostage.
+configureAppUpdateInstallation(async () => {
+  const saved = await flushDirtyEditorRows(render);
+  if (!saved || hasPendingEditorWrites(state.editorChapter)
+      || getEditorOperationQueueSnapshot().hasActiveOperations
+      || getRepoWriteQueueSnapshot().hasActiveNonSyncWrites) {
+    throw new Error("Changes are still being saved. Please wait, resolve any save errors, and try Restart to update again.");
+  }
+});
 
 // Set when the user force-closes past pending writes so the close guard and
 // beforeunload do not re-block a close the user already approved.
@@ -1112,6 +1180,7 @@ async function bootstrap() {
   }
 
   const storedBrokerSession = await prepareStoredBrokerSessionRestore();
+  const brokerSessionInspection = beginStoredBrokerSessionInspection(storedBrokerSession);
   void registerBrokerAuthListener(render, loadUserTeams);
   void registerGithubAppInstallListener(render, setGithubAppInstallation);
   void registerWordPressExportListeners(render);
@@ -1119,9 +1188,15 @@ async function bootstrap() {
   void registerProjectTransferListeners(render);
   void registerChapterPdfExportListeners(render);
   void registerEditorImageCaptionListeners(render);
-  void checkForAppUpdate(render, { silent: true });
+  void registerAppUpdateProgressListener(render);
+  startAppUpdateChecks(render);
   render();
-  void initializeConnectivity(render, () => restoreStoredBrokerSession(render, loadUserTeams, storedBrokerSession));
+  void initializeConnectivity(render, () => restoreStoredBrokerSession(
+    render,
+    loadUserTeams,
+    storedBrokerSession,
+    { inspection: brokerSessionInspection },
+  ));
 }
 
 bootstrapPromise = bootstrap();

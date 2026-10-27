@@ -51,12 +51,15 @@ export function applyEditorRowFieldValue(row, languageCode, nextValue, contentKi
   const fields = cloneRowFields(row.fields);
   const footnotes = cloneRowFootnotes(row.footnotes);
   const imageCaptions = cloneRowFields(row.imageCaptions);
+  const attributions = cloneRowFields(row.attributions);
   if (normalizedContentKind === "footnote") {
     footnotes[languageCode] = applyEditorFootnoteText(
       footnotes[languageCode],
       options?.marker,
       nextValue,
     );
+  } else if (normalizedContentKind === "attribution") {
+    attributions[languageCode] = nextValue;
   } else if (normalizedContentKind === "image-caption") {
     imageCaptions[languageCode] = nextValue;
   } else {
@@ -76,6 +79,8 @@ export function applyEditorRowFieldValue(row, languageCode, nextValue, contentKi
           row.persistedImageCaptions,
           row.images,
           row.persistedImages,
+          attributions,
+          row.persistedAttributions,
         )
         ? "idle"
         : "dirty";
@@ -85,6 +90,7 @@ export function applyEditorRowFieldValue(row, languageCode, nextValue, contentKi
     fields,
     footnotes,
     imageCaptions,
+    attributions,
     freshness:
       row.freshness === "conflict"
         ? "conflict"
@@ -99,6 +105,8 @@ export function applyEditorRowFieldValue(row, languageCode, nextValue, contentKi
               row.persistedImageCaptions,
               row.images,
               row.persistedImages,
+              attributions,
+              row.persistedAttributions,
             )
             ? "fresh"
             : "dirty",
@@ -206,7 +214,8 @@ export function applyEditorRowTextStyleStaleSaved(row, payload) {
   );
 
   return {
-    ...row,
+    ...applyEditorRowTextStyleSaved(row, payload),
+    textStyle: row.textStyle,
     persistedTextStyle: textStyle,
     lastUpdate: payload?.lastUpdate ?? row.lastUpdate ?? null,
     textStyleSaveState: {
@@ -225,8 +234,33 @@ export function applyEditorRowTextStyleSaved(row, payload) {
   const textStyle = payload && typeof payload === "object" ? payload.textStyle : payload;
   const normalizedTextStyle = normalizeEditorRowTextStyle(textStyle);
 
+  const converted = row.persistedTextStyle === "quote" && normalizedTextStyle !== "quote";
+  const fields = cloneRowFields(row.fields);
+  const attributions = cloneRowFields(row.attributions);
+  if (converted) {
+    for (const [code, attribution] of Object.entries(attributions)) {
+      if (attribution) fields[code] = fields[code] ? `${fields[code].trimEnd()}\n\n${attribution}` : attribution;
+      attributions[code] = "";
+    }
+  }
+  // The command reads the latest disk row. Adopt its text for untouched columns;
+  // retain any typing that happened while the style write was in flight.
+  for (const [code, text] of Object.entries(payload?.fields ?? {})) {
+    if ((row.fields?.[code] ?? "") === (row.persistedFields?.[code] ?? "")) fields[code] = text;
+  }
+  for (const [code, text] of Object.entries(payload?.attributions ?? {})) {
+    if ((row.attributions?.[code] ?? "") === (row.persistedAttributions?.[code] ?? "")) attributions[code] = text;
+  }
   return {
     ...row,
+    fields,
+    attributions,
+    ...(payload?.fields ? {
+      baseFields: cloneRowFields(payload.fields),
+      persistedFields: cloneRowFields(payload.fields),
+      baseAttributions: cloneRowFields(payload.attributions),
+      persistedAttributions: cloneRowFields(payload.attributions),
+    } : {}),
     textStyle: normalizedTextStyle,
     persistedTextStyle: normalizedTextStyle,
     lastUpdate: payload?.lastUpdate ?? row.lastUpdate ?? null,
@@ -300,15 +334,18 @@ function buildMergedRowState(remoteRow, mergeResult) {
     fields: cloneRowFields(mergeResult?.mergedFields ?? remoteRow.fields),
     footnotes: cloneRowFootnotes(mergeResult?.mergedFootnotes ?? remoteRow.footnotes),
     imageCaptions: cloneRowFields(mergeResult?.mergedImageCaptions ?? remoteRow.imageCaptions),
+    attributions: cloneRowFields(mergeResult?.mergedAttributions ?? remoteRow.attributions),
     images: cloneRowImages(mergeResult?.mergedImages ?? remoteRow.images),
     fieldStates: cloneRowFieldStates(mergeResult?.mergedFieldStates ?? remoteRow.fieldStates),
     baseFields: cloneRowFields(remoteRow.fields),
     baseFootnotes: cloneRowFootnotes(remoteRow.footnotes),
     baseImageCaptions: cloneRowFields(remoteRow.imageCaptions),
+    baseAttributions: cloneRowFields(remoteRow.attributions),
     baseImages: cloneRowImages(remoteRow.images),
     persistedFields: cloneRowFields(remoteRow.fields),
     persistedFootnotes: cloneRowFootnotes(remoteRow.footnotes),
     persistedImageCaptions: cloneRowFields(remoteRow.imageCaptions),
+    persistedAttributions: cloneRowFields(remoteRow.attributions),
     persistedImages: cloneRowImages(remoteRow.images),
     persistedFieldStates: cloneRowFieldStates(remoteRow.fieldStates),
     saveError: "",
@@ -324,6 +361,8 @@ function buildMergedRowState(remoteRow, mergeResult) {
     mergedRow.persistedImageCaptions,
     mergedRow.images,
     mergedRow.persistedImages,
+    mergedRow.attributions,
+    mergedRow.persistedAttributions,
   );
 
   return {
@@ -402,6 +441,7 @@ export function applyEditorRowPersistSucceeded(row, payloadRow, persistedSnapsho
   const snapshotFields = cloneRowFields(persistedSnapshot?.fields ?? row.fields);
   const snapshotFootnotes = cloneRowFootnotes(persistedSnapshot?.footnotes ?? row.footnotes);
   const snapshotImageCaptions = cloneRowFields(persistedSnapshot?.imageCaptions ?? row.imageCaptions);
+  const snapshotAttributions = cloneRowFields(persistedSnapshot?.attributions ?? row.attributions);
   const snapshotImages = cloneRowImages(persistedSnapshot?.images ?? row.images);
   const snapshotTimings = cloneRowTimings(persistedSnapshot?.timings ?? row.timings);
   const timingsChangedDuringSave = !rowTimingsEqual(row.timings, snapshotTimings);
@@ -414,17 +454,21 @@ export function applyEditorRowPersistSucceeded(row, payloadRow, persistedSnapsho
     snapshotImageCaptions,
     row.images,
     snapshotImages,
+    row.attributions,
+    snapshotAttributions,
   );
   if (rowChangedDuringSave) {
     const mergeResult = mergeEditorRowVersions({
       baseFields: snapshotFields,
       baseFootnotes: snapshotFootnotes,
       baseImageCaptions: snapshotImageCaptions,
+      baseAttributions: snapshotAttributions,
       baseImages: snapshotImages,
       baseFieldStates: row.persistedFieldStates,
       localFields: row.fields,
       localFootnotes: row.footnotes,
       localImageCaptions: row.imageCaptions,
+      localAttributions: row.attributions,
       localImages: row.images,
       localFieldStates: row.fieldStates,
       remoteRow: normalizedRow,
@@ -446,20 +490,24 @@ export function applyEditorRowPersistSucceeded(row, payloadRow, persistedSnapsho
     const savedFields = hasPersistedSnapshot ? snapshotFields : normalizedRow.fields;
     const savedFootnotes = hasPersistedSnapshot ? snapshotFootnotes : normalizedRow.footnotes;
     const savedImageCaptions = hasPersistedSnapshot ? snapshotImageCaptions : normalizedRow.imageCaptions;
+    const savedAttributions = hasPersistedSnapshot ? snapshotAttributions : normalizedRow.attributions;
     const savedImages = hasPersistedSnapshot ? snapshotImages : normalizedRow.images;
     return preservePendingRowWrites({
       ...normalizedRow,
       fields: cloneRowFields(savedFields),
       footnotes: cloneRowFootnotes(savedFootnotes),
       imageCaptions: cloneRowFields(savedImageCaptions),
+      attributions: cloneRowFields(savedAttributions),
       images: cloneRowImages(savedImages),
       baseFields: cloneRowFields(savedFields),
       baseFootnotes: cloneRowFootnotes(savedFootnotes),
       baseImageCaptions: cloneRowFields(savedImageCaptions),
+      baseAttributions: cloneRowFields(savedAttributions),
       baseImages: cloneRowImages(savedImages),
       persistedFields: cloneRowFields(savedFields),
       persistedFootnotes: cloneRowFootnotes(savedFootnotes),
       persistedImageCaptions: cloneRowFields(savedImageCaptions),
+      persistedAttributions: cloneRowFields(savedAttributions),
       persistedImages: cloneRowImages(savedImages),
       saveStatus: "idle",
       freshness: "fresh",
@@ -472,6 +520,7 @@ export function applyEditorRowPersistSucceeded(row, payloadRow, persistedSnapsho
     fields: cloneRowFields(row.fields),
     footnotes: cloneRowFootnotes(row.footnotes),
     imageCaptions: cloneRowFields(row.imageCaptions),
+    attributions: cloneRowFields(row.attributions),
     timings: cloneRowTimings(row.timings),
     saveStatus: "dirty",
     freshness: "dirty",
@@ -492,6 +541,10 @@ export function applyEditorRowImageSaved(row, payloadRow) {
     row.persistedFields,
     row.persistedFootnotes,
     row.persistedImageCaptions,
+    {},
+    {},
+    row.attributions,
+    row.persistedAttributions,
   );
   if (!textChangedLocally) {
     return preservePendingRowWrites({
@@ -505,6 +558,7 @@ export function applyEditorRowImageSaved(row, payloadRow) {
     fields: cloneRowFields(row.fields),
     footnotes: cloneRowFootnotes(row.footnotes),
     imageCaptions: cloneRowFields(row.imageCaptions),
+    attributions: cloneRowFields(row.attributions),
     saveStatus: row.saveStatus === "idle" ? "dirty" : row.saveStatus,
     saveError: row.saveStatus === "idle" ? "" : row.saveError,
     freshness:
@@ -537,6 +591,7 @@ export function applyEditorRowConflictDetected(row, payload = {}, options = {}) 
   const nextFields = cloneRowFields(options?.localFields ?? row.fields);
   const nextFootnotes = cloneRowFootnotes(options?.localFootnotes ?? row.footnotes);
   const nextImageCaptions = cloneRowFields(options?.localImageCaptions ?? row.imageCaptions);
+  const nextAttributions = cloneRowFields(options?.localAttributions ?? row.attributions);
   const remoteVersion =
     normalizeConflictRemoteVersion(
       payload?.conflictRemoteVersion
@@ -551,6 +606,7 @@ export function applyEditorRowConflictDetected(row, payload = {}, options = {}) 
     fields: nextFields,
     footnotes: nextFootnotes,
     imageCaptions: nextImageCaptions,
+    attributions: nextAttributions,
     freshness: "conflict",
     saveStatus: "conflict",
     saveError: "Translation text changed on disk.",
@@ -559,6 +615,7 @@ export function applyEditorRowConflictDetected(row, payload = {}, options = {}) 
       baseFields: cloneRowFields(payload?.baseFields),
       baseFootnotes: cloneRowFootnotes(payload?.baseFootnotes),
       baseImageCaptions: cloneRowFields(payload?.baseImageCaptions),
+      baseAttributions: cloneRowFields(payload?.baseAttributions),
       remoteRow: payload?.row ? normalizeEditorRow(payload.row) : null,
       remoteVersion,
     },
@@ -592,18 +649,22 @@ export function applyEditorConflictResolutionSavedLocally(
   const localFields = cloneRowFields(nextLocalFields);
   const localFootnotes = cloneRowFootnotes(nextLocalFootnotes);
   const localImageCaptions = cloneRowFields(nextLocalImageCaptions);
+  const localAttributions = cloneRowFields(options?.nextLocalAttributions ?? row.attributions);
 
   return {
     ...persistedRow,
     fields: localFields,
     footnotes: localFootnotes,
     imageCaptions: localImageCaptions,
+    attributions: localAttributions,
     baseFields: cloneRowFields(persistedRow.fields),
     baseFootnotes: cloneRowFootnotes(persistedRow.footnotes),
     baseImageCaptions: cloneRowFields(persistedRow.imageCaptions),
+    baseAttributions: cloneRowFields(persistedRow.attributions),
     persistedFields: cloneRowFields(persistedRow.fields),
     persistedFootnotes: cloneRowFootnotes(persistedRow.footnotes),
     persistedImageCaptions: cloneRowFields(persistedRow.imageCaptions),
+    persistedAttributions: cloneRowFields(persistedRow.attributions),
     saveStatus: "conflict",
     freshness: "conflict",
     saveError: "",
@@ -612,6 +673,7 @@ export function applyEditorConflictResolutionSavedLocally(
       baseFields: cloneRowFields(persistedRow.fields),
       baseFootnotes: cloneRowFootnotes(persistedRow.footnotes),
       baseImageCaptions: cloneRowFields(persistedRow.imageCaptions),
+      baseAttributions: cloneRowFields(persistedRow.attributions),
       remoteRow: row?.conflictState?.remoteRow ? normalizeEditorRow(row.conflictState.remoteRow) : null,
       remoteVersion: normalizeConflictRemoteVersion(options?.remoteVersion ?? row?.conflictState?.remoteVersion ?? null),
     },
@@ -634,6 +696,7 @@ export function applyEditorRowConflictSaveSucceeded(
   const localFields = cloneRowFields(nextLocalFields);
   const localFootnotes = cloneRowFootnotes(nextLocalFootnotes);
   const localImageCaptions = cloneRowFields(nextLocalImageCaptions);
+  const localAttributions = cloneRowFields(options?.nextLocalAttributions ?? row.attributions);
   const hasRemainingConflict = !rowTextContentEqual(
     localFields,
     localFootnotes,
@@ -641,6 +704,10 @@ export function applyEditorRowConflictSaveSucceeded(
     remoteRow.fields,
     remoteRow.footnotes,
     remoteRow.imageCaptions,
+    {},
+    {},
+    localAttributions,
+    remoteRow.attributions,
   );
 
   if (!hasRemainingConflict) {
@@ -649,12 +716,15 @@ export function applyEditorRowConflictSaveSucceeded(
       fields: localFields,
       footnotes: localFootnotes,
       imageCaptions: localImageCaptions,
+      attributions: localAttributions,
       baseFields: cloneRowFields(remoteRow.fields),
       baseFootnotes: cloneRowFootnotes(remoteRow.footnotes),
       baseImageCaptions: cloneRowFields(remoteRow.imageCaptions),
+      baseAttributions: cloneRowFields(remoteRow.attributions),
       persistedFields: cloneRowFields(remoteRow.fields),
       persistedFootnotes: cloneRowFootnotes(remoteRow.footnotes),
       persistedImageCaptions: cloneRowFields(remoteRow.imageCaptions),
+      persistedAttributions: cloneRowFields(remoteRow.attributions),
       saveStatus: "idle",
       freshness: "fresh",
       conflictState: null,
@@ -666,12 +736,15 @@ export function applyEditorRowConflictSaveSucceeded(
     fields: localFields,
     footnotes: localFootnotes,
     imageCaptions: localImageCaptions,
+    attributions: localAttributions,
     baseFields: cloneRowFields(remoteRow.fields),
     baseFootnotes: cloneRowFootnotes(remoteRow.footnotes),
     baseImageCaptions: cloneRowFields(remoteRow.imageCaptions),
+    baseAttributions: cloneRowFields(remoteRow.attributions),
     persistedFields: cloneRowFields(remoteRow.fields),
     persistedFootnotes: cloneRowFootnotes(remoteRow.footnotes),
     persistedImageCaptions: cloneRowFields(remoteRow.imageCaptions),
+    persistedAttributions: cloneRowFields(remoteRow.attributions),
     saveStatus: "conflict",
     freshness: "conflict",
     saveError: "Translation text changed on disk.",
@@ -680,6 +753,7 @@ export function applyEditorRowConflictSaveSucceeded(
       baseFields: cloneRowFields(remoteRow.fields),
       baseFootnotes: cloneRowFootnotes(remoteRow.footnotes),
       baseImageCaptions: cloneRowFields(remoteRow.imageCaptions),
+      baseAttributions: cloneRowFields(remoteRow.attributions),
       remoteRow,
       remoteVersion: normalizeConflictRemoteVersion(options?.remoteVersion ?? row?.conflictState?.remoteVersion ?? null),
     },

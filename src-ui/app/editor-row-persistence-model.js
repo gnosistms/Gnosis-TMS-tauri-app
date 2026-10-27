@@ -55,12 +55,15 @@ export function rowTextContentEqual(
   rightImageCaptions,
   leftImages = {},
   rightImages = {},
+  leftAttributions = {},
+  rightAttributions = {},
 ) {
   return (
     rowFieldsEqual(leftFields, rightFields)
     && rowFootnotesEqual(leftFootnotes, rightFootnotes)
     && rowFieldsEqual(leftImageCaptions, rightImageCaptions)
     && rowImagesEqual(leftImages, rightImages)
+    && rowFieldsEqual(leftAttributions, rightAttributions)
   );
 }
 
@@ -81,6 +84,48 @@ export function rowFieldStatesEqual(left, right) {
   });
 }
 
+// Language codes whose text content (field, footnotes, or caption) differs
+// from what was last persisted — the columns a save is actually about.
+// Rows without persisted tracking (none loaded yet) report every column.
+export function editorRowChangedLanguageCodes(row) {
+  const fields = row?.fields ?? {};
+  const footnotes = row?.footnotes ?? {};
+  const imageCaptions = row?.imageCaptions ?? {};
+  const attributions = row?.attributions ?? {};
+  const languageCodes = new Set([
+    ...Object.keys(fields),
+    ...Object.keys(footnotes),
+    ...Object.keys(imageCaptions),
+    ...Object.keys(attributions),
+    ...Object.keys(row?.persistedAttributions ?? {}),
+  ]);
+  if (!row?.persistedFields && !row?.persistedFootnotes && !row?.persistedImageCaptions) {
+    return languageCodes;
+  }
+  const persistedFields = row?.persistedFields ?? {};
+  const persistedFootnotes = row?.persistedFootnotes ?? {};
+  const persistedImageCaptions = row?.persistedImageCaptions ?? {};
+  const changed = new Set();
+  for (const languageCode of languageCodes) {
+    if (
+      !rowTextContentEqual(
+        { [languageCode]: fields[languageCode] ?? "" },
+        { [languageCode]: footnotes[languageCode] ?? [] },
+        { [languageCode]: imageCaptions[languageCode] ?? "" },
+        { [languageCode]: persistedFields[languageCode] ?? "" },
+        { [languageCode]: persistedFootnotes[languageCode] ?? [] },
+        { [languageCode]: persistedImageCaptions[languageCode] ?? "" },
+        {}, {},
+        { [languageCode]: attributions[languageCode] ?? "" },
+        { [languageCode]: row?.persistedAttributions?.[languageCode] ?? "" },
+      )
+    ) {
+      changed.add(languageCode);
+    }
+  }
+  return changed;
+}
+
 export function rowHasFieldChanges(row) {
   return (
     !rowTextContentEqual(
@@ -92,6 +137,8 @@ export function rowHasFieldChanges(row) {
       row?.persistedImageCaptions,
       row?.images,
       row?.persistedImages,
+      row?.attributions,
+      row?.persistedAttributions,
     )
     || !rowTimingsEqual(row?.timings, row?.persistedTimings)
   );

@@ -25,8 +25,9 @@ fn cache_installation_access_best_effort(
     app: &AppHandle,
     installation: &GithubAppInstallationInfo,
     operation: &'static str,
+    session_token: &str,
 ) {
-    if cache_installation_access(app, installation).is_err() {
+    if cache_installation_access(app, installation, session_token).is_err() {
         report_backend_nonfatal_error(app, operation, "installation_access_cache_write_failed");
     }
 }
@@ -45,6 +46,7 @@ pub(crate) async fn list_accessible_github_app_installations(
                 &app,
                 installation,
                 "list_accessible_github_app_installations.cache_installation_access",
+                &session_token,
             );
         }
         Ok(installations)
@@ -70,6 +72,7 @@ pub(crate) async fn inspect_github_app_installation(
             &app,
             &installation,
             "inspect_github_app_installation.cache_installation_access",
+            &session_token,
         );
         Ok(installation)
     })

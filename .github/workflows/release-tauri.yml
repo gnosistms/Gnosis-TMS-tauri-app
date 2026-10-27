@@ -254,3 +254,27 @@ jobs:
             gh release delete-asset "$GITHUB_REF_NAME" "$(basename "$dmg_path")" --yes || true
             gh release upload "$GITHUB_REF_NAME" "$zip_path" --clobber
           done < <(find src-tauri/target -path '*bundle/dmg/*.dmg' -type f | sort)
+
+  publish-release-notes:
+    name: Publish release notes
+    needs: publish-tauri
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Publish versioned release notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          NOTES_PATH="docs/releases/${RELEASE_TAG}.md"
+          if [[ ! -f "$NOTES_PATH" ]]; then
+            echo "Release notes are required at $NOTES_PATH." >&2
+            exit 1
+          fi
+          gh release edit "$RELEASE_TAG" --notes-file "$NOTES_PATH"

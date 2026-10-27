@@ -280,54 +280,56 @@ async function reconcileOneProjectRepoSyncState({
         input,
         sessionToken: requireBrokerSession(),
       });
-      if (shouldAbort?.()) {
-        return Array.isArray(initialSnapshots) ? initialSnapshots : [];
-      }
-
-      mergeSnapshots(initialSnapshots);
-      onSnapshots?.(initialSnapshots, descriptor);
-      openRequiredAppUpdatePromptFromProjectSnapshots(initialSnapshots, render);
-      showScopedSyncBadge("projects", syncingBadgeText(initialSnapshots), render);
-      render();
+      const canPublish = () => !shouldAbort?.() && state.selectedTeamId === team.id;
+      const publishSnapshots = (snapshots, badgeText = syncingBadgeText(snapshots)) => {
+        if (!canPublish()) return;
+        mergeSnapshots(snapshots);
+        onSnapshots?.(snapshots, descriptor);
+        openRequiredAppUpdatePromptFromProjectSnapshots(snapshots, render);
+        showScopedSyncBadge("projects", badgeText, render);
+        render();
+      };
+      publishSnapshots(initialSnapshots);
 
       let snapshots = initialSnapshots;
+      // The backend returns its stored snapshot on each poll. Do not publish
+      // identical results: publication rebuilds the projects page and interrupts
+      // scrolling even though no project information changed.
+      let publishedSnapshotJson = JSON.stringify(snapshots);
       const pollingStartedAt = projectRepoSyncNow();
       let previousSignature = projectRepoSyncSignature(snapshots);
       let noProgressPolls = 0;
       while (hasSyncingRepos(snapshots)) {
         await delay(PROJECT_REPO_SYNC_POLL_DELAY_MS);
-        if (shouldAbort?.() || state.selectedTeamId !== team.id) {
-          return Array.isArray(snapshots) ? snapshots : [];
-        }
+        // Canceling a discovery stops UI publication, not the native Git job.
+        // Retain the repo queue until that job finishes so a newly available
+        // Add files/Delete action cannot race a still-running first sync.
         snapshots = await invoke("list_project_repo_sync_states", { input });
-        if (shouldAbort?.()) {
-          return Array.isArray(snapshots) ? snapshots : [];
-        }
         const signature = projectRepoSyncSignature(snapshots);
         noProgressPolls = signature === previousSignature ? noProgressPolls + 1 : 0;
         previousSignature = signature;
         const elapsedMs = Math.max(0, projectRepoSyncNow() - pollingStartedAt);
-        if (
+        const stalled = hasSyncingRepos(snapshots) && (
           elapsedMs >= PROJECT_REPO_SYNC_MAX_POLL_MS
           || noProgressPolls >= PROJECT_REPO_SYNC_NO_PROGRESS_POLLS
-        ) {
-          snapshots = markProjectRepoSyncStalled(
+        );
+        // A UI timeout does not cancel native work. Keep the real snapshots for
+        // queue ownership and decorate only the published progress indication.
+        const visibleSnapshots = stalled
+          ? markProjectRepoSyncStalled(
             snapshots,
             descriptor,
             elapsedMs >= PROJECT_REPO_SYNC_MAX_POLL_MS ? "maxDuration" : "noProgress",
-          );
-          mergeSnapshots(snapshots);
-          onSnapshots?.(snapshots, descriptor);
-          openRequiredAppUpdatePromptFromProjectSnapshots(snapshots, render);
-          showScopedSyncBadge("projects", "Project repo sync is taking longer than expected.", render);
-          render();
-          break;
+          )
+          : snapshots;
+        const snapshotJson = JSON.stringify(visibleSnapshots);
+        if (snapshotJson === publishedSnapshotJson) {
+          continue;
         }
-        mergeSnapshots(snapshots);
-        onSnapshots?.(snapshots, descriptor);
-        openRequiredAppUpdatePromptFromProjectSnapshots(snapshots, render);
-        showScopedSyncBadge("projects", syncingBadgeText(snapshots), render);
-        render();
+        publishedSnapshotJson = snapshotJson;
+        publishSnapshots(visibleSnapshots, stalled
+          ? "Project repo sync is taking longer than expected."
+          : syncingBadgeText(snapshots));
       }
 
       return Array.isArray(snapshots) ? snapshots : [];
@@ -394,6 +396,7 @@ export async function reconcileProjectRepoSyncStates(render, team, projects, opt
     return;
   }
   const updateQueuedSyncBadge = () => {
+    if (shouldAbort?.() || state.selectedTeamId !== team.id) return;
     showScopedSyncBadge(
       "projects",
       queuedSyncBadgeText(waitingSummaryForProjectSync(team, input.projects), input.projects.length),
@@ -433,9 +436,10 @@ export async function reconcileProjectRepoSyncStates(render, team, projects, opt
   const issueText = issueNoticeText(snapshots);
   if (issueText) {
     showNoticeBadge(issueText, render, 2400);
-  } else {
-    render();
   }
+  // Keep the full render last: an engaged project dropdown holds only the
+  // latest render, so a later badge-only update would discard the page refresh.
+  render();
 
   return Array.isArray(snapshots) ? snapshots : [];
 }

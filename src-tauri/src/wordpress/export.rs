@@ -1,7 +1,13 @@
-use std::path::{Path, PathBuf};
 use std::time::Duration;
+use std::{
+    collections::{HashMap, HashSet},
+    fs::File,
+    io::Read,
+    path::{Path, PathBuf},
+};
 
 use reqwest::blocking::Client;
+use reqwest::header::LINK;
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter};
 use url::Url;
@@ -12,9 +18,14 @@ use crate::{
     project_repo_paths::resolve_project_git_repo_path,
     wordpress::client::{WordPressSite, WORDPRESS_RECONNECT_MESSAGE},
     wordpress::debug::wordpress_debug_log,
+    wordpress::image_cache::{
+        remove_cached_site, CachedWordPressImage, WordPressImageCacheKey,
+        WordPressImageCacheSession,
+    },
     wordpress::storage::{
-        clear_wordpress_connection, load_wordpress_connection, WordPressConnection,
-        WordPressConnectionInfo,
+        forget_wordpress_connection as forget_saved_wordpress_connection,
+        list_wordpress_connections as list_saved_wordpress_connections, load_wordpress_connection,
+        save_wordpress_connection, WordPressConnection, WordPressConnectionInfo,
     },
 };
 
@@ -41,6 +52,8 @@ pub(crate) struct WordPressFootnoteInput {
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct WordPressExportInput {
+    storage_login: String,
+    site_id: String,
     installation_id: i64,
     repo_name: String,
     project_id: Option<String>,
@@ -51,6 +64,8 @@ pub(crate) struct WordPressExportInput {
     content: String,
     #[serde(default)]
     footnotes: Vec<WordPressFootnoteInput>,
+    #[serde(default)]
+    refresh_wordpress_images: bool,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -66,6 +81,7 @@ pub(crate) struct WordPressExportProgressPayload {
     post_title: Option<String>,
     post_status: Option<String>,
     post_edit_link: Option<String>,
+    error_code: Option<&'static str>,
 }
 
 #[derive(serde::Serialize)]
@@ -79,31 +95,255 @@ pub(crate) struct WordPressPostSummary {
 }
 
 #[tauri::command]
-pub(crate) async fn get_wordpress_connection(
+pub(crate) async fn list_wordpress_connections(
     app: AppHandle,
-) -> Result<Option<WordPressConnectionInfo>, String> {
+    storage_login: String,
+) -> Result<Vec<WordPressConnectionInfo>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        Ok(load_wordpress_connection(&app)?.map(|connection| connection.info()))
+        list_saved_wordpress_connections(&app, &storage_login)
     })
     .await
-    .map_err(|error| format!("Could not read the WordPress connection: {error}"))?
+    .map_err(|error| format!("Could not read the WordPress connections: {error}"))?
 }
 
 #[tauri::command]
-pub(crate) async fn disconnect_wordpress(app: AppHandle) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || clear_wordpress_connection(&app))
+pub(crate) async fn forget_wordpress_connection(
+    app: AppHandle,
+    storage_login: String,
+    site_id: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        forget_saved_wordpress_connection(&app, &storage_login, &site_id)?;
+        if let Err(error) = remove_cached_site(&app, site_id.trim()) {
+            wordpress_debug_log(&format!(
+                "could not clear forgotten site's image cache: {error}"
+            ));
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|error| format!("Could not forget the WordPress connection: {error}"))?
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct WordPressSiteInspection {
+    kind: &'static str,
+    site_url: String,
+    display_name: String,
+    blog_id: Option<String>,
+    api_root: Option<String>,
+}
+
+#[tauri::command]
+pub(crate) async fn inspect_wordpress_site(
+    site_url: String,
+) -> Result<WordPressSiteInspection, String> {
+    tauri::async_runtime::spawn_blocking(move || inspect_wordpress_site_blocking(&site_url))
         .await
-        .map_err(|error| format!("Could not clear the WordPress connection: {error}"))?
+        .map_err(|error| format!("Could not inspect the WordPress site: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn save_self_hosted_wordpress_connection(
+    app: AppHandle,
+    storage_login: String,
+    site_url: String,
+    api_root: String,
+    username: String,
+    password: String,
+    allow_insecure: bool,
+) -> Result<WordPressConnectionInfo, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let site_url_parsed = parse_http_url(&site_url)?;
+        let api_root_parsed = parse_http_url(&api_root)?;
+        if site_url_parsed.host_str() != api_root_parsed.host_str()
+            || site_url_parsed.port_or_known_default() != api_root_parsed.port_or_known_default()
+        {
+            return Err("The discovered WordPress API uses a different origin. Enter that site address directly before sending credentials.".to_string());
+        }
+        if (site_url_parsed.scheme() == "http" || api_root_parsed.scheme() == "http") && !allow_insecure {
+            return Err("Confirm that you want to send WordPress credentials over unencrypted HTTP.".to_string());
+        }
+        if username.trim().is_empty() || password.is_empty() {
+            return Err("Enter the WordPress username and password.".to_string());
+        }
+        let display_name = discover_self_hosted_name(&api_root_parsed).unwrap_or_default();
+        let connection = WordPressConnection::self_hosted(
+            site_url_parsed.to_string(), display_name, api_root_parsed.to_string(), username, password,
+        );
+        let site = WordPressSite::from_connection(&connection)?;
+        let client = wordpress_http_client()?;
+        let user = site.get_json(&client, "users/me?context=edit")
+            .map_err(|error| error.trim_start_matches("WORDPRESS_REAUTH_REQUIRED: ").to_string())?;
+        let capabilities = user.get("capabilities").and_then(|value| value.as_object());
+        let can_edit = capabilities.and_then(|items| items.get("edit_posts"))
+            .and_then(|value| value.as_bool()).unwrap_or(false);
+        let can_upload = capabilities.and_then(|items| items.get("upload_files"))
+            .and_then(|value| value.as_bool()).unwrap_or(false);
+        if !can_edit || !can_upload {
+            return Err("This WordPress user must be allowed to edit posts and upload files.".to_string());
+        }
+        save_wordpress_connection(&app, &storage_login, &connection)?;
+        Ok(connection.info())
+    })
+    .await
+    .map_err(|error| format!("Could not connect the self-hosted WordPress site: {error}"))?
+}
+
+fn parse_http_url(value: &str) -> Result<Url, String> {
+    let with_scheme = if value.trim().contains("://") {
+        value.trim().to_string()
+    } else {
+        format!("https://{}", value.trim())
+    };
+    let url = Url::parse(&with_scheme)
+        .map_err(|_| "Enter a valid WordPress site address.".to_string())?;
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        return Err("Enter an HTTP or HTTPS WordPress site address.".to_string());
+    }
+    Ok(url)
+}
+
+fn inspect_wordpress_site_blocking(value: &str) -> Result<WordPressSiteInspection, String> {
+    let site_url = parse_http_url(value)?;
+    let client = Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|error| format!("Could not create the WordPress discovery client: {error}"))?;
+    if let Some(host) = site_url.host_str() {
+        let lookup = wordpress_com_site_lookup_url(host)?;
+        if let Ok(response) = client
+            .get(lookup)
+            .header("Accept", "application/json")
+            .send()
+        {
+            if response.status().is_success() {
+                if let Ok(payload) = response.json::<serde_json::Value>() {
+                    if let Some(blog_id) = payload.get("ID").and_then(|value| value.as_u64()) {
+                        return Ok(WordPressSiteInspection {
+                            kind: "wordpressCom",
+                            site_url: payload
+                                .get("URL")
+                                .and_then(|value| value.as_str())
+                                .unwrap_or(site_url.as_str())
+                                .trim_end_matches('/')
+                                .to_string(),
+                            display_name: payload
+                                .get("name")
+                                .and_then(|value| value.as_str())
+                                .unwrap_or_default()
+                                .to_string(),
+                            blog_id: Some(blog_id.to_string()),
+                            api_root: None,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    let api_root = discover_wordpress_api_root(&client, &site_url)?;
+    let display_name = discover_self_hosted_name(&api_root).unwrap_or_default();
+    Ok(WordPressSiteInspection {
+        kind: "selfHosted",
+        site_url: site_url.to_string().trim_end_matches('/').to_string(),
+        display_name,
+        blog_id: None,
+        api_root: Some(api_root.to_string().trim_end_matches('/').to_string()),
+    })
+}
+
+fn wordpress_com_site_lookup_url(host: &str) -> Result<Url, String> {
+    let mut lookup = Url::parse("https://public-api.wordpress.com/rest/v1.1/sites/")
+        .map_err(|error| format!("Could not build the WordPress.com discovery URL: {error}"))?;
+    lookup
+        .path_segments_mut()
+        .map_err(|_| "Could not build the WordPress.com discovery URL.".to_string())?
+        .pop_if_empty()
+        .push(host);
+    Ok(lookup)
+}
+
+fn discover_wordpress_api_root(client: &Client, site_url: &Url) -> Result<Url, String> {
+    if let Ok(response) = client.head(site_url.clone()).send() {
+        for value in response.headers().get_all(LINK) {
+            if let Ok(value) = value.to_str() {
+                for part in value.split(',') {
+                    if part.contains("rel=\"https://api.w.org/\"") {
+                        if let (Some(start), Some(end)) = (part.find('<'), part.find('>')) {
+                            if let Ok(url) = Url::parse(&part[start + 1..end]) {
+                                return Ok(url);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let mut base = site_url.clone();
+    if !base.path().ends_with('/') {
+        base.set_path(&format!("{}/", base.path()));
+    }
+    for candidate in [base.join("wp-json/").ok(), {
+        let mut route = base.clone();
+        route.set_query(Some("rest_route=/"));
+        Some(route)
+    }]
+    .into_iter()
+    .flatten()
+    {
+        if let Ok(response) = client
+            .get(candidate.clone())
+            .header("Accept", "application/json")
+            .send()
+        {
+            if response.status().is_success() {
+                if let Ok(payload) = response.json::<serde_json::Value>() {
+                    if payload
+                        .get("namespaces")
+                        .and_then(|value| value.as_array())
+                        .is_some_and(|items| {
+                            items.iter().any(|item| item.as_str() == Some("wp/v2"))
+                        })
+                    {
+                        return Ok(candidate);
+                    }
+                }
+            }
+        }
+    }
+    Err("Could not discover a WordPress REST API at that address.".to_string())
+}
+
+fn discover_self_hosted_name(api_root: &Url) -> Option<String> {
+    let client = Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .ok()?;
+    let payload = client
+        .get(api_root.clone())
+        .header("Accept", "application/json")
+        .send()
+        .ok()?
+        .json::<serde_json::Value>()
+        .ok()?;
+    payload
+        .get("name")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
 }
 
 #[tauri::command]
 pub(crate) async fn search_wordpress_posts(
     app: AppHandle,
+    storage_login: String,
+    site_id: String,
     search: String,
 ) -> Result<Vec<WordPressPostSummary>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let connection = require_wordpress_connection(&app)?;
-        let site = WordPressSite::wordpress_com(&connection)?;
+        let connection = require_wordpress_connection(&app, &storage_login, &site_id)?;
+        let site = WordPressSite::from_connection(&connection)?;
         let client = wordpress_http_client()?;
 
         let path = wordpress_post_search_path(&search, &connection);
@@ -191,7 +431,7 @@ fn url_host_matches_connection(url: &Url, connection: &WordPressConnection) -> b
     let Some(input_host) = url.host_str() else {
         return false;
     };
-    let Ok(site_url) = Url::parse(connection.blog_url.trim()) else {
+    let Ok(site_url) = Url::parse(connection.site_url.trim()) else {
         return false;
     };
     let Some(site_host) = site_url.host_str() else {
@@ -210,7 +450,7 @@ fn wordpress_com_editor_post_id(url: &Url, connection: &WordPressConnection) -> 
     if segments.len() < 3 || segments.first()? != &"post" {
         return None;
     }
-    if segments.get(1)?.trim() != connection.blog_id.trim() {
+    if segments.get(1)?.trim() != connection.blog_id()?.trim() {
         return None;
     }
     parse_positive_u64(segments.get(2)?)
@@ -270,6 +510,9 @@ pub(crate) async fn export_chapter_to_wordpress(
     app: AppHandle,
     input: WordPressExportInput,
 ) -> Result<(), String> {
+    if input.storage_login.trim().is_empty() || input.site_id.trim().is_empty() {
+        return Err("Choose a connected WordPress site first.".to_string());
+    }
     if input.job_id.trim().is_empty() {
         return Err("The WordPress export is missing a job id.".to_string());
     }
@@ -322,17 +565,20 @@ pub(crate) async fn export_chapter_to_wordpress(
                         post_title: outcome.post_title,
                         post_status: outcome.post_status,
                         post_edit_link: outcome.post_edit_link,
+                        error_code: None,
                     },
                 )
             }
             Err(error) => {
                 wordpress_debug_log(&format!("export failed: {error}"));
+                let reauth_required = error.contains("WORDPRESS_REAUTH_REQUIRED:");
+                let message = error.replace("WORDPRESS_REAUTH_REQUIRED: ", "");
                 emit_export_progress(
                     &app,
                     WordPressExportProgressPayload {
                         job_id,
                         status: "error",
-                        message: error,
+                        message,
                         current: None,
                         total: None,
                         post_link: None,
@@ -340,6 +586,7 @@ pub(crate) async fn export_chapter_to_wordpress(
                         post_title: None,
                         post_status: None,
                         post_edit_link: None,
+                        error_code: reauth_required.then_some("reauthRequired"),
                     },
                 )
             }
@@ -362,8 +609,8 @@ fn run_wordpress_export(
     app: &AppHandle,
     input: WordPressExportInput,
 ) -> Result<WordPressExportOutcome, String> {
-    let connection = require_wordpress_connection(app)?;
-    let site = WordPressSite::wordpress_com(&connection)?;
+    let connection = require_wordpress_connection(app, &input.storage_login, &input.site_id)?;
+    let site = WordPressSite::from_connection(&connection)?;
     let client = wordpress_http_client()?;
 
     let image_sources = collect_image_sources(&input.content);
@@ -393,6 +640,92 @@ fn run_wordpress_export(
         };
         let total = image_sources.len();
 
+        let mut prepared_local_images = HashMap::new();
+        let mut cache_keys = HashMap::new();
+        for source in &image_sources {
+            if is_local_image_source(source) {
+                let repo_path = repo_path
+                    .as_ref()
+                    .ok_or_else(|| "The local project repo is not available yet.".to_string())?;
+                let prepared = prepare_repo_image(repo_path, source)?;
+                cache_keys.insert(source.clone(), prepared.cache_key.clone());
+                prepared_local_images.insert(source.clone(), prepared);
+            } else if let Some(cache_key) =
+                wordpress_remote_image_cache_key(source, &connection.site_url)
+            {
+                cache_keys.insert(source.clone(), cache_key);
+            }
+        }
+
+        let mut image_cache = match WordPressImageCacheSession::open(app, &input.site_id) {
+            Ok(cache) => cache,
+            Err(error) => {
+                wordpress_debug_log(&format!(
+                    "WordPress image cache could not be opened; continuing uncached: {error}"
+                ));
+                WordPressImageCacheSession::unavailable(&input.site_id)
+            }
+        };
+        let mut validated_images = HashMap::new();
+        if !input.refresh_wordpress_images {
+            let candidate_keys = cache_keys.values().cloned().collect::<HashSet<_>>();
+            let candidates = candidate_keys
+                .into_iter()
+                .filter_map(|cache_key| {
+                    image_cache
+                        .get(&cache_key)
+                        .cloned()
+                        .map(|cached| (cache_key, cached))
+                })
+                .collect::<Vec<_>>();
+            let attachment_ids = candidates
+                .iter()
+                .map(|(_, cached)| cached.attachment_id)
+                .collect::<HashSet<_>>();
+            if !attachment_ids.is_empty() {
+                emit_export_progress(
+                    app,
+                    WordPressExportProgressPayload {
+                        job_id: input.job_id.clone(),
+                        status: "progress",
+                        message: format!(
+                            "Checking {} cached image{}...",
+                            attachment_ids.len(),
+                            if attachment_ids.len() == 1 { "" } else { "s" }
+                        ),
+                        current: None,
+                        total: Some(total),
+                        post_link: None,
+                        post_id: None,
+                        post_title: None,
+                        post_status: None,
+                        post_edit_link: None,
+                        error_code: None,
+                    },
+                );
+                match fetch_and_reconcile_cached_media(candidates, |attachment_ids| {
+                    fetch_current_media_by_ids(&site, &client, attachment_ids)
+                }) {
+                    Ok(reconciliation) => {
+                        for cache_key in reconciliation.stale_keys {
+                            image_cache.remove(&cache_key);
+                        }
+                        for (cache_key, current) in reconciliation.validated {
+                            cache_uploaded_wordpress_image(
+                                &mut image_cache,
+                                cache_key.clone(),
+                                &current,
+                            );
+                            validated_images.insert(cache_key, current);
+                        }
+                    }
+                    Err(error) => wordpress_debug_log(&format!(
+                        "cached WordPress media validation failed; falling back to verified per-image lookup: {error}"
+                    )),
+                }
+            }
+        }
+
         for (index, source) in image_sources.iter().enumerate() {
             emit_export_progress(
                 app,
@@ -407,17 +740,32 @@ fn run_wordpress_export(
                     post_title: None,
                     post_status: None,
                     post_edit_link: None,
+                    error_code: None,
                 },
             );
 
-            if let Some(repo_path) = repo_path.as_ref().filter(|_| is_local_image_source(source)) {
+            if is_local_image_source(source) {
                 wordpress_debug_log(&format!(
                     "uploading image {} of {total}: {source}",
                     index + 1
                 ));
-                let uploaded = upload_repo_image(&site, &client, repo_path, source)?;
+                let prepared = prepared_local_images.remove(source).ok_or_else(|| {
+                    format!("Could not prepare the local image '{source}' for export.")
+                })?;
+                ensure_prepared_repo_image_unchanged(&prepared, source)?;
+                let cache_key = prepared.cache_key.clone();
+                let uploaded = validated_image_or_else(
+                    input.refresh_wordpress_images,
+                    Some(&cache_key),
+                    &validated_images,
+                    || {
+                        upload_repo_image(&site, &client, source, prepared, &mut image_cache)
+                            .map(Some)
+                    },
+                )?
+                .ok_or_else(|| format!("Could not resolve the local image '{source}'."))?;
                 wordpress_debug_log(&format!(
-                    "image uploaded: {source} -> {} natural={:?}x{:?}",
+                    "image resolved: {source} -> {} natural={:?}x{:?}",
                     uploaded.source_url, uploaded.natural_width, uploaded.natural_height,
                 ));
                 content = apply_uploaded_image_to_content(&content, source, &uploaded);
@@ -429,13 +777,20 @@ fn run_wordpress_export(
             // its attachment ID in the block so WordPress can generate srcset and
             // sizes attributes (including Retina-resolution candidates).
             if let Some(lookup) =
-                wordpress_media_lookup_for_site_source(source, &connection.blog_url)
+                wordpress_media_lookup_for_site_source(source, &connection.site_url)
             {
-                let media = find_site_media_by_source(&site, &client, &lookup, source).map_err(
-                    |error| {
-                        format!(
-                            "Could not verify the WordPress Media Library image '{source}' before export: {error}"
-                        )
+                let cache_key = wordpress_remote_image_cache_key(source, &connection.site_url);
+                let media = resolve_remote_image_with_cache(
+                    input.refresh_wordpress_images,
+                    cache_key.as_ref(),
+                    &validated_images,
+                    &mut image_cache,
+                    || {
+                        find_site_media_by_source(&site, &client, &lookup, source).map_err(|error| {
+                            format!(
+                                "Could not verify the WordPress Media Library image '{source}' before export: {error}"
+                            )
+                        })
                     },
                 )?;
                 if let Some(media) = media {
@@ -460,6 +815,12 @@ fn run_wordpress_export(
                 }
             }
         }
+
+        if let Err(error) = image_cache.commit() {
+            wordpress_debug_log(&format!(
+                "WordPress image cache commit failed; export still continues: {error}"
+            ));
+        }
     }
 
     emit_export_progress(
@@ -479,6 +840,7 @@ fn run_wordpress_export(
             post_title: None,
             post_status: None,
             post_edit_link: None,
+            error_code: None,
         },
     );
 
@@ -544,22 +906,42 @@ fn run_wordpress_export(
         post_id,
         post_title,
         post_status,
-        post_edit_link: post_id.map(|id| wordpress_editor_link(&connection.blog_id, id)),
+        post_edit_link: post_id.and_then(|id| wordpress_editor_link(&connection, id)),
     })
 }
 
 /// The WordPress.com editor URL for a post; works for both Simple and
 /// Jetpack-connected sites reachable through the WordPress.com API.
-fn wordpress_editor_link(blog_id: &str, post_id: u64) -> String {
-    format!("https://wordpress.com/post/{}/{post_id}", blog_id.trim())
+fn wordpress_editor_link(connection: &WordPressConnection, post_id: u64) -> Option<String> {
+    if let Some(blog_id) = connection.blog_id() {
+        return Some(format!(
+            "https://wordpress.com/post/{}/{post_id}",
+            blog_id.trim()
+        ));
+    }
+    let mut url = Url::parse(&format!(
+        "{}/wp-admin/post.php",
+        connection.site_url.trim_end_matches('/')
+    ))
+    .ok()?;
+    url.query_pairs_mut()
+        .append_pair("post", &post_id.to_string())
+        .append_pair("action", "edit");
+    Some(url.to_string())
 }
 
-fn require_wordpress_connection(app: &AppHandle) -> Result<WordPressConnection, String> {
-    load_wordpress_connection(app)?.ok_or_else(|| WORDPRESS_RECONNECT_MESSAGE.to_string())
+fn require_wordpress_connection(
+    app: &AppHandle,
+    storage_login: &str,
+    site_id: &str,
+) -> Result<WordPressConnection, String> {
+    load_wordpress_connection(app, storage_login, site_id)?
+        .ok_or_else(|| format!("WORDPRESS_REAUTH_REQUIRED: {WORDPRESS_RECONNECT_MESSAGE}"))
 }
 
 fn wordpress_http_client() -> Result<Client, String> {
     Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(120))
         .build()
         .map_err(|error| format!("Could not create the WordPress HTTP client: {error}"))
@@ -657,11 +1039,22 @@ fn replace_image_source(content: &str, source: &str, uploaded_url: &str) -> Stri
     )
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct UploadedWordPressImage {
     attachment_id: Option<u64>,
     source_url: String,
     natural_width: Option<u64>,
     natural_height: Option<u64>,
+}
+
+struct PreparedRepoImage {
+    absolute_path: PathBuf,
+    file_len: u64,
+    modified: Option<std::time::SystemTime>,
+    original_name: String,
+    mime_type: &'static str,
+    content_hash: String,
+    cache_key: WordPressImageCacheKey,
 }
 
 /// Display size for an uploaded image: capped to
@@ -822,12 +1215,7 @@ fn apply_uploaded_image_to_content(
     replace_image_source(content, source, &uploaded.source_url)
 }
 
-fn upload_repo_image(
-    site: &WordPressSite,
-    client: &Client,
-    repo_path: &Path,
-    source: &str,
-) -> Result<UploadedWordPressImage, String> {
+fn prepare_repo_image(repo_path: &Path, source: &str) -> Result<PreparedRepoImage, String> {
     let absolute_path = resolve_repo_image_path(repo_path, source)?;
     let metadata = std::fs::metadata(&absolute_path)
         .map_err(|_| format!("Could not find the uploaded image '{source}' in the project."))?;
@@ -835,30 +1223,71 @@ fn upload_repo_image(
         return Err(format!("The image '{source}' is too large to upload."));
     }
 
-    let bytes = std::fs::read(&absolute_path)
-        .map_err(|error| format!("Could not read the uploaded image '{source}': {error}"))?;
     let original_name = absolute_path
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("image")
         .to_string();
-    let mime_type = image_mime_type(&original_name, &bytes)
+    let (content_hash, header) = image_content_hash_and_header(&absolute_path, source)?;
+    let mime_type = image_mime_type(&original_name, &header)
         .ok_or_else(|| format!("Could not determine the image type for '{source}'."))?;
+    let cache_key = WordPressImageCacheKey::local(content_hash.clone());
+    Ok(PreparedRepoImage {
+        absolute_path,
+        file_len: metadata.len(),
+        modified: metadata.modified().ok(),
+        original_name,
+        mime_type,
+        content_hash,
+        cache_key,
+    })
+}
 
+fn ensure_prepared_repo_image_unchanged(
+    prepared: &PreparedRepoImage,
+    source: &str,
+) -> Result<(), String> {
+    let metadata = std::fs::metadata(&prepared.absolute_path)
+        .map_err(|_| format!("Could not find the uploaded image '{source}' in the project."))?;
+    let changed = metadata.len() != prepared.file_len
+        || prepared
+            .modified
+            .is_some_and(|modified| metadata.modified().ok() != Some(modified));
+    if changed {
+        return Err(format!(
+            "The image '{source}' changed while preparing the WordPress export. Try exporting again."
+        ));
+    }
+    Ok(())
+}
+
+fn upload_repo_image(
+    site: &WordPressSite,
+    client: &Client,
+    source: &str,
+    prepared: PreparedRepoImage,
+    image_cache: &mut WordPressImageCacheSession,
+) -> Result<UploadedWordPressImage, String> {
     // Content-address the media file: identical bytes always get the same slug, so a
     // copy already in the WordPress media library from an earlier export is reused
     // instead of uploaded again. Without this, every export added a fresh duplicate.
-    let slug = content_addressed_media_slug(&bytes);
+    let slug = content_addressed_media_slug_from_hash(&prepared.content_hash);
     if let Some(existing) = find_uploaded_media_by_slug(site, client, &slug)? {
         wordpress_debug_log(&format!(
             "reusing existing media for {source}: slug={slug} -> {}",
             existing.source_url
         ));
+        cache_uploaded_wordpress_image(image_cache, prepared.cache_key, &existing);
         return Ok(existing);
     }
 
-    let file_name = format!("{slug}.{}", media_file_extension(mime_type));
-    let response = site.upload_media(client, &file_name, mime_type, bytes)?;
+    wordpress_debug_log(&format!(
+        "uploading new WordPress media for {source}: original={} slug={slug}",
+        prepared.original_name
+    ));
+    let bytes = read_prepared_repo_image_bytes(&prepared, source)?;
+    let file_name = format!("{slug}.{}", media_file_extension(prepared.mime_type));
+    let response = site.upload_media(client, &file_name, prepared.mime_type, bytes)?;
     let source_url = response
         .get("source_url")
         .and_then(|value| value.as_str())
@@ -872,7 +1301,7 @@ fn upload_repo_image(
             "WordPress did not return an attachment ID for the uploaded image.".to_string()
         })?;
 
-    Ok(UploadedWordPressImage {
+    let uploaded = UploadedWordPressImage {
         attachment_id: Some(attachment_id),
         source_url,
         natural_width: response
@@ -881,23 +1310,92 @@ fn upload_repo_image(
         natural_height: response
             .pointer("/media_details/height")
             .and_then(|value| value.as_u64()),
-    })
+    };
+    cache_uploaded_wordpress_image(image_cache, prepared.cache_key, &uploaded);
+    Ok(uploaded)
+}
+
+fn image_content_hash(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn image_content_hash_and_header(path: &Path, source: &str) -> Result<(String, Vec<u8>), String> {
+    const HASH_BUFFER_BYTES: usize = 64 * 1024;
+    const IMAGE_HEADER_BYTES: usize = 12;
+
+    let mut file = File::open(path)
+        .map_err(|error| format!("Could not read the uploaded image '{source}': {error}"))?;
+    let mut hasher = Sha256::new();
+    let mut header = Vec::with_capacity(IMAGE_HEADER_BYTES);
+    let mut buffer = [0_u8; HASH_BUFFER_BYTES];
+    loop {
+        let count = file
+            .read(&mut buffer)
+            .map_err(|error| format!("Could not read the uploaded image '{source}': {error}"))?;
+        if count == 0 {
+            break;
+        }
+        if header.len() < IMAGE_HEADER_BYTES {
+            let remaining = IMAGE_HEADER_BYTES - header.len();
+            header.extend_from_slice(&buffer[..count.min(remaining)]);
+        }
+        hasher.update(&buffer[..count]);
+    }
+    let content_hash = hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    Ok((content_hash, header))
+}
+
+fn read_prepared_repo_image_bytes(
+    prepared: &PreparedRepoImage,
+    source: &str,
+) -> Result<Vec<u8>, String> {
+    let bytes = std::fs::read(&prepared.absolute_path)
+        .map_err(|error| format!("Could not read the uploaded image '{source}': {error}"))?;
+    if bytes.len() as u64 > MAX_WORDPRESS_IMAGE_BYTES {
+        return Err(format!("The image '{source}' is too large to upload."));
+    }
+    if image_content_hash(&bytes) != prepared.content_hash {
+        return Err(format!(
+            "The image '{source}' changed while preparing the WordPress export. Try exporting again."
+        ));
+    }
+    Ok(bytes)
 }
 
 /// A stable, slug-safe name derived from the image bytes. WordPress turns an uploaded
 /// file's name into the attachment slug, so a deterministic name lets a later export
-/// find the same attachment. 128 bits of SHA-256 make collisions between distinct
-/// images effectively impossible.
-fn content_addressed_media_slug(bytes: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    let digest = hasher.finalize();
-    let hex: String = digest
-        .iter()
-        .take(16)
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
-    format!("gnosis-tms-{hex}")
+/// find the same attachment. The WordPress-facing slug retains the existing 128-bit
+/// prefix while the local cache uses the complete SHA-256 hash.
+fn content_addressed_media_slug_from_hash(content_hash: &str) -> String {
+    let prefix = content_hash.get(..32).unwrap_or(content_hash);
+    format!("gnosis-tms-{prefix}")
+}
+
+fn cache_uploaded_wordpress_image(
+    image_cache: &mut WordPressImageCacheSession,
+    cache_key: WordPressImageCacheKey,
+    uploaded: &UploadedWordPressImage,
+) {
+    let Some(attachment_id) = uploaded.attachment_id else {
+        return;
+    };
+    let cached = CachedWordPressImage {
+        attachment_id,
+        source_url: uploaded.source_url.clone(),
+        natural_width: uploaded.natural_width,
+        natural_height: uploaded.natural_height,
+    };
+    image_cache.upsert(cache_key, cached);
 }
 
 fn media_file_extension(mime_type: &str) -> &'static str {
@@ -1031,6 +1529,17 @@ fn normalize_wordpress_host(host: &str) -> String {
     host.trim_start_matches("www.").to_ascii_lowercase()
 }
 
+fn wordpress_remote_image_cache_key(
+    source: &str,
+    site_url: &str,
+) -> Option<WordPressImageCacheKey> {
+    wordpress_media_lookup_for_site_source(source, site_url)?;
+    let (host, path) = wordpress_origin_image_identity(source)?;
+    Some(WordPressImageCacheKey::wordpress_remote(format!(
+        "{host}{path}"
+    )))
+}
+
 /// Normalized host and decoded path for an origin URL or Jetpack Image CDN URL.
 /// Query parameters such as `w=748` intentionally do not participate in identity.
 fn wordpress_origin_image_identity(value: &str) -> Option<(String, String)> {
@@ -1087,6 +1596,123 @@ fn media_text_search_path(search: &str) -> String {
         "media?search={}&per_page=100&media_type=image&_fields=id,slug,source_url,media_details",
         url::form_urlencoded::byte_serialize(search.as_bytes()).collect::<String>()
     )
+}
+
+const WORDPRESS_MEDIA_VALIDATION_BATCH_SIZE: usize = 100;
+
+fn media_include_paths(attachment_ids: impl IntoIterator<Item = u64>) -> Vec<String> {
+    let mut attachment_ids = attachment_ids.into_iter().collect::<Vec<_>>();
+    attachment_ids.sort_unstable();
+    attachment_ids.dedup();
+    attachment_ids
+        .chunks(WORDPRESS_MEDIA_VALIDATION_BATCH_SIZE)
+        .map(|chunk| {
+            let include = chunk
+                .iter()
+                .map(u64::to_string)
+                .collect::<Vec<_>>()
+                .join(",");
+            format!(
+                "media?include={include}&per_page={}&media_type=image&_fields=id,source_url,media_details",
+                chunk.len()
+            )
+        })
+        .collect()
+}
+
+fn fetch_current_media_by_ids(
+    site: &WordPressSite,
+    client: &Client,
+    attachment_ids: impl IntoIterator<Item = u64>,
+) -> Result<HashMap<u64, UploadedWordPressImage>, String> {
+    let mut current = HashMap::new();
+    for path in media_include_paths(attachment_ids) {
+        let response = site.get_json(client, &path)?;
+        for item in response.as_array().into_iter().flatten() {
+            if let Some(media) = uploaded_wordpress_image_from_media_item(item) {
+                if let Some(attachment_id) = media.attachment_id {
+                    current.insert(attachment_id, media);
+                }
+            }
+        }
+    }
+    Ok(current)
+}
+
+#[derive(Debug)]
+struct CachedMediaReconciliation {
+    validated: HashMap<WordPressImageCacheKey, UploadedWordPressImage>,
+    stale_keys: Vec<WordPressImageCacheKey>,
+}
+
+fn reconcile_cached_media_candidates(
+    candidates: Vec<(WordPressImageCacheKey, CachedWordPressImage)>,
+    current_media: &HashMap<u64, UploadedWordPressImage>,
+) -> CachedMediaReconciliation {
+    let mut validated = HashMap::new();
+    let mut stale_keys = Vec::new();
+    for (cache_key, cached) in candidates {
+        if let Some(current) = current_media.get(&cached.attachment_id) {
+            validated.insert(cache_key, current.clone());
+        } else {
+            stale_keys.push(cache_key);
+        }
+    }
+    CachedMediaReconciliation {
+        validated,
+        stale_keys,
+    }
+}
+
+fn fetch_and_reconcile_cached_media(
+    candidates: Vec<(WordPressImageCacheKey, CachedWordPressImage)>,
+    fetch_current: impl FnOnce(HashSet<u64>) -> Result<HashMap<u64, UploadedWordPressImage>, String>,
+) -> Result<CachedMediaReconciliation, String> {
+    let attachment_ids = candidates
+        .iter()
+        .map(|(_, cached)| cached.attachment_id)
+        .collect::<HashSet<_>>();
+    let current_media = fetch_current(attachment_ids)?;
+    Ok(reconcile_cached_media_candidates(
+        candidates,
+        &current_media,
+    ))
+}
+
+fn validated_image_or_else(
+    refresh: bool,
+    cache_key: Option<&WordPressImageCacheKey>,
+    validated_images: &HashMap<WordPressImageCacheKey, UploadedWordPressImage>,
+    resolve: impl FnOnce() -> Result<Option<UploadedWordPressImage>, String>,
+) -> Result<Option<UploadedWordPressImage>, String> {
+    if !refresh {
+        if let Some(validated) = cache_key.and_then(|key| validated_images.get(key)) {
+            return Ok(Some(validated.clone()));
+        }
+    }
+    resolve()
+}
+
+fn resolve_remote_image_with_cache(
+    refresh: bool,
+    cache_key: Option<&WordPressImageCacheKey>,
+    validated_images: &HashMap<WordPressImageCacheKey, UploadedWordPressImage>,
+    image_cache: &mut WordPressImageCacheSession,
+    resolve: impl FnOnce() -> Result<Option<UploadedWordPressImage>, String>,
+) -> Result<Option<UploadedWordPressImage>, String> {
+    let validated_cache_hit =
+        !refresh && cache_key.is_some_and(|key| validated_images.contains_key(key));
+    let media = validated_image_or_else(refresh, cache_key, validated_images, resolve)?;
+    if let Some(cache_key) = cache_key {
+        if let Some(media) = media.as_ref() {
+            if !validated_cache_hit {
+                cache_uploaded_wordpress_image(image_cache, cache_key.clone(), media);
+            }
+        } else {
+            image_cache.remove(cache_key);
+        }
+    }
+    Ok(media)
 }
 
 fn find_site_media_by_source(
@@ -1283,22 +1909,19 @@ mod tests {
     use super::*;
 
     fn test_connection() -> WordPressConnection {
-        WordPressConnection {
-            access_token: "token".to_string(),
-            blog_id: "12345".to_string(),
-            blog_url: "https://gnosisvn.org".to_string(),
-        }
+        WordPressConnection::wordpress_com(
+            "token".to_string(),
+            "12345".to_string(),
+            "https://gnosisvn.org".to_string(),
+            String::new(),
+        )
     }
 
     #[test]
     fn wordpress_editor_link_targets_the_wordpress_com_editor() {
         assert_eq!(
-            wordpress_editor_link("12345", 678),
-            "https://wordpress.com/post/12345/678"
-        );
-        assert_eq!(
-            wordpress_editor_link(" 12345 ", 678),
-            "https://wordpress.com/post/12345/678"
+            wordpress_editor_link(&test_connection(), 678).as_deref(),
+            Some("https://wordpress.com/post/12345/678")
         );
     }
 
@@ -1530,6 +2153,32 @@ mod tests {
     }
 
     #[test]
+    fn wordpress_remote_cache_key_normalizes_origin_photon_and_query_variants() {
+        let site_url = "https://gnosisvn.org";
+        let origin = wordpress_remote_image_cache_key(
+            "https://www.gnosisvn.org/wp-content/uploads/2026/08/painting.webp?version=1",
+            site_url,
+        );
+        let photon = wordpress_remote_image_cache_key(
+            "https://i2.wp.com/gnosisvn.org/wp-content/uploads/2026/08/painting.webp?w=748&ssl=1",
+            site_url,
+        );
+        let other_query = wordpress_remote_image_cache_key(
+            "https://gnosisvn.org/wp-content/uploads/2026/08/painting.webp?version=2",
+            site_url,
+        );
+
+        assert_eq!(origin, photon);
+        assert_eq!(origin, other_query);
+        assert!(origin.is_some());
+        assert!(wordpress_remote_image_cache_key(
+            "https://example.com/wp-content/uploads/2026/08/painting.webp",
+            site_url,
+        )
+        .is_none());
+    }
+
+    #[test]
     fn wordpress_media_lookup_builds_bounded_filename_search_fallbacks() {
         let lookup = wordpress_media_lookup_for_site_source(
             "https://gnosisvn.org/wp-content/uploads/2026/08/one-two-three-four-five-six-seven-eight-nine-ten.webp",
@@ -1750,18 +2399,51 @@ mod tests {
     #[test]
     fn content_addressed_slug_is_stable_per_content_and_slug_safe() {
         let png = b"\x89PNG\r\n\x1a\nfake-body";
-        let slug = content_addressed_media_slug(png);
+        let hash = image_content_hash(png);
+        let slug = content_addressed_media_slug_from_hash(&hash);
         // Deterministic: identical bytes always produce the same slug (so a later
         // export finds the same media item instead of uploading a duplicate).
-        assert_eq!(slug, content_addressed_media_slug(png));
+        assert_eq!(hash.len(), 64);
+        assert_eq!(slug, content_addressed_media_slug_from_hash(&hash));
         // Different bytes produce a different slug.
-        assert_ne!(slug, content_addressed_media_slug(b"other bytes"));
+        assert_ne!(
+            slug,
+            content_addressed_media_slug_from_hash(&image_content_hash(b"other bytes"))
+        );
         // Slug-safe: only lowercase hex and hyphens, so WordPress keeps it verbatim.
         assert!(slug.starts_with("gnosis-tms-"));
         assert!(slug
             .trim_start_matches("gnosis-tms-")
             .chars()
             .all(|character| character.is_ascii_hexdigit() && !character.is_ascii_uppercase()));
+    }
+
+    #[test]
+    fn repo_image_preparation_streams_the_hash_and_detects_later_changes() {
+        let repo_path = std::env::temp_dir().join(format!(
+            "gnosis-wordpress-streamed-image-{}",
+            uuid::Uuid::now_v7()
+        ));
+        std::fs::create_dir_all(&repo_path).unwrap();
+        let image_path = repo_path.join("image.png");
+        let original = b"\x89PNG\r\n\x1a\noriginal-body";
+        std::fs::write(&image_path, original).unwrap();
+
+        let prepared = prepare_repo_image(&repo_path, "image.png").unwrap();
+        assert_eq!(prepared.content_hash, image_content_hash(original));
+        assert_eq!(prepared.file_len, original.len() as u64);
+        assert_eq!(prepared.mime_type, "image/png");
+        assert!(ensure_prepared_repo_image_unchanged(&prepared, "image.png").is_ok());
+
+        let changed = b"\x89PNG\r\n\x1a\nchanged!-body";
+        assert_eq!(changed.len(), original.len());
+        std::fs::write(&image_path, changed).unwrap();
+        assert!(read_prepared_repo_image_bytes(&prepared, "image.png")
+            .unwrap_err()
+            .contains("changed while preparing"));
+
+        let _ = std::fs::remove_file(image_path);
+        let _ = std::fs::remove_dir(repo_path);
     }
 
     #[test]
@@ -1787,6 +2469,195 @@ mod tests {
         assert!(path.contains("per_page=100"));
         assert!(path.contains("media_type=image"));
         assert!(path.contains("_fields=id,slug,source_url,media_details"));
+    }
+
+    #[test]
+    fn media_include_paths_deduplicate_sort_and_chunk_attachment_ids() {
+        let mut ids = (1_u64..=205).rev().collect::<Vec<_>>();
+        ids.extend([1, 100, 205]);
+        let paths = media_include_paths(ids);
+
+        assert_eq!(paths.len(), 3);
+        assert!(paths[0].starts_with("media?include=1,2,3,"));
+        assert!(paths[0].contains(",99,100&per_page=100"));
+        assert!(paths[1].starts_with("media?include=101,102,"));
+        assert!(paths[1].contains(",199,200&per_page=100"));
+        assert!(paths[2].starts_with("media?include=201,202,203,204,205&per_page=5"));
+        assert!(paths
+            .iter()
+            .all(|path| path.contains("media_type=image&_fields=id,source_url,media_details")));
+    }
+
+    #[test]
+    fn cached_media_reconciliation_uses_current_metadata_and_marks_missing_ids_stale() {
+        let current_key = WordPressImageCacheKey::wordpress_remote("site/current.jpg");
+        let deleted_key = WordPressImageCacheKey::wordpress_remote("site/deleted.jpg");
+        let candidates = vec![
+            (
+                current_key.clone(),
+                CachedWordPressImage {
+                    attachment_id: 10,
+                    source_url: "https://site/old.jpg".to_string(),
+                    natural_width: Some(800),
+                    natural_height: Some(600),
+                },
+            ),
+            (
+                deleted_key.clone(),
+                CachedWordPressImage {
+                    attachment_id: 20,
+                    source_url: "https://site/deleted.jpg".to_string(),
+                    natural_width: Some(1000),
+                    natural_height: Some(1000),
+                },
+            ),
+        ];
+        let current = UploadedWordPressImage {
+            attachment_id: Some(10),
+            source_url: "https://site/cropped.jpg".to_string(),
+            natural_width: Some(600),
+            natural_height: Some(900),
+        };
+        let current_media = HashMap::from([(10, current.clone())]);
+
+        let reconciliation = reconcile_cached_media_candidates(candidates, &current_media);
+
+        assert_eq!(reconciliation.validated.get(&current_key), Some(&current));
+        assert_eq!(reconciliation.stale_keys, vec![deleted_key]);
+    }
+
+    #[test]
+    fn batch_validation_failure_falls_back_and_reseeds_a_replacement_attachment() {
+        use std::cell::Cell;
+
+        let key = WordPressImageCacheKey::wordpress_remote("site/replaced.jpg");
+        let candidates = vec![(
+            key.clone(),
+            CachedWordPressImage {
+                attachment_id: 10,
+                source_url: "https://site/old.jpg".to_string(),
+                natural_width: Some(800),
+                natural_height: Some(600),
+            },
+        )];
+        let requested_ids = Cell::new(0);
+        let validation = fetch_and_reconcile_cached_media(candidates, |ids| {
+            requested_ids.set(ids.len());
+            Err("batch unavailable".to_string())
+        });
+        assert_eq!(validation.unwrap_err(), "batch unavailable");
+        assert_eq!(requested_ids.get(), 1);
+
+        let replacement = UploadedWordPressImage {
+            attachment_id: Some(11),
+            source_url: "https://site/replacement.jpg".to_string(),
+            natural_width: Some(900),
+            natural_height: Some(900),
+        };
+        let lookup_calls = Cell::new(0);
+        let mut cache = WordPressImageCacheSession::unavailable("site-a");
+        let resolved =
+            resolve_remote_image_with_cache(false, Some(&key), &HashMap::new(), &mut cache, || {
+                lookup_calls.set(lookup_calls.get() + 1);
+                Ok(Some(replacement.clone()))
+            })
+            .unwrap();
+
+        assert_eq!(resolved, Some(replacement));
+        assert_eq!(lookup_calls.get(), 1);
+        assert_eq!(cache.get(&key).map(|image| image.attachment_id), Some(11));
+    }
+
+    #[test]
+    fn partial_batch_response_repairs_only_the_missing_attachment() {
+        let current_key = WordPressImageCacheKey::wordpress_remote("site/current.jpg");
+        let missing_key = WordPressImageCacheKey::wordpress_remote("site/missing.jpg");
+        let candidates = vec![
+            (
+                current_key.clone(),
+                CachedWordPressImage {
+                    attachment_id: 10,
+                    source_url: "https://site/old-current.jpg".to_string(),
+                    natural_width: Some(800),
+                    natural_height: Some(600),
+                },
+            ),
+            (
+                missing_key.clone(),
+                CachedWordPressImage {
+                    attachment_id: 20,
+                    source_url: "https://site/missing.jpg".to_string(),
+                    natural_width: Some(800),
+                    natural_height: Some(600),
+                },
+            ),
+        ];
+        let current = UploadedWordPressImage {
+            attachment_id: Some(10),
+            source_url: "https://site/current.jpg".to_string(),
+            natural_width: Some(600),
+            natural_height: Some(900),
+        };
+
+        let reconciliation = fetch_and_reconcile_cached_media(candidates, |ids| {
+            assert_eq!(ids, HashSet::from([10, 20]));
+            Ok(HashMap::from([(10, current.clone())]))
+        })
+        .unwrap();
+
+        assert_eq!(reconciliation.validated.get(&current_key), Some(&current));
+        assert_eq!(reconciliation.stale_keys, vec![missing_key]);
+    }
+
+    #[test]
+    fn validated_hit_skips_lookup_while_refresh_invokes_it() {
+        use std::cell::Cell;
+
+        let key = WordPressImageCacheKey::wordpress_remote("site/image.jpg");
+        let validated = UploadedWordPressImage {
+            attachment_id: Some(10),
+            source_url: "https://site/current.jpg".to_string(),
+            natural_width: Some(1200),
+            natural_height: Some(800),
+        };
+        let validated_images = HashMap::from([(key.clone(), validated.clone())]);
+        let lookup_calls = Cell::new(0);
+        let mut cache = WordPressImageCacheSession::unavailable("site-a");
+
+        let warm = resolve_remote_image_with_cache(
+            false,
+            Some(&key),
+            &validated_images,
+            &mut cache,
+            || {
+                lookup_calls.set(lookup_calls.get() + 1);
+                Ok(None)
+            },
+        )
+        .unwrap();
+        assert_eq!(warm, Some(validated));
+        assert_eq!(lookup_calls.get(), 0);
+
+        let refreshed = UploadedWordPressImage {
+            attachment_id: Some(11),
+            source_url: "https://site/refreshed.jpg".to_string(),
+            natural_width: Some(900),
+            natural_height: Some(900),
+        };
+        let result = resolve_remote_image_with_cache(
+            true,
+            Some(&key),
+            &validated_images,
+            &mut cache,
+            || {
+                lookup_calls.set(lookup_calls.get() + 1);
+                Ok(Some(refreshed.clone()))
+            },
+        )
+        .unwrap();
+        assert_eq!(result, Some(refreshed));
+        assert_eq!(lookup_calls.get(), 1);
+        assert_eq!(cache.get(&key).map(|image| image.attachment_id), Some(11));
     }
 
     #[test]
@@ -1862,5 +2733,15 @@ mod tests {
             Some("image/webp")
         );
         assert_eq!(image_mime_type("notes.txt", b"plain text"), None);
+    }
+
+    #[test]
+    fn wordpress_com_lookup_url_has_one_separator_before_the_site() {
+        assert_eq!(
+            wordpress_com_site_lookup_url("gnosisvn.org")
+                .unwrap()
+                .as_str(),
+            "https://public-api.wordpress.com/rest/v1.1/sites/gnosisvn.org"
+        );
     }
 }

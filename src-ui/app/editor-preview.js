@@ -117,20 +117,22 @@ export function buildEditorPreviewDocument(rows, languageCode) {
     const image = normalizeEditorFieldImage(row?.images?.[languageCode]);
     const caption = previewImageCaptionValue(row, languageCode);
     const textStyle = normalizeEditorRowTextStyle(row?.textStyle);
+    const attribution = textStyle === "quote" ? previewTextValue(row?.attributions?.[languageCode]) : "";
     const blocks = [];
 
-    if (text.trim()) {
+    if (text.trim() || attribution.trim()) {
       blocks.push({
         kind: "text",
         rowId: row.rowId ?? "",
         languageCode,
         textStyle,
         text,
+        ...(attribution.trim() ? { attribution } : {}),
         footnotes,
       });
     }
 
-    if (!text.trim() && footnotes.length > 0) {
+    if (!text.trim() && !attribution.trim() && footnotes.length > 0) {
       blocks.push({
         kind: "text",
         rowId: row.rowId ?? "",
@@ -192,7 +194,7 @@ function countPreviewSearchMatchesForBlock(block, searchQuery) {
 
   const footnoteMatches = normalizeEditorFootnotes(block.footnotes)
     .reduce((total, entry) => total + countMatchesInText(entry.text, searchQuery), 0);
-  return countMatchesInText(block.text, searchQuery) + footnoteMatches;
+  return countMatchesInText(block.text, searchQuery) + countMatchesInText(block.attribution, searchQuery) + footnoteMatches;
 }
 
 export function countEditorPreviewSearchMatches(blocks, searchQuery) {
@@ -253,6 +255,7 @@ function renderPreviewHighlightedText(text, searchState, matchCounter, languageC
     return renderPreviewPlainText(text);
   }
 
+  const baseMatchIndex = matchCounter.current;
   const result = renderSanitizedInlineMarkupWithHighlights(
     previewTextValue(text),
     query,
@@ -260,13 +263,13 @@ function renderPreviewHighlightedText(text, searchState, matchCounter, languageC
     {
       activeMatchIndex: normalizedState.activeMatchIndex,
       markRenderer(segmentHtml, range) {
-        const matchIndex = matchCounter.current;
-        matchCounter.current += 1;
+        const matchIndex = baseMatchIndex + range.index;
         const isActive = matchIndex === normalizedState.activeMatchIndex;
         return `<mark class="translate-preview__search-match${isActive ? " is-active" : ""}" data-preview-search-match data-preview-search-match-index="${escapeHtml(String(matchIndex))}">${segmentHtml}</mark>`;
       },
     },
   );
+  matchCounter.current = baseMatchIndex + result.totalMatchCount;
 
   return result.html;
 }
@@ -486,17 +489,30 @@ function renderTextWithWordPressFootnoteRefs(block, footnoteState, options = {})
 
   const appendReference = (entry) => {
     usedMarkers.add(entry.marker);
+    // HTML can cite the same note repeatedly, including across an explicit
+    // separator. Keep this map local to the source row: markers restart per row.
+    const existingItem = options.htmlFootnotes?.get(entry.marker);
     const number = footnoteState.items.length + 1;
-    const id = options.serialize
+    const id = existingItem?.id ?? (options.serialize
       ? createWordPressFootnoteId(block, number)
-      : stableFootnoteId(block, number);
-    footnoteState.items.push({
+      : stableFootnoteId(block, number));
+    const item = existingItem ?? {
       id,
       number,
       rowId: block?.rowId ?? "",
       languageCode: block?.languageCode ?? "",
       text: entry.text,
-    });
+    };
+    if (!existingItem) {
+      footnoteState.items.push(item);
+    }
+    if (options.htmlFootnotes) {
+      options.htmlFootnotes.set(entry.marker, item);
+      item.references ??= [];
+      const referenceId = `${id}-link${item.references.length ? `-${item.references.length + 1}` : ""}`;
+      item.references.push(referenceId);
+      return `<sup class="fn"><a id="${escapeHtml(referenceId)}" href="#${escapeHtml(id)}" role="doc-noteref" aria-label="Footnote ${item.number}">${item.number}</a></sup>`;
+    }
     return options.serialize
       ? `<sup data-fn="${escapeHtml(id)}" class="fn"><a id="${escapeHtml(id)}-link" href="#${escapeHtml(id)}">${number}</a></sup>`
       : `<sup class="translate-preview__footnote-ref fn" data-fn="${escapeHtml(entry.text)}"><a href="#fn-${escapeHtml(id)}" id="fnref-${escapeHtml(id)}" aria-describedby="footnote-label">${number}</a></sup>`;
@@ -504,13 +520,16 @@ function renderTextWithWordPressFootnoteRefs(block, footnoteState, options = {})
 
   for (const marker of markers) {
     const entry = footnoteByMarker.get(marker.marker);
-    if (entry && !usedMarkers.has(marker.marker)) {
+    if (entry && (options.htmlFootnotes || !usedMarkers.has(marker.marker))) {
       const separator = marker.index === previousInlineMarkerEnd ? markerSeparatorHtml : "";
       const referenceHtml = `${separator}${appendReference(entry)}`;
       ranges.push({
         start: marker.index,
         end: marker.endIndex,
         priority: 5,
+        // The renderer replaces the whole "[n]" marker text with one reference,
+        // so the serializer must not invoke it once per sub-segment.
+        replacesText: true,
         markRenderer() {
           return referenceHtml;
         },
@@ -543,7 +562,7 @@ function renderTextWithWordPressFootnoteRefs(block, footnoteState, options = {})
 }
 
 function renderPreviewSeparatorBlock(block) {
-  return `<hr class="translate-preview__separator" data-preview-block="separator" data-row-id="${escapeHtml(block?.rowId ?? "")}" aria-hidden="true">`;
+  return `<hr class="translate-preview__separator" data-preview-block="separator" data-row-id="${escapeHtml(block?.rowId ?? "")}" lang="${escapeHtml(block?.languageCode ?? "")}" data-tooltip="Double-click to edit." aria-hidden="true">`;
 }
 
 function renderWordPressFootnotesList(footnoteState, renderSegment, options = {}) {
@@ -555,7 +574,7 @@ function renderWordPressFootnotesList(footnoteState, renderSegment, options = {}
     const backLink = options.serialize
       ? `<a href="#fnref-${escapeHtml(item.id)}" aria-label="Jump to footnote reference ${escapeHtml(item.number)}">&#8617;</a>`
       : `<a class="translate-preview__footnote-backlink" href="#fnref-${escapeHtml(item.id)}" aria-label="Jump to footnote reference ${escapeHtml(item.number)}">&#8617;</a>`;
-    return `<li id="fn-${escapeHtml(item.id)}">${renderSegment(item.text, item.languageCode)} ${backLink}</li>`;
+    return `<li id="fn-${escapeHtml(item.id)}" data-preview-block="footnote" data-row-id="${escapeHtml(item.rowId)}" lang="${escapeHtml(item.languageCode)}" data-tooltip="Double-click to edit.">${renderSegment(item.text, item.languageCode)} ${backLink}</li>`;
   }).join("");
 
   return `<ol class="wp-block-footnotes">${items}</ol>`;
@@ -579,9 +598,9 @@ export function renderEditorPreviewDocumentHtml(blocks, options = {}) {
 
         const caption = String(block.caption ?? "").trim();
         const captionHtml = caption
-          ? `<figcaption class="translate-preview__image-caption" lang="${escapeHtml(block.languageCode ?? "")}">${renderPreviewHighlightedText(block.caption, searchState, matchCounter, block.languageCode)}</figcaption>`
+          ? `<figcaption class="translate-preview__image-caption" data-preview-block="image-caption" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}" data-tooltip="Double-click to edit.">${renderPreviewHighlightedText(block.caption, searchState, matchCounter, block.languageCode)}</figcaption>`
           : "";
-        return `<figure class="translate-preview__image-block" data-preview-block="image" data-row-id="${escapeHtml(block.rowId ?? "")}"><img class="translate-preview__image" src="${escapeHtml(imageSrc)}" alt="" loading="eager" />${captionHtml}</figure>`;
+        return `<figure class="translate-preview__image-block" data-preview-block="image" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}" data-tooltip="Double-click to edit."><img class="translate-preview__image" src="${escapeHtml(imageSrc)}" alt="" loading="eager" />${captionHtml}</figure>`;
       }
 
       if (block?.kind !== "text") {
@@ -593,7 +612,7 @@ export function renderEditorPreviewDocumentHtml(blocks, options = {}) {
         if (!customHtml.trim()) {
           return "";
         }
-        return `<div class="translate-preview__block translate-preview__block--custom-html" data-preview-block="custom-html" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}">${customHtml}</div>`;
+        return `<div class="translate-preview__block translate-preview__block--custom-html" data-preview-block="custom-html" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}" data-tooltip="Double-click to edit.">${customHtml}</div>`;
       }
 
       const tagName = previewTextTagForStyle(block.textStyle);
@@ -617,10 +636,10 @@ export function renderEditorPreviewDocumentHtml(blocks, options = {}) {
               appendRemaining: index === appendPartIndex,
             },
           );
-          if (!textHtml.trim()) {
-            return "";
-          }
-          return `<${tagName} class="translate-preview__block translate-preview__block--${variant}" data-preview-block="${escapeHtml(variant)}" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}">${textHtml}</${tagName}>`;
+          const attributionHtml = block.attribution?.trim() && index === parts.length - 1
+            ? `<cite class="translate-preview__attribution" data-preview-block="attribution" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}" data-tooltip="Double-click to edit.">${renderPreviewHighlightedText(block.attribution, searchState, matchCounter, block.languageCode)}</cite>` : "";
+          if (!textHtml.trim() && !attributionHtml) return "";
+          return `<${tagName} class="translate-preview__block translate-preview__block--${variant}" data-preview-block="${escapeHtml(variant)}" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}" data-tooltip="Double-click to edit.">${textHtml}${attributionHtml}</${tagName}>`;
         })
         .filter(Boolean)
         .join("");
@@ -704,7 +723,7 @@ function serializePreviewTextBlockHtml(block, footnoteState, options = {}) {
     const innerParagraph = wrapSerializedWordPressBlock("paragraph", `<p>${textHtml}</p>`);
     return {
       blockName: "quote",
-      html: `<blockquote class="wp-block-quote">${innerParagraph}</blockquote>`,
+      html: `<blockquote class="wp-block-quote">${innerParagraph}${block.attribution?.trim() ? `<cite${options.localFormatting ? ' style="display:block;font-size:90%;text-align:right;font-style:normal"' : ""}>${serializePreviewText(block.attribution)}</cite>` : ""}</blockquote>`,
     };
   }
   if (normalizedStyle === EDITOR_ROW_TEXT_STYLE_INDENTED) {
@@ -737,35 +756,36 @@ function serializePreviewTextBlock(block, footnoteState, options = {}) {
   );
 }
 
-function serializePreviewTextBlockParts(block, footnoteState) {
+function serializePreviewTextBlockParts(block, footnoteState, options = {}) {
   const parts = previewTextParts(block);
   const usedMarkers = new Set();
+  const htmlFootnotes = options.htmlFootnotes ? new Map() : undefined;
   const appendPartIndex = footnoteAppendPartIndex(parts, block.footnotes);
   return parts
     .map((part, index) => {
       if (part.kind === "separator") {
         return WORDPRESS_SEPARATOR_BLOCK;
       }
-      if (!previewTextHasVisibleContent(part.block?.text) && index !== appendPartIndex) {
+      if (!previewTextHasVisibleContent(part.block?.text) && index !== appendPartIndex && !block.attribution) {
         return "";
       }
       const textHtml = renderTextWithWordPressFootnoteRefs(part.block, footnoteState, {
         serialize: true,
+        htmlFootnotes,
         usedMarkers,
         appendRemaining: index === appendPartIndex,
       });
-      if (!textHtml.trim()) {
-        return "";
-      }
-      return serializePreviewTextBlock(part.block, footnoteState, {
+      if (!textHtml.trim() && !block.attribution) return "";
+      return serializePreviewTextBlock({ ...part.block, attribution: index === parts.length - 1 ? block.attribution : "" }, footnoteState, {
         preRenderedTextHtml: textHtml,
+        localFormatting: options.localFormatting,
       });
     })
     .filter(Boolean)
     .join("\n\n");
 }
 
-function serializeEditorPreviewBlocks(blocks) {
+function serializeEditorPreviewBlocks(blocks, options = {}) {
   const footnoteState = { items: [] };
   const bodyHtml = (Array.isArray(blocks) ? blocks : [])
     .map((block) => {
@@ -781,7 +801,7 @@ function serializeEditorPreviewBlocks(blocks) {
         return rawHtml ? `<!-- wp:html -->\n${rawHtml}\n<!-- /wp:html -->` : "";
       }
 
-      return serializePreviewTextBlockParts(block, footnoteState);
+      return serializePreviewTextBlockParts(block, footnoteState, options);
     })
     .filter(Boolean)
     .join("\n\n");
@@ -790,8 +810,37 @@ function serializeEditorPreviewBlocks(blocks) {
 }
 
 export function serializeEditorPreviewHtml(blocks) {
-  const { bodyHtml, footnotesHtml } = serializeEditorPreviewBlocks(blocks);
+  const { bodyHtml, footnoteState } = serializeEditorPreviewBlocks(blocks, { htmlFootnotes: true, localFormatting: true });
+  const footnotesHtml = serializeHtmlFootnotes(footnoteState);
   return ["<meta charset='utf-8'>", bodyHtml, footnotesHtml].filter(Boolean).join("\n\n");
+}
+
+function serializeHtmlFootnotes(footnoteState) {
+  if (footnoteState.items.length === 0) {
+    return "";
+  }
+  const headingId = `${footnoteState.items[0].id}-heading`;
+  const items = footnoteState.items.map((item) => {
+    const multipleReferences = item.references.length > 1;
+    const backlinks = item.references.map((referenceId, index) => {
+      const label = multipleReferences
+        ? `Back to reference ${index + 1} for footnote ${item.number}`
+        : `Back to footnote reference ${item.number}`;
+      const arrow = multipleReferences ? `&#8617;<sup>${index + 1}</sup>` : "&#8617;";
+      return `<a href="#${escapeHtml(referenceId)}" role="doc-backlink" aria-label="${label}">${arrow}</a>`;
+    }).join(" ");
+    return `<li id="${escapeHtml(item.id)}" tabindex="-1">${serializePreviewText(item.text)} ${backlinks}</li>`;
+  }).join("\n");
+  // A static Custom HTML block also survives WordPress paste without depending
+  // on footnote post metadata, which cannot be carried on the clipboard.
+  return [
+    "<!-- wp:html -->",
+    `<section class="footnotes" role="doc-endnotes" aria-labelledby="${escapeHtml(headingId)}">`,
+    `<h2 id="${escapeHtml(headingId)}">Footnotes</h2>`,
+    `<ol>\n${items}\n</ol>`,
+    "</section>",
+    "<!-- /wp:html -->",
+  ].join("\n");
 }
 
 function isHeading1Block(block) {
@@ -825,9 +874,8 @@ const WORDPRESS_SEPARATOR_BLOCK = [
   "<!-- /wp:separator -->",
 ].join("\n");
 
-// WordPress post payload: the same block markup as the clipboard HTML export,
-// minus the clipboard charset prefix, plus the footnote bodies that the core
-// footnotes block stores in the `footnotes` post meta (ids match the
+// WordPress post payload uses native WordPress citation markup, plus the bodies
+// that the core footnotes block stores in the `footnotes` post meta (ids match the
 // `data-fn` refs already present in the markup). A leading H1 is promoted to
 // `title` and removed from the content.
 export function serializeEditorPreviewWordPress(blocks) {
@@ -885,7 +933,7 @@ function plainTextWithFootnoteRefs(block, footnoteItems, options = {}) {
   let cursor = 0;
   for (const marker of markers) {
     const entry = footnoteByMarker.get(marker.marker);
-    if (entry && !usedMarkers.has(marker.marker)) {
+    if (entry && (options.htmlFootnotes || !usedMarkers.has(marker.marker))) {
       result += visibleText.slice(cursor, marker.index) + appendReference(entry);
       cursor = marker.endIndex;
     }
@@ -950,7 +998,7 @@ export function serializeEditorPreviewPlainText(blocks, options = {}) {
           appendRemaining: index === appendPartIndex,
           showFootnoteLinkUrls,
         }).trim();
-      });
+      }).concat(block.attribution ? [extractInlineMarkupVisibleText(block.attribution)] : []);
     })
     .filter(Boolean);
 

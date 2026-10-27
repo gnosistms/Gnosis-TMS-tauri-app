@@ -18,6 +18,7 @@ import {
 } from "./translate-history-shared.js";
 
 const PENDING_LOCAL_SAVE_ERROR_AFTER_MS = 10_000;
+import { renderSrtHistorySelector } from "../app/editor-srt-group-render.js";
 
 function pendingLocalSaveAgeMs(entry) {
   const committedAtMs = Date.parse(entry?.committedAt ?? "");
@@ -101,7 +102,8 @@ function renderHistoryEntry(entry, previousEntry, activeLanguage, activeSection,
 }
 
 export function renderHistoryPane(editorChapter, rows, languages) {
-  const activeRow = rows.find((row) => row.id === editorChapter?.activeRowId) ?? null;
+  const displayRow = rows.find((row) => row.id === editorChapter?.activeRowId || row.srtGroup?.memberRowIds.includes(editorChapter?.activeRowId)) ?? null;
+  const activeRow = displayRow?.srtGroup?.members.find((row) => row.rowId === editorChapter.activeRowId) ?? displayRow;
   const activeLanguage =
     languages.find((language) => language.code === editorChapter?.activeLanguageCode) ?? null;
   const activeSection = activeRow?.sections?.find((section) => section.code === activeLanguage?.code) ?? null;
@@ -110,6 +112,7 @@ export function renderHistoryPane(editorChapter, rows, languages) {
         ...activeSection,
         footnote: activeSection?.footnote ?? "",
         imageCaption: activeSection?.imageCaption ?? "",
+        attribution: activeSection?.attribution ?? "",
         image: activeSection?.image ?? null,
         textStyle: activeRow?.textStyle ?? "paragraph",
       }
@@ -141,10 +144,11 @@ export function renderHistoryPane(editorChapter, rows, languages) {
   return !activeRow || !activeLanguage
     ? `
       <div class="history-empty">
-        <p>Select a translation to view its Git history.</p>
+        <p>Select a translation to view History.</p>
       </div>
     `
     : `
+      ${renderSrtHistorySelector(displayRow, editorChapter)}
       ${
         history.status === "error"
           ? `

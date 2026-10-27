@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tmx version="1.4">
+  <header creationtool="Gnosis TMS" creationtoolversion="0.8" segtype="phrase" o-tmf="Gnosis TMS" adminlang="en" srclang="es" datatype="plaintext">
+    <prop type="x-gnosis-glossary-title">Sample Spanish-English Glossary</prop>
+  </header>
+  <body>
+    <tu tuid="sample-banco">
+      <note>Check the surrounding action before choosing a meaning; this word is often mistranslated when context is skimmed.</note>
+      <prop type="x-gnosis-footnote">The Spanish word “banco” can name either a financial institution or a seat.</prop>
+      <tuv xml:lang="es"><seg>banco</seg></tuv>
+      <tuv xml:lang="en"><note>Use for a financial institution.</note><seg>bank</seg></tuv>
+      <tuv xml:lang="en"><note>Use for a long seat.</note><seg>bench</seg></tuv>
+    </tu>
+    <tu tuid="sample-ir">
+      <tuv xml:lang="es"><seg>voy</seg></tuv>
+      <tuv xml:lang="es"><seg>vas</seg></tuv>
+      <tuv xml:lang="es"><seg>va</seg></tuv>
+      <tuv xml:lang="es"><seg>vamos</seg></tuv>
+      <tuv xml:lang="es"><seg>vais</seg></tuv>
+      <tuv xml:lang="es"><seg>van</seg></tuv>
+      <tuv xml:lang="en"><seg>go</seg></tuv>
+    </tu>
+    <tu tuid="sample-claro">
+      <tuv xml:lang="es"><seg>claro</seg></tuv>
+      <tuv xml:lang="en"><note>Use when describing something understandable, visible, or light in color.</note><seg>clear</seg></tuv>
+      <tuv xml:lang="en"><note>Use as an affirmative response or to express that something is obvious.</note><seg>of course</seg></tuv>
+    </tu>
+    <tu tuid="sample-usted">
+      <note>Keep verb and adjective agreement consistent with the person addressed; grammatical third person does not mean “he” or “she.”</note>
+      <prop type="x-gnosis-footnote">“Usted” is the formal singular form of “you” in Spanish.</prop>
+      <tuv xml:lang="es"><seg>usted</seg></tuv>
+      <tuv xml:lang="en"><seg>you</seg></tuv>
+    </tu>
+    <tu tuid="sample-pues">
+      <tuv xml:lang="es"><seg>pues</seg></tuv>
+      <tuv xml:lang="en"><note>Omit when it is only a discourse filler and English reads more naturally without it.</note><seg></seg></tuv>
+    </tu>
+    <tu tuid="sample-sobremesa">
+      <prop type="x-gnosis-footnote">“Sobremesa” is the time spent talking at the table after a meal.</prop>
+      <tuv xml:lang="es"><seg>sobremesa</seg></tuv>
+      <tuv xml:lang="en"><seg>after-meal conversation</seg></tuv>
+    </tu>
+    <tu tuid="sample-realizar">
+      <note>Avoid the false friend “realize” unless the Spanish actually means becoming aware of something.</note>
+      <tuv xml:lang="es"><seg>realizar</seg></tuv>
+      <tuv xml:lang="en"><seg>carry out</seg></tuv>
+    </tu>
+    <tu tuid="sample-pueblo">
+      <prop type="x-gnosis-footnote">Depending on context, “pueblo” may refer to a settlement or to a people as a community.</prop>
+      <tuv xml:lang="es"><seg>pueblo</seg></tuv>
+      <tuv xml:lang="en"><note>Use for a small settlement.</note><seg>town</seg></tuv>
+      <tuv xml:lang="en"><note>Use for a population or cultural community.</note><seg>people</seg></tuv>
+    </tu>
+    <tu tuid="sample-quedar">
+      <note>Do not translate this verb mechanically; its meaning changes substantially with its complement and construction.</note>
+      <tuv xml:lang="es"><seg>quedar</seg></tuv>
+      <tuv xml:lang="en"><note>Use for continuing in a place or state.</note><seg>remain</seg></tuv>
+      <tuv xml:lang="en"><note>Use with “con” when people agree on a meeting.</note><seg>arrange to meet</seg></tuv>
+      <tuv xml:lang="en"><note>Use when clothing or a style looks good on someone.</note><seg>suit</seg></tuv>
+    </tu>
+    <tu tuid="sample-ojala">
+      <prop type="x-gnosis-footnote">The Spanish interjection “ojalá” expresses a strong hope or wish.</prop>
+      <tuv xml:lang="es"><seg>ojalá</seg></tuv>
+      <tuv xml:lang="en"><note>Use for a hope presented as reasonably possible.</note><seg>hopefully</seg></tuv>
+      <tuv xml:lang="en"><note>Use for a wistful or unlikely wish.</note><seg>if only</seg></tuv>
+    </tu>
+  </body>
+</tmx>

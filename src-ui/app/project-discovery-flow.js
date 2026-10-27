@@ -23,10 +23,10 @@ import {
 } from "./team-metadata-flow.js";
 import {
   clearRestoredLocalHardDeleteTombstones,
+  captureLocalHardDeleteRestorationCheck,
   filterLocalHardDeletedResources,
   isLocalHardDeletedResource,
 } from "./local-hard-delete-store.js";
-import { isSoftDeletedResource } from "./resource-write-policy.js";
 import { filterKnownDeletedRepoResources, isDeletedRepoResource } from "./repo-transport-eligibility.js";
 import {
   projectRepoScope,
@@ -74,6 +74,7 @@ function projectRepoSyncSnapshot(project, repoSyncByProjectId = {}) {
 
 function projectFileLoadState(project, {
   hasListing = false,
+  localRepoReady,
   repoSyncByProjectId = {},
   missingListingState = "loading",
 } = {}) {
@@ -89,6 +90,14 @@ function projectFileLoadState(project, {
   }
 
   const syncStatus = String(projectRepoSyncSnapshot(project, repoSyncByProjectId)?.status ?? "").trim();
+  if (localRepoReady === false || syncStatus === "notCloned") {
+    return "loading";
+  }
+  // A successful local listing (including an empty one) is independent of
+  // transport. Keep it ready through remote discovery and background sync.
+  if (localRepoReady === true || project?.fileLoadState === "ready") {
+    return "ready";
+  }
   if (PROJECT_FILE_LOAD_PENDING_STATUSES.has(syncStatus)) {
     return "loading";
   }
@@ -154,17 +163,16 @@ export function applyLocalProjectSnapshotHardDeleteState(selectedTeam, snapshot)
   if (!selectedTeam) {
     return { items, deletedItems };
   }
-  clearRestoredLocalHardDeleteTombstones(selectedTeam, "project", [...items, ...deletedItems], {
-    isActive: (project) => !isSoftDeletedResource(project, "project"),
-  });
+  // Cached/progress snapshots cannot prove restoration. Both collections must
+  // respect removal until a subsequent metadata read confirms an active record.
+  const visibleItems = preserveArrayIdentity(
+    items, filterLocalHardDeletedResources(selectedTeam, "project", items),
+  );
   const visibleDeletedItems = preserveArrayIdentity(
-    deletedItems,
-    filterLocalHardDeletedResources(selectedTeam, "project", deletedItems, {
-      isDeleted: (project) => isSoftDeletedResource(project, "project"),
-    }),
+    deletedItems, filterLocalHardDeletedResources(selectedTeam, "project", deletedItems),
   );
   return {
-    items: applyLocalChapterHardDeleteStateToProjects(selectedTeam, items),
+    items: applyLocalChapterHardDeleteStateToProjects(selectedTeam, visibleItems),
     deletedItems: applyLocalChapterHardDeleteStateToProjects(selectedTeam, visibleDeletedItems),
   };
 }
@@ -402,9 +410,10 @@ function failProjectLoadPageSync({
   }
 }
 
-function isProjectDiscoveryCurrent(teamId, requestId, syncVersionAtStart) {
+function isProjectDiscoveryCurrent(teamId, requestId, syncVersionAtStart, signal) {
   return (
-    state.screen === "projects"
+    !signal?.aborted
+    && state.screen === "projects"
     && state.selectedTeamId === teamId
     && state.projectDiscoveryRequestId === requestId
     && state.projectSyncVersion === syncVersionAtStart
@@ -419,10 +428,11 @@ async function abortProjectDiscoveryIfStale(
   beganProjectsPageSync = false,
   options = {},
 ) {
-  if (isProjectDiscoveryCurrent(teamId, requestId, syncVersionAtStart)) {
+  if (isProjectDiscoveryCurrent(teamId, requestId, syncVersionAtStart, options.signal)) {
     return false;
   }
 
+  options.onDiscoveryStale?.();
   if (beganProjectsPageSync) {
     await completeProjectLoadPageSync({ render, options, clearNotice: false });
   } else {
@@ -572,10 +582,10 @@ function mergeProjectsWithLocalFiles(snapshot, listings = [], targets = [], opti
     const visibleChapters = filterLocalHardDeletedChapters(selectedTeam, normalizedChapters);
 
     if (typeof listing.projectId === "string" && listing.projectId.trim()) {
-      listingByProjectId.set(listing.projectId, visibleChapters);
+      listingByProjectId.set(listing.projectId, { ...listing, chapters: visibleChapters });
     }
     if (typeof listing.repoName === "string" && listing.repoName.trim()) {
-      listingByRepoName.set(listing.repoName, visibleChapters);
+      listingByRepoName.set(listing.repoName, { ...listing, chapters: visibleChapters });
     }
   }
 
@@ -595,11 +605,12 @@ function mergeProjectsWithLocalFiles(snapshot, listings = [], targets = [], opti
     const hasProjectIdListing = listingByProjectId.has(project.id);
     const hasRepoNameListing = listingByRepoName.has(project.name);
     const hasListing = hasProjectIdListing || hasRepoNameListing;
-    const chapters = hasProjectIdListing
+    const listing = hasProjectIdListing
       ? listingByProjectId.get(project.id)
       : hasRepoNameListing
         ? listingByRepoName.get(project.name)
-        : [];
+        : null;
+    const chapters = listing?.chapters ?? [];
     return {
       ...project,
       chapters,
@@ -610,6 +621,7 @@ function mergeProjectsWithLocalFiles(snapshot, listings = [], targets = [], opti
         },
         {
           hasListing,
+          localRepoReady: listing?.localRepoReady,
           repoSyncByProjectId: options.repoSyncByProjectId,
           missingListingState: options.missingListingState,
         },
@@ -854,6 +866,7 @@ export async function refreshProjectFilesFromDisk(render, selectedTeam, projects
 
 export async function loadProjectSnapshotForTeam(render, teamId = state.selectedTeamId, options = {}) {
   const selectedTeam = state.teams.find((team) => team.id === teamId);
+  const confirmRestoredLocalProjects = captureLocalHardDeleteRestorationCheck(selectedTeam, "project");
   const syncVersionAtStart = state.projectSyncVersion;
   const requestId = nextProjectDiscoveryRequestId();
   let pendingChapterMutations = [];
@@ -890,7 +903,7 @@ export async function loadProjectSnapshotForTeam(render, teamId = state.selected
       options.applyChapterPendingMutation,
     );
     const glossaryResult = await glossaryLoadPromise;
-    if (await abortProjectDiscoveryIfStale(render, selectedTeam?.id ?? teamId, requestId, syncVersionAtStart)) {
+    if (await abortProjectDiscoveryIfStale(render, selectedTeam?.id ?? teamId, requestId, syncVersionAtStart, false, options)) {
       return currentLoadResult;
     }
     const preservedSnapshot =
@@ -922,7 +935,7 @@ export async function loadProjectSnapshotForTeam(render, teamId = state.selected
       ...options,
       loadStoredChapterPendingMutations,
     });
-    if (await abortProjectDiscoveryIfStale(render, selectedTeam.id, requestId, syncVersionAtStart)) {
+    if (await abortProjectDiscoveryIfStale(render, selectedTeam.id, requestId, syncVersionAtStart, false, options)) {
       return currentLoadResult;
     }
     pendingChapterMutations = localSnapshot.pendingChapterMutations;
@@ -962,7 +975,7 @@ export async function loadProjectSnapshotForTeam(render, teamId = state.selected
       progressType: "localSnapshotError",
     });
   }
-  if (await abortProjectDiscoveryIfStale(render, selectedTeam.id, requestId, syncVersionAtStart)) {
+  if (await abortProjectDiscoveryIfStale(render, selectedTeam.id, requestId, syncVersionAtStart, false, options)) {
     return currentLoadResult;
   }
   clearNoticeBadge();
@@ -1012,6 +1025,10 @@ export async function loadProjectSnapshotForTeam(render, teamId = state.selected
         ? metadataResult.value
         : [];
     const metadataLoaded = metadataResult.status === "fulfilled";
+    if (metadataLoaded) {
+      confirmRestoredLocalProjects(projectMetadataRecords, (record) =>
+        record.recordState === "live" && record.lifecycleState === "active");
+    }
     let repairLoaded = repairResult.status === "fulfilled";
     let repairIssues =
       repairResult.status === "fulfilled"
@@ -1190,7 +1207,9 @@ export async function loadProjectSnapshotForTeam(render, teamId = state.selected
       return currentLoadResult;
     }
     await reconcileProjectRepoSyncStates(render, selectedTeam, mappedProjects, {
-      shouldAbort: () => !isProjectDiscoveryCurrent(selectedTeam.id, requestId, syncVersionAtStart),
+      shouldAbort: () => !isProjectDiscoveryCurrent(selectedTeam.id, requestId, syncVersionAtStart, options.signal),
+      // The sync flow renders after these query-layer publications. Passing
+      // render through as well would replace the page twice for each update.
       applySnapshots: (snapshots) => {
         repoSyncByProjectId = repoSyncSnapshotMap(snapshots);
         mappedProjects = applyProjectFileLoadStates(mappedProjects, {
@@ -1198,7 +1217,6 @@ export async function loadProjectSnapshotForTeam(render, teamId = state.selected
           missingListingState: "loading",
         });
         currentLoadResult = publishProjectLoadSnapshot({
-          render,
           selectedTeam,
           snapshot: {
             items: mappedProjects.filter((project) => project.lifecycleState !== "deleted"),
@@ -1221,7 +1239,6 @@ export async function loadProjectSnapshotForTeam(render, teamId = state.selected
           missingListingState: "loading",
         });
         currentLoadResult = publishProjectLoadSnapshot({
-          render,
           selectedTeam,
           snapshot: {
             items: mappedProjects.filter((project) => project.lifecycleState !== "deleted"),
@@ -1353,7 +1370,7 @@ export async function loadProjectSnapshotForTeam(render, teamId = state.selected
     }
   } catch (error) {
     if (
-      !isProjectDiscoveryCurrent(selectedTeam?.id ?? teamId, requestId, syncVersionAtStart)
+      !isProjectDiscoveryCurrent(selectedTeam?.id ?? teamId, requestId, syncVersionAtStart, options.signal)
       && await abortProjectDiscoveryIfStale(
         render,
         selectedTeam?.id ?? teamId,

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  editorRowChangedLanguageCodes,
   reconcileDirtyRowIds,
   resolveDirtyTrackedEditorRowIds,
   rowHasPersistedChanges,
@@ -92,4 +93,24 @@ test("row text style saves keep the row dirty-tracked while saving", () => {
   });
 
   assert.equal(rowNeedsDirtyTracking(styleSavingRow), true);
+});
+
+test("editorRowChangedLanguageCodes lists only columns whose text differs from the persisted values", () => {
+  const changed = editorRowChangedLanguageCodes(
+    row("row-1", {
+      fields: { es: "uno", en: "one", vi: "" },
+      persistedFields: { es: "uno", en: "", vi: "" },
+      footnotes: { vi: [{ marker: 1, text: "note" }] },
+      persistedFootnotes: { vi: [] },
+      imageCaptions: { es: "cap" },
+      persistedImageCaptions: { es: "cap" },
+    }),
+  );
+  assert.deepEqual([...changed].sort(), ["en", "vi"]);
+
+  // Without persisted tracking every column counts as changed.
+  assert.deepEqual(
+    [...editorRowChangedLanguageCodes({ fields: { es: "uno", en: "one" } })].sort(),
+    ["en", "es"],
+  );
 });

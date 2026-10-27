@@ -8,12 +8,14 @@ import { isOfflineBlockedAction } from "./offline-policy.js";
 import { showOfflineUnsupportedMessage } from "./offline-ui.js";
 import { createProjectActions } from "./actions/project-actions.js";
 import { createGlossaryActions } from "./actions/glossary-actions.js";
+import { createGlossaryResearchActions } from "./actions/glossary-research-actions.js";
 import { createQaActions } from "./actions/qa-actions.js";
 import { createTeamActions } from "./actions/team-actions.js";
 import { createTranslateActions } from "./actions/translate-actions.js";
 import { createUserActions } from "./user-actions.js";
 import { actionSuffix } from "./action-helpers.js";
 import { state } from "./state.js";
+import { studioAction } from "./glossary-research-studio-flow.js";
 
 function updateRequiredAllowsAction(action) {
   return (
@@ -37,6 +39,7 @@ export function createActionDispatcher(render) {
   const domainHandlers = [
     createTeamActions(render),
     createProjectActions(render),
+    createGlossaryResearchActions(render),
     createGlossaryActions(render),
     createQaActions(render),
     createUserActions(render),
@@ -45,6 +48,7 @@ export function createActionDispatcher(render) {
   ];
 
   return async function dispatchAction(action, event) {
+    if (["preparing", "restarting"].includes(state.appUpdate.status)) return true;
     if (state.appUpdate.required === true && !updateRequiredAllowsAction(action)) {
       return true;
     }
@@ -53,6 +57,8 @@ export function createActionDispatcher(render) {
       showOfflineUnsupportedMessage(render);
       return true;
     }
+
+    if (await studioAction(action, render)) return true;
 
     for (const actionMap of exactActionMaps) {
       const handler = actionMap[action];

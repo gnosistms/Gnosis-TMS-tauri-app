@@ -155,6 +155,47 @@ function visiblePositionToRawOffset(parsed, visiblePosition, bias = "start") {
   return finalSegment ? finalSegment.rawEnd : parsed.source.length;
 }
 
+export function mapInlineMarkupVisiblePositionToRawInsertionOffset(value, visiblePosition) {
+  const parsed = parseInlineMarkup(value);
+  const elements = collectElementNodes(parsed.nodes);
+  let rawOffset = visiblePositionToRawOffset(parsed, visiblePosition, "end");
+
+  // A glossary term that ends exactly with a styled/link element should put
+  // its footnote marker after that element, not inside its formatting. Walk
+  // outward through every closing tag that begins at the current boundary.
+  // Ruby needs one extra step: the base term ends where its <rt> annotation
+  // begins, so skip the annotation and close the whole ruby element first.
+  let moved = true;
+  while (moved) {
+    moved = false;
+    const closingElement = elements.find((node) =>
+      node?.closeStart === rawOffset
+      && Number.isInteger(node.closeEnd)
+      && node.closeEnd > rawOffset
+    );
+    if (closingElement) {
+      rawOffset = closingElement.closeEnd;
+      moved = true;
+      continue;
+    }
+
+    const closingRuby = elements.find((node) => {
+      if (node?.tag !== "ruby" || !Number.isInteger(node.rawEnd) || node.rawEnd <= rawOffset) {
+        return false;
+      }
+      const annotation = (Array.isArray(node.children) ? node.children : [])
+        .find((child) => child?.type === "element" && child.tag === "rt");
+      return annotation?.openStart === rawOffset;
+    });
+    if (closingRuby) {
+      rawOffset = closingRuby.rawEnd;
+      moved = true;
+    }
+  }
+
+  return rawOffset;
+}
+
 function selectedVisibleSegments(parsed, selectionStart, selectionEnd) {
   const start = Math.max(0, Math.min(parsed.source.length, Number.parseInt(selectionStart ?? "", 10) || 0));
   const end = Math.max(start, Math.min(parsed.source.length, Number.parseInt(selectionEnd ?? "", 10) || 0));

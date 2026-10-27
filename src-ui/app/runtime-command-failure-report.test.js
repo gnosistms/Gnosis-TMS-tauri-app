@@ -11,13 +11,82 @@ globalThis.window = globalThis.window ?? {
   clearTimeout,
 };
 
-const { resolveCommandFailureReport } = await import("./runtime.js");
+const {
+  resolveCommandFailureReport,
+  resolveTeamAiCredentialRecovery,
+} = await import("./runtime.js");
 
-test("skips the expected session-expired path", () => {
+test("recognizes provider-key rejection failures from team AI commands", () => {
+  assert.deepEqual(
+    resolveTeamAiCredentialRecovery(
+      "run_ai_translation",
+      {
+        request: {
+          providerId: "openai",
+          installationId: 42,
+        },
+      },
+      new Error("The saved OpenAI API key was rejected. Update it in AI Settings and try again."),
+    ),
+    { providerId: "openai", installationId: 42 },
+  );
   assert.equal(
-    resolveCommandFailureReport("any_command", new Error("AUTH_REQUIRED:Your GitHub session expired.")),
+    resolveTeamAiCredentialRecovery(
+      "run_ai_translation",
+      { request: { providerId: "openai", installationId: 42 } },
+      new Error("OpenAI temporarily rate limited this request."),
+    ),
     null,
   );
+  assert.equal(
+    resolveTeamAiCredentialRecovery(
+      "load_team_ai_settings",
+      { providerId: "openai", installationId: 42 },
+      new Error("The saved OpenAI API key was rejected."),
+    ),
+    null,
+  );
+});
+
+test("skips expected session-expired and native login-changed paths", () => {
+  for (const message of [
+    "AUTH_REQUIRED:Your GitHub session expired.",
+    "AUTH_SESSION_CHANGED:The saved GitHub login has changed.",
+  ]) {
+    assert.equal(resolveCommandFailureReport("any_command", new Error(message)), null);
+  }
+});
+
+test("intentional alignment cancellation is expected control flow", () => {
+  assert.equal(resolveCommandFailureReport("preflight_aligned_translation_to_gtms_chapter", "ALIGNMENT_CANCELED: Alignment canceled."), null);
+  assert.equal(resolveCommandFailureReport("apply_aligned_translation_to_gtms_chapter", "ALIGNMENT_CANCELED: Alignment canceled."), null);
+});
+
+test("expected glossary/QA validation stays visible to callers without becoming telemetry", () => {
+  for (const message of [
+    "Enter at least one source term.",
+    "Some source variants are repeated within this term. Remove or change the duplicates before saving.",
+    "The terms highlighted in red below are redundant with other parts of this glossary. Please remove them before saving.",
+    'Remove or change these duplicate source variants before saving: ["example"]',
+  ]) {
+    assert.equal(resolveCommandFailureReport("upsert_gtms_glossary_term", message), null);
+    assert.ok(resolveCommandFailureReport("unexpected_command", message));
+  }
+  assert.equal(resolveCommandFailureReport("upsert_gtms_qa_list_term", "Enter QA term text."), null);
+  for (const [command, message] of [
+    ["delete_gtms_glossary_term", "The glossary term could not be found."],
+    ["upsert_gtms_glossary_term", "Could not parse term file: invalid JSON"],
+    ["upsert_gtms_qa_list_term", "The QA term file is not a JSON object."],
+  ]) {
+    assert.ok(resolveCommandFailureReport(command, message));
+  }
+});
+
+test("invalid XLSX language headers are expected but other import failures still report", () => {
+  const message = 'Column 1 in row 1 has unsupported language code "Key". Use supported codes such as es, en, vi, zh-Hans, or zh-Hant.';
+  assert.equal(resolveCommandFailureReport("import_xlsx_to_gtms", new Error(message)), null);
+  assert.ok(resolveCommandFailureReport("unexpected_command", message));
+  assert.ok(resolveCommandFailureReport("import_xlsx_to_gtms", "Could not write chapter: disk full"));
 });
 
 test("skips forced-update control flow", () => {
@@ -81,6 +150,7 @@ test("skips expected remote permission denials", () => {
     "Your account type cannot manage shared resources.",
     "Your account type cannot edit shared content.",
     "You need admin access in @Gnosis-VN for this action.",
+    "Could not verify active access for this team. Refresh team access and try again.",
   ]) {
     assert.equal(
       resolveCommandFailureReport("push_command", new Error(message)),
@@ -88,6 +158,40 @@ test("skips expected remote permission denials", () => {
       `expected skip for: ${message}`,
     );
   }
+});
+
+test("skips expected AI provider throttling and quota failures", () => {
+  for (const message of [
+    "OpenAI rate limited this request. Wait a moment and try again.",
+    "OpenAI temporarily rate limited this request.",
+    "You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.",
+  ]) {
+    assert.equal(
+      resolveCommandFailureReport("run_ai_translation", new Error(message)),
+      null,
+      `expected skip for: ${message}`,
+    );
+  }
+
+  const unexpected = new Error("OpenAI returned malformed structured output.");
+  assert.equal(
+    resolveCommandFailureReport("run_ai_translation", unexpected).error,
+    unexpected,
+  );
+});
+
+test("skips secondary local team-metadata listing failures only", () => {
+  const error = new Error(
+    "The local team-metadata repo for installation 42 is not available yet.",
+  );
+  for (const command of [
+    "list_local_gnosis_project_metadata_records",
+    "list_local_gnosis_glossary_metadata_records",
+    "list_local_gnosis_qa_list_metadata_records",
+  ]) {
+    assert.equal(resolveCommandFailureReport(command, error), null, command);
+  }
+  assert.equal(resolveCommandFailureReport("ensure_local_team_metadata_repo", error).error, error);
 });
 
 test("replaces malformed AI assistant payloads with a fixed message", () => {
@@ -118,18 +222,28 @@ test("skips expected user-input / validation failures", () => {
 });
 
 test("skips expected repository creation validation", () => {
-  assert.equal(
-    resolveCommandFailureReport(
-      "create_gnosis_project_repo",
-      new Error("GitHub API 422: name already exists on this account"),
-    ),
-    null,
-  );
+  for (const command of [
+    "create_gnosis_project_repo",
+    "create_gnosis_glossary_repo",
+    "create_gnosis_qa_list_repo",
+  ]) {
+    assert.equal(
+      resolveCommandFailureReport(
+        command,
+        new Error("GitHub API 422: name already exists on this account"),
+      ),
+      null,
+      command,
+    );
+  }
   const unexpected = new Error('GitHub API 422: {"message":"Malformed repository payload."}');
-  assert.equal(
-    resolveCommandFailureReport("create_gnosis_project_repo", unexpected).error,
-    unexpected,
-  );
+  for (const command of [
+    "create_gnosis_project_repo",
+    "create_gnosis_glossary_repo",
+    "create_gnosis_qa_list_repo",
+  ]) {
+    assert.equal(resolveCommandFailureReport(command, unexpected).error, unexpected, command);
+  }
 });
 
 test("reports ordinary failures unchanged at the default level", () => {
@@ -137,4 +251,61 @@ test("reports ordinary failures unchanged at the default level", () => {
   const report = resolveCommandFailureReport("load_manifest", error);
   assert.equal(report.error, error);
   assert.equal(report.options, undefined);
+});
+
+test("reports AI requests the provider dropped after a minute", () => {
+  for (const provider of ["OpenAI", "Claude"]) {
+    const error = new Error(
+      `${provider} stopped responding after about a minute without returning a result. `
+        + "If this error persists, please report it to the Gnosis TMS development team.",
+    );
+    const report = resolveCommandFailureReport("run_ai_translation_batch", error);
+    assert.equal(report?.error, error, provider);
+  }
+});
+
+test("access diagnostics preserve the issue message and expose only bounded categories", () => {
+  const message = "Could not verify write access for this team. Refresh team access and try again.";
+  for (const category of ["snapshot_storage", "session_storage", "membership_unverified", "broker_response_parse"]) {
+    const result = resolveCommandFailureReport("update_gtms_editor_row_fields", `ACCESS_VERIFICATION_FAILED:${JSON.stringify({ message, category })}`);
+    assert.equal(result.error, message);
+    assert.deepEqual(result.options, { tags: { access_failure: category } });
+  }
+  const result = resolveCommandFailureReport("update_gtms_editor_row_text_style", 'ACCESS_VERIFICATION_FAILED:{"category":"secret response content","message":"private path"}');
+  assert.equal(result.error, message);
+  assert.equal(result.options.tags.access_failure, "unexpected");
+  assert.equal(resolveCommandFailureReport("cmd", "ACCESS_VERIFICATION_FAILED:malformed").error, message);
+});
+
+test("classified access transport and permission failures follow operational telemetry policy", () => {
+  for (const category of ["broker_transport", "broker_http_403"]) {
+    assert.equal(resolveCommandFailureReport("update_gtms_editor_row_fields", `ACCESS_VERIFICATION_FAILED:${JSON.stringify({ category })}`), null);
+  }
+  const result = resolveCommandFailureReport("update_gtms_editor_row_fields", 'ACCESS_VERIFICATION_FAILED:{"category":"broker_http_503"}');
+  assert.equal(result.options.level, "warning");
+  assert.equal(result.options.tags.access_failure, "broker_http_503");
+});
+
+test("reports AI safety-filter declines as tagged warnings", () => {
+  const withCategory = resolveCommandFailureReport(
+    "run_ai_translation_batch",
+    new Error(
+      "Claude's safety filter declined this request (category: bio). "
+        + "Try again, or choose a different AI model for this text.",
+    ),
+  );
+  assert.deepEqual(withCategory, {
+    error: "Claude safety filter declined a request",
+    options: {
+      level: "warning",
+      fingerprint: ["command-failure", "run_ai_translation_batch", "ai-safety-refusal"],
+      tags: { ai_refusal_category: "bio" },
+    },
+  });
+
+  const withoutCategory = resolveCommandFailureReport(
+    "run_ai_review",
+    "Claude's safety filter declined this request. Try again, or choose a different AI model for this text.",
+  );
+  assert.equal(withoutCategory.options.tags.ai_refusal_category, "unspecified");
 });

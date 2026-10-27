@@ -11,14 +11,106 @@ export function projectsSearchModeIsActiveForState(state) {
 }
 
 export function projectsSearchResultCountLabel(projectsSearch = {}) {
-  const total = Number.isFinite(projectsSearch?.total) ? projectsSearch.total : 0;
-  const count = projectsSearch?.totalCapped === true ? `${total}+` : `${total}`;
-  const suffix = total === 1 && projectsSearch?.totalCapped !== true ? "" : "s";
-  return `${count} result${suffix}`;
+  if (projectsSearch?.includeWeakerMatches === true) {
+    const total = Number.isFinite(projectsSearch?.total) ? projectsSearch.total : 0;
+    const suffix = total === 1 ? "" : "s";
+    const cappedSuffix = projectsSearch?.totalCapped === true ? " shown" : "";
+    return `${total} matching row${suffix}${cappedSuffix}`;
+  }
+
+  const strongTotal = Number.isFinite(projectsSearch?.strongTotal)
+    ? projectsSearch.strongTotal
+    : (projectsSearch?.results ?? []).filter((row) => row?.qualityTier !== "weaker").length;
+  const suffix = strongTotal === 1 ? "" : "s";
+  const cappedSuffix = projectsSearch?.totalCapped === true ? " shown" : "";
+  return `${strongTotal} strong matching row${suffix}${cappedSuffix}`;
 }
 
-export function indexProjectSearchResults(results = []) {
-  return Object.fromEntries(
-    (Array.isArray(results) ? results : []).map((result) => [String(result?.resultId ?? ""), result]),
+export function projectSearchWeakerToggleLabel(projectsSearch = {}) {
+  if (projectsSearch?.includeWeakerMatches === true) {
+    return "Show fewer results";
+  }
+  const weakerTotal = Number.isFinite(projectsSearch?.weakerTotal)
+    ? projectsSearch.weakerTotal
+    : (projectsSearch?.results ?? []).filter((row) => row?.qualityTier === "weaker").length;
+  return `Show more results (${weakerTotal})`;
+}
+
+export function projectSearchVisibleResults(projectsSearch = {}) {
+  const results = Array.isArray(projectsSearch?.results) ? projectsSearch.results : [];
+  if (projectsSearch?.includeWeakerMatches === true) {
+    return results;
+  }
+  return results.filter((row) => row?.qualityTier !== "weaker");
+}
+
+function compareTitleThenId(left, right) {
+  const titleComparison = String(left?.title ?? "").trim().localeCompare(
+    String(right?.title ?? "").trim(),
+    undefined,
+    { sensitivity: "base", numeric: true },
   );
+  if (titleComparison !== 0) {
+    return titleComparison;
+  }
+  return String(left?.id ?? "").localeCompare(String(right?.id ?? ""), undefined, {
+    sensitivity: "base",
+    numeric: true,
+  });
+}
+
+export function buildProjectSearchTree(results = []) {
+  const projectsById = new Map();
+
+  for (const row of Array.isArray(results) ? results : []) {
+    const projectId = String(row?.projectId ?? "").trim();
+    const chapterId = String(row?.chapterId ?? "").trim();
+    const rowId = String(row?.rowId ?? "").trim();
+    if (!projectId || !chapterId || !rowId) {
+      continue;
+    }
+
+    let project = projectsById.get(projectId);
+    if (!project) {
+      project = {
+        id: projectId,
+        title: String(row?.projectTitle ?? "Project"),
+        score: Number(row?.score ?? 0),
+        rowCount: 0,
+        chaptersById: new Map(),
+      };
+      projectsById.set(projectId, project);
+    }
+    project.score = Math.max(project.score, Number(row?.score ?? 0));
+    project.rowCount += 1;
+
+    let chapter = project.chaptersById.get(chapterId);
+    if (!chapter) {
+      chapter = {
+        id: chapterId,
+        title: String(row?.chapterTitle ?? "Chapter"),
+        score: Number(row?.score ?? 0),
+        rowCount: 0,
+        rows: [],
+      };
+      project.chaptersById.set(chapterId, chapter);
+    }
+    chapter.score = Math.max(chapter.score, Number(row?.score ?? 0));
+    chapter.rowCount += 1;
+    chapter.rows.push(row);
+  }
+
+  return [...projectsById.values()]
+    .map((project) => ({
+      ...project,
+      chapters: [...project.chaptersById.values()]
+        .map((chapter) => ({
+          ...chapter,
+          rows: [...chapter.rows].sort((left, right) =>
+            String(left?.rowOrderKey ?? "").localeCompare(String(right?.rowOrderKey ?? ""))
+            || String(left?.rowId ?? "").localeCompare(String(right?.rowId ?? ""))),
+        }))
+        .sort(compareTitleThenId),
+    }))
+    .sort(compareTitleThenId);
 }

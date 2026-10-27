@@ -427,7 +427,15 @@ fn wordpress_caption_from_media_response(
     let caption = media
         .pointer("/caption/rendered")
         .and_then(Value::as_str)
-        .and_then(wordpress_caption_plain_text);
+        .and_then(|rendered| {
+            wordpress_caption_inline_markup(
+                rendered,
+                media
+                    .get("source_url")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+            )
+        });
     Some(match caption {
         Some(caption) => WordPressCaptionMatch::Caption(caption),
         None => WordPressCaptionMatch::MatchedWithoutCaption,
@@ -515,7 +523,7 @@ fn percent_decode_utf8_lossy(value: &str) -> String {
     String::from_utf8_lossy(&decoded).to_string()
 }
 
-fn wordpress_caption_plain_text(rendered: &str) -> Option<String> {
+fn wordpress_caption_inline_markup(rendered: &str, source_url: &str) -> Option<String> {
     let fragment = Html::parse_fragment(rendered);
     let more_link_selector = Selector::parse(".more-link").ok()?;
     let last_text_node = fragment
@@ -534,26 +542,81 @@ fn wordpress_caption_plain_text(rendered: &str) -> Option<String> {
                 .any(|node| node.id() == last_text_node.id())
         })
     });
-    let text = fragment
+    // Emit only canonical editor links. Preserve their text and punctuation while
+    // flattening layout HTML; do not carry WordPress attributes into the editor.
+    let mut output = String::new();
+    let mut has_visible_text = false;
+    let mut pending = fragment
         .root_element()
-        .descendants()
-        .filter(|node| {
-            !trailing_more_link.is_some_and(|more_link| {
-                node.ancestors()
-                    .filter_map(ElementRef::wrap)
-                    .any(|ancestor| ancestor.id() == more_link.id())
-            })
-        })
-        .filter_map(|node| node.value().as_text().map(|text| text.as_ref()))
-        .flat_map(str::split_whitespace)
-        .collect::<Vec<_>>()
-        .join(" ");
+        .children()
+        .rev()
+        .map(|node| (node, None::<&str>))
+        .collect::<Vec<_>>();
+    while let Some((node, closing)) = pending.pop() {
+        if let Some(closing) = closing {
+            output.push_str(closing);
+            continue;
+        }
+        if let Some(text) = node.value().as_text() {
+            output.push_str(text);
+            has_visible_text |= !text.trim().is_empty();
+            continue;
+        }
+        let Some(element) = ElementRef::wrap(node) else {
+            continue;
+        };
+        if trailing_more_link.is_some_and(|more_link| more_link.id() == element.id())
+            || matches!(
+                element.value().name(),
+                "script" | "style" | "template" | "noscript"
+            )
+        {
+            continue;
+        }
+        if matches!(
+            element.value().name(),
+            "p" | "div" | "li" | "br" | "blockquote" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
+        ) {
+            output.push(' ');
+            pending.push((node, Some(" ")));
+        }
+        if element.value().name() == "a" {
+            if let Some(href) = element
+                .attr("href")
+                .and_then(|href| wordpress_caption_link_href(href, source_url))
+            {
+                output.push_str("<a href=\"");
+                output.push_str(
+                    &href
+                        .replace('&', "&amp;")
+                        .replace('"', "&quot;")
+                        .replace('<', "&lt;")
+                        .replace('>', "&gt;"),
+                );
+                output.push_str("\">");
+                pending.push((node, Some("</a>")));
+            }
+        }
+        pending.extend(node.children().rev().map(|child| (child, None)));
+    }
+    let text = output.split_whitespace().collect::<Vec<_>>().join(" ");
     let text = if trailing_more_link.is_some() {
         strip_wordpress_generated_more_ellipsis(&text)
     } else {
         text
     };
-    (!text.is_empty()).then_some(text)
+    (has_visible_text && !text.is_empty()).then_some(text)
+}
+
+fn wordpress_caption_link_href(href: &str, source_url: &str) -> Option<String> {
+    let href = href.trim();
+    if href.is_empty() {
+        return None;
+    }
+    let url = url::Url::parse(href)
+        .or_else(|_| url::Url::parse(source_url)?.join(href))
+        .ok()?;
+    (matches!(url.scheme(), "http" | "https") && url.host_str().is_some()).then(|| url.to_string())
 }
 
 fn strip_wordpress_generated_more_ellipsis(text: &str) -> String {
@@ -1581,7 +1644,7 @@ fn detected_uploaded_image_extension(bytes: &[u8]) -> Option<&'static str> {
     None
 }
 
-fn validated_uploaded_image_extension(
+pub(super) fn validated_uploaded_image_extension(
     filename: &str,
     bytes: &[u8],
 ) -> Result<&'static str, String> {
@@ -2378,26 +2441,28 @@ mod tests {
     }
 
     #[test]
-    fn wordpress_caption_plain_text_strips_generated_more_link_suffix() {
+    fn wordpress_caption_inline_markup_strips_generated_more_link_suffix() {
         assert_eq!(
-            wordpress_caption_plain_text(
+            wordpress_caption_inline_markup(
                 r#"<p>Tranh lụa về Phục Hy thời nhà Tống &hellip;
                     <a class="more-link" href="https://example.com/attachment/">
                         More <span class="screen-reader-text">attachment filename</span>
                     </a></p>"#,
+                "https://example.com/wp-content/uploads/image.jpg",
             ),
             Some("Tranh lụa về Phục Hy thời nhà Tống".to_string())
         );
     }
 
     #[test]
-    fn wordpress_caption_plain_text_cleans_reported_jesus_image_caption() {
+    fn wordpress_caption_inline_markup_cleans_reported_jesus_image_caption() {
         assert_eq!(
-            wordpress_caption_plain_text(
+            wordpress_caption_inline_markup(
                 r#"<p>“Chúa Giêsu bước đi trên mặt nước”, tranh khắc gỗ của Gustave Doré, năm 1869. &hellip;
                     <a class="more-link" href="https://gnosisvn.org/attachment/">
                         More <span class="screen-reader-text">attachment filename</span>
                     </a></p>"#,
+                "https://gnosisvn.org/wp-content/uploads/image.jpg",
             ),
             Some(
                 "“Chúa Giêsu bước đi trên mặt nước”, tranh khắc gỗ của Gustave Doré, năm 1869."
@@ -2407,18 +2472,100 @@ mod tests {
     }
 
     #[test]
-    fn wordpress_caption_plain_text_preserves_legitimate_links_and_ellipses() {
+    fn wordpress_caption_inline_markup_preserves_legitimate_links_and_ellipses() {
         assert_eq!(
-            wordpress_caption_plain_text(
+            wordpress_caption_inline_markup(
                 r#"<p>A deliberate ending… <a href="https://example.com/more">More context</a></p>"#,
+                "https://example.com/wp-content/uploads/image.jpg",
             ),
-            Some("A deliberate ending… More context".to_string())
+            Some(
+                r#"A deliberate ending… <a href="https://example.com/more">More context</a>"#
+                    .to_string()
+            )
         );
         assert_eq!(
-            wordpress_caption_plain_text(
+            wordpress_caption_inline_markup(
                 r#"<p>Read <a class="more-link" href="https://example.com/details">more details</a> before continuing.</p>"#,
+                "https://example.com/wp-content/uploads/image.jpg",
             ),
-            Some("Read more details before continuing.".to_string())
+            Some(
+                r#"Read <a href="https://example.com/details">more details</a> before continuing."#
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn wordpress_caption_response_preserves_reported_luanxa_links() {
+        let response = json!([{
+            "source_url": "https://gnosisvn.org/wp-content/uploads/2026/10/LuanXa.webp",
+            "caption": { "rendered": r#"<p>Mỗi luân xa giống như một bông hoa năng lượng.</p>
+                <p>Bạn có thể xem mô hình 3D trình bày chi tiết hơn về các luân xa tại <a href="https://chakras.gnosis-tms.com">đây</a>, và tài liệu liệt kê các nguồn tham khảo được sử dụng để xây dựng những hình ảnh này tại <a href="https://chakras.gnosis-tms.com/dau">đây</a>.</p>"# }
+        }]);
+        let Some(WordPressCaptionMatch::Caption(caption)) = wordpress_caption_from_media_response(
+            &response,
+            "gnosisvn.org/wp-content/uploads/2026/10/LuanXa.webp",
+        ) else {
+            panic!("matching caption should be imported");
+        };
+        assert_eq!(
+            caption,
+            r#"Mỗi luân xa giống như một bông hoa năng lượng. Bạn có thể xem mô hình 3D trình bày chi tiết hơn về các luân xa tại <a href="https://chakras.gnosis-tms.com/">đây</a>, và tài liệu liệt kê các nguồn tham khảo được sử dụng để xây dựng những hình ảnh này tại <a href="https://chakras.gnosis-tms.com/dau">đây</a>."#
+        );
+        let segments = super::super::chapter_export::inline_segments(&caption);
+        assert_eq!(
+            segments
+                .iter()
+                .filter_map(|segment| segment.style.link.as_deref())
+                .collect::<Vec<_>>(),
+            [
+                "https://chakras.gnosis-tms.com/",
+                "https://chakras.gnosis-tms.com/dau"
+            ]
+        );
+    }
+
+    #[test]
+    fn wordpress_caption_links_resolve_relative_hrefs_and_drop_unrelated_attributes() {
+        assert_eq!(wordpress_caption_inline_markup(
+            r#"<p>Read <a class="source" target="_blank" onclick="bad()" href="/source?a=1&amp;b=2">this <em>source</em></a>, then <a href="//references.example.org/paper">that paper</a>.<br>Next line.</p>"#,
+            "https://example.com/wp-content/uploads/image.jpg"
+        ), Some(r#"Read <a href="https://example.com/source?a=1&amp;b=2">this source</a>, then <a href="https://references.example.org/paper">that paper</a>. Next line."#.into()));
+    }
+
+    #[test]
+    fn wordpress_caption_discards_unsafe_links_and_non_content_html() {
+        assert_eq!(
+            wordpress_caption_inline_markup(
+                r#"<p><a href="javascript:alert(1)">First</a> <a href="data:text/html,unsafe">second</a> <a href="mailto:test@example.com">third</a> <a>fourth</a> <a href="">fifth</a>.</p><script>bad()</script><style>bad { }</style><p>Next.</p>"#,
+                "https://example.com/image.jpg"
+            ),
+            Some("First second third fourth fifth. Next.".into())
+        );
+        assert_eq!(
+            wordpress_caption_inline_markup(
+                "<script>bad()</script><p> </p>",
+                "https://example.com/image.jpg"
+            ),
+            None
+        );
+        assert_eq!(
+            wordpress_caption_inline_markup(
+                r#"<p><a href="https://example.com"> </a></p>"#,
+                "https://example.com/image.jpg"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn wordpress_caption_more_cleanup_keeps_earlier_content_links() {
+        assert_eq!(
+            wordpress_caption_inline_markup(
+                r#"<p>See <a href="https://example.com/source">the source</a> […] <a class="more-link" href="https://example.com/attachment">More <span>attachment</span></a></p>"#,
+                "https://example.com/image.jpg"
+            ),
+            Some(r#"See <a href="https://example.com/source">the source</a>"#.into())
         );
     }
 

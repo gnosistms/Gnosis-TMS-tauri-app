@@ -30,14 +30,14 @@ export function anyProjectMutatingRepoQueueWriteActive() {
 
 export function areProjectCreationWritesDisabled() {
   return (
-    areResourcePageWritesDisabled(state.projectsPage)
+    areResourcePageWriteSubmissionsDisabled(state.projectsPage)
     || anyProjectMutatingWriteIsActive()
     || anyProjectMutatingRepoQueueWriteActive()
   );
 }
 
-export function areProjectLocalHardDeleteWritesDisabled() {
-  return areResourcePageWritesDisabled(state.projectsPage);
+export function areProjectLocalHardDeleteWritesDisabled(pageState = state.projectsPage) {
+  return areResourcePageWriteSubmissionsDisabled(pageState);
 }
 
 export function areProjectLifecycleWritesDisabled() {

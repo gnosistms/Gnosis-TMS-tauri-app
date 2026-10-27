@@ -4,6 +4,7 @@ import {
   openAiMissingKeyModal,
   resolveAiActionProviderAndModel,
 } from "./ai-settings-flow.js";
+import { formatAiProviderActionError } from "./ai-provider-error.js";
 import { ensureSelectedTeamAiProviderReady } from "./team-ai-flow.js";
 import { resolveEditorAiTranslateLanguages } from "./editor-ai-translate-target.js";
 import {
@@ -14,6 +15,10 @@ import {
 import { invoke, waitForNextPaint } from "./runtime.js";
 import { state } from "./state.js";
 import { editorFootnotesPlainText, findEditorRowById } from "./editor-utils.js";
+import { editorFootnotesForAiReview } from "./editor-footnotes.js";
+import { srtLinguisticRow, srtGroupForRow, srtGroupingEnabled } from "./editor-srt-grouping.js";
+import { beginSrtGroupEdit, updateSrtGroupDraft, pendingSrtGroupEdits } from "./editor-srt-group-edit-flow.js";
+import { srtGroupSnapshot } from "./editor-srt-group-ai.js";
 import { formatAiHistoryModelLabel } from "./editor-history.js";
 import {
   buildEditorAssistantThreadKey,
@@ -30,7 +35,6 @@ import {
   applyEditorAssistantItemApplyFailed,
   applyEditorAssistantPending,
   applyEditorAssistantPromptedRowTextSnapshot,
-  applyEditorAssistantProviderContinuity,
   applyEditorAssistantThinking,
   clearEditorAssistantPending,
   updateEditorAssistantItem,
@@ -48,6 +52,7 @@ import {
   buildEditorAiTranslationGlossaryHints,
   buildEditorDerivedGlossaryModel,
 } from "./editor-glossary-highlighting.js";
+import { ensureEditorGlossaryReady } from "./editor-glossary-flow.js";
 import { buildDerivedGlossaryTermInputs } from "./editor-derived-glossary-flow.js";
 import { saveStoredEditorDerivedGlossaryEntryForChapter } from "./editor-derived-glossary-cache.js";
 import { saveStoredEditorAssistantChapterData } from "./editor-ai-assistant-cache.js";
@@ -433,7 +438,7 @@ function currentAssistantContext(chapterState = state.editorChapter, overrides =
     return null;
   }
 
-  const row = findEditorRowById(chapterState.activeRowId, chapterState);
+  const row = srtLinguisticRow(findEditorRowById(chapterState.activeRowId, chapterState), chapterState);
   if (!row) {
     return null;
   }
@@ -473,6 +478,8 @@ function currentAssistantContext(chapterState = state.editorChapter, overrides =
     targetLanguageLabel: normalizeLanguageLabel(targetLanguage, targetLanguageCode),
     sourceText,
     targetText,
+    targetFootnotes: editorFootnotesForAiReview(row.footnotes?.[targetLanguageCode]),
+    targetImageCaption: row.imageCaptions?.[targetLanguageCode] ?? "",
     sourceFootnote: editorFootnotesPlainText(row.footnotes?.[sourceLanguageCode]),
     sourceImageCaption: row.imageCaptions?.[sourceLanguageCode] ?? "",
     alternateLanguageTexts: buildEditorAssistantAlternateLanguageTexts(
@@ -945,7 +952,7 @@ function classifyAssistantIntent(message, context) {
 }
 
 async function resolveAssistantGlossaryHints(context, providerId, modelId, allowDerivedPreparation = false) {
-  const glossaryState = context.chapterState?.glossary ?? null;
+  const glossaryState = await ensureEditorGlossaryReady(context.chapterState, context.chapterId);
   const glossaryModel = glossaryState?.matcherModel ?? null;
   const glossarySourceLanguageCode =
     typeof glossaryState?.sourceLanguage?.code === "string" && glossaryState.sourceLanguage.code.trim()
@@ -1082,28 +1089,6 @@ async function resolveAssistantGlossaryHints(context, providerId, modelId, allow
   };
 }
 
-function resolveProviderModelKey(providerId, modelId) {
-  const normalizedProviderId = typeof providerId === "string" ? providerId.trim() : "";
-  const normalizedModelId = typeof modelId === "string" ? modelId.trim() : "";
-  return normalizedProviderId && normalizedModelId
-    ? `${normalizedProviderId}::${normalizedModelId}`
-    : "";
-}
-
-function resolveAssistantProviderContinuation(thread, providerId, modelId) {
-  const providerModelKey = resolveProviderModelKey(providerId, modelId);
-  const continuity = providerModelKey
-    ? thread?.providerContinuityByModelKey?.[providerModelKey] ?? null
-    : null;
-  const previousResponseId =
-    typeof continuity?.providerResponseId === "string" && continuity.providerResponseId.trim()
-      ? continuity.providerResponseId.trim()
-      : typeof continuity?.previousResponseId === "string" && continuity.previousResponseId.trim()
-        ? continuity.previousResponseId.trim()
-        : "";
-  return previousResponseId ? { previousResponseId } : null;
-}
-
 function rowTextUpdatesSinceLastAssistantPrompt(thread, context) {
   if (thread?.hasPromptedRowTextSnapshot !== true) {
     return {};
@@ -1146,6 +1131,8 @@ function buildAssistantTurnRequestPayload(
       targetLanguageCode: context.targetLanguageCode,
       targetLanguageLabel: context.targetLanguageLabel,
       targetText: context.targetText,
+      targetFootnotes: context.targetFootnotes,
+      targetImageCaption: context.targetImageCaption,
       sourceFootnote: context.sourceFootnote,
       sourceImageCaption: context.sourceImageCaption,
       ...rowTextUpdatesSinceLastAssistantPrompt(thread, context),
@@ -1165,7 +1152,6 @@ function buildAssistantTurnRequestPayload(
     documentRevisionKey: documentDigest?.revisionKey ?? "",
     concordanceHits: intent.concordanceHits,
     replyLanguageHint: "",
-    providerContinuation: resolveAssistantProviderContinuation(thread, providerId, modelId),
   });
 }
 
@@ -1373,16 +1359,6 @@ export async function runEditorAiAssistant(render) {
       requestPayload.row?.targetText ?? "",
     );
 
-    if (payload?.providerContinuation) {
-      const providerModelKey = resolveProviderModelKey(providerId, modelId);
-      state.editorChapter = applyEditorAssistantProviderContinuity(
-        state.editorChapter,
-        context.threadKey,
-        providerModelKey,
-        payload.providerContinuation,
-      );
-    }
-
     if (intent.includeDocumentDigest && payload?.assistantText && documentDigest?.revisionKey) {
       state.editorChapter = applyEditorAssistantDocumentDigest(
         state.editorChapter,
@@ -1469,7 +1445,10 @@ export async function runEditorAiAssistant(render) {
       baseContext.threadKey,
       [
         createAssistantErrorMessage({
-          errorText: parsedError.messageText,
+          errorText: formatAiProviderActionError(
+            providerIdForError,
+            parsedError.messageText,
+          ),
           promptText: parsedError.promptText,
           details: errorDetails,
         }, errorContext),
@@ -1518,8 +1497,36 @@ export async function applyEditorAssistantDraft(render, itemId, operations = {})
   renderAssistantSidebar(render);
 
   try {
+    let groupEdit = null;
+    const expected = item.details?.srtGroupDraft;
+    if (expected && !srtGroupingEnabled(state.editorChapter)) {
+      throw new Error("Switch to Group fragments to apply this sentence draft.");
+    }
+    if (srtGroupingEnabled(state.editorChapter)) {
+      const group = srtGroupForRow(state.editorChapter, context.rowId);
+      if (pendingSrtGroupEdits(state.editorChapter, { rowIds: group.map((row) => row.rowId) }).length) {
+        throw new Error("Save the sentence edits before applying this draft.");
+      }
+      if (expected && (group.map((row) => row.rowId).join(":") !== expected.memberRowIds.join(":")
+        || srtGroupSnapshot(group) !== expected.captured)) {
+        throw new Error("The sentence changed since this draft was created. Generate a new draft before applying.");
+      }
+      groupEdit = beginSrtGroupEdit(context.rowId, context.targetLanguageCode);
+      if (expected) {
+        for (const result of expected.results) {
+          const member = group.find((row) => row.rowId === result.rowId);
+          if (result.translatedFootnote?.trim() && !editorFootnotesPlainText(member.footnotes?.[context.targetLanguageCode]).trim()) {
+            updateEditorRowFieldValue(member.rowId, context.targetLanguageCode, result.translatedFootnote, "footnote");
+          }
+          if (result.translatedImageCaption?.trim() && !String(member.imageCaptions?.[context.targetLanguageCode] ?? "").trim()) {
+            updateEditorRowFieldValue(member.rowId, context.targetLanguageCode, result.translatedImageCaption, "image-caption");
+          }
+        }
+      }
+    }
     if (item.draftTranslationText) {
-      updateEditorRowFieldValue(
+      if (groupEdit) updateSrtGroupDraft(groupEdit.firstRowId, context.targetLanguageCode, item.draftTranslationText, { forceSave: true });
+      else updateEditorRowFieldValue(
         context.rowId,
         context.targetLanguageCode,
         item.draftTranslationText,
@@ -1543,13 +1550,16 @@ export async function applyEditorAssistantDraft(render, itemId, operations = {})
     }
     renderAssistantSidebarAndBody(render);
 
-    await persistEditorRowOnBlur(render, context.rowId, {
+    const saved = await persistEditorRowOnBlur(render, context.rowId, {
       commitMetadata: {
         operation: "ai-assistant-apply",
         aiModel: item.details?.modelId ?? "",
       },
       waitForDurable: false,
     });
+    if (srtGroupingEnabled(state.editorChapter) && saved === false) throw new Error("The sentence draft could not be saved. Your draft is preserved; correct it and retry.");
+    if (srtGroupingEnabled(state.editorChapter) && operations.flushDirtyEditorRows
+      && !(await operations.flushDirtyEditorRows(render))) throw new Error("The sentence attachments could not be saved. Your draft is preserved; retry saving.");
 
     state.editorChapter = applyEditorAssistantItemApplied(
       state.editorChapter,
@@ -1605,7 +1615,16 @@ export function toggleEditorAssistantDraftDiff(render, itemId) {
   renderAssistantSidebar(render);
 }
 
-export function logEditorAssistantTranslation(payload = {}) {
+// Persists the current chapter's assistant state (translation logs, threads).
+// Batch flows that log many rows pass `persist: false` to
+// logEditorAssistantTranslation and call this once per batch: each persist
+// clones and IPCs the whole cross-chapter assistant cache (measured ~100 ms
+// per call on a 9 MB cache), which per row serialized the batch apply lane.
+export function persistEditorAssistantState() {
+  persistAssistantState();
+}
+
+export function logEditorAssistantTranslation(payload = {}, options = {}) {
   const threadKey = buildEditorAssistantThreadKey(
     payload.rowId,
     payload.sourceLanguageCode,
@@ -1645,16 +1664,9 @@ export function logEditorAssistantTranslation(payload = {}) {
       targetLanguageCode: payload.targetLanguageCode,
     },
   );
-  if (payload.providerContinuation) {
-    const providerModelKey = resolveProviderModelKey(payload.providerId, payload.modelId);
-    state.editorChapter = applyEditorAssistantProviderContinuity(
-      state.editorChapter,
-      threadKey,
-      providerModelKey,
-      payload.providerContinuation,
-    );
+  if (options.persist !== false) {
+    persistAssistantState();
   }
-  persistAssistantState();
 }
 
 export function logEditorAssistantTranslationDraft(payload = {}) {
@@ -1684,6 +1696,7 @@ export function logEditorAssistantTranslationDraft(payload = {}) {
       draftTranslationImageCaption: payload.draftTranslationImageCaption ?? "",
       details: {
         kind: "translate_refinement",
+        ...(payload.srtGroupDraft ? { srtGroupDraft: payload.srtGroupDraft } : {}),
         providerId: payload.providerId ?? "",
         modelId: payload.modelId ?? "",
         sourceLanguageCode: payload.sourceLanguageCode ?? "",
@@ -1702,14 +1715,5 @@ export function logEditorAssistantTranslationDraft(payload = {}) {
       targetLanguageCode: payload.targetLanguageCode,
     },
   );
-  if (payload.providerContinuation) {
-    const providerModelKey = resolveProviderModelKey(payload.providerId, payload.modelId);
-    state.editorChapter = applyEditorAssistantProviderContinuity(
-      state.editorChapter,
-      threadKey,
-      providerModelKey,
-      payload.providerContinuation,
-    );
-  }
   persistAssistantState();
 }

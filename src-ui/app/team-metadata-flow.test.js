@@ -8,6 +8,7 @@ globalThis.document = globalThis.document ?? {
 const invokeEvents = [];
 const invokePayloads = [];
 let releaseProjectWrite = null;
+let invokeHandler = null;
 
 globalThis.window = {
   __TAURI__: {
@@ -15,6 +16,9 @@ globalThis.window = {
       invoke: async (command, payload) => {
         invokeEvents.push(command);
         invokePayloads.push({ command, payload });
+        if (typeof invokeHandler === "function") {
+          return invokeHandler(command, payload);
+        }
         if (command === "upsert_local_gnosis_project_metadata_record") {
           return new Promise((resolve) => {
             releaseProjectWrite = resolve;
@@ -32,7 +36,9 @@ globalThis.window = {
 };
 
 const { resetSessionState, state } = await import("./state.js");
+const { queryClient } = await import("./query-client.js");
 const {
+  listProjectMetadataRecords,
   upsertGlossaryMetadataRecord,
   upsertProjectMetadataRecord,
 } = await import("./team-metadata-flow.js");
@@ -82,8 +88,44 @@ test.beforeEach(() => {
   invokeEvents.length = 0;
   invokePayloads.length = 0;
   releaseProjectWrite = null;
+  invokeHandler = null;
   resetSessionState();
   state.auth.session = { sessionToken: "session-token" };
+});
+
+test.afterEach(() => {
+  queryClient.clear();
+});
+
+test("shared metadata sync handles an early rejection while the local read is pending", async () => {
+  let releaseLocalRead = null;
+  invokeHandler = async (command) => {
+    if (command === "sync_local_team_metadata_repo") {
+      throw new Error("metadata sync failed");
+    }
+    if (command === "list_local_gnosis_project_metadata_records") {
+      return new Promise((resolve) => {
+        releaseLocalRead = resolve;
+      });
+    }
+    return null;
+  };
+
+  const unhandled = [];
+  const onUnhandledRejection = (reason) => unhandled.push(reason);
+  process.on("unhandledRejection", onUnhandledRejection);
+  try {
+    const recordsPromise = listProjectMetadataRecords(team({ installationId: 77 }));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(unhandled, []);
+
+    releaseLocalRead([]);
+    assert.deepEqual(await recordsPromise, []);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(unhandled, []);
+  } finally {
+    process.off("unhandledRejection", onUnhandledRejection);
+  }
 });
 
 test("project metadata writes forward an authoritative chapter count", async () => {

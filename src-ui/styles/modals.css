@@ -27,6 +27,13 @@
     rgba(255, 251, 246, 0.66);
 }
 
+/* A dialog with no enabled control (progress and wait modals) takes focus itself.
+   Without this, WebView2 on Windows draws its dark default focus ring around the
+   card. Controls inside the dialog keep their own focus styles. */
+[data-modal-dialog]:focus {
+  outline: none;
+}
+
 .modal-card--compact {
   width: min(620px, 100%);
 }
@@ -190,6 +197,36 @@
   width: min(760px, 100%);
 }
 
+.modal-card--pdf-font-review {
+  width: min(1000px, 100%);
+}
+
+.pdf-font-review__excerpts {
+  display: grid;
+  gap: 18px;
+  max-height: 55vh;
+  min-height: 100px;
+  overflow: auto;
+}
+
+.pdf-font-review__excerpt {
+  margin: 0;
+}
+
+.pdf-font-review__excerpt figcaption {
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.pdf-font-review__excerpt img {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: white;
+  border: 1px solid var(--surface-border);
+}
+
 .modal-card .modal-card__body--editor-export {
   gap: 0;
   padding: 0;
@@ -206,10 +243,6 @@
 
 .editor-export-modal__header .modal__title {
   font-size: clamp(1.8rem, 3vw, 2.4rem);
-}
-
-.editor-export-modal__close {
-  flex: 0 0 auto;
 }
 
 .editor-export-modal {
@@ -311,6 +344,36 @@
   background: var(--modal-progress-track-bg, rgba(255, 247, 233, 0.48));
 }
 
+.editor-export-modal__saved-fonts,
+.editor-export-modal__saved-font-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.editor-export-modal__saved-fonts > button {
+  justify-self: start;
+}
+
+.editor-export-modal__saved-font-list {
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.editor-export-modal__saved-font-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.editor-export-modal__saved-font-list li > span {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
 .editor-export-modal__pdf-progress-header {
   display: flex;
   justify-content: space-between;
@@ -352,7 +415,7 @@
   margin-top: auto;
 }
 
-.editor-export-modal__wordpress-disconnect {
+.editor-export-modal__wordpress-switch {
   border: none;
   background: none;
   color: var(--link);
@@ -362,6 +425,84 @@
   margin-left: 6px;
   padding: 0;
   text-decoration: underline;
+}
+
+.editor-export-modal__wordpress-sites {
+  display: grid;
+  gap: 8px;
+  max-height: 280px;
+  overflow: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.editor-export-modal__wordpress-sites li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.editor-export-modal__wordpress-site {
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-control);
+  background: var(--panel-surface);
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.editor-export-modal__wordpress-site span {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.editor-export-modal__wordpress-forget {
+  width: 34px;
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 1.2rem;
+}
+
+/* Keep the shared tooltip inside its site row, clear of the list's scroll clip. */
+.editor-export-modal__wordpress-forget[data-tooltip]::before,
+.editor-export-modal__wordpress-forget[data-tooltip]:hover::before,
+.editor-export-modal__wordpress-forget[data-tooltip]:focus-visible::before {
+  top: 50%;
+  bottom: auto;
+  left: auto;
+  right: calc(100% + 10px);
+  transform: translateY(-50%);
+}
+
+.editor-export-modal__wordpress-forget[data-tooltip]::after,
+.editor-export-modal__wordpress-forget[data-tooltip]:hover::after,
+.editor-export-modal__wordpress-forget[data-tooltip]:focus-visible::after {
+  top: 50%;
+  bottom: auto;
+  left: auto;
+  right: calc(100% + 4px);
+  transform: translateY(-50%) rotate(-90deg);
+}
+
+.editor-export-modal__wordpress-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.editor-export-modal__wordpress-http-warning {
+  display: flex;
+  gap: 8px;
+  color: var(--warning-ink, var(--ink));
+  font-size: 0.9rem;
+  line-height: 1.4;
 }
 
 .editor-export-modal__wordpress-modes {
@@ -1193,6 +1334,64 @@
   background: transparent;
 }
 
+/* related entries: kept apart, linked as a reminder */
+.glossary-term-modal__related {
+  display: grid;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+/* a small, quiet button at the start of the bottom row */
+.glossary-term-modal__related-button {
+  margin-right: auto;
+  padding: 4px 6px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.glossary-term-modal__related-button:hover,
+.glossary-term-modal__related-button.is-open {
+  color: var(--link-hover);
+}
+
+.glossary-term-modal__related-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.glossary-term-modal__related-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-control);
+  background: var(--surface-strong);
+}
+
+.glossary-term-modal__related-targets {
+  color: var(--muted);
+}
+
+.glossary-term-modal__related-add {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.glossary-term-modal__related-add .field__input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .term-lane__header {
   display: flex;
   align-items: baseline;
@@ -1636,6 +1835,16 @@
   line-height: 1.35;
 }
 
+.project-import-modal__error-badge:has(.project-import-sample-link) {
+  border-radius: 12px;
+}
+
+.project-import-sample-link {
+  display: inline;
+  font: inherit;
+  text-decoration: underline;
+}
+
 .project-document-input__drop-target,
 .project-import-modal__drop-target {
   --project-import-drop-target-color: rgba(173, 111, 42, 0.5);
@@ -1711,6 +1920,15 @@
   line-height: 1.5;
 }
 
+.glossary-import-modal__sample-link {
+  color: var(--link);
+  font-weight: 650;
+}
+
+.glossary-import-modal__sample-link:hover {
+  color: var(--link-hover);
+}
+
 .project-import-modal__upload-progress {
   display: grid;
   gap: 12px;
@@ -1765,6 +1983,14 @@
 
 .ai-translate-all-modal__language {
   min-height: 38px;
+}
+
+.ai-translate-all-modal__language-note {
+  display: block;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 400;
+  line-height: 1.35;
 }
 
 .ai-translate-all-modal__progress-summary {
@@ -2085,4 +2311,14 @@
   .term-variant-row__drag-spacer {
     display: none;
   }
+}
+.subtitle-meaning-examples {
+  max-height: 40vh;
+  overflow-y: auto;
+  padding-left: 1.5rem;
+  overflow-wrap: anywhere;
+}
+
+.subtitle-meaning-examples li + li {
+  margin-top: 1rem;
 }

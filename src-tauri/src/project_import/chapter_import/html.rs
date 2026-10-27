@@ -1116,6 +1116,41 @@ mod tests {
     }
 
     #[test]
+    fn html_import_preserves_wordpress_images_without_captions() {
+        let long_text =
+            "This paragraph contains enough article text for reader extraction. ".repeat(12);
+        let img = r#"<img src="/wp-content/uploads/plate.jpg" width="640" height="420" alt="" class="wp-image-123">"#;
+        let variants = [
+            img.to_string(),
+            format!("<p>{img}</p>"),
+            format!("<p><a href=\"/wp-content/uploads/plate.jpg\">{img}</a></p>"),
+            format!("<figure class=\"wp-block-image\">{img}</figure>"),
+            format!("<figure class=\"wp-block-image\"><a href=\"/wp-content/uploads/plate.jpg\">{img}</a></figure>"),
+        ];
+        for markup in variants {
+            let parsed = parse_html_file(html_input(&format!(
+                "<html><body><article><p>{long_text}</p>{markup}<p>{long_text}</p></article></body></html>"
+            )))
+            .expect("html should parse");
+            let images: Vec<_> = parsed
+                .rows
+                .iter()
+                .filter_map(|row| row.fields.get("en"))
+                .filter(|field| field.image.is_some())
+                .collect();
+            assert_eq!(images.len(), 1, "captionless image missing: {markup}");
+            assert_eq!(images[0].image_caption, "");
+            assert_eq!(
+                images[0]
+                    .image
+                    .as_ref()
+                    .and_then(|image| image.url.as_deref()),
+                Some("https://example.com/wp-content/uploads/plate.jpg")
+            );
+        }
+    }
+
+    #[test]
     fn html_import_preserves_article_images_with_figcaptions() {
         let long_text =
             "This paragraph contains enough article text for reader extraction. ".repeat(12);

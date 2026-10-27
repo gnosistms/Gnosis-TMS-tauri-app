@@ -27,7 +27,7 @@ import { qaListRepoDescriptor, teamSupportsQaListRepos } from "./qa-list-repo-fl
 import { beginPageSync, completePageSync, failPageSync } from "./page-sync.js";
 import { queryClient } from "./query-client.js";
 import { showNoticeBadge } from "./status-feedback.js";
-import { qaListTermWriteIsActive } from "./qa-term-write-coordinator.js";
+import { qaListTermWriteIsActive, waitForQaTermWritesToSettle } from "./qa-term-write-coordinator.js";
 import {
   qaListBackgroundSyncIsActive,
   qaListBackgroundSyncNeedsExitSync,
@@ -110,11 +110,12 @@ export function qaListEditorPayloadMatches(payload, expectedContext) {
 }
 
 export function qaListEditorHasOpenDraft() {
-  return state.qaTermEditor?.isOpen === true;
+  return state.qaTermEditor?.isOpen === true
+    && (!state.qaTermEditor.qaListId || state.qaTermEditor.qaListId === state.qaListEditor?.qaListId);
 }
 
 export function qaListEditorHasActiveTermWrite() {
-  return qaListTermWriteIsActive();
+  return qaListTermWriteIsActive(currentQaListTeam(), state.qaListEditor);
 }
 
 export function qaListEditorHasActiveBackgroundSync() {
@@ -258,11 +259,18 @@ export async function openQaListEditor(render, qaListId, options = {}) {
     Number.isFinite(team?.installationId) && qaList?.repoName
       ? getCachedQaListEditorPayload(team, qaList)
       : null;
-  applyQaListEditorSummary(qaList, {
-    navigationSource: options.navigationSource ?? null,
-    status: cachedPayload || !qaList.repoName ? "ready" : "loading",
-    terms: cachedPayload ? [] : undefined,
-  });
+  if (hasReadyQaListEditor(qaList)) {
+    state.qaListEditor = {
+      ...state.qaListEditor,
+      navigationSource: options.navigationSource ?? null,
+    };
+  } else {
+    applyQaListEditorSummary(qaList, {
+      navigationSource: options.navigationSource ?? null,
+      status: cachedPayload || !qaList.repoName ? "ready" : "loading",
+      terms: cachedPayload ? [] : undefined,
+    });
+  }
   state.screen = "qaListEditor";
   if (cachedPayload) {
     maybeApplyQaListEditorSnapshot(cachedPayload, qaListEditorContext(team, qaList), null);
@@ -316,63 +324,31 @@ export async function openEditorQaList(render, options = {}) {
 
   primeQaListsLoadingState(team.id, { preserveVisibleData: state.qaLists.length > 0 });
   let qaList = resolveDefaultQaListForLanguage(targetLanguageCode, team);
-  state.screen = "qaListEditor";
-  let openedQaListEditor = false;
   if (qaList) {
-    const cachedPayload = getCachedQaListEditorPayload(team, qaList);
-    applyQaListEditorSummary(qaList, {
-      navigationSource: "editor",
-      status: cachedPayload ? "ready" : "loading",
-      terms: cachedPayload ? [] : [],
-    });
-    if (cachedPayload) {
-      maybeApplyQaListEditorSnapshot(cachedPayload, qaListEditorContext(team, qaList), null);
-    }
-    openedQaListEditor = true;
-  } else {
-    state.selectedQaListId = null;
-    state.qaListEditor = {
-      ...createQaListEditorState(),
-      status: "loading",
-      navigationSource: "editor",
-      title: "QA List",
-      language: findIsoLanguageOption(targetLanguageCode),
-    };
+    return openQaListEditor(render, qaList.id, { navigationSource: "editor", preferredQaList: qaList });
   }
+
+  state.screen = "qaListEditor";
+  state.selectedQaListId = null;
+  const loadingEditor = {
+    ...createQaListEditorState(),
+    status: "loading",
+    navigationSource: "editor",
+    title: "QA List",
+    language: findIsoLanguageOption(targetLanguageCode),
+  };
+  state.qaListEditor = loadingEditor;
   render();
-
-  if (!qaList) {
-    await loadTeamQaLists(render, team.id);
-    qaList = resolveDefaultQaListForLanguage(targetLanguageCode, team);
-  }
-
+  await loadTeamQaLists(render, team.id);
+  if (!selectedQaListTeamMatches(team) || state.screen !== "qaListEditor"
+    || state.qaListEditor !== loadingEditor) return;
+  qaList = resolveDefaultQaListForLanguage(targetLanguageCode, team);
   if (!qaList) {
     state.screen = "qa";
     render();
     return;
   }
-
-  if (!openedQaListEditor) {
-    const cachedPayload = getCachedQaListEditorPayload(team, qaList);
-    applyQaListEditorSummary(qaList, {
-      navigationSource: "editor",
-      status: cachedPayload ? "ready" : "loading",
-      terms: cachedPayload ? [] : [],
-    });
-    state.screen = "qaListEditor";
-    if (cachedPayload) {
-      maybeApplyQaListEditorSnapshot(cachedPayload, qaListEditorContext(team, qaList), null);
-    }
-    render();
-  }
-  await loadSelectedQaListEditorData(render);
-  if (
-    state.screen === "qaListEditor"
-    && state.qaListEditor?.repoName
-    && state.qaListEditor?.status === "ready"
-  ) {
-    startQaListBackgroundSyncSession(render);
-  }
+  return openQaListEditor(render, qaList.id, { navigationSource: "editor", preferredQaList: qaList });
 }
 
 function applyQaListEditorSummary(qaList, options = {}) {
@@ -399,10 +375,24 @@ function applyQaListEditorSummary(qaList, options = {}) {
   };
 }
 
+function hasReadyQaListEditor(qaList) {
+  return state.qaListEditor?.status === "ready"
+    && state.qaListEditor.qaListId === qaList?.id
+    && state.qaListEditor.repoName === qaList?.repoName;
+}
+
 export function primeSelectedQaListEditorLoadingState(options = {}) {
   const qaListId = options.qaListId ?? state.selectedQaListId;
   const qaList = resolveQaListForEditor(qaListId, options.preferredQaList ?? null);
   const preservedSearchQuery = state.qaListEditor?.searchQuery ?? "";
+  // Keep the usable list while the snapshot guard protects an edit or sync.
+  if (hasReadyQaListEditor(qaList)) {
+    state.qaListEditor = {
+      ...state.qaListEditor,
+      navigationSource: options.navigationSource ?? state.qaListEditor.navigationSource ?? null,
+    };
+    return;
+  }
   if (qaList) {
     applyQaListEditorSummary(qaList, {
       navigationSource: options.navigationSource ?? state.qaListEditor?.navigationSource ?? null,
@@ -423,9 +413,9 @@ export function primeSelectedQaListEditorLoadingState(options = {}) {
 }
 
 export async function loadSelectedQaListEditorData(render, options = {}) {
-  const preserveVisibleData = options.preserveVisibleData === true;
   const qaListId = options.qaListId ?? state.selectedQaListId ?? state.qaListEditor?.qaListId ?? null;
   const qaList = resolveQaListForEditor(qaListId, options.preferredQaList ?? null);
+  const preserveVisibleData = hasReadyQaListEditor(qaList);
   if (!qaList) {
     state.qaListEditor = {
       ...createQaListEditorState(),
@@ -477,6 +467,10 @@ export async function loadSelectedQaListEditorData(render, options = {}) {
 
   try {
     if (teamSupportsQaListRepos(team) && qaList.repoName) {
+      if (!preserveVisibleData) {
+        await waitForQaTermWritesToSettle(team, qaList);
+        if (!qaListEditorContextMatches(expectedContext)) return;
+      }
       const response = await loadQaListEditorPayloadFromDisk(team, qaList);
       maybeApplyQaListEditorSnapshot(response, expectedContext, render, {
         showDeferredNotice: true,

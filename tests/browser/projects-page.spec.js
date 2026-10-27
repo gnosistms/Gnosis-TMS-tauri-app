@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./test.js";
 
 // Projects page virtualization + scroll restore acceptance tests. The
 // projects fixture writes visible state directly (no Tauri backend), so these
@@ -31,6 +31,52 @@ async function dismissTelemetryDisclosureModal(page) {
     await expect(page.locator(".modal-backdrop")).toHaveCount(0);
   }
 }
+
+test("project search case toggle updates through the action dispatcher", async ({ page }) => {
+  await mountProjectsFixture(page, { projectCount: 2 });
+  const toggle = page.locator("[data-project-search-case-toggle]");
+  await expect(toggle).toHaveText("aA");
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  await expect(toggle).toHaveClass(/search-field__action--active/);
+  await page.locator("[data-project-search-input]").fill("D");
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  await page.locator("[data-project-search-input]").fill("");
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+});
+
+// Windows Vietnamese Telex composes each word in the field ("vieejt" →
+// "việt") until the word ends. A render that replaces the field mid-word cut
+// the composition off and scrambled the typed text.
+async function typeWithInputMethod(page, words) {
+  const session = await page.context().newCDPSession(page);
+  for (const [index, steps] of words.entries()) {
+    for (const text of steps) {
+      await session.send("Input.imeSetComposition", { text, selectionStart: text.length, selectionEnd: text.length });
+      await page.waitForTimeout(30);
+    }
+    await session.send("Input.insertText", { text: steps.at(-1) });
+    await page.waitForTimeout(30);
+    if (index < words.length - 1) {
+      await page.keyboard.type(" ");
+    }
+  }
+}
+
+test("project search keeps text typed with an input method (Vietnamese Telex)", async ({ page }) => {
+  await mountProjectsFixture(page, { projectCount: 2 });
+  const input = page.locator("[data-project-search-input]");
+  await input.click();
+  await typeWithInputMethod(page, [
+    ["v", "vi", "vie", "viê", "việ", "việt"],
+    ["n", "na", "nam"],
+  ]);
+  await expect(input).toHaveValue("việt nam");
+  await expect(input).toBeFocused();
+});
 
 function renderedItemKeys(page) {
   return page.evaluate(() =>
@@ -552,3 +598,140 @@ test.describe("projects page virtualization", () => {
     expect(keysAfterCollapse).not.toContain("f:fixture-project-001:fixture-chapter-0-0");
   });
 });
+
+for (const refreshInitially of [true, false]) {
+  test(`local project removal works with refresh ${refreshInitially ? "already running" : "starting in the dialog"}`, async ({ page }) => {
+    await page.route("**/local-project-removal-fixture", (route) => route.fulfill({
+      contentType: "text/html",
+      body: '<html><head><link rel="stylesheet" href="/styles.css"></head><body><div id="app"></div></body></html>',
+    }));
+    await page.goto("/local-project-removal-fixture");
+    await page.evaluate(async (refreshing) => {
+      window.localRemovalCalls = [];
+      const nativeFinished = new Promise((resolve) => { window.finishLocalRemoval = resolve; });
+      window.__TAURI__ = { core: { invoke: async (command, payload) => {
+        window.localRemovalCalls.push({ command, payload });
+        if (command !== "purge_local_gtms_project_repo") throw new Error(`Unexpected IPC: ${command}`);
+        await nativeFinished;
+      } } };
+      const { state } = await import(`${location.origin}/app/state.js`);
+      const { queryClient, projectKeys } = await import(`${location.origin}/app/query-client.js`);
+      const { createProjectsQuerySnapshot, applyProjectsQuerySnapshotToState } = await import(`${location.origin}/app/project-query.js`);
+      const { setActiveStorageLogin } = await import(`${location.origin}/app/team-storage.js`);
+      const { createProjectActions } = await import(`${location.origin}/app/actions/project-actions.js`);
+      const { handleInputEvent } = await import(`${location.origin}/app/input-handlers.js`);
+      const { renderProjectsScreen } = await import(`${location.origin}/screens/projects.js`);
+      setActiveStorageLogin("local-removal-browser-test");
+      const team = { id: "team-local-removal", installationId: 42, membershipRole: "owner", githubOrg: "test-team" };
+      state.teams = [team];
+      state.selectedTeamId = team.id;
+      state.screen = "projects";
+      state.showDeletedProjects = true;
+      const staleSnapshot = createProjectsQuerySnapshot({
+        items: [{ id: "active-project", name: "active-repo", title: "Keep this project", lifecycleState: "active", fileLoadState: "ready", chapters: [] }],
+        deletedItems: [{ id: "deleted-project", name: "deleted-repo", title: "Remove this copy", lifecycleState: "deleted", chapters: [] }],
+      });
+      queryClient.setQueryData(projectKeys.byTeam(team.id), staleSnapshot);
+      applyProjectsQuerySnapshotToState(staleSnapshot, { teamId: team.id, isFetching: refreshing });
+      const render = () => { document.querySelector("#app").innerHTML = renderProjectsScreen(state); };
+      const handleAction = createProjectActions(render);
+      document.addEventListener("click", (event) => {
+        const action = event.target.closest("[data-action]")?.dataset.action;
+        if (action) void handleAction(action, event);
+      });
+      document.addEventListener("input", (event) => handleInputEvent(event, render));
+      window.startRemovalRefresh = () => { state.projectsPage.isRefreshing = true; };
+      window.finishStaleRemovalRefresh = () => {
+        applyProjectsQuerySnapshotToState(staleSnapshot, { teamId: team.id });
+        render();
+      };
+      render();
+    }, refreshInitially);
+    const deleteAction = page.locator('[data-action="delete-deleted-project:deleted-project"]');
+    await expect(deleteAction).toBeEnabled();
+    await deleteAction.click();
+    const dialog = page.locator('[data-modal-dialog="project-permanent-deletion"]');
+    await expect(dialog).toBeVisible();
+    if (!refreshInitially) await page.evaluate(() => window.startRemovalRefresh());
+    await dialog.locator('[data-project-permanent-delete-input]').fill("Remove this copy");
+    await dialog.getByRole("button", { name: "Delete", exact: true }).click();
+    await expect(dialog).toBeVisible();
+    await expect(page.getByText("PROJECT LOAD FAILED", { exact: true })).toHaveCount(0);
+    await page.evaluate(() => window.finishLocalRemoval());
+    await expect(dialog).toHaveCount(0);
+    await expect(deleteAction).toHaveCount(0);
+    await page.evaluate(() => window.finishStaleRemovalRefresh());
+    await expect(deleteAction).toHaveCount(0);
+    await expect(page.getByText("Keep this project", { exact: true })).toBeVisible();
+    await expect(page.getByText("PROJECT LOAD FAILED", { exact: true })).toHaveCount(0);
+    expect(await page.evaluate(() => window.localRemovalCalls.map((call) => call.command)))
+      .toEqual(["purge_local_gtms_project_repo"]);
+  });
+}
+
+for (const width of [1024, 1440]) {
+  for (const status of ["updateRequired", "importedEditorConflicts", "dirtyLocal"]) {
+    test(`project ${status} notices stay inside the card at ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.route("**/project-notice-fixture", (route) => route.fulfill({
+        contentType: "text/html",
+        body: '<html><head><link rel="stylesheet" href="/styles.css"></head><body><div id="app"></div></body></html>',
+      }));
+      await page.goto("/project-notice-fixture");
+      await page.evaluate(async (syncStatus) => {
+        const { state } = await import(`${location.origin}/app/state.js`);
+        const { renderProjectsScreen } = await import(`${location.origin}/screens/projects.js`);
+        const team = { id: "notice-team", name: "Team", installationId: 42, membershipRole: "owner" };
+        state.teams = [team];
+        state.selectedTeamId = team.id;
+        state.screen = "projects";
+        state.projects = [{
+          id: "notice-project", name: "subtitles", title: "Subtitles", fileLoadState: "ready",
+          chapters: Array.from({ length: 7 }, (_, index) => ({
+            id: `notice-chapter-${index}`, name: `Subtitle file ${index + 1}`, status: "active", sourceWordCount: 100,
+          })),
+        }];
+        state.expandedProjects = new Set(["notice-project"]);
+        state.projectDiscovery = { status: "ready" };
+        state.projectRepoSyncByProjectId = {
+          "notice-project": {
+            status: syncStatus,
+            message: "This project repo 'subtitles' was last saved by Gnosis TMS 0.8.127. You are running 0.8.125. Update Gnosis TMS before syncing so an older app version does not overwrite newer-format data.",
+          },
+        };
+        window.renderNoticeFixture = (expanded, showNotice = true) => {
+          state.expandedProjects = new Set(expanded ? ["notice-project"] : []);
+          state.projectRepoSyncByProjectId["notice-project"].status = showNotice ? syncStatus : "idle";
+          document.querySelector("#app").innerHTML = renderProjectsScreen(state);
+        };
+        window.renderNoticeFixture(true);
+      }, status);
+      const notice = page.locator(".project-vlist__card .expandable-card__status");
+      await expect(notice).toBeVisible();
+      const measure = () => page.evaluate(() => {
+        const header = document.querySelector(".project-vlist__card--header");
+        const notice = header.querySelector(".expandable-card__status");
+        const file = document.querySelector(".project-vlist__card--body-start");
+        return {
+          seam: file ? file.getBoundingClientRect().top - header.getBoundingClientRect().bottom : 0,
+          noticeBottomSpace: header.getBoundingClientRect().bottom - notice.getBoundingClientRect().bottom,
+          noticeMargin: parseFloat(getComputedStyle(notice).marginBottom),
+        };
+      });
+      const expanded = await measure();
+      expect(Math.abs(expanded.seam)).toBeLessThanOrEqual(1);
+      expect(expanded.noticeBottomSpace).toBeGreaterThanOrEqual(expanded.noticeMargin);
+      await page.evaluate(() => window.renderNoticeFixture(false));
+      await expect(notice).toBeVisible();
+      const collapsed = await measure();
+      expect(collapsed.noticeBottomSpace).toBeGreaterThanOrEqual(collapsed.noticeMargin);
+      await page.evaluate(() => window.renderNoticeFixture(true, false));
+      await expect(notice).toHaveCount(0);
+      const seamWithoutNotice = await page.evaluate(() =>
+        document.querySelector(".project-vlist__card--body-start").getBoundingClientRect().top
+        - document.querySelector(".project-vlist__card--header").getBoundingClientRect().bottom,
+      );
+      expect(Math.abs(seamWithoutNotice)).toBeLessThanOrEqual(1);
+    });
+  }
+}

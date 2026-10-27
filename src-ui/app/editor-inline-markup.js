@@ -16,6 +16,7 @@ export {
 } from "./editor-inline-markup/serialize.js";
 export {
   mapInlineMarkupBaseRangesToVisibleRanges,
+  mapInlineMarkupVisiblePositionToRawInsertionOffset,
 } from "./editor-inline-markup/ranges.js";
 export {
   renderSanitizedInlineMarkupWithRanges,
@@ -28,3 +29,4 @@ export {
   describeInlineMarkupSelection,
   toggleInlineMarkupSelection,
 } from "./editor-inline-markup/transforms.js";
+export { buildInlineMarkupDiff } from "./editor-inline-markup/diff.js";

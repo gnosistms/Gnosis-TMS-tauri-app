@@ -36,6 +36,7 @@ import {
 } from "./project-write-coordinator.js";
 import { enqueueRepoWrite } from "./repo-write-queue.js";
 import { openLocalFilePathPicker, openLocalFilePicker } from "./local-file-picker.js";
+import { isProjectImportFormatError } from "./project-import-format.js";
 import { enforceImportFileSizeLimit } from "./import-file-limit.js";
 import { canManageProjects } from "./resource-capabilities.js";
 import { normalizeSupportedLanguageCode } from "../lib/language-options.js";
@@ -597,6 +598,7 @@ export function openProjectImportModal(render, projectId) {
     status: "idle",
     error: "",
     failedFileNames: [],
+    formatFailedFileNames: [],
     pendingFile: null,
     pendingFiles: [],
     pendingFileName: "",
@@ -633,6 +635,7 @@ export function cancelProjectImportModal(render) {
     status: "idle",
     error: "",
     failedFileNames: [],
+    formatFailedFileNames: [],
     pendingFile: null,
     pendingFiles: [],
     pendingFileName: "",
@@ -647,6 +650,7 @@ export function cancelProjectImportModal(render) {
 export function closeProjectImportUploadError(render) {
   state.projectImport = projectImportModalState({
     failedFileNames: [],
+    formatFailedFileNames: [],
   });
   render();
 }
@@ -1107,6 +1111,7 @@ async function completeProjectImport(render, selectedFile, fileType, options = {
       pendingFiles: [],
       pendingFileName: "",
       failedFileNames: [],
+      formatFailedFileNames: [],
       isBatch: false,
       ...resetProjectImportUploadProgress(),
       selectedSourceLanguageCode: "",
@@ -1137,6 +1142,7 @@ async function completeProjectImport(render, selectedFile, fileType, options = {
       pendingFiles: [],
       pendingFileName: "",
       failedFileNames: [],
+      formatFailedFileNames: [],
       isBatch: false,
       ...resetProjectImportUploadProgress(),
       selectedSourceLanguageCode: "",
@@ -1144,7 +1150,9 @@ async function completeProjectImport(render, selectedFile, fileType, options = {
     });
     clearProjectsStatus(render);
     failProjectsPageSync();
-    showNoticeBadge(state.projectImport.error || "The file could not be imported.", render);
+    if (!isProjectImportFormatError(error)) {
+      showNoticeBadge(state.projectImport.error || "The file could not be imported.", render);
+    }
     render();
   }
 }
@@ -1233,6 +1241,7 @@ export async function importProjectFiles(render, selectedFiles, options = {}) {
       pendingFiles: files,
       pendingFileName: "",
       failedFileNames: [],
+      formatFailedFileNames: [],
       isBatch: true,
       ...resetProjectImportUploadProgress(),
       selectedSourceLanguageCode: "",
@@ -1253,6 +1262,7 @@ export async function importProjectFiles(render, selectedFiles, options = {}) {
     pendingFiles: files,
     pendingFileName: "",
     failedFileNames: [],
+    formatFailedFileNames: [],
     isBatch: true,
     ...(usesUploadProgress
       ? {
@@ -1271,6 +1281,7 @@ export async function importProjectFiles(render, selectedFiles, options = {}) {
 
   let importedResults = [];
   let failedFileNames = [];
+  let formatFailedFileNames = [];
   let wasCanceled = false;
   try {
     const batchPayload = await buildProjectImportBatchFiles(files, options.confirmedSourceLanguageCode);
@@ -1300,6 +1311,9 @@ export async function importProjectFiles(render, selectedFiles, options = {}) {
         ...failedFileNames,
         ...failedFileNamesFromBatchResult(batchResult),
       ];
+      formatFailedFileNames = (batchResult?.failedFiles ?? [])
+        .filter((failure) => isProjectImportFormatError(failure?.error))
+        .map((failure) => failure.fileName);
       wasCanceled = batchResult?.canceled === true || state.projectImport.uploadCancelRequested === true;
       await applyImportedFilesToProject(selectedTeam, targetProject, importedResults, linkedGlossary);
     }
@@ -1311,6 +1325,7 @@ export async function importProjectFiles(render, selectedFiles, options = {}) {
       pendingFiles: [],
       pendingFileName: "",
       failedFileNames: [],
+      formatFailedFileNames: [],
       isBatch: false,
       ...resetProjectImportUploadProgress(),
       selectedSourceLanguageCode: "",
@@ -1336,6 +1351,7 @@ export async function importProjectFiles(render, selectedFiles, options = {}) {
     pendingFiles: [],
     pendingFileName: "",
     failedFileNames,
+    formatFailedFileNames,
     isBatch: false,
     ...resetProjectImportUploadProgress(),
     selectedSourceLanguageCode: "",

@@ -16,11 +16,13 @@
 
 use std::collections::HashMap;
 
-/// Bumped whenever compiled-matcher or selection semantics change; asserted
-/// against the shared golden fixture so JS and Rust stay in lockstep. Only
-/// tests read it today; production consumers arrive with cache versioning.
+/// Bumped whenever compiled-matcher, tokenizer, or selection semantics
+/// change; asserted against the shared golden fixture so JS and Rust stay in
+/// lockstep. v2: quotes, dots, and hyphens are tokens, not separators (see
+/// plans/glossary-punctuation-tokens-plan.md). Only tests read it today;
+/// production consumers arrive with cache versioning.
 #[cfg_attr(not(test), allow(dead_code))]
-pub(crate) const GLOSSARY_MATCHER_POLICY_VERSION: u64 = 1;
+pub(crate) const GLOSSARY_MATCHER_POLICY_VERSION: u64 = 2;
 
 /// The single active selection policy. The legacy left-to-right scan was
 /// removed after the v0.8.86 bake, so rollback is now a git revert rather
@@ -201,7 +203,8 @@ pub(crate) fn select_globally_longest_occurrences(
 #[cfg(test)]
 mod tests {
     use super::super::{
-        find_matched_glossary_terms_in_texts, tokenize_glossary_term, tokenize_text_words,
+        find_matched_glossary_terms_in_texts, glossary_tokens_are_matchable,
+        tokenize_glossary_term, tokenize_text_words,
     };
     use super::*;
     use crate::ai::types::AiTranslatedGlossaryTermInput;
@@ -254,7 +257,7 @@ mod tests {
         let mut index_by_key = std::collections::HashMap::<String, usize>::new();
         for candidate in &case.candidates {
             let tokens = tokenize_glossary_term(&candidate.term);
-            if tokens.is_empty() {
+            if !glossary_tokens_are_matchable(&tokens) {
                 continue;
             }
             let key = tokens.join(" ");

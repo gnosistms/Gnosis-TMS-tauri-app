@@ -182,6 +182,7 @@ const {
   createGlossaryEditorState,
   createGlossaryTermEditorState,
   resetSessionState,
+  createAppUpdateState,
   state,
 } = await import("./state.js");
 const {
@@ -200,11 +201,16 @@ const {
 const {
   openGlossaryTermEditor,
   submitGlossaryTermEditor,
+  updateGlossaryTermVariant,
+  moveGlossaryTermVariantToIndex,
+  removeGlossaryTermVariant,
 } = await import("./glossary-term-draft.js");
 const {
   deleteGlossaryTerm,
+  loadSelectedGlossaryEditorData,
   maybeApplyGlossaryEditorSnapshot,
   openGlossaryEditor,
+  primeSelectedGlossaryEditorLoadingState,
 } = await import("./glossary-editor-flow.js");
 const {
   setCachedGlossaryEditorPayload,
@@ -213,7 +219,11 @@ const {
   anyGlossaryTermWriteIsActive,
   resetGlossaryTermWriteCoordinator,
 } = await import("./glossary-term-write-coordinator.js");
-const { queryClient } = await import("./query-client.js");
+const { queryClient, teamKeys } = await import("./query-client.js");
+const { createNavigationActions } = await import("./actions/navigation-actions.js");
+const { createGlossaryEditorQueryOptions } = await import("./glossary-editor-query.js");
+const { createQaListEditorQueryOptions } = await import("./qa-list-editor-query.js");
+const { applyQaListEditorPayload } = await import("./qa-list-shared.js");
 
 function glossaryTerm(overrides = {}) {
   return {
@@ -283,6 +293,11 @@ function installGlossaryEditorFixture(options = {}) {
     terms: cloneValue(terms),
   };
   state.glossaryTermEditor = createGlossaryTermEditorState();
+  // Keep access refresh from treating the fixture's default null IPC response as
+  // an authoritative empty team list during navigation tests.
+  queryClient.setQueryData(teamKeys.currentUser("fixture-user"), {
+    items: cloneValue(state.teams), deletedItems: [], authLogin: "fixture-user",
+  });
 }
 
 async function flushAsyncWork() {
@@ -317,6 +332,8 @@ function deferred() {
   });
   return { promise, resolve, reject };
 }
+
+test.afterEach(() => queryClient.clear());
 
 test.beforeEach(async () => {
   invokeLog.length = 0;
@@ -427,6 +444,94 @@ test("glossary editor snapshot apply leaves visible terms alone while a term dra
   assert.equal(state.glossaryEditor.terms[0]?.termId, "term-1");
 });
 
+for (const entry of ["open", "navigation"]) {
+  for (const outcome of ["saved", "failed"]) {
+    test(`returning to the glossary via ${entry} preserves the list during a term save (${outcome})`, async () => {
+      installGlossaryEditorFixture();
+      const diskPayload = cloneValue(state.glossaryEditor);
+      const save = deferred();
+      invokeHandler = async (command) => {
+        if (command === "upsert_gtms_glossary_term") return save.promise;
+        if (command === "load_gtms_glossary_editor_data") return diskPayload;
+        if (command === "sync_gtms_glossary_repos") return [];
+        return null;
+      };
+      await openGlossaryTermEditor(() => {}, "term-1");
+      state.glossaryTermEditor.targetTerms = ["edited target"];
+      await submitGlossaryTermEditor(() => {});
+      await flushAsyncWork();
+      assert.equal(anyGlossaryTermWriteIsActive(), true);
+      assert.equal(syncInvocationCount("upsert_gtms_glossary_term"), 1);
+
+      await syncAndStopGlossaryBackgroundSyncSession(() => {});
+      state.screen = "translate";
+      const renderedStates = [];
+      const render = () => renderedStates.push(cloneValue(state.glossaryEditor));
+      if (entry === "open") {
+        await openGlossaryEditor(render, "glossary-1", { navigationSource: "editor" });
+      } else {
+        primeSelectedGlossaryEditorLoadingState({ navigationSource: "editor" });
+        state.screen = "glossaryEditor";
+        await loadSelectedGlossaryEditorData(render);
+      }
+      assert.equal(state.glossaryEditor.status, "ready");
+      assert.equal(state.glossaryEditor.terms.length, 2);
+      assert.deepEqual(state.glossaryEditor.terms[0].targetTerms, ["edited target"]);
+      assert.equal(state.glossaryEditor.terms[0].pendingMutation, "save");
+      assert.ok(renderedStates.every((editor) => editor.status === "ready" && editor.terms.length === 2));
+
+      if (outcome === "saved") {
+        save.resolve({ term: glossaryTerm({ targetTerms: ["edited target"] }), termCount: 2 });
+      } else {
+        save.reject(new Error("Save failed"));
+      }
+      await waitForGlossaryTermWrites();
+      assert.equal(anyGlossaryTermWriteIsActive(), false);
+      assert.equal(state.glossaryEditor.status, "ready");
+      assert.equal(state.glossaryEditor.terms.length, 2);
+      assert.deepEqual(state.glossaryEditor.terms[0].targetTerms, outcome === "saved" ? ["edited target"] : ["mot"]);
+      assert.equal(state.glossaryEditor.terms[0].pendingMutation, null);
+      if (outcome === "failed") {
+        assert.equal(state.glossaryTermEditor.isOpen, true);
+        assert.deepEqual(state.glossaryTermEditor.targetTerms, ["edited target"]);
+        assert.match(state.glossaryTermEditor.error, /Save failed/);
+      }
+    });
+  }
+}
+
+test("priming a different glossary clears the previous glossary terms", () => {
+  installGlossaryEditorFixture();
+  state.glossaries.push({ ...state.glossaries[0], id: "glossary-2", repoName: "glossary-2" });
+  state.selectedGlossaryId = "glossary-2";
+  primeSelectedGlossaryEditorLoadingState();
+  assert.equal(state.glossaryEditor.status, "loading");
+  assert.equal(state.glossaryEditor.glossaryId, "glossary-2");
+  assert.deepEqual(state.glossaryEditor.terms, []);
+});
+
+test("glossary reload keeps ready terms visible while background sync defers the snapshot", async () => {
+  installGlossaryEditorFixture();
+  const terms = cloneValue(state.glossaryEditor.terms);
+  const sync = deferred();
+  invokeHandler = async (command) => {
+    if (command === "sync_gtms_glossary_editor_repo") return sync.promise;
+    if (command === "load_gtms_glossary_editor_data") {
+      return { glossaryId: "glossary-1", terms: [] };
+    }
+    return null;
+  };
+  const syncing = maybeStartGlossaryBackgroundSync(() => {}, { force: true });
+  primeSelectedGlossaryEditorLoadingState();
+  await loadSelectedGlossaryEditorData(() => {});
+  assert.equal(state.glossaryEditor.status, "ready");
+  assert.deepEqual(state.glossaryEditor.terms, terms);
+  sync.resolve({ changedTermIds: ["term-1"] });
+  await syncing;
+  assert.equal(state.glossaryEditor.status, "ready");
+  assert.equal(state.glossaryEditor.terms[0].freshness, "stale");
+});
+
 test("glossary background sync marks changed terms stale without replacing the snapshot", async () => {
   installGlossaryEditorFixture();
   invokeHandler = async (command) => {
@@ -522,6 +627,26 @@ test("glossary background sync skips non-forced sync while the term editor is op
 
   assert.equal(didSync, false);
   assert.equal(syncInvocationCount("sync_gtms_glossary_editor_repo"), 0);
+});
+
+test("glossary background sync is held while a research window is open, even when forced", async () => {
+  installGlossaryEditorFixture();
+  invokeHandler = async (command) => (command === "sync_gtms_glossary_editor_repo"
+    ? { oldHeadSha: "head-1", newHeadSha: "head-1", changedTermIds: [], insertedTermIds: [], deletedTermIds: [] }
+    : null);
+
+  startGlossaryBackgroundSyncSession(() => {});
+  await flushAsyncWork();
+  invokeLog.length = 0;
+  currentTime = 20_000;
+  state.glossaryResearch = { ...state.glossaryResearch, isOpen: true };
+
+  assert.equal(await maybeStartGlossaryBackgroundSync(() => {}, { force: true }), false);
+  assert.equal(syncInvocationCount("sync_gtms_glossary_editor_repo"), 0);
+
+  state.glossaryResearch = { ...state.glossaryResearch, isOpen: false };
+  assert.equal(await maybeStartGlossaryBackgroundSync(() => {}), true);
+  assert.equal(syncInvocationCount("sync_gtms_glossary_editor_repo"), 1);
 });
 
 test("glossary exit sync stays inactive when the session has no local edits", async () => {
@@ -1179,6 +1304,296 @@ test("saving a glossary term syncs first and then persists the user's modal draf
   assert.ok(renderCalls.length > 0);
 });
 
+for (const termId of [null, "term-1"]) {
+  test(`backend duplicate rejection marks the recovered ${termId ? "edited" : "new"} draft and tracks variant changes`, async () => {
+    installGlossaryEditorFixture();
+    state.glossaryTermEditor = {
+      ...createGlossaryTermEditorState(),
+      isOpen: true,
+      glossaryId: "glossary-1",
+      termId,
+      sourceTerms: ["Dag Dugpa", "Dag-Dugpa", 'Dugpa "quoted"'],
+      targetTerms: ["Dag Dugpa"],
+      footnote: "Keep this footnote.",
+    };
+    invokeHandler = async (command) => {
+      if (command === "sync_gtms_glossary_editor_repo") return { changedTermIds: [] };
+      if (command === "upsert_gtms_glossary_term") {
+        throw new Error(`Remove or change these duplicate source variants before saving: ${JSON.stringify(["Dag-Dugpa", 'Dugpa "quoted"'])}`);
+      }
+      return null;
+    };
+
+    await submitGlossaryTermEditor(() => {});
+    await waitForGlossaryTermWrites();
+
+    assert.equal(syncInvocationCount("upsert_gtms_glossary_term"), 1);
+    assert.equal(syncInvocationCount("sync_gtms_glossary_repos"), 0);
+    assert.equal(state.glossaryTermEditor.isOpen, true);
+    assert.equal(state.glossaryTermEditor.footnote, "Keep this footnote.");
+    assert.equal(state.glossaryTermEditor.error, "");
+    assert.deepEqual(state.glossaryTermEditor.redundantSourceVariantIndices, [1, 2]);
+    assert.match(state.glossaryTermEditor.sourceTermDuplicateWarning, /marked variants/);
+    assert.doesNotMatch(state.glossaryTermEditor.sourceTermDuplicateWarning, /below/);
+
+    moveGlossaryTermVariantToIndex("source", 2, 0);
+    assert.deepEqual(state.glossaryTermEditor.redundantSourceVariantIndices, [0, 2]);
+    removeGlossaryTermVariant("source", 0);
+    assert.deepEqual(state.glossaryTermEditor.redundantSourceVariantIndices, [1]);
+    updateGlossaryTermVariant("source", 1, "Unique variant");
+    assert.deepEqual(state.glossaryTermEditor.redundantSourceVariantIndices, []);
+    assert.equal(state.glossaryTermEditor.sourceTermDuplicateWarning, "");
+  });
+}
+
+for (const context of ["missing summary", "local summary without identity"]) {
+  test(`chapter term navigation saves a footnote with ${context}`, async () => {
+    installGlossaryEditorFixture();
+    const terms = cloneValue(state.glossaryEditor.terms);
+    const glossary = cloneValue(state.glossaries[0]);
+    state.glossaries = context === "missing summary" ? [] : [{
+      id: glossary.id, repoName: glossary.repoName, title: glossary.title,
+    }];
+    state.glossaryEditor = createGlossaryEditorState();
+    state.selectedGlossaryId = null;
+    state.screen = "translate";
+    state.selectedChapterId = "chapter-1";
+    state.projects = [{ id: "project-1", chapters: [{
+      id: "chapter-1",
+      linkedGlossary: { glossaryId: glossary.id, repoName: glossary.repoName },
+    }] }];
+    invokeHandler = async (command, payload) => {
+      if (command === "load_gtms_glossary_editor_data") return {
+        glossaryId: glossary.id, title: glossary.title, terms,
+        lifecycleState: "active", termCount: terms.length,
+      };
+      if (command === "list_local_gnosis_glossary_metadata_records") {
+        assert.equal(payload.installationId, 7);
+        return [{
+          id: glossary.id, repoName: glossary.repoName, title: glossary.title,
+          fullName: "actual-owner/glossary-1", githubRepoId: 42,
+          defaultBranch: "translation",
+        }];
+      }
+      if (command === "sync_gtms_glossary_editor_repo") return {
+        changedTermIds: [], insertedTermIds: [], deletedTermIds: [],
+      };
+      if (command === "upsert_gtms_glossary_term") return {
+        term: glossaryTerm(payload.input),
+      };
+      if (command === "sync_gtms_glossary_repos") return [];
+      return null;
+    };
+
+    await createNavigationActions(() => {})("open-editor-glossary-term:term-1");
+    await flushAsyncWork();
+    assert.equal(state.glossaryTermEditor.isOpen, true);
+    assert.equal(state.glossaryTermEditor.termId, "term-1");
+    state.glossaryTermEditor.footnote = "Updated footnote only.";
+    await submitGlossaryTermEditor(() => {});
+    await waitForGlossaryTermWrites();
+
+    const saved = invokeLog.filter(entry => entry.command === "upsert_gtms_glossary_term");
+    assert.equal(saved.length, 1, state.glossaryTermEditor.error);
+    assert.equal(saved[0].payload.input.termId, "term-1");
+    assert.equal(saved[0].payload.input.footnote, "Updated footnote only.");
+    assert.deepEqual(saved[0].payload.input.sourceTerms, terms[0].sourceTerms);
+    const syncInput = invokeLog.find(entry => entry.command === "sync_gtms_glossary_editor_repo").payload.input;
+    assert.equal(syncInput.fullName, "actual-owner/glossary-1");
+    assert.equal(syncInput.repoId, 42);
+    assert.equal(syncInput.defaultBranchName, "translation");
+    assert.equal(state.glossaryTermEditor.isOpen, false);
+    assert.equal(state.glossaryEditor.terms.length, terms.length);
+    assert.equal(state.glossaryEditor.terms[0].footnote, "Updated footnote only.");
+  });
+}
+
+for (const [kind, queryOptions, command] of [
+  ["glossary", createGlossaryEditorQueryOptions, "list_local_gnosis_glossary_metadata_records"],
+  ["QA list", createQaListEditorQueryOptions, "list_local_gnosis_qa_list_metadata_records"],
+]) {
+  for (const mismatch of ["id", "repoName", "githubRepoId", "fullName"]) {
+    test(`${kind} editor never hydrates identity from mismatched ${mismatch}`, async () => {
+      installGlossaryEditorFixture();
+      const resource = { id: "resource-1", repoName: "repo-1", repoId: 42 };
+      invokeHandler = async (name) => name === command ? [{
+        id: resource.id, repoName: resource.repoName, title: "Resource",
+        fullName: "owner/repo-1", githubRepoId: 42,
+        [mismatch]: mismatch === "githubRepoId" ? 43 : "other",
+      }] : {};
+      const load = queryOptions(state.teams[0], resource).queryFn();
+      if (mismatch === "id") {
+        assert.equal((await load).fullName, "");
+      } else {
+        await assert.rejects(load, /repository details have changed/);
+      }
+    });
+  }
+}
+
+test("QA editor applies repository identity loaded from local metadata", async () => {
+  installGlossaryEditorFixture();
+  const resource = { id: "qa-1", repoName: "qa-repo", title: "QA" };
+  state.selectedQaListId = resource.id;
+  state.qaLists = [resource];
+  Object.assign(state.qaListEditor, { qaListId: resource.id, repoName: resource.repoName });
+  invokeHandler = async (command) => command === "list_local_gnosis_qa_list_metadata_records" ? [{
+    ...resource, fullName: "actual-owner/qa-repo", githubRepoId: 43, defaultBranch: "qa",
+  }] : { qaListId: resource.id, title: "QA", terms: [] };
+  const payload = await createQaListEditorQueryOptions(state.teams[0], resource).queryFn();
+  applyQaListEditorPayload(payload);
+  assert.equal(state.qaListEditor.fullName, "actual-owner/qa-repo");
+  assert.equal(state.qaListEditor.repoId, 43);
+  assert.equal(state.qaListEditor.defaultBranchName, "qa");
+});
+
+test("a late metadata lookup cannot replace another glossary after navigation", async () => {
+  installGlossaryEditorFixture();
+  state.glossaries[0].fullName = "";
+  const metadata = deferred();
+  invokeHandler = async (command) => {
+    if (command === "load_gtms_glossary_editor_data") return {
+      glossaryId: "glossary-1", title: "Original", terms: [],
+    };
+    if (command === "list_local_gnosis_glossary_metadata_records") return metadata.promise;
+    return null;
+  };
+  const opening = openGlossaryEditor(() => {}, "glossary-1");
+  await flushAsyncWork();
+  state.selectedGlossaryId = "other";
+  state.glossaryEditor = {
+    ...createGlossaryEditorState(), glossaryId: "other", repoName: "other",
+    fullName: "owner/other", status: "ready",
+  };
+  metadata.resolve([{
+    id: "glossary-1", repoName: "glossary-1", title: "Original",
+    fullName: "owner/glossary-1", githubRepoId: 42,
+  }]);
+  await opening;
+  assert.equal(state.glossaryEditor.glossaryId, "other");
+  assert.equal(state.glossaryEditor.fullName, "owner/other");
+  assert.equal(state.glossaryTermEditor.isOpen, false);
+});
+
+for (const context of ["missing summary", "missing full name"]) {
+  for (const termId of [null, "term-1"]) {
+    test(`${termId ? "editing" : "creating"} a glossary term syncs with ${context}`, async () => {
+      installGlossaryEditorFixture();
+      Object.assign(state.glossaryEditor, {
+        fullName: "fixture-org/glossary-1",
+        repoId: 42,
+        defaultBranchName: "translation",
+        defaultBranchHeadOid: "remote-head-1",
+      });
+      if (context === "missing summary") {
+        state.glossaries = [];
+      } else {
+        state.glossaries[0].fullName = "";
+        state.glossaries[0].defaultBranchName = "translation";
+      }
+      state.glossaryTermEditor = {
+        ...createGlossaryTermEditorState(),
+        isOpen: true,
+        glossaryId: "glossary-1",
+        termId,
+        sourceTerms: ["Bons", "Bonz"],
+        targetTerms: ["Bön"],
+        footnote: "Keep this footnote.",
+      };
+      invokeHandler = async (command, payload) => {
+        if (command === "sync_gtms_glossary_editor_repo") {
+          if (!payload.input.repoName || !payload.input.fullName) {
+            throw new Error("missing repository context");
+          }
+          return { changedTermIds: [], insertedTermIds: [], deletedTermIds: [] };
+        }
+        if (command === "upsert_gtms_glossary_term") {
+          return { term: glossaryTerm({ ...payload.input, termId: termId || "created-term" }) };
+        }
+        if (command === "sync_gtms_glossary_repos") return [];
+        return null;
+      };
+
+      await submitGlossaryTermEditor(() => {});
+      await waitForGlossaryTermWrites();
+
+      assert.equal(syncInvocationCount("upsert_gtms_glossary_term"), 1);
+      const preflight = invokeLog.find(entry => entry.command === "sync_gtms_glossary_editor_repo").payload.input;
+      assert.equal(preflight.installationId, 7);
+      assert.equal(preflight.glossaryId, "glossary-1");
+      assert.equal(preflight.repoName, "glossary-1");
+      assert.equal(preflight.fullName, "fixture-org/glossary-1");
+      assert.equal(preflight.repoId, 42);
+      assert.equal(preflight.defaultBranchName, "translation");
+      const pushedRepo = invokeLog.find(entry => entry.command === "sync_gtms_glossary_repos")?.payload.input.glossaries[0];
+      assert.equal(pushedRepo?.fullName, preflight.fullName);
+      assert.equal(pushedRepo?.repoName, preflight.repoName);
+      assert.equal(state.glossaryTermEditor.isOpen, false);
+      assert.equal(state.glossaryEditor.terms.find(term => term.termId === (termId || "created-term"))?.footnote, "Keep this footnote.");
+    });
+  }
+}
+
+test("missing glossary repository identity is not inferred from the team and preserves the draft", async () => {
+  installGlossaryEditorFixture();
+  state.glossaries[0].fullName = "";
+  const draft = {
+    ...createGlossaryTermEditorState(),
+    isOpen: true,
+    glossaryId: "glossary-1",
+    sourceTerms: ["Bons"],
+    targetTerms: ["Bön"],
+    footnote: "Keep this footnote.",
+  };
+  state.glossaryTermEditor = draft;
+
+  await submitGlossaryTermEditor(() => {});
+  await waitForGlossaryTermWrites();
+
+  assert.equal(state.glossaryTermEditor, draft);
+  assert.match(draft.error, /repository/i);
+  assert.equal(draft.footnote, "Keep this footnote.");
+  assert.equal(syncInvocationCount("sync_gtms_glossary_editor_repo"), 0);
+  assert.equal(syncInvocationCount("upsert_gtms_glossary_term"), 0);
+});
+
+for (const conflict of ["glossary ID", "repo name", "full name", "repo ID", "full name path"]) {
+  test(`conflicting glossary ${conflict} preserves the draft without syncing`, async () => {
+    installGlossaryEditorFixture();
+    const summary = state.glossaries[0];
+    state.glossaryEditor.fullName = summary.fullName;
+    state.glossaryEditor.repoId = summary.repoId;
+    if (conflict === "glossary ID") {
+      summary.id = "other-glossary";
+      state.selectedGlossaryId = summary.id;
+    }
+    if (conflict === "repo name") summary.repoName = "other-repo";
+    if (conflict === "full name") summary.fullName = "other-org/glossary-1";
+    if (conflict === "repo ID") summary.repoId = 999;
+    if (conflict === "full name path") {
+      summary.fullName = "fixture-org/other-repo";
+      state.glossaryEditor.fullName = summary.fullName;
+    }
+    const draft = {
+      ...createGlossaryTermEditorState(),
+      isOpen: true,
+      glossaryId: "glossary-1",
+      sourceTerms: ["Bons"],
+      targetTerms: ["Bön"],
+      footnote: "Keep this footnote.",
+    };
+    state.glossaryTermEditor = draft;
+
+    await submitGlossaryTermEditor(() => {});
+    await waitForGlossaryTermWrites();
+
+    assert.equal(state.glossaryTermEditor, draft);
+    assert.match(draft.error, /repository details have changed/);
+    assert.equal(draft.footnote, "Keep this footnote.");
+    assert.equal(invokeLog.length, 0);
+  });
+}
+
 test("saving a glossary term sanitizes ruby markup and escapes unsupported inline formatting", async () => {
   installGlossaryEditorFixture({
     terms: [
@@ -1273,27 +1688,657 @@ test("saving a glossary term sanitizes ruby markup and escapes unsupported inlin
   assert.deepEqual(state.glossaryEditor.terms[0]?.targetTerms, capturedUpsertInput?.targetTerms);
 });
 
-test("glossary background sync opens a required update prompt when the repo was saved by a newer app", async () => {
-  installGlossaryEditorFixture();
+for (const available of [true, false]) {
+  test(`glossary background sync keeps sync paused and gates the update prompt on platform availability (${available})`, async () => {
+    installGlossaryEditorFixture();
 
+    state.appUpdate = createAppUpdateState();
+    invokeHandler = async (command) => {
+      if (command === "check_for_app_update") {
+        return { available, version: available ? "0.1.36" : null, currentVersion: "0.1.35" };
+      }
+      if (command === "sync_gtms_glossary_editor_repo") {
+        throw new Error(
+          "APP_UPDATE_REQUIRED:{\"requiredVersion\":\"0.1.36\",\"currentVersion\":\"0.1.35\",\"message\":\"Update before syncing this glossary.\"}",
+        );
+      }
+      return null;
+    };
+
+    startGlossaryBackgroundSyncSession(() => {});
+    await flushAsyncWork();
+
+    const synced = await maybeStartGlossaryBackgroundSync(() => {}, { force: true });
+
+    assert.equal(synced, false);
+    await new Promise(setImmediate);
+    assert.equal(state.appUpdate.required, available);
+    assert.equal(state.appUpdate.promptVisible, available);
+    assert.equal(state.appUpdate.version, "0.1.36");
+    assert.equal(state.appUpdate.currentVersion, "0.1.35");
+    assert.equal(state.appUpdate.requirement.message, "Update before syncing this glossary.");
+  });
+}
+
+test("completing an A save must not insert its term into B", async () => {
+  installGlossaryEditorFixture();
+  const save = deferred();
+  invokeHandler = async (command, payload) => {
+    if (command === "upsert_gtms_glossary_term") return save.promise;
+    if (command === "sync_gtms_glossary_repos") return [];
+    if (command === "load_gtms_glossary_editor_data") return {
+      glossaryId: payload.input.glossaryId, repoName: payload.input.repoName,
+      title: "B", terms: [glossaryTerm({ termId: "b-term", targetTerms: ["B only"] })], termCount: 1,
+    };
+    return null;
+  };
+  await openGlossaryTermEditor(() => {}, "term-1");
+  state.glossaryTermEditor.targetTerms = ["saved A term"];
+  await submitGlossaryTermEditor(() => {});
+  await flushAsyncWork();
+  state.glossaries.push({ ...state.glossaries[0], id: "glossary-b", repoName: "glossary-b", fullName: "fixture-org/glossary-b" });
+  await openGlossaryEditor(() => {}, "glossary-b");
+  save.resolve({ term: glossaryTerm({ targetTerms: ["saved A term"] }), termCount: 2 });
+  await waitForGlossaryTermWrites();
+  assert.equal(state.glossaryEditor.glossaryId, "glossary-b");
+  assert.equal(state.glossaryEditor.terms.some(t => t.termId === "term-1"), false);
+});
+
+test("opening B during an A write must finish loading B", async () => {
+  installGlossaryEditorFixture();
+  const { requestGlossaryTermWriteIntent } = await import("./glossary-term-write-coordinator.js");
+  const write = deferred();
+  requestGlossaryTermWriteIntent({ key: "a", scope: "glossary-repo:7:glossary-1", glossaryId: "glossary-1", teamId: "team-1" }, { run: () => write.promise, clearOnSuccess: true });
+  invokeHandler = async (command, payload) => {
+    if (command === "load_gtms_glossary_editor_data") return { glossaryId: payload.input.glossaryId, terms: [glossaryTerm({termId: "b-term"})] };
+    return null;
+  };
+  state.glossaries.push({ ...state.glossaries[0], id: "glossary-b", repoName: "glossary-b", fullName: "fixture-org/glossary-b" });
+  await openGlossaryEditor(() => {}, "glossary-b");
+  write.resolve();
+  await waitForGlossaryTermWrites();
+  assert.equal(state.glossaryEditor.status, "ready");
+});
+
+test("successful deletion must remove the visible term", async () => {
+  installGlossaryEditorFixture();
   invokeHandler = async (command) => {
-    if (command === "sync_gtms_glossary_editor_repo") {
-      throw new Error(
-        "APP_UPDATE_REQUIRED:{\"requiredVersion\":\"0.1.36\",\"currentVersion\":\"0.1.35\",\"message\":\"Update before syncing this glossary.\"}",
-      );
-    }
+    if (command === "delete_gtms_glossary_term") return { termId: "term-1", termCount: 1 };
+    if (command === "sync_gtms_glossary_repos") return [];
+    if (command === "load_gtms_glossary_editor_data") return { glossaryId: "glossary-1", terms: [glossaryTerm({termId: "term-2"})], termCount: 1 };
+    return null;
+  };
+  startGlossaryBackgroundSyncSession(() => {});
+  await flushAsyncWork();
+  await deleteGlossaryTerm(() => {}, "term-1");
+  assert.equal(state.glossaryEditor.terms.some(t => t.termId === "term-1"), false);
+});
+
+test("deleting a search result without a collection summary updates the filtered screen", async () => {
+  installGlossaryEditorFixture();
+  state.glossaryEditor.fullName = state.glossaries[0].fullName;
+  state.glossaryEditor.defaultBranchHeadOid = "remote-head-1";
+  state.glossaryEditor.searchQuery = "uno";
+  state.glossaries = [];
+  let renderedHtml = "";
+  const { renderGlossaryEditorScreen } = await import("../screens/glossary-editor.js");
+  invokeHandler = async (command) => {
+    if (command === "delete_gtms_glossary_term") return { termId: "term-1", termCount: 1 };
+    if (command === "sync_gtms_glossary_repos") return [];
     return null;
   };
 
-  startGlossaryBackgroundSyncSession(() => {});
+  await deleteGlossaryTerm(() => { renderedHtml = renderGlossaryEditorScreen(state); }, "term-1");
+
+  assert.equal(syncInvocationCount("delete_gtms_glossary_term"), 1);
+  assert.equal(syncInvocationCount("sync_gtms_glossary_repos"), 1);
+  assert.deepEqual(state.glossaryEditor.terms.map(term => term.termId), ["term-2"]);
+  assert.equal(state.glossaryEditor.searchQuery, "uno");
+  assert.match(renderedHtml, /No terms match this search/);
+  assert.doesNotMatch(renderedHtml, /edit-glossary-term:term-1/);
+});
+
+test("a rejected edit restores the saved row while keeping the conflicting draft", async () => {
+  installGlossaryEditorFixture({ terms: [glossaryTerm({ sourceTerms: ["Original"] })] });
+  state.glossaryEditor.searchQuery = "Dugpa";
+  await openGlossaryTermEditor(() => {}, "term-1");
+  state.glossaryTermEditor.sourceTerms = ["Dag Dugpa"];
+  invokeHandler = async (command) => {
+    if (command === "sync_gtms_glossary_editor_repo") return { changedTermIds: [] };
+    if (command === "upsert_gtms_glossary_term") {
+      state.glossaryEditor.terms.push(glossaryTerm({ termId: "remote-term", sourceTerms: ["Dag Dugpa"] }));
+      throw new Error('Remove or change these duplicate source variants before saving: ["Dag Dugpa"]');
+    }
+    return null;
+  };
+  await submitGlossaryTermEditor(() => {});
+  await waitForGlossaryTermWrites();
+
+  assert.deepEqual(state.glossaryEditor.terms.find(term => term.termId === "term-1").sourceTerms, ["Original"]);
+  assert.equal(state.glossaryEditor.terms.filter(term => term.sourceTerms.includes("Dag Dugpa")).length, 1);
+  assert.deepEqual(state.glossaryTermEditor.sourceTerms, ["Dag Dugpa"]);
+  assert.deepEqual(state.glossaryTermEditor.redundantSourceVariantIndices, [0]);
+  assert.equal(state.glossaryEditor.searchQuery, "Dugpa");
+});
+
+for (const outcome of ["success", "failure", "rollback"]) {
+  test(`glossary save ${outcome} after switching preserves B and recovers A`, async () => {
+    installGlossaryEditorFixture();
+    const originalPayload = cloneValue(state.glossaryEditor);
+    const glossaryA = state.glossaries[0];
+    const glossaryB = { ...glossaryA, id: "glossary-b", repoName: "glossary-b", fullName: "fixture-org/glossary-b" };
+    state.glossaries.push(glossaryB);
+    const save = deferred();
+    let attempt = 0;
+    invokeHandler = async (command, payload) => {
+      if (command === "upsert_gtms_glossary_term") {
+        attempt += 1;
+        if (attempt === 1) return save.promise;
+        assert.equal(payload.input.glossaryId, glossaryA.id);
+        assert.equal(payload.input.repoName, glossaryA.repoName);
+        return { term: glossaryTerm({ targetTerms: payload.input.targetTerms }), termCount: 2 };
+      }
+      if (command === "sync_gtms_glossary_repos") {
+        if (outcome === "rollback" && attempt === 1) return [{ repoName: glossaryA.repoName, status: "syncError", message: "Push failed" }];
+        return [];
+      }
+      if (command === "load_gtms_glossary_editor_data") {
+        if (payload.input.glossaryId === glossaryA.id) return originalPayload;
+        return { glossaryId: glossaryB.id, title: "B", terms: [glossaryTerm({ termId: "b-term" })], termCount: 1 };
+      }
+      return null;
+    };
+    await openGlossaryTermEditor(() => {}, "term-1");
+    state.glossaryTermEditor.targetTerms = ["A draft"];
+    await submitGlossaryTermEditor(() => {});
+    await flushAsyncWork();
+    await openGlossaryEditor(() => {}, glossaryB.id);
+    assert.equal(state.glossaryEditor.status, "ready");
+    const before = cloneValue(state.glossaryEditor);
+    if (outcome === "failure") save.reject(new Error("Save failed"));
+    else save.resolve({ term: glossaryTerm({ targetTerms: ["A draft"] }), termCount: 2, previousHeadSha: "old-A-head" });
+    await waitForGlossaryTermWrites();
+    assert.deepEqual(state.glossaryEditor, before);
+    assert.equal(state.glossaryTermEditor.isOpen, false);
+    if (outcome === "rollback") {
+      const rollback = invokeLog.find(entry => entry.command === "rollback_gtms_glossary_term_upsert");
+      assert.equal(rollback.payload.input.glossaryId, glossaryA.id);
+    }
+    if (outcome !== "success") {
+      await openGlossaryEditor(() => {}, glossaryA.id);
+      assert.equal(state.glossaryTermEditor.glossaryId, glossaryA.id);
+      assert.deepEqual(state.glossaryTermEditor.targetTerms, ["A draft"]);
+      await submitGlossaryTermEditor(() => {});
+      await waitForGlossaryTermWrites();
+      assert.equal(attempt, 2);
+      assert.equal(state.glossaryTermEditor.isOpen, false);
+      assert.deepEqual(state.glossaryEditor.terms[0].targetTerms, ["A draft"]);
+    }
+  });
+}
+
+test("cold return to a glossary resumes after its save finishes", async () => {
+  installGlossaryEditorFixture();
+  const originalPayload = cloneValue(state.glossaryEditor);
+  state.glossaries.push({ ...state.glossaries[0], id: "glossary-b", repoName: "glossary-b", fullName: "fixture-org/glossary-b" });
+  const save = deferred();
+  invokeHandler = async (command, payload) => {
+    if (command === "upsert_gtms_glossary_term") return save.promise;
+    if (command === "sync_gtms_glossary_repos") return [];
+    if (command === "load_gtms_glossary_editor_data") return { ...originalPayload, glossaryId: payload.input.glossaryId, repoName: payload.input.repoName };
+    return null;
+  };
+  await openGlossaryTermEditor(() => {}, "term-1");
+  state.glossaryTermEditor.targetTerms = ["saved"];
+  await submitGlossaryTermEditor(() => {});
   await flushAsyncWork();
+  await openGlossaryEditor(() => {}, "glossary-b");
+  const opening = openGlossaryEditor(() => {}, "glossary-1");
+  await flushAsyncWork();
+  assert.equal(state.glossaryEditor.status, "loading");
+  originalPayload.terms[0].targetTerms = ["saved"];
+  save.resolve({ term: glossaryTerm({ targetTerms: ["saved"] }), termCount: 2 });
+  await opening;
+  assert.equal(state.glossaryEditor.status, "ready");
+  assert.deepEqual(state.glossaryEditor.terms[0].targetTerms, ["saved"]);
+});
 
-  const synced = await maybeStartGlossaryBackgroundSync(() => {}, { force: true });
+test("confirmed glossary deletion preserves another open term draft", async () => {
+  installGlossaryEditorFixture();
+  await openGlossaryTermEditor(() => {}, "term-2");
+  state.glossaryTermEditor.targetTerms = ["unsaved edit"];
+  const draft = cloneValue(state.glossaryTermEditor);
+  invokeHandler = async (command) => command === "sync_gtms_glossary_repos" ? [] : null;
+  await deleteGlossaryTerm(() => {}, "term-1");
+  assert.deepEqual(state.glossaryEditor.terms.map(term => term.termId), ["term-2"]);
+  assert.deepEqual(state.glossaryTermEditor, draft);
+});
 
-  assert.equal(synced, false);
-  assert.equal(state.appUpdate.required, true);
-  assert.equal(state.appUpdate.promptVisible, true);
-  assert.equal(state.appUpdate.version, "0.1.36");
-  assert.equal(state.appUpdate.currentVersion, "0.1.35");
-  assert.equal(state.appUpdate.message, "Update before syncing this glossary.");
+test("queued glossary writes keep their original repository after navigation", async () => {
+  installGlossaryEditorFixture();
+  const save = deferred();
+  let saves = 0;
+  invokeHandler = async (command, payload) => {
+    if (command === "upsert_gtms_glossary_term") {
+      saves += 1;
+      assert.equal(payload.input.repoName, "glossary-1");
+      if (saves === 1) await save.promise;
+      return { term: glossaryTerm({ termId: payload.input.termId, targetTerms: payload.input.targetTerms }), termCount: 2 };
+    }
+    if (command === "sync_gtms_glossary_repos") return [];
+    if (command === "load_gtms_glossary_editor_data") return { glossaryId: payload.input.glossaryId, terms: [] };
+    return null;
+  };
+  await openGlossaryTermEditor(() => {}, "term-1");
+  await submitGlossaryTermEditor(() => {});
+  await flushAsyncWork();
+  await openGlossaryTermEditor(() => {}, "term-2");
+  state.glossaryTermEditor.targetTerms = ["queued A edit"];
+  await submitGlossaryTermEditor(() => {});
+  state.glossaries.push({ ...state.glossaries[0], id: "glossary-b", repoName: "glossary-b", fullName: "fixture-org/glossary-b" });
+  await openGlossaryEditor(() => {}, "glossary-b");
+  const secondPreflightStart = invokeLog.length;
+  save.resolve();
+  await waitForGlossaryTermWrites();
+  assert.equal(saves, 2);
+  const preflights = invokeLog.slice(secondPreflightStart).filter(entry => entry.command === "sync_gtms_glossary_editor_repo");
+  assert.equal(preflights.length, 1);
+  assert.equal(preflights[0].payload.input.repoName, "glossary-1");
+  assert.deepEqual(state.glossaryEditor.terms, []);
+});
+
+test("a saved glossary term does not patch a different team with matching resource IDs", async () => {
+  installGlossaryEditorFixture();
+  const save = deferred();
+  invokeHandler = async (command) => {
+    if (command === "upsert_gtms_glossary_term") return save.promise;
+    if (command === "sync_gtms_glossary_repos") return [];
+    return null;
+  };
+  await openGlossaryTermEditor(() => {}, "term-1");
+  await submitGlossaryTermEditor(() => {});
+  await flushAsyncWork();
+  state.selectedTeamId = "other-team";
+  state.teams.push({ ...state.teams[0], id: "other-team", installationId: 99 });
+  state.glossaryEditor.terms = [glossaryTerm({ targetTerms: ["other team's term"] })];
+  const before = cloneValue(state.glossaryEditor);
+  save.resolve({ term: glossaryTerm({ targetTerms: ["A's term"] }), termCount: 2 });
+  await waitForGlossaryTermWrites();
+  assert.deepEqual(state.glossaryEditor, before);
+});
+
+test("dismissing a recovered glossary draft clears its failure without reopening it", async () => {
+  installGlossaryEditorFixture();
+  const { cancelGlossaryTermEditor } = await import("./glossary-term-draft.js");
+  const originalPayload = cloneValue(state.glossaryEditor);
+  invokeHandler = async (command) => {
+    if (command === "upsert_gtms_glossary_term") throw new Error("Save failed");
+    if (command === "load_gtms_glossary_editor_data") return originalPayload;
+    return null;
+  };
+  await openGlossaryTermEditor(() => {}, "term-1");
+  state.glossaryTermEditor.targetTerms = ["unsaved"];
+  await submitGlossaryTermEditor(() => {});
+  await waitForGlossaryTermWrites();
+  assert.equal(state.glossaryTermEditor.isOpen, true);
+  cancelGlossaryTermEditor(() => {});
+  assert.deepEqual(state.glossaryEditor.terms[0].targetTerms, originalPayload.terms[0].targetTerms);
+  assert.equal(state.glossaryEditor.terms[0].pendingError, "");
+  await openGlossaryEditor(() => {}, "glossary-1");
+  assert.equal(state.glossaryTermEditor.isOpen, false);
+});
+
+for (const outcome of ["success", "rollback"]) {
+  for (const returnBeforeLocalSave of [true, false]) {
+    test(`translation editor uses local terms during push (${outcome}, early return: ${returnBeforeLocalSave})`, async () => {
+      const { loadEditorGlossaryState } = await import("./editor-glossary-flow.js");
+      installGlossaryEditorFixture();
+      const team = state.teams[0];
+      const link = { glossaryId: "glossary-1", repoName: "glossary-1" };
+      const chapter = { id: "chapter-1", linkedGlossary: link };
+      state.projects = [{ id: "project-1", chapters: [chapter] }];
+      state.selectedChapterId = chapter.id;
+      const original = cloneValue(state.glossaryEditor);
+      let disk = original;
+      const save = deferred();
+      const push = deferred();
+      let pushing = false;
+      invokeHandler = async (command, payload) => {
+        if (command === "load_gtms_glossary_editor_data") return cloneValue(disk);
+        if (command === "sync_gtms_glossary_editor_repo") return { changedTermIds: [] };
+        if (command === "upsert_gtms_glossary_term") {
+          await save.promise;
+          const term = glossaryTerm({ targetTerms: payload.input.targetTerms });
+          disk = { ...original, terms: [term, original.terms[1]] };
+          return { term, termCount: 2, previousHeadSha: "old-head" };
+        }
+        if (command === "sync_gtms_glossary_repos") {
+          pushing = true;
+          await push.promise;
+          if (outcome === "rollback") return [{ status: "syncError", message: "Push failed" }];
+          // A successful sync can also bring another translator's term back.
+          disk = { ...disk, terms: [...disk.terms, glossaryTerm({ termId: "remote-term" })] };
+          return [];
+        }
+        if (command === "rollback_gtms_glossary_term_upsert") disk = original;
+        return null;
+      };
+      state.editorChapter = {
+        ...state.editorChapter, status: "ready", chapterId: chapter.id,
+        glossary: await loadEditorGlossaryState(team, chapter),
+      };
+      const originalMatcher = state.editorChapter.glossary.matcherModel;
+      const rows = state.editorChapter.rows;
+      const fieldEditor = state.editorChapter.mainFieldEditor;
+      const renderCalls = [];
+      const render = (options) => renderCalls.push(options);
+      await openGlossaryTermEditor(render, "term-1");
+      state.glossaryTermEditor.targetTerms = ["New local translation"];
+      await submitGlossaryTermEditor(render);
+      if (returnBeforeLocalSave) state.screen = "translate";
+      save.resolve();
+      await flushAsyncWork();
+      assert.equal(pushing, true);
+      if (!returnBeforeLocalSave) {
+        state.screen = "translate";
+        state.editorChapter.glossary = await loadEditorGlossaryState(team, chapter);
+      }
+      assert.deepEqual(state.editorChapter.glossary.terms[0].targetTerms, ["New local translation"]);
+      assert.notEqual(state.editorChapter.glossary.matcherModel, originalMatcher);
+      assert.equal(state.editorChapter.rows, rows);
+      assert.equal(state.editorChapter.mainFieldEditor, fieldEditor);
+      assert.equal(renderCalls.some(options => options?.scope === "translate-body"), false);
+
+      push.resolve();
+      await waitForGlossaryTermWrites();
+      await flushAsyncWork();
+      assert.deepEqual(state.editorChapter.glossary.terms[0].targetTerms,
+        outcome === "rollback" ? original.terms[0].targetTerms : ["New local translation"]);
+      assert.equal(state.editorChapter.glossary.terms.length, outcome === "success" ? 3 : 2);
+      assert.equal(state.editorChapter.rows, rows);
+      assert.equal(state.editorChapter.mainFieldEditor, fieldEditor);
+    });
+  }
+}
+
+for (const destination of ["team", "chapter", "link", "screen"]) {
+  test(`local glossary refresh ignores a late result after changing ${destination}`, async () => {
+    const { refreshEditorGlossaryAfterLocalChange } = await import("./editor-glossary-flow.js");
+    installGlossaryEditorFixture();
+    const team = state.teams[0];
+    const link = { glossaryId: "glossary-1", repoName: "glossary-1" };
+    const chapter = { id: "chapter-1", linkedGlossary: link };
+    state.projects = [{ id: "project-1", chapters: [chapter] }];
+    state.screen = "translate";
+    state.editorChapter = { ...state.editorChapter, status: "ready", chapterId: chapter.id, glossary: link };
+    const read = deferred();
+    invokeHandler = async () => read.promise;
+    const refresh = refreshEditorGlossaryAfterLocalChange(() => assert.fail("Unexpected render"), team, link);
+    await flushAsyncWork();
+    if (destination === "team") state.selectedTeamId = "other-team";
+    if (destination === "chapter") state.editorChapter.chapterId = "other-chapter";
+    if (destination === "link") chapter.linkedGlossary = { ...link, glossaryId: "other-glossary" };
+    if (destination === "screen") state.screen = "glossaryEditor";
+    read.resolve(cloneValue(state.glossaryEditor));
+    await refresh;
+    assert.equal(state.editorChapter.glossary, link);
+  });
+}
+
+test("an in-flight glossary read cannot overwrite the rollback snapshot", async () => {
+  const { refreshEditorGlossaryAfterLocalChange } = await import("./editor-glossary-flow.js");
+  installGlossaryEditorFixture();
+  const team = state.teams[0];
+  const link = { glossaryId: "glossary-1", repoName: "glossary-1" };
+  const chapter = { id: "chapter-1", linkedGlossary: link };
+  state.projects = [{ id: "project-1", chapters: [chapter] }];
+  state.screen = "translate";
+  state.editorChapter = { ...state.editorChapter, status: "ready", chapterId: chapter.id, glossary: link };
+  const read = deferred();
+  const restored = cloneValue(state.glossaryEditor);
+  let reads = 0;
+  invokeHandler = async () => ++reads === 1 ? read.promise : restored;
+  const older = refreshEditorGlossaryAfterLocalChange(() => {}, team, link);
+  await flushAsyncWork();
+  await refreshEditorGlossaryAfterLocalChange(() => {}, team, link);
+  read.resolve({ ...restored, terms: [glossaryTerm({ targetTerms: ["Rolled back"] })] });
+  await older;
+  assert.deepEqual(state.editorChapter.glossary.terms, restored.terms);
+});
+
+test("a locally deleted term disappears before push and returns after rollback", async () => {
+  const { loadEditorGlossaryState } = await import("./editor-glossary-flow.js");
+  installGlossaryEditorFixture();
+  const team = state.teams[0];
+  const link = { glossaryId: "glossary-1", repoName: "glossary-1" };
+  const chapter = { id: "chapter-1", linkedGlossary: link };
+  state.projects = [{ id: "project-1", chapters: [chapter] }];
+  const original = cloneValue(state.glossaryEditor);
+  let disk = original;
+  const push = deferred();
+  invokeHandler = async (command) => {
+    if (command === "load_gtms_glossary_editor_data") return cloneValue(disk);
+    if (command === "delete_gtms_glossary_term") {
+      disk = { ...original, terms: original.terms.filter(term => term.termId !== "term-1") };
+      state.screen = "translate";
+      return { previousHeadSha: "old-head" };
+    }
+    if (command === "sync_gtms_glossary_repos") {
+      await push.promise;
+      return [{ status: "syncError", message: "Push failed" }];
+    }
+    if (command === "rollback_gtms_glossary_term_upsert") disk = original;
+    return null;
+  };
+  state.editorChapter = {
+    ...state.editorChapter, status: "ready", chapterId: chapter.id,
+    glossary: await loadEditorGlossaryState(team, chapter),
+  };
+  const deleting = deleteGlossaryTerm(() => {}, "term-1");
+  await flushAsyncWork();
+  assert.deepEqual(state.editorChapter.glossary.terms.map(term => term.termId), ["term-2"]);
+  push.resolve();
+  await deleting;
+  await flushAsyncWork();
+  assert.deepEqual(state.editorChapter.glossary.terms, original.terms);
+});
+
+function installLinkedEditorFixture() {
+  installGlossaryEditorFixture();
+  const team = state.teams[0];
+  const link = { glossaryId: "glossary-1", repoName: "glossary-1" };
+  const chapter = { id: "chapter-1", linkedGlossary: link };
+  const project = { id: "project-1", name: "project-1", chapters: [chapter] };
+  state.projects = [project];
+  state.screen = "translate";
+  state.selectedChapterId = chapter.id;
+  state.editorChapter = {
+    ...state.editorChapter, status: "ready", chapterId: chapter.id,
+    glossary: { ...link, status: "ready" }, rows: [{ rowId: "row-1" }],
+  };
+  return { team, link, chapter, project };
+}
+
+for (const failureFirst of [true, false]) {
+  test(`newer glossary refresh survives obsolete read failure (failure first: ${failureFirst})`, async () => {
+    const { refreshEditorGlossaryAfterLocalChange } = await import("./editor-glossary-flow.js");
+    const { team, link } = installLinkedEditorFixture();
+    const oldRead = deferred();
+    const newRead = deferred();
+    const restored = cloneValue(state.glossaryEditor);
+    let calls = 0;
+    invokeHandler = async () => ++calls === 1 ? oldRead.promise : newRead.promise;
+    const older = refreshEditorGlossaryAfterLocalChange(() => {}, team, link);
+    await flushAsyncWork();
+    const newer = refreshEditorGlossaryAfterLocalChange(() => {}, team, link);
+    await flushAsyncWork();
+    if (failureFirst) {
+      oldRead.reject(new Error("Could not read glossary term during checkout"));
+      await flushAsyncWork();
+    }
+    newRead.resolve(restored);
+    await newer;
+    if (!failureFirst) oldRead.reject(new Error("Could not read glossary term during checkout"));
+    await older;
+    assert.equal(state.editorChapter.glossary.status, "ready");
+    assert.deepEqual(state.editorChapter.glossary.terms, restored.terms);
+  });
+}
+
+for (const outcome of ["save", "rollback"]) {
+  test(`pending-write chapter resume reloads an off-screen glossary ${outcome} without replacing editor state`, async () => {
+    const { refreshEditorGlossaryAfterLocalChange, loadEditorGlossaryState } = await import("./editor-glossary-flow.js");
+    const { openTranslateChapter } = await import("./editor-chapter-load-flow.js");
+    const { requestEditorOperation, resetEditorOperationQueue } = await import("./editor-operation-queue.js");
+    const { projectRepoScope } = await import("./repo-write-queue.js");
+    const { team, link, chapter, project } = installLinkedEditorFixture();
+    const original = cloneValue(state.glossaryEditor);
+    const changed = { ...original, terms: [glossaryTerm({ targetTerms: ["New local value"] })] };
+    let disk = outcome === "save" ? original : changed;
+    const resumedRead = deferred();
+    let delayRead = false;
+    invokeHandler = async (command) => {
+      if (command === "load_gtms_glossary_editor_data") return delayRead ? resumedRead.promise : disk;
+      return null;
+    };
+    state.editorChapter.glossary = await loadEditorGlossaryState(team, chapter);
+    state.editorChapter.dirtyRowIds = new Set(["row-1"]);
+    const rows = state.editorChapter.rows;
+    const dirtyRows = state.editorChapter.dirtyRowIds;
+    const fieldEditor = state.editorChapter.mainFieldEditor;
+    const pending = deferred();
+    const operation = requestEditorOperation({
+      repoScope: projectRepoScope({ team, project }), metadata: { chapterId: chapter.id },
+    }, { run: () => pending.promise });
+    try {
+      state.screen = "glossaryEditor";
+      disk = outcome === "save" ? changed : original;
+      await refreshEditorGlossaryAfterLocalChange(() => {}, team, link);
+      delayRead = true;
+      const opened = await openTranslateChapter(() => {}, chapter.id, {
+        applyEditorUiState() {}, normalizeEditorRows: value => value,
+        applyChapterMetadataToState() {}, loadActiveEditorFieldHistory() {},
+        flushDirtyEditorRows: async () => true, persistEditorChapterSelections() {},
+      });
+      // Opening must finish even while the glossary read and chapter save wait.
+      assert.equal(opened, true);
+      resumedRead.resolve(disk);
+      await flushAsyncWork();
+      assert.deepEqual(state.editorChapter.glossary.terms, disk.terms);
+      assert.equal(state.editorChapter.rows, rows);
+      assert.equal(state.editorChapter.dirtyRowIds, dirtyRows);
+      assert.equal(state.editorChapter.mainFieldEditor, fieldEditor);
+      assert.equal(syncInvocationCount("load_gtms_chapter_editor_data"), 0);
+    } finally {
+      resumedRead.resolve(disk);
+      pending.resolve();
+      await operation.promise;
+      resetEditorOperationQueue();
+    }
+  });
+}
+
+for (const outcome of ["success", "rollback"]) {
+  test(`research report awaits the confirmed write (${outcome})`, async () => {
+    const { saveResearchEntry } = await import("./glossary-research-report-flow.js");
+    installGlossaryEditorFixture();
+    state.screen = "glossaryResearchReport";
+    const push = deferred();
+    let pushing = false;
+    const term = glossaryTerm({ termId: "persisted-research-term", sourceTerms: ["research source"], targetTerms: ["research target"] });
+    invokeHandler = async (command) => {
+      if (command === "sync_gtms_glossary_editor_repo") return { changedTermIds: [] };
+      if (command === "upsert_gtms_glossary_term") return { term, termCount: 3, previousHeadSha: "old-head" };
+      if (command === "sync_gtms_glossary_repos") {
+        pushing = true;
+        await push.promise;
+        return outcome === "rollback" ? [{ status: "syncError", message: "Push failed" }] : [];
+      }
+      return null;
+    };
+    const draft = { id: "e1", entryId: "e1", decision: "add", sourceTerms: term.sourceTerms, generalNote: "", variants: [{ id: "v1", target: "research target", note: "", include: true }], conflicts: [], saveStatus: "idle" };
+    state.glossaryResearchReport = { glossaryId: "glossary-1", runId: "run-1", run: { meta: {} }, entryDrafts: { e1: draft } };
+    const saving = saveResearchEntry(() => {}, "e1");
+    await flushAsyncWork();
+    assert.equal(pushing, true);
+    assert.equal(draft.saveStatus, "saving");
+    assert.equal(state.glossaryResearchReport.run.meta.savedToGlossary, undefined);
+    push.resolve();
+    await saving;
+    if (outcome === "success") {
+      assert.equal(draft.saveStatus, "saved");
+      assert.equal(draft.existingTermId, term.termId);
+      assert.equal(draft.decision, "update");
+      assert.equal(state.glossaryResearchReport.run.meta.savedToGlossary.entries.length, 1);
+    } else {
+      assert.equal(draft.saveStatus, "idle");
+      assert.match(draft.saveError, /Push failed/);
+      assert.equal(draft.existingTermId, undefined);
+      assert.equal(state.glossaryResearchReport.run.meta.savedToGlossary, undefined);
+    }
+  });
+}
+
+test("a retest finishing after an edit does not restore its consistent result", async () => {
+  const { retestResearchConflict, updateResearchEntryField } = await import("./glossary-research-report-flow.js");
+  installGlossaryEditorFixture();
+  const response = deferred();
+  invokeHandler = async (command) => {
+    if (command === "run_glossary_research_request") {
+      await response.promise;
+      return { status: "ok", text: JSON.stringify({ items: [{ occId: "o1.1", status: "selected", variantId: "v1" }] }), usage: {} };
+    }
+    return null;
+  };
+  const conflict = { variantIds: ["v1", "v2"], occIds: ["o1.1"], retest: null };
+  const draft = { id: "e1", entryId: "e1", kind: "word", sourceTerms: ["mundo"], generalNote: "", variants: [{ id: "v1", target: "world", note: "", include: true }, { id: "v2", target: "planet", note: "", include: true }], conflicts: [conflict] };
+  state.glossaryResearchReport = {
+    entryDrafts: { e1: draft },
+    run: {
+      meta: { term: "mundo", providerId: "claude", modelId: "claude-opus-5-5" },
+      counting: { occurrences: [{ occId: "o1.1", entryId: "e1", itemId: "p1", start: 0, end: 5, surface: "mundo", sentenceStart: 0, sentenceEnd: 6 }] },
+      sample: { items: { p1: { itemId: "p1", text: "mundo.", occurrences: [{ start: 0, end: 5, surface: "mundo" }] } } },
+    },
+  };
+  const testing = retestResearchConflict(() => {}, "e1", 0);
+  await flushAsyncWork();
+  assert.equal(conflict.retest.status, "running");
+  updateResearchEntryField("e1", "note", "Changed while testing", 0);
+  response.resolve();
+  await testing;
+  assert.equal(conflict.retest, null);
+});
+
+test("edits during a confirmed report save remain pending and the next save uses the real term id", async () => {
+  const { saveResearchEntry, updateResearchEntryField } = await import("./glossary-research-report-flow.js");
+  installGlossaryEditorFixture();
+  state.screen = "glossaryResearchReport";
+  const push = deferred();
+  const writes = [];
+  invokeHandler = async (command, payload) => {
+    if (command === "sync_gtms_glossary_editor_repo") return { changedTermIds: [] };
+    if (command === "upsert_gtms_glossary_term") {
+      writes.push(cloneValue(payload.input));
+      return { term: glossaryTerm({ termId: "persisted-term", sourceTerms: payload.input.sourceTerms, targetTerms: payload.input.targetTerms }), previousHeadSha: "old-head" };
+    }
+    if (command === "sync_gtms_glossary_repos") { await push.promise; return []; }
+    return null;
+  };
+  const draft = { id: "e1", entryId: "e1", decision: "add", sourceTerms: ["first source"], generalNote: "", variants: [{ id: "v1", target: "first translation", note: "", include: true }], conflicts: [], saveStatus: "idle" };
+  state.glossaryResearchReport = { glossaryId: "glossary-1", runId: "run-1", run: { meta: {} }, entryDrafts: { e1: draft } };
+  const saving = saveResearchEntry(() => {}, "e1");
+  await flushAsyncWork();
+  updateResearchEntryField("e1", "target", "second translation", 0);
+  updateResearchEntryField("e1", "sourceTerms", "second source");
+  push.resolve();
+  await saving;
+  assert.equal(draft.saveStatus, "idle");
+  assert.equal(draft.existingTermId, "persisted-term");
+  assert.deepEqual(writes[0].targetTerms, ["first translation"]);
+  assert.deepEqual(state.glossaryResearchReport.run.meta.savedToGlossary.entries[0].sourceTerms, ["first source"]);
+  await saveResearchEntry(() => {}, "e1");
+  assert.equal(draft.saveStatus, "saved");
+  assert.equal(writes[1].termId, "persisted-term");
+  assert.deepEqual(writes[1].targetTerms, ["second translation"]);
+  assert.deepEqual(writes[1].sourceTerms, ["second source"]);
 });

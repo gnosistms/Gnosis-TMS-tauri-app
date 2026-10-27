@@ -1,3 +1,4 @@
+use super::book_export::BookItemInput;
 use super::*;
 use crate::util::atomic_replace;
 use reqwest::blocking::Client as BlockingClient;
@@ -13,12 +14,18 @@ use std::sync::{
 use std::time::Duration;
 use tauri::{path::BaseDirectory, Emitter, Manager};
 use tauri_plugin_shell::{process::CommandEvent, ShellExt};
+use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
+mod font_fallback;
+mod font_preferences;
+mod font_review;
+
 use super::chapter_export::{
-    apply_print_custom_html_policy, build_export_document, download_public_image_bytes_detailed,
-    inline_segments, inline_visible_text, ExportBlock, ExportChapterFileInput, ExportDocument,
-    ExportImage, InlineStyleState,
+    apply_print_custom_html_policy, build_scoped_export_document,
+    download_public_image_bytes_detailed, export_text_style, inline_segments, inline_visible_text,
+    load_export_chapters, ExportBlock, ExportChapterFileInput, ExportDocument, ExportImage,
+    InlineStyleState,
 };
 
 const PDF_EXPORT_EVENT: &str = "chapter-pdf-export-progress";
@@ -28,6 +35,7 @@ const MAX_FONT_BYTES: u64 = 30 * 1024 * 1024;
 const TYPST_COMPILE_TIMEOUT: Duration = Duration::from_secs(120);
 const CANCELLED: &str = "__GNOSIS_PDF_EXPORT_CANCELLED__";
 const MAX_TYPST_DIAGNOSTIC_BYTES: usize = 128 * 1024;
+const PDF_IMAGE_PREPARATION_REVISION: &str = "pdf-images-v1";
 
 #[derive(Clone, Debug, PartialEq)]
 enum PreparedTypstImage {
@@ -45,6 +53,81 @@ enum ResolvedPdfImage {
     Placeholder(String),
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PdfImageCacheScope {
+    installation_id: i64,
+    repo_name: String,
+    project_id: Option<String>,
+    project_full_name: Option<String>,
+    chapter_id: String,
+}
+
+impl PdfImageCacheScope {
+    fn from_input(input: &PdfChapterExportInput) -> Self {
+        Self {
+            installation_id: input.installation_id,
+            repo_name: input.repo_name.clone(),
+            project_id: input.project_id.clone(),
+            project_full_name: input.project_full_name.clone(),
+            chapter_id: input.chapter_id.clone(),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct CachedPreparedPdfImage {
+    fingerprint: String,
+    bytes: Arc<Vec<u8>>,
+    aspect: Option<f64>,
+}
+
+#[derive(Default)]
+struct PdfImagePreparationCache {
+    scope: Option<PdfImageCacheScope>,
+    entries: HashMap<String, CachedPreparedPdfImage>,
+}
+
+struct PdfWorkspacePreparationOptions<'a> {
+    footnote_links_as_plain_text: bool,
+    paper_size: &'a str,
+    image_cache_scope: &'a PdfImageCacheScope,
+}
+
+impl PdfImagePreparationCache {
+    fn use_scope(&mut self, scope: &PdfImageCacheScope) {
+        if self.scope.as_ref() != Some(scope) {
+            self.scope = Some(scope.clone());
+            self.entries.clear();
+        }
+    }
+
+    fn get(
+        &self,
+        scope: &PdfImageCacheScope,
+        key: &str,
+        fingerprint: &str,
+    ) -> Option<CachedPreparedPdfImage> {
+        (self.scope.as_ref() == Some(scope))
+            .then(|| self.entries.get(key))
+            .flatten()
+            .filter(|entry| entry.fingerprint == fingerprint)
+            .cloned()
+    }
+
+    fn insert(&mut self, scope: &PdfImageCacheScope, key: String, entry: CachedPreparedPdfImage) {
+        // A slower export for the previous chapter must not repopulate the cache
+        // after a newer export has switched its single-chapter scope.
+        if self.scope.as_ref() == Some(scope) {
+            self.entries.insert(key, entry);
+        }
+    }
+}
+
+fn pdf_image_preparation_cache() -> &'static Mutex<PdfImagePreparationCache> {
+    static CACHE: OnceLock<Mutex<PdfImagePreparationCache>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(PdfImagePreparationCache::default()))
+}
+
 pub(crate) type PdfChapterExportInput = ExportChapterFileInput;
 
 #[derive(Clone, Deserialize)]
@@ -56,7 +139,17 @@ pub(crate) struct PdfFontInspectionInput {
     #[serde(default)]
     project_full_name: Option<String>,
     chapter_id: String,
+    #[serde(default)]
+    chapter_ids: Vec<String>,
+    #[serde(default)]
+    project_title: String,
+    #[serde(default)]
+    book_items: Vec<BookItemInput>,
     language_code: String,
+    #[serde(default)]
+    omit_custom_html: Option<bool>,
+    #[serde(default)]
+    footnote_links_as_plain_text: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -68,6 +161,7 @@ pub(crate) struct PdfFontInspection {
     missing_bytes: u64,
     installed: bool,
     font_families: Vec<String>,
+    saved_fallback_fonts: Vec<font_preferences::SavedFontChoice>,
 }
 
 #[derive(Clone, Serialize)]
@@ -83,6 +177,8 @@ struct PdfExportProgressPayload {
     progress_total: u64,
     progress_unit: String,
     progress_indeterminate: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    font_review: Option<font_review::FontReview>,
 }
 
 #[derive(Clone, Copy)]
@@ -146,6 +242,53 @@ fn pdf_jobs() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
     JOBS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+struct PendingFontReview {
+    review_id: String,
+    approved: Arc<AtomicBool>,
+    choices: Vec<font_fallback::FontChoice>,
+}
+
+fn pdf_font_reviews() -> &'static Mutex<HashMap<String, PendingFontReview>> {
+    static REVIEWS: OnceLock<Mutex<HashMap<String, PendingFontReview>>> = OnceLock::new();
+    REVIEWS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub(crate) fn approve_gtms_chapter_pdf_fonts(
+    app: &AppHandle,
+    job_id: &str,
+    review_id: &str,
+) -> Result<bool, String> {
+    approve_pending_font_review(job_id, review_id, |choices| {
+        font_preferences::save(app, choices)
+    })
+}
+
+pub(crate) fn forget_gtms_pdf_font_approval(
+    app: &AppHandle,
+    font_id: &str,
+) -> Result<bool, String> {
+    font_preferences::forget(app, font_id)
+}
+
+fn approve_pending_font_review(
+    job_id: &str,
+    review_id: &str,
+    save: impl FnOnce(&[font_fallback::FontChoice]) -> Result<(), String>,
+) -> Result<bool, String> {
+    let reviews = pdf_font_reviews()
+        .lock()
+        .map_err(|_| "The PDF font review is unavailable.".to_string())?;
+    let Some(review) = reviews
+        .get(job_id)
+        .filter(|review| review.review_id == review_id)
+    else {
+        return Ok(false);
+    };
+    save(&review.choices)?;
+    review.approved.store(true, Ordering::Release);
+    Ok(true)
+}
+
 struct PdfJobRegistration {
     job_id: String,
     cancelled: Arc<AtomicBool>,
@@ -159,6 +302,9 @@ impl Drop for PdfJobRegistration {
                 .is_some_and(|current| Arc::ptr_eq(current, &self.cancelled))
             {
                 jobs.remove(&self.job_id);
+                if let Ok(mut reviews) = pdf_font_reviews().lock() {
+                    reviews.remove(&self.job_id);
+                }
             }
         }
     }
@@ -328,6 +474,8 @@ pub(crate) fn inspect_gtms_chapter_pdf_fonts(
     if input.language_code.trim().is_empty() {
         return Err("Choose the export language first.".to_string());
     }
+    let omit_custom_html = input.omit_custom_html.unwrap_or(true);
+    let show_link_urls = input.footnote_links_as_plain_text;
     let document = load_export_document(
         app,
         &ExportChapterFileInput {
@@ -337,14 +485,18 @@ pub(crate) fn inspect_gtms_chapter_pdf_fonts(
             project_id: input.project_id,
             project_full_name: input.project_full_name,
             chapter_id: input.chapter_id,
+            chapter_ids: input.chapter_ids,
+            project_title: input.project_title,
+            book_items: input.book_items,
             language_code: input.language_code,
             format: "pdf".to_string(),
             output_path: String::new(),
             paper_size: "us-letter".to_string(),
-            footnote_links_as_plain_text: false,
-            omit_custom_html: true,
+            footnote_links_as_plain_text: show_link_urls,
+            omit_custom_html,
         },
     )?;
+    let document = apply_print_custom_html_policy(&document, omit_custom_html);
     if let Some(script) = unsupported_pdf_language(&document.language_code) {
         return Ok(PdfFontInspection {
             supported: false,
@@ -355,6 +507,7 @@ pub(crate) fn inspect_gtms_chapter_pdf_fonts(
             missing_bytes: 0,
             installed: false,
             font_families: Vec::new(),
+            saved_fallback_fonts: Vec::new(),
         });
     }
 
@@ -366,6 +519,14 @@ pub(crate) fn inspect_gtms_chapter_pdf_fonts(
         .filter(|asset| !valid_cached_font(&font_dir.join(asset.file_name), **asset))
         .map(|asset| asset.size)
         .sum();
+    let approved = font_preferences::load(app)?;
+    let saved_fallback_fonts = relevant_saved_fonts(
+        &document,
+        &font_dir,
+        show_link_urls,
+        missing_bytes == 0,
+        &approved,
+    )?;
     let font_families = assets
         .iter()
         .map(|asset| asset.family.to_string())
@@ -379,6 +540,7 @@ pub(crate) fn inspect_gtms_chapter_pdf_fonts(
         missing_bytes,
         installed: missing_bytes == 0,
         font_families,
+        saved_fallback_fonts,
     })
 }
 
@@ -395,6 +557,29 @@ pub(crate) fn cancel_gtms_chapter_pdf_export(job_id: &str) -> Result<bool, Strin
     };
     cancelled.store(true, Ordering::Release);
     Ok(true)
+}
+
+fn relevant_saved_fonts(
+    document: &ExportDocument,
+    font_dir: &Path,
+    show_link_urls: bool,
+    fonts_installed: bool,
+    approved: &[font_fallback::FontChoice],
+) -> Result<Vec<font_preferences::SavedFontChoice>, String> {
+    if !fonts_installed || approved.is_empty() {
+        return Ok(Vec::new());
+    }
+    let missing = font_fallback::missing_characters(
+        document,
+        font_dir,
+        show_link_urls,
+        &AtomicBool::new(false),
+    )?;
+    Ok(if missing.is_empty() {
+        Vec::new()
+    } else {
+        font_preferences::summaries(approved)
+    })
 }
 
 fn unsupported_pdf_language(language_code: &str) -> Option<&'static str> {
@@ -448,10 +633,15 @@ pub(crate) fn start_gtms_chapter_pdf_export(
         input.job_id.trim().to_string()
     };
     let cancelled = Arc::new(AtomicBool::new(false));
-    pdf_jobs()
-        .lock()
-        .map_err(|_| "The PDF export state is unavailable.".to_string())?
-        .insert(job_id.clone(), cancelled.clone());
+    {
+        let mut jobs = pdf_jobs()
+            .lock()
+            .map_err(|_| "The PDF export state is unavailable.".to_string())?;
+        if jobs.contains_key(&job_id) {
+            return Err("This PDF export is already running.".to_string());
+        }
+        jobs.insert(job_id.clone(), cancelled.clone());
+    }
     let task_app = app.clone();
     let task_job_id = job_id.clone();
     tauri::async_runtime::spawn(async move {
@@ -497,6 +687,7 @@ async fn run_pdf_export(
     cancelled: Arc<AtomicBool>,
 ) -> Result<(), String> {
     let paper_size = normalize_pdf_paper_size(&input.paper_size)?;
+    let image_cache_scope = PdfImageCacheScope::from_input(&input);
     emit_progress(
         app,
         job_id,
@@ -529,7 +720,8 @@ async fn run_pdf_export(
     let font_app = app.clone();
     let font_job_id = job_id.to_string();
     let font_cancelled = cancelled.clone();
-    let font_assets = required_fonts_for_document(&document);
+    let prepared_document = apply_print_custom_html_policy(&document, omit_custom_html);
+    let font_assets = required_fonts_for_document(&prepared_document);
     let font_dir = tauri::async_runtime::spawn_blocking(move || {
         ensure_fonts(&font_app, &font_job_id, font_assets, &font_cancelled)
     })
@@ -537,25 +729,58 @@ async fn run_pdf_export(
     .map_err(|error| format!("The PDF font worker failed: {error}"))??;
 
     check_cancelled(&cancelled)?;
-    let prepared_document = apply_print_custom_html_policy(&document, omit_custom_html);
     let prep_font_dir = font_dir.clone();
     let prep_cancelled = cancelled.clone();
     let prep_app = app.clone();
     let prep_job_id = job_id.to_string();
-    let workspace = tauri::async_runtime::spawn_blocking(move || {
+    let prepared = tauri::async_runtime::spawn_blocking(move || {
+        let options = PdfWorkspacePreparationOptions {
+            footnote_links_as_plain_text,
+            paper_size,
+            image_cache_scope: &image_cache_scope,
+        };
         prepare_pdf_workspace(
             &prep_app,
             &prep_job_id,
             &prepared_document,
-            footnote_links_as_plain_text,
-            paper_size,
             &prep_font_dir,
+            &options,
             &prep_cancelled,
         )
     })
     .await
     .map_err(|error| format!("The PDF image worker failed: {error}"))??;
+    let workspace = prepared.workspace;
+    let fallback_fonts = prepared.fallback_fonts;
     let _workspace_cleanup = WorkspaceCleanup(workspace.clone());
+
+    if let Some(review) = prepared.review {
+        emit_progress(
+            app,
+            job_id,
+            "running",
+            "font-review-preparing",
+            "Preparing highlighted font samples…",
+            PdfProgressValue::indeterminate(),
+        );
+        compile_typst(
+            app,
+            &workspace,
+            &font_dir,
+            &fallback_fonts,
+            "font-review.typ",
+            "font-review-{p}.svg",
+            &cancelled,
+        )
+        .await?;
+        let review_workspace = workspace.clone();
+        let review = tauri::async_runtime::spawn_blocking(move || {
+            font_review::read_review(&review_workspace, review)
+        })
+        .await
+        .map_err(|_| "The PDF font review worker failed.".to_string())??;
+        await_font_review(app, job_id, review, prepared.approval_choices, &cancelled).await?;
+    }
 
     emit_progress(
         app,
@@ -566,8 +791,68 @@ async fn run_pdf_export(
         PdfProgressValue::indeterminate(),
     );
 
-    let source_path = workspace.join("chapter.typ");
     let rendered_path = workspace.join("chapter.pdf");
+    compile_typst(
+        app,
+        &workspace,
+        &font_dir,
+        &fallback_fonts,
+        "chapter.typ",
+        "chapter.pdf",
+        &cancelled,
+    )
+    .await?;
+
+    emit_progress(
+        app,
+        job_id,
+        "running",
+        "saving",
+        "Saving the finished PDF…",
+        PdfProgressValue::determinate(0, 1, "steps"),
+    );
+    check_cancelled(&cancelled)?;
+    install_rendered_pdf(&rendered_path, &output_path)?;
+    Ok(())
+}
+
+async fn compile_typst(
+    app: &AppHandle,
+    workspace: &Path,
+    font_dir: &Path,
+    fallback_fonts: &[PathBuf],
+    source_name: &str,
+    rendered_name: &str,
+    cancelled: &AtomicBool,
+) -> Result<(), String> {
+    check_cancelled(cancelled)?;
+    let source_path = workspace.join(source_name);
+    let rendered_path = workspace.join(rendered_name);
+    let mut arguments: Vec<std::ffi::OsString> = vec![
+        "compile".into(),
+        "--root".into(),
+        workspace.as_os_str().to_owned(),
+        "--font-path".into(),
+        font_dir.as_os_str().to_owned(),
+        "--ignore-system-fonts".into(),
+        "--package-path".into(),
+        workspace.join("packages").into_os_string(),
+    ];
+    let mut font_directories = BTreeSet::new();
+    for path in fallback_fonts {
+        if !path.is_file() {
+            return Err(
+                "A selected fallback font is no longer installed. Please export again.".to_string(),
+            );
+        }
+        if let Some(directory) = path.parent() {
+            font_directories.insert(directory.to_path_buf());
+        }
+    }
+    for directory in font_directories {
+        arguments.extend(["--font-path".into(), directory.into_os_string()]);
+    }
+    arguments.extend([source_path.into_os_string(), rendered_path.into_os_string()]);
     let command =
         if cfg!(debug_assertions) {
             std::env::var_os("GNOSIS_TYPST_BIN")
@@ -581,18 +866,7 @@ async fn run_pdf_export(
                 .map_err(|error| format!("The bundled Typst compiler is unavailable: {error}"))?
         };
     let (mut receiver, child) = command
-        .args([
-            "compile".into(),
-            "--root".into(),
-            workspace.as_os_str().to_owned(),
-            "--font-path".into(),
-            font_dir.as_os_str().to_owned(),
-            "--ignore-system-fonts".into(),
-            "--package-path".into(),
-            workspace.join("packages").into_os_string(),
-            source_path.as_os_str().to_owned(),
-            rendered_path.as_os_str().to_owned(),
-        ])
+        .args(arguments)
         .spawn()
         .map_err(|error| format!("Could not start the bundled Typst compiler: {error}"))?;
     let mut child = Some(child);
@@ -628,17 +902,61 @@ async fn run_pdf_export(
         let details = String::from_utf8_lossy(&stderr);
         return Err(format_typst_error(&details));
     }
+    // Typst can exit successfully with an unknown family and render missing-glyph
+    // boxes. Never let a font-name mismatch turn approval into silent data loss.
+    if String::from_utf8_lossy(&stderr).contains("unknown font family:") {
+        return Err("A selected font could not be loaded by the PDF renderer. Try another installed font, or export as DOCX or HTML.".to_string());
+    }
 
-    emit_progress(
-        app,
-        job_id,
-        "running",
-        "saving",
-        "Saving the finished PDF…",
-        PdfProgressValue::determinate(0, 1, "steps"),
-    );
-    check_cancelled(&cancelled)?;
-    install_rendered_pdf(&rendered_path, &output_path)?;
+    Ok(())
+}
+
+async fn await_font_review(
+    app: &AppHandle,
+    job_id: &str,
+    review: font_review::FontReview,
+    choices: Vec<font_fallback::FontChoice>,
+    cancelled: &AtomicBool,
+) -> Result<(), String> {
+    let approved = Arc::new(AtomicBool::new(false));
+    pdf_font_reviews()
+        .lock()
+        .map_err(|_| "The PDF font review is unavailable.".to_string())?
+        .insert(
+            job_id.to_string(),
+            PendingFontReview {
+                review_id: review.review_id.clone(),
+                approved: approved.clone(),
+                choices,
+            },
+        );
+    app.emit(
+        PDF_EXPORT_EVENT,
+        PdfExportProgressPayload {
+            job_id: job_id.to_string(),
+            status: "font-review".into(),
+            stage: "font-review".into(),
+            message: "Review the fallback fonts before publishing.".into(),
+            downloaded_bytes: 0,
+            total_bytes: 0,
+            progress_current: 0,
+            progress_total: 0,
+            progress_unit: String::new(),
+            progress_indeterminate: false,
+            font_review: Some(review),
+        },
+    )
+    .map_err(|_| "Could not display the PDF font review.".to_string())?;
+    loop {
+        check_cancelled(cancelled)?;
+        if approved.load(Ordering::Acquire) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    if let Ok(mut reviews) = pdf_font_reviews().lock() {
+        reviews.remove(job_id);
+    }
     Ok(())
 }
 
@@ -654,26 +972,15 @@ fn load_export_document(
     )?;
     ensure_repo_exists(&repo_path, "The local project repo is not available yet.")?;
     ensure_valid_git_repo(&repo_path, "The local project repo is missing or invalid.")?;
-    let chapter_path =
-        find_chapter_path_by_id(app, &repo_path.join("chapters"), &input.chapter_id)?;
-    let chapter_file: StoredChapterFile =
-        read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
-    let languages = sanitize_chapter_languages(&chapter_file.languages);
-    if !languages
-        .iter()
-        .any(|language| language.code == input.language_code)
-    {
-        return Err("The selected export language is not available in this file.".to_string());
-    }
-    let rows = load_editor_rows(&chapter_path.join("rows"))?;
+    let chapters = load_export_chapters(app, &repo_path, input)?;
     let head_sha = current_repo_head_sha(&repo_path);
     let full_name =
         resolve_project_full_name_for_pdf(&repo_path, input.project_full_name.as_deref());
-    build_export_document(
+    build_scoped_export_document(
+        app,
         &repo_path,
-        &chapter_file,
-        &rows,
-        &input.language_code,
+        &chapters,
+        input,
         full_name.as_deref(),
         head_sha.as_deref().unwrap_or_default(),
     )
@@ -699,7 +1006,9 @@ fn document_characters(document: &ExportDocument) -> BTreeSet<char> {
     characters.extend(document.title.chars());
     for block in &document.blocks {
         match block {
-            ExportBlock::Text { text, .. } | ExportBlock::Footnote { text, .. } => {
+            ExportBlock::Text { text, .. }
+            | ExportBlock::Attribution { text }
+            | ExportBlock::Footnote { text, .. } => {
                 for segment in inline_segments(text) {
                     characters.extend(segment.text.chars());
                 }
@@ -1002,12 +1311,49 @@ fn prepare_typst_workspace(
     job_id: &str,
     workspace: &Path,
     document: &ExportDocument,
-    footnote_links_as_plain_text: bool,
-    paper_size: &str,
+    options: &PdfWorkspacePreparationOptions<'_>,
     cancelled: &AtomicBool,
 ) -> Result<(), String> {
     check_cancelled(cancelled)?;
-    let image_paths = prepare_typst_images(app, job_id, workspace, document, cancelled)?;
+    let image_paths = prepare_typst_images(
+        app,
+        job_id,
+        workspace,
+        document,
+        options.image_cache_scope,
+        cancelled,
+    )?;
+    fs::write(workspace.join("flourish.svg"), CHAPTER_FLOURISH_SVG)
+        .map_err(|error| format!("Could not prepare the title ornament for the PDF: {error}"))?;
+    write_droplet_package(workspace)?;
+    let mut source = typst_preamble(document, options.paper_size);
+    if document.book_parts.is_empty() {
+        source.push_str(&render_typst_chapter(
+            document,
+            &image_paths,
+            options,
+            cancelled,
+        )?);
+    } else {
+        source.push_str(&render_typst_book(
+            document,
+            &image_paths,
+            options,
+            cancelled,
+        )?);
+    }
+    fs::write(workspace.join("chapter.typ"), source)
+        .map_err(|error| format!("Could not write the temporary Typst document: {error}"))
+}
+
+// This is the chapter style: book chapters and standalone exports use this
+// exact renderer, including title promotion, ornaments, floats, and drop caps.
+fn render_typst_chapter(
+    document: &ExportDocument,
+    image_paths: &HashMap<String, PreparedTypstImage>,
+    options: &PdfWorkspacePreparationOptions<'_>,
+    cancelled: &AtomicBool,
+) -> Result<String, String> {
     let mut anchored_footnotes: HashMap<usize, Vec<(usize, String)>> = HashMap::new();
     let mut anchored_numbers = HashSet::new();
     for block in &document.blocks {
@@ -1028,15 +1374,12 @@ fn prepare_typst_workspace(
     let leading_title = leading_heading_title(document);
     let title = leading_title.as_deref().unwrap_or(document.title.as_str());
     // The ornament under the chapter title; referenced by the gnosis-title rule.
-    fs::write(workspace.join("flourish.svg"), CHAPTER_FLOURISH_SVG)
-        .map_err(|error| format!("Could not prepare the title ornament for the PDF: {error}"))?;
-    write_droplet_package(workspace)?;
-    let mut source = typst_preamble(document, paper_size);
+    let mut source = String::new();
     // No spacer after the title: it is a top float now, and its `clearance`
     // provides the gap to whatever the page starts with.
     source.push_str(&format!("#gnosis-title({})\n", typst_string(title)));
     let (emission_order, trailing_start) =
-        typst_block_emission_order(&document.blocks, &image_paths);
+        typst_block_emission_order(&document.blocks, image_paths);
     let dropcap_index = if latin_body(&document.language_code) {
         dropcap_block_index(&document.blocks, &emission_order, leading_title.is_some())
     } else {
@@ -1058,21 +1401,29 @@ fn prepare_typst_workspace(
                         .get(&block_index)
                         .map(Vec::as_slice)
                         .unwrap_or_default(),
-                    footnote_links_as_plain_text,
+                    options.footnote_links_as_plain_text,
                 );
-                match normalize_editor_text_style_value(Some(text_style)).as_str() {
-                    "heading1" => source.push_str(&format!("= {inline}\n\n")),
-                    "heading2" => source.push_str(&format!("== {inline}\n\n")),
-                    "quote" | "blockquote" => {
-                        source.push_str(&format!("#quote(block: true)[{inline}]\n\n"))
-                    }
-                    "centered" => source.push_str(&format!("#align(center)[{inline}]\n\n")),
-                    "indented" => source.push_str(&format!("#pad(left: 2em)[{inline}]\n\n")),
-                    _ if Some(block_index) == dropcap_index => {
-                        source.push_str(&format!("#gnosis-dropcap[{inline}]\n\n"))
-                    }
-                    _ => source.push_str(&format!("{inline}\n\n")),
+                let text_block = render_typst_text_block(
+                    text_style,
+                    &inline,
+                    Some(block_index) == dropcap_index,
+                );
+                if matches!(
+                    document.blocks.get(block_index + 1),
+                    Some(ExportBlock::Attribution { .. })
+                ) {
+                    source.push_str(&format!(
+                        "#block(sticky: true, breakable: true)[{text_block}]\n"
+                    ));
+                } else {
+                    source.push_str(&text_block);
                 }
+            }
+            ExportBlock::Attribution { text } => {
+                source.push_str(&format!(
+                    "#align(right)[#text(size: 0.9em)[{}]]\n\n",
+                    render_inline_typst(text, false)
+                ));
             }
             ExportBlock::Separator => {
                 source.push_str("#line(length: 100%, stroke: 0.5pt)\n#v(0.8em)\n")
@@ -1080,7 +1431,7 @@ fn prepare_typst_workspace(
             ExportBlock::Footnote { number, text, .. } if !anchored_numbers.contains(number) => {
                 source.push_str(&format!(
                     "#footnote[{}]\n",
-                    render_inline_typst(text, footnote_links_as_plain_text)
+                    render_inline_typst(text, options.footnote_links_as_plain_text)
                 ));
             }
             ExportBlock::Footnote { .. } => {}
@@ -1125,8 +1476,197 @@ fn prepare_typst_workspace(
             }
         }
     }
-    fs::write(workspace.join("chapter.typ"), source)
-        .map_err(|error| format!("Could not write the temporary Typst document: {error}"))
+    Ok(source)
+}
+
+// Typst resolves these metadata locations against the final paginated document.
+// A contents section can be anywhere; no guessed page counts or extra render jobs.
+const BOOK_LAYOUT_RULES: &str = r#"
+#set page(numbering: none, footer: context {
+  let p = here().page()
+  let starts = query(<gnosis-print-start>)
+  let ends = query(<gnosis-print-end>)
+  for range in starts.zip(ends) {
+    if range.first().location().page() <= p and p <= range.last().location().page() {
+      align(center, counter(page).display(range.first().value))
+    }
+  }
+})
+#let gnosis-contents(t) = {
+  show link: set text(fill: black)
+  align(center, text(font: gnosis-book-heading-font, size: 20pt, t))
+  v(1.8em)
+  context {
+    for entry in query(<gnosis-book-entry>) {
+      block(width: 100%, above: 0.65em, below: 0.65em)[
+        #link(entry.location())[#grid(columns: (1fr, auto), column-gutter: 1em,
+          entry.value.title,
+          numbering(entry.value.numbering, ..counter(page).at(entry.location())),
+        )]
+      ]
+    }
+  }
+}
+"#;
+
+fn render_typst_book(
+    document: &ExportDocument,
+    image_paths: &HashMap<String, PreparedTypstImage>,
+    options: &PdfWorkspacePreparationOptions<'_>,
+    cancelled: &AtomicBool,
+) -> Result<String, String> {
+    let mut source = BOOK_LAYOUT_RULES.to_string();
+    let mut body_started = false;
+    let heading_fonts = heading_font_families(document)
+        .into_iter()
+        .map(typst_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    source.insert_str(
+        0,
+        &format!("#let gnosis-book-heading-font = ({heading_fonts})\n"),
+    );
+    for (index, part) in document.book_parts.iter().enumerate() {
+        check_cancelled(cancelled)?;
+        let item = &part.item;
+        if !item.image_asset_id.is_empty()
+            && section_prepared_image(&part.document, image_paths).is_none()
+        {
+            return Err(
+                "Could not prepare a book image. Select the image again before exporting.".into(),
+            );
+        }
+        if index > 0 {
+            let side = if item.kind == "copyright" {
+                "even"
+            } else {
+                "odd"
+            };
+            source.push_str(&format!("#pagebreak(to: \"{side}\")\n"));
+        } else if item.kind == "copyright" {
+            // A leading copyright page still occupies the verso of a spread.
+            source.push_str("#pagebreak(to: \"even\")\n");
+        }
+        if item.kind == "chapter" && !body_started {
+            source.push_str("#counter(page).update(1)\n");
+            body_started = true;
+        }
+        let numbering = if body_started { "1" } else { "i" };
+        if !matches!(item.kind.as_str(), "title" | "copyright" | "contents") {
+            let title = if item.kind == "chapter" {
+                leading_heading_title(&part.document).unwrap_or_else(|| part.document.title.clone())
+            } else {
+                item.title.clone()
+            };
+            source.push_str(&format!(
+                "#metadata((title: {}, numbering: \"{numbering}\")) <gnosis-book-entry>\n",
+                typst_string(&title)
+            ));
+        }
+        let numbered = matches!(item.kind.as_str(), "chapter" | "contents");
+        if numbered {
+            source.push_str(&format!(
+                "#metadata(\"{numbering}\") <gnosis-print-start>\n"
+            ));
+        }
+        if item.kind == "chapter" {
+            source.push_str(&render_typst_chapter(
+                &part.document,
+                image_paths,
+                options,
+                cancelled,
+            )?);
+        } else if item.kind == "contents" {
+            source.push_str(&format!(
+                "#gnosis-contents({})\n",
+                typst_string(&item.title)
+            ));
+        } else if item.kind == "title" {
+            source.push_str(&format!("#align(center)[\n#v(0.2fr)\n#text(font: ({heading_fonts}), size: 30pt, weight: \"medium\")[{}]\n", render_inline_typst(&item.title, false)));
+            if !item.subtitle.trim().is_empty() {
+                source.push_str(&format!(
+                    "#v(1em)\n#text(font: ({heading_fonts}), size: 18pt)[{}]\n",
+                    render_inline_typst(&item.subtitle, false)
+                ));
+            }
+            source.push_str("#v(2.5em)\n");
+            if !item.author.trim().is_empty() {
+                source.push_str(&format!(
+                    "#text(size: 15pt)[{}]\n",
+                    render_inline_typst(&item.author, false)
+                ));
+            }
+            if !item.translator.trim().is_empty() {
+                source.push_str(&format!(
+                    "#v(1em)\n#text(size: 12pt)[{}]\n",
+                    render_inline_typst(&item.translator, false)
+                ));
+            }
+            source.push_str("#v(1fr)\n");
+            if let Some(path) = section_prepared_image(&part.document, image_paths) {
+                source.push_str(&format!(
+                    "#image({}, width: 1.3in, height: 0.7in, fit: \"contain\")\n",
+                    typst_string(path)
+                ));
+            }
+            source.push_str("]\n");
+        } else if item.kind == "image" {
+            source.push_str("#v(1fr)\n#align(center)[\n");
+            if let Some(path) = section_prepared_image(&part.document, image_paths) {
+                source.push_str(&format!(
+                    "#gnosis-image({}, caption: [{}])\n",
+                    typst_string(path),
+                    render_typst_image_caption(&item.caption)
+                ));
+            }
+            if !item.caption.trim().is_empty() {
+                source.push_str(&format!(
+                    "#v(0.65em)\n{}\n",
+                    render_typst_image_caption(&item.caption)
+                ));
+            }
+            source.push_str("]\n#v(1fr)\n");
+        } else {
+            if item.kind == "copyright" {
+                source.push_str("#v(1fr)\n");
+            }
+            if item.kind == "dedication" {
+                source.push_str("#v(0.22fr)\n#align(center)[\n");
+            }
+            for (index, text) in item.text.split("<hr>").enumerate() {
+                if index > 0 {
+                    source.push_str("#v(1em)\n#align(center, image(\"flourish.svg\", width: 0.66in))\n#v(1em)\n");
+                }
+                source.push_str(&render_inline_typst(
+                    text,
+                    options.footnote_links_as_plain_text,
+                ));
+                source.push_str("\n\n");
+            }
+            if item.kind == "dedication" {
+                source.push_str("]\n#v(1fr)\n");
+            }
+        }
+        if numbered {
+            source.push_str("\n#metadata(none) <gnosis-print-end>\n");
+        }
+    }
+    Ok(source)
+}
+
+fn section_prepared_image<'a>(
+    document: &ExportDocument,
+    images: &'a HashMap<String, PreparedTypstImage>,
+) -> Option<&'a str> {
+    document.blocks.iter().find_map(|block| {
+        let ExportBlock::Image { image, .. } = block else {
+            return None;
+        };
+        match images.get(&export_image_key(image)) {
+            Some(PreparedTypstImage::File { path, .. }) => Some(path.as_str()),
+            _ => None,
+        }
+    })
 }
 
 /// Emission order for blocks. Everything up to the trailing image run keeps
@@ -1182,12 +1722,12 @@ fn dropcap_block_index(
             ExportBlock::Text { text_style, text } => {
                 let first = inline_visible_text(text)
                     .chars()
-                    .find(|character| !character.is_whitespace());
+                    .find(|character| character.is_alphanumeric());
                 // Blank rows emit nothing visible — look past them, the way a
                 // reader would.
                 let Some(first) = first else { continue };
                 let plain = !matches!(
-                    normalize_editor_text_style_value(Some(text_style)).as_str(),
+                    export_text_style(Some(text_style)).as_str(),
                     "heading1" | "heading2" | "quote" | "blockquote" | "centered" | "indented"
                 );
                 return (plain && first.is_alphabetic()).then_some(index);
@@ -1198,31 +1738,105 @@ fn dropcap_block_index(
     None
 }
 
+struct PreparedPdfWorkspace {
+    workspace: PathBuf,
+    review: Option<font_review::PreparedFontReview>,
+    fallback_fonts: Vec<PathBuf>,
+    approval_choices: Vec<font_fallback::FontChoice>,
+}
+
 fn prepare_pdf_workspace(
     app: &AppHandle,
     job_id: &str,
     document: &ExportDocument,
-    footnote_links_as_plain_text: bool,
-    paper_size: &str,
     font_dir: &Path,
+    options: &PdfWorkspacePreparationOptions<'_>,
     cancelled: &AtomicBool,
-) -> Result<PathBuf, String> {
-    validate_document_glyphs(document, font_dir)?;
+) -> Result<PreparedPdfWorkspace, String> {
     check_cancelled(cancelled)?;
     let workspace = pdf_workspace()?;
-    if let Err(error) = prepare_typst_workspace(
-        Some(app),
-        job_id,
-        &workspace,
-        document,
-        footnote_links_as_plain_text,
-        paper_size,
-        cancelled,
-    ) {
+    let result = (|| {
+        let approved = font_preferences::load(app)?;
+        let plan = font_fallback::resolve(
+            document,
+            font_dir,
+            options.footnote_links_as_plain_text,
+            &approved,
+            cancelled,
+        )?;
+        if !plan.missing.is_empty() {
+            report_font_coverage_gap(app, &plan, document);
+        }
+        plan.validate()?;
+        prepare_typst_workspace(Some(app), job_id, &workspace, document, options, cancelled)?;
+        let unapproved = plan.unapproved(&approved);
+        if !plan.fonts.is_empty() {
+            let chapter_path = workspace.join("chapter.typ");
+            let source = fs::read_to_string(&chapter_path)
+                .map_err(|_| "Could not prepare the PDF font choices.".to_string())?;
+            fs::write(&chapter_path, format!("{}{source}", plan.rules(false)))
+                .map_err(|_| "Could not prepare the PDF font choices.".to_string())?;
+        }
+        let review = if unapproved.fonts.is_empty() {
+            None
+        } else {
+            Some(font_review::prepare(
+                &workspace,
+                document,
+                options,
+                &plan,
+                &unapproved,
+            )?)
+        };
+        let fallback_fonts = plan.fonts.iter().map(|font| font.path.clone()).collect();
+        Ok(PreparedPdfWorkspace {
+            workspace: workspace.clone(),
+            review,
+            fallback_fonts,
+            approval_choices: unapproved.fonts.iter().map(|font| font.choice()).collect(),
+        })
+    })();
+    if result.is_err() {
         let _ = fs::remove_dir_all(&workspace);
-        return Err(error);
     }
-    Ok(workspace)
+    result
+}
+
+fn report_font_coverage_gap(
+    app: &AppHandle,
+    plan: &font_fallback::FontFallbackPlan,
+    document: &ExportDocument,
+) {
+    static REPORTED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    // Only the in-process dedup key includes codepoints; no text, raw characters,
+    // codepoint sequence, font paths, or excerpts cross the telemetry boundary.
+    let signature = format!(
+        "{:x}",
+        Sha256::digest(plan.missing.iter().collect::<String>().as_bytes())
+    );
+    if let Ok(mut reported) = REPORTED.get_or_init(|| Mutex::new(HashSet::new())).lock() {
+        if reported.len() >= 256 || !reported.insert(signature) {
+            return;
+        }
+        let _ = app.emit("chapter-pdf-font-coverage-gap", plan.diagnostic(document));
+    }
+}
+
+fn render_typst_text_block(style: &str, inline: &str, dropcap: bool) -> String {
+    if style == "chapter_heading" {
+        return format!("#pagebreak(weak: true)\n= {inline}\n\n");
+    }
+    match export_text_style(Some(style)).as_str() {
+        "heading1" => format!("= {inline}\n\n"),
+        "heading2" => format!("== {inline}\n\n"),
+        "quote" | "blockquote" => {
+            format!("#quote(block: true)[#text(style: \"italic\")[{inline}]]\n\n")
+        }
+        "centered" => format!("#align(center)[{inline}]\n\n"),
+        "indented" => format!("#pad(left: 2em)[{inline}]\n\n"),
+        _ if dropcap => format!("#gnosis-dropcap[{inline}]\n\n"),
+        _ => format!("{inline}\n\n"),
+    }
 }
 
 fn prepare_typst_images(
@@ -1230,8 +1844,12 @@ fn prepare_typst_images(
     job_id: &str,
     workspace: &Path,
     document: &ExportDocument,
+    cache_scope: &PdfImageCacheScope,
     cancelled: &AtomicBool,
 ) -> Result<HashMap<String, PreparedTypstImage>, String> {
+    if let Ok(mut cache) = pdf_image_preparation_cache().lock() {
+        cache.use_scope(cache_scope);
+    }
     let mut unique = Vec::new();
     let mut seen = HashSet::new();
     for block in &document.blocks {
@@ -1256,25 +1874,47 @@ fn prepare_typst_images(
         return Ok(HashMap::new());
     }
 
-    let total_images = unique.len() as u64;
+    let mut cached_images = HashMap::new();
+    let mut pending_images = Vec::new();
+    for (key, image, caption) in unique {
+        check_cancelled(cancelled)?;
+        let (fingerprint, source_bytes) = pdf_image_fingerprint(&image)?;
+        let cached = pdf_image_preparation_cache()
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get(cache_scope, &key, &fingerprint));
+        if let Some(cached) = cached {
+            cached_images.insert(key, cached);
+        } else {
+            pending_images.push((key, image, caption, fingerprint, source_bytes));
+        }
+    }
+
+    let total_images = (cached_images.len() + pending_images.len()) as u64;
+    let cached_count = cached_images.len() as u64;
     if let Some(app) = app {
         emit_progress(
             app,
             job_id,
             "running",
             "preparing-images",
-            &format!("Preparing images (0 of {total_images})…"),
-            PdfProgressValue::determinate(0, total_images, "items"),
+            &format!("Preparing images ({cached_count} of {total_images})…"),
+            PdfProgressValue::determinate(cached_count, total_images, "items"),
         );
     }
-    let queue = Arc::new(Mutex::new(VecDeque::from(unique.clone())));
+    let pending_order = pending_images
+        .iter()
+        .map(|(key, _, _, fingerprint, _)| (key.clone(), fingerprint.clone()))
+        .collect::<Vec<_>>();
+    let worker_count = pending_images.len().min(4);
+    let queue = Arc::new(Mutex::new(VecDeque::from(pending_images)));
     let results = Arc::new(Mutex::new(HashMap::<
         String,
         Result<ResolvedPdfImage, String>,
     >::new()));
-    let completed = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let completed = Arc::new(std::sync::atomic::AtomicU64::new(cached_count));
     std::thread::scope(|scope| {
-        for _ in 0..unique.len().min(4) {
+        for _ in 0..worker_count {
             let queue = queue.clone();
             let results = results.clone();
             let completed = completed.clone();
@@ -1285,10 +1925,14 @@ fn prepare_typst_images(
                     return;
                 }
                 let next = queue.lock().ok().and_then(|mut queue| queue.pop_front());
-                let Some((key, image, caption)) = next else {
+                let Some((key, image, caption, _, source_bytes)) = next else {
                     return;
                 };
-                let result = resolve_pdf_image(&image, &caption).map(|resolved| match resolved {
+                let resolved = match source_bytes {
+                    Some(bytes) => Ok(ResolvedPdfImage::Bytes(bytes)),
+                    None => resolve_pdf_image(&image, &caption),
+                };
+                let result = resolved.map(|resolved| match resolved {
                     ResolvedPdfImage::Bytes(bytes) => {
                         ResolvedPdfImage::Bytes(optimize_pdf_image_bytes(bytes))
                     }
@@ -1319,7 +1963,7 @@ fn prepare_typst_images(
         .lock()
         .map_err(|_| "The PDF image worker results are unavailable.".to_string())?;
     let mut prepared_images = HashMap::new();
-    for (index, (key, _, _)) in unique.into_iter().enumerate() {
+    for (index, (key, fingerprint)) in pending_order.into_iter().enumerate() {
         let resolved = results
             .remove(&key)
             .ok_or_else(|| "An image could not be prepared for the PDF.".to_string())??;
@@ -1331,9 +1975,21 @@ fn prepare_typst_images(
                 })?;
                 let relative = format!("images/image-{index}.{extension}");
                 let aspect = typst_image_aspect(&bytes);
-                fs::write(workspace.join(&relative), bytes).map_err(|error| {
+                let bytes = Arc::new(bytes);
+                fs::write(workspace.join(&relative), bytes.as_slice()).map_err(|error| {
                     format!("Could not prepare an image for PDF export: {error}")
                 })?;
+                if let Ok(mut cache) = pdf_image_preparation_cache().lock() {
+                    cache.insert(
+                        cache_scope,
+                        key.clone(),
+                        CachedPreparedPdfImage {
+                            fingerprint,
+                            bytes,
+                            aspect,
+                        },
+                    );
+                }
                 prepared_images.insert(
                     key,
                     PreparedTypstImage::File {
@@ -1347,7 +2003,47 @@ fn prepare_typst_images(
             }
         }
     }
+    let cached_offset = prepared_images.len();
+    for (index, (key, cached)) in cached_images.into_iter().enumerate() {
+        let extension = typst_image_extension(cached.bytes.as_slice()).ok_or_else(|| {
+            "A cached image uses a format that Typst cannot include in the PDF.".to_string()
+        })?;
+        let relative = format!("images/image-{}.{extension}", cached_offset + index);
+        fs::write(workspace.join(&relative), cached.bytes.as_slice())
+            .map_err(|error| format!("Could not reuse a prepared PDF image: {error}"))?;
+        prepared_images.insert(
+            key,
+            PreparedTypstImage::File {
+                path: relative,
+                aspect: cached.aspect,
+            },
+        );
+    }
     Ok(prepared_images)
+}
+
+fn pdf_image_fingerprint(image: &ExportImage) -> Result<(String, Option<Vec<u8>>), String> {
+    let mut digest = Sha256::new();
+    digest.update(PDF_IMAGE_PREPARATION_REVISION.as_bytes());
+    digest.update([0]);
+    match image {
+        ExportImage::Url(url) => {
+            // A changed URL is a changed image input. Keeping the successful bytes
+            // avoids another network request on repeated exports of the chapter.
+            digest.update(b"url\0");
+            digest.update(url.as_bytes());
+            Ok((format!("{:x}", digest.finalize()), None))
+        }
+        ExportImage::Upload { absolute_path, .. } => {
+            let bytes = fs::read(absolute_path).map_err(|_| {
+                "An uploaded image is missing from the local project. Sync the project and try again."
+                    .to_string()
+            })?;
+            digest.update(b"upload\0");
+            digest.update(&bytes);
+            Ok((format!("{:x}", digest.finalize()), Some(bytes)))
+        }
+    }
 }
 
 /// Print-resolution pixel caps: 300 DPI over the letter text area
@@ -1536,6 +2232,50 @@ const CHAPTER_FLOURISH_SVG: &str = include_str!("chapter_flourish.svg");
 /// from the workspace's `--package-path` without touching the network. The
 /// version here must match the `#import "@preview/droplet:…"` in the preamble.
 const DROPLET_VERSION: &str = "0.3.1";
+
+/// Great Vibes' advance widths exclude calligraphic swashes. Typst's `measure`
+/// reports those advances, so `droplet` otherwise lets painted ink collide with
+/// every line beside the cap. These values are the base capitals' furthest
+/// right-side ink overhangs at the three-line size, measured from the pinned
+/// GreatVibes-Regular.ttf. Vietnamese letters use their bare Latin capital for
+/// sizing. Most also use it for horizontal clearance, but the right-side horns
+/// on the Ơ and Ư families receive separate clearance metrics. The original
+/// glyph is rendered afterward at the base capital's fixed size and position.
+const DROP_CAP_METRICS_RULE: &str = r#"#let gnosis-dropcap-base(letter) = (
+  "À": "A", "Á": "A", "Ả": "A", "Ã": "A", "Ạ": "A",
+  "Ă": "A", "Ằ": "A", "Ắ": "A", "Ẳ": "A", "Ẵ": "A", "Ặ": "A",
+  "Â": "A", "Ầ": "A", "Ấ": "A", "Ẩ": "A", "Ẫ": "A", "Ậ": "A",
+  "Đ": "D",
+  "È": "E", "É": "E", "Ẻ": "E", "Ẽ": "E", "Ẹ": "E",
+  "Ê": "E", "Ề": "E", "Ế": "E", "Ể": "E", "Ễ": "E", "Ệ": "E",
+  "Ì": "I", "Í": "I", "Ỉ": "I", "Ĩ": "I", "Ị": "I",
+  "Ò": "O", "Ó": "O", "Ỏ": "O", "Õ": "O", "Ọ": "O",
+  "Ô": "O", "Ồ": "O", "Ố": "O", "Ổ": "O", "Ỗ": "O", "Ộ": "O",
+  "Ơ": "O", "Ờ": "O", "Ớ": "O", "Ở": "O", "Ỡ": "O", "Ợ": "O",
+  "Ù": "U", "Ú": "U", "Ủ": "U", "Ũ": "U", "Ụ": "U",
+  "Ư": "U", "Ừ": "U", "Ứ": "U", "Ử": "U", "Ữ": "U", "Ự": "U",
+  "Ỳ": "Y", "Ý": "Y", "Ỷ": "Y", "Ỹ": "Y", "Ỵ": "Y",
+).at(letter, default: letter)
+#let gnosis-dropcap-clearance-base(letter) = (
+  "Ơ": "Ơ", "Ờ": "Ơ", "Ớ": "Ơ", "Ở": "Ơ", "Ỡ": "Ơ", "Ợ": "Ơ",
+  "Ư": "Ư", "Ừ": "Ư", "Ứ": "Ư", "Ử": "Ư", "Ữ": "Ư", "Ự": "Ư",
+).at(letter, default: gnosis-dropcap-base(letter))
+#let gnosis-dropcap-optical-gap(letter) = if gnosis-dropcap-clearance-base(letter) == "Ư" {
+  0.18em
+} else {
+  0.35em
+}
+#let gnosis-dropcap-gap(letter) = gnosis-dropcap-optical-gap(letter) + (
+  "A": 0.53em, "B": 0.17em, "C": 0.47em, "D": 0.04em,
+  "E": 0.16em, "F": 1.30em, "G": 0.24em, "H": 0.46em,
+  "I": 0.84em, "J": 0.77em, "K": 1.36em, "L": 0.57em,
+  "M": 0.41em, "N": 0.48em, "O": 0.65em, "P": 0.64em,
+  "Q": 0.23em, "R": 0.32em, "S": 0.22em, "T": 1.74em,
+  "U": 0.20em, "V": 0.24em, "W": 0.12em, "X": 0.95em,
+  "Y": 0.40em, "Z": 1.23em,
+  "Ơ": 0.65em, "Ư": 0.64em,
+).at(gnosis-dropcap-clearance-base(letter), default: 0pt)
+"#;
 const DROPLET_PACKAGE_FILES: &[(&str, &str)] = &[
     ("typst.toml", include_str!("droplet/typst.toml")),
     ("LICENSE", include_str!("droplet/LICENSE")),
@@ -1573,6 +2313,32 @@ fn latin_body(language_code: &str) -> bool {
         || code.starts_with("zh")
         || code.starts_with("ar")
         || code.starts_with("fa"))
+}
+
+fn heading_font_families(document: &ExportDocument) -> Vec<&'static str> {
+    if latin_body(&document.language_code) {
+        vec!["Alegreya", "EB Garamond", "Cormorant Garamond Gnosis"]
+    } else {
+        let code = document
+            .language_code
+            .to_ascii_lowercase()
+            .replace('_', "-");
+        let family = if code.starts_with("ja") {
+            "Shippori Mincho"
+        } else if code.starts_with("ko") {
+            "Noto Serif KR"
+        } else if code.starts_with("zh-hant")
+            || code.starts_with("zh-tw")
+            || code.starts_with("zh-hk")
+        {
+            "Noto Serif TC"
+        } else if code.starts_with("zh") {
+            "Noto Serif SC"
+        } else {
+            "Noto Naskh Arabic"
+        };
+        vec![family, "EB Garamond"]
+    }
 }
 
 fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
@@ -1620,11 +2386,7 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
     // Kindred style: Alegreya leads titles and body headings on Latin-script
     // exports, with the body's own fallbacks behind it. Other scripts keep
     // their body families for headings.
-    let heading_families = if latin {
-        vec!["Alegreya", "EB Garamond", "Cormorant Garamond Gnosis"]
-    } else {
-        families.clone()
-    };
+    let heading_families = heading_font_families(document);
     let heading_family_list = heading_families
         .iter()
         .map(|family| typst_string(family))
@@ -1646,7 +2408,7 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
             .collect::<Vec<_>>()
             .join(", ");
         format!(
-            "#import \"@preview/droplet:{DROPLET_VERSION}\": dropcap\n#let gnosis-dropcap(body) = dropcap(height: 3, gap: 0.35em, font: ({letter_families}), body)\n"
+            "#import \"@preview/droplet:{DROPLET_VERSION}\": dropcap\n{DROP_CAP_METRICS_RULE}#let gnosis-dropcap(body) = dropcap(height: 3, gap: gnosis-dropcap-gap, sizing-transform: gnosis-dropcap-base, top-edge: \"cap-height\", bottom-edge: \"descender\", font: ({letter_families}), body)\n"
         )
     } else {
         String::new()
@@ -1667,7 +2429,7 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
         "#let gnosis-title(t) = place(top, float: true, clearance: 4.6em, block(width: 100%, align(center)[#text(font: ({heading_family_list}), size: 14.5pt, tracking: 0.12em)[#upper(t)]#v(1.2em, weak: true)#image(\"flourish.svg\", width: 0.66in)]))\n"
     );
     format!(
-        "#set page(paper: \"{paper_size}\", margin: (x: 0.85in, y: 0.8in), numbering: \"1\")\n#set text(font: ({family_list}), size: {size_pt}pt, lang: {}, dir: {direction})\n#set par(justify: true, leading: {leading_em}em)\n{greek_rule}{heading_rule}{dropcap_rule}{title_rule}#show link: set text(fill: rgb(\"245c8a\"))\n{GNOSIS_IMAGE_RULE}\n",
+        "#set page(paper: \"{paper_size}\", margin: (x: 0.85in, y: 0.8in), numbering: \"1\")\n#set text(font: ({family_list}), size: {size_pt}pt, lang: {}, dir: {direction})\n#set par(justify: true, leading: {leading_em}em)\n{GNOSIS_FOOTNOTE_RULE}{greek_rule}{heading_rule}{dropcap_rule}{title_rule}#show link: set text(fill: rgb(\"245c8a\"))\n{GNOSIS_IMAGE_RULE}\n",
         typst_string(&document.language_code)
     )
 }
@@ -1676,6 +2438,27 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
 /// across typefaces. Completed with the family name and a closing parenthesis.
 const GREEK_RUN_RULE_PREFIX: &str =
     "#show regex(\"[\\u{0370}-\\u{03FF}\\u{1F00}-\\u{1FFF}]+\"): set text(font: ";
+
+/// Knuth-style footnotes: a normal baseline number sits in a fixed, right-aligned
+/// gutter while every line of note text shares one stable left edge. Typst's native
+/// footnote callout remains untouched, so references in the body stay superscripted.
+/// The marker is rebuilt as a link to preserve navigation in exported PDFs.
+const GNOSIS_FOOTNOTE_RULE: &str = r#"#set footnote.entry(indent: 0em)
+#show footnote.entry: it => {
+  let marker-width = 12pt
+  let marker-gap = 3pt
+  let nums = counter(footnote).at(it.note.location())
+  let number = numbering(it.note.numbering, ..nums)
+  let marker = link(it.note.location(), number + [.])
+  grid(
+    columns: (marker-width, 1fr),
+    column-gutter: marker-gap,
+    align: (end + top, start + top),
+    marker,
+    it.note.body,
+  )
+}
+"#;
 
 /// Scales an image to the full text width, but never taller than the space its own
 /// caption leaves on the page. The caption content is passed in purely so it can be
@@ -1695,7 +2478,8 @@ const GREEK_RUN_RULE_PREFIX: &str =
 const GNOSIS_IMAGE_RULE: &str = "#let gnosis-image(path, caption: none) = layout(region => {\n  let width = region.width\n  let reserved = if caption == none { 0pt } else {\n    measure(block(width: width, caption)).height + (0.65em).to-absolute()\n  }\n  let limit = region.height - reserved - (1.5em).to-absolute()\n  let natural = measure(image(path, width: width))\n  if natural.height > limit { align(center, image(path, height: limit)) } else { image(path, width: width) }\n})\n";
 
 fn render_inline_typst(text: &str, show_link_urls: bool) -> String {
-    inline_segments(text)
+    let normalized = text.nfc().collect::<String>();
+    inline_segments(&normalized)
         .into_iter()
         .map(|segment| render_styled_typst_text(&segment.text, &segment.style, show_link_urls))
         .collect::<Vec<_>>()
@@ -1771,6 +2555,7 @@ fn render_inline_typst_with_footnotes(
     if footnotes.is_empty() {
         return render_inline_typst(text, false);
     }
+    let normalized = text.nfc().collect::<String>();
     let notes = footnotes
         .iter()
         .map(|(marker, text)| (*marker, text.as_str()))
@@ -1782,7 +2567,7 @@ fn render_inline_typst_with_footnotes(
     // note 12). Typst has no automatic separator yet — if a future Typst
     // release groups adjacent footnotes itself (typst/typst#7627), drop this.
     let mut last_emitted_footnote = false;
-    for segment in inline_segments(text) {
+    for segment in inline_segments(&normalized) {
         let mut cursor = 0usize;
         while let Some((start, end, marker)) =
             next_unescaped_footnote_marker(&segment.text, cursor, &notes, &used)
@@ -1887,40 +2672,6 @@ fn render_styled_typst_text(text: &str, style: &InlineStyleState, show_link_urls
         rendered = format!("#link({})[{rendered}]{suffix}", typst_string(link));
     }
     rendered
-}
-
-fn validate_document_glyphs(document: &ExportDocument, font_dir: &Path) -> Result<(), String> {
-    let font_data = required_fonts_for_document(document)
-        .into_iter()
-        .map(|asset| {
-            fs::read(font_dir.join(asset.file_name))
-                .map_err(|_| "A required PDF font is missing. Try the export again.".to_string())
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let missing = document_characters(document)
-        .into_iter()
-        .filter(|ch| !ch.is_control() && !ch.is_whitespace())
-        .filter(|ch| {
-            !font_data.iter().any(|data| {
-                ttf_parser::Face::parse(data, 0)
-                    .ok()
-                    .and_then(|face| face.glyph_index(*ch))
-                    .is_some()
-            })
-        })
-        .take(8)
-        .collect::<Vec<_>>();
-    if missing.is_empty() {
-        return Ok(());
-    }
-    let labels = missing
-        .iter()
-        .map(|ch| format!("{ch} (U+{:04X})", *ch as u32))
-        .collect::<Vec<_>>()
-        .join(", ");
-    Err(format!(
-        "The selected PDF fonts do not contain every character in this chapter: {labels}. Use DOCX or HTML for this document for now."
-    ))
 }
 
 fn typst_string(value: &str) -> String {
@@ -2129,6 +2880,7 @@ fn emit_progress(
             progress_total: progress.total,
             progress_unit: progress.unit.to_string(),
             progress_indeterminate: progress.indeterminate,
+            font_review: None,
         },
     );
 }
@@ -2136,6 +2888,203 @@ fn emit_progress(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_font_control_only_appears_for_exported_coverage_gaps() {
+        let workspace = pdf_workspace().unwrap();
+        let _cleanup = WorkspaceCleanup(workspace.clone());
+        let mut document = ExportDocument {
+            book_parts: Vec::new(),
+            title: "Title".into(),
+            language_code: "vi".into(),
+            blocks: vec![ExportBlock::Text {
+                text_style: "paragraph".into(),
+                text: "Plain text".into(),
+            }],
+        };
+        let bytes = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("resources/fonts/CormorantGaramondGnosis-Roman.ttf"),
+        )
+        .unwrap();
+        for asset in required_fonts_for_document(&document) {
+            fs::write(workspace.join(asset.file_name), &bytes).unwrap();
+        }
+        let approved: Vec<font_fallback::FontChoice> = serde_json::from_value(serde_json::json!([{
+            "family": "Noto Sans EgyptHiero", "style": "normal", "weight": 400, "stretchPercent": 100.0
+        }])).unwrap();
+        assert!(
+            relevant_saved_fonts(&document, &workspace, false, true, &approved)
+                .unwrap()
+                .is_empty()
+        );
+        document.blocks.push(ExportBlock::Text {
+            text_style: "custom_html".into(),
+            text: "<p>\u{13153}</p>".into(),
+        });
+        assert_eq!(
+            relevant_saved_fonts(&document, &workspace, false, true, &approved)
+                .unwrap()
+                .len(),
+            1
+        );
+        let omitted = apply_print_custom_html_policy(&document, true);
+        assert!(
+            relevant_saved_fonts(&omitted, &workspace, false, true, &approved)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            relevant_saved_fonts(&document, &workspace, false, false, &approved)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            relevant_saved_fonts(&document, &workspace, false, true, &[])
+                .unwrap()
+                .is_empty()
+        );
+        let mut document = omitted;
+        document.blocks.push(ExportBlock::Footnote {
+            number: 1,
+            marker: 1,
+            anchor_block: Some(0),
+            text: "<a href=\"https://example.test/\u{13153}\">Reference</a>".into(),
+        });
+        assert!(
+            relevant_saved_fonts(&document, &workspace, false, true, &approved)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            relevant_saved_fonts(&document, &workspace, true, true, &approved)
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn font_approval_requires_the_current_review_and_job_cleanup_removes_it() {
+        let job_id = Uuid::now_v7().to_string();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        pdf_jobs()
+            .lock()
+            .unwrap()
+            .insert(job_id.clone(), cancelled.clone());
+        let approved = Arc::new(AtomicBool::new(false));
+        pdf_font_reviews().lock().unwrap().insert(
+            job_id.clone(),
+            PendingFontReview {
+                review_id: "current-review".into(),
+                approved: approved.clone(),
+                choices: Vec::new(),
+            },
+        );
+        assert!(
+            !approve_pending_font_review(&job_id, "stale-review", |_| panic!(
+                "Stale approvals must not be saved"
+            ))
+            .unwrap()
+        );
+        assert!(!approved.load(Ordering::Acquire));
+        assert!(
+            approve_pending_font_review(
+                &job_id,
+                "current-review",
+                |_| Err("Could not save".into())
+            )
+            .is_err()
+        );
+        assert!(
+            !approved.load(Ordering::Acquire),
+            "Saving must succeed before publication resumes"
+        );
+        assert!(approve_pending_font_review(&job_id, "current-review", |_| Ok(())).unwrap());
+        assert!(approved.load(Ordering::Acquire));
+        let registration = PdfJobRegistration {
+            job_id: job_id.clone(),
+            cancelled,
+        };
+        drop(registration);
+        assert!(
+            !approve_pending_font_review(&job_id, "current-review", |_| panic!(
+                "Closed reviews must not save a preference"
+            ))
+            .unwrap()
+        );
+        assert!(!pdf_jobs().lock().unwrap().contains_key(&job_id));
+    }
+
+    fn test_image_cache_scope(chapter_id: &str) -> PdfImageCacheScope {
+        PdfImageCacheScope {
+            installation_id: 7,
+            repo_name: "book".to_string(),
+            project_id: Some("project-1".to_string()),
+            project_full_name: Some("team/book".to_string()),
+            chapter_id: chapter_id.to_string(),
+        }
+    }
+
+    #[test]
+    fn pdf_image_cache_reuses_matches_invalidates_individually_and_clears_by_chapter() {
+        let chapter_a = test_image_cache_scope("chapter-a");
+        let chapter_b = test_image_cache_scope("chapter-b");
+        let mut cache = PdfImagePreparationCache::default();
+        cache.use_scope(&chapter_a);
+        cache.insert(
+            &chapter_a,
+            "file:first".to_string(),
+            CachedPreparedPdfImage {
+                fingerprint: "first-v1".to_string(),
+                bytes: Arc::new(vec![1, 2, 3]),
+                aspect: Some(0.5),
+            },
+        );
+        cache.insert(
+            &chapter_a,
+            "file:second".to_string(),
+            CachedPreparedPdfImage {
+                fingerprint: "second-v1".to_string(),
+                bytes: Arc::new(vec![4, 5, 6]),
+                aspect: Some(1.0),
+            },
+        );
+
+        assert!(cache.get(&chapter_a, "file:first", "first-v1").is_some());
+        assert!(cache.get(&chapter_a, "file:first", "first-v2").is_none());
+        assert!(cache.get(&chapter_a, "file:second", "second-v1").is_some());
+
+        cache.use_scope(&chapter_b);
+        assert!(cache.get(&chapter_b, "file:first", "first-v1").is_none());
+        assert!(cache.entries.is_empty());
+    }
+
+    #[test]
+    fn uploaded_pdf_image_fingerprint_tracks_file_content() {
+        let path = std::env::temp_dir().join(format!("gnosis-pdf-cache-{}.png", Uuid::now_v7()));
+        fs::write(&path, b"first image bytes").expect("write first image");
+        let image = ExportImage::Upload {
+            repo_relative_path: "image.png".to_string(),
+            raw_url: None,
+            absolute_path: path.clone(),
+        };
+        let (first, first_bytes) = pdf_image_fingerprint(&image).expect("fingerprint first image");
+        fs::write(&path, b"changed image bytes").expect("write changed image");
+        let (changed, changed_bytes) =
+            pdf_image_fingerprint(&image).expect("fingerprint changed image");
+        let _ = fs::remove_file(path);
+
+        assert_ne!(first, changed);
+        assert_eq!(
+            first_bytes.as_deref(),
+            Some(b"first image bytes".as_slice())
+        );
+        assert_eq!(
+            changed_bytes.as_deref(),
+            Some(b"changed image bytes".as_slice())
+        );
+    }
 
     #[test]
     fn language_font_selection_uses_the_matching_serif_family() {
@@ -2216,6 +3165,7 @@ mod tests {
     #[test]
     fn quoted_scripts_pull_in_their_own_fonts() {
         let plain = ExportDocument {
+            book_parts: Vec::new(),
             title: "Tâm vũ trụ".to_string(),
             language_code: "vi".to_string(),
             blocks: vec![ExportBlock::Text {
@@ -2232,6 +3182,7 @@ mod tests {
         assert!(!fonts.iter().any(|font| font.family.starts_with("Noto")));
 
         let quoting = ExportDocument {
+            book_parts: Vec::new(),
             title: "Ông 伏羲".to_string(),
             language_code: "vi".to_string(),
             blocks: vec![ExportBlock::Text {
@@ -2269,6 +3220,7 @@ mod tests {
     #[test]
     fn a_leading_h1_becomes_the_chapter_title() {
         let document = ExportDocument {
+            book_parts: Vec::new(),
             title: "File Title".to_string(),
             language_code: "en".to_string(),
             blocks: vec![
@@ -2286,6 +3238,7 @@ mod tests {
     #[test]
     fn a_non_heading_first_line_leaves_the_file_title_in_place() {
         let document = ExportDocument {
+            book_parts: Vec::new(),
             title: "File Title".to_string(),
             language_code: "en".to_string(),
             blocks: vec![text_block("paragraph", "Just a paragraph.")],
@@ -2296,6 +3249,7 @@ mod tests {
     #[test]
     fn a_leading_h1_that_anchors_a_footnote_is_not_promoted() {
         let document = ExportDocument {
+            book_parts: Vec::new(),
             title: "File Title".to_string(),
             language_code: "en".to_string(),
             blocks: vec![
@@ -2313,8 +3267,222 @@ mod tests {
     }
 
     #[test]
+    fn composed_book_uses_shared_chapters_and_final_contents_locations() {
+        use super::super::book_export::{BookItemInput, BookPart};
+        let workspace = pdf_workspace().unwrap();
+        let _cleanup = WorkspaceCleanup(workspace.clone());
+        let text = |value: &str| ExportBlock::Text {
+            text_style: "paragraph".into(),
+            text: value.into(),
+        };
+        let part = |kind: &str, title: &str, body: Vec<ExportBlock>| BookPart {
+            item: BookItemInput {
+                id: format!("{kind}-{title}"),
+                kind: kind.into(),
+                title: title.into(),
+                text: if kind == "copyright" {
+                    "© Example\n<i>All rights reserved.</i><hr>Second edition".into()
+                } else if kind == "dedication" {
+                    "For our readers.".into()
+                } else {
+                    String::new()
+                },
+                subtitle: if kind == "title" {
+                    "A subtitle".into()
+                } else {
+                    String::new()
+                },
+                author: if kind == "title" {
+                    "An Author".into()
+                } else {
+                    String::new()
+                },
+                ..Default::default()
+            },
+            document: ExportDocument {
+                title: title.into(),
+                language_code: "en".into(),
+                blocks: body,
+                book_parts: Vec::new(),
+            },
+        };
+        let mut parts = vec![
+            part("title", "A Book", vec![text("A Book")]),
+            part("copyright", "Copyright", vec![text("© Example")]),
+            part("dedication", "Dedication", vec![text("For our readers.")]),
+            part(
+                "chapter",
+                "Chapter One",
+                vec![
+                    text("An opening paragraph in the chapter style."),
+                    text(&"A paragraph to fill the book and verify pagination. ".repeat(700)),
+                ],
+            ),
+            part(
+                "chapter",
+                "Chapter Two",
+                vec![text(
+                    "Another opening paragraph, with a drop cap of its own.",
+                )],
+            ),
+            // Contents deliberately follows the chapters.
+            part("contents", "Mục lục", vec![text("Mục lục")]),
+        ];
+        let illustration = workspace.join("illustration.svg");
+        fs::write(&illustration, br##"<svg xmlns="http://www.w3.org/2000/svg" width="300" height="500"><rect width="300" height="500" fill="#b79858"/><circle cx="150" cy="240" r="90" fill="#fff4da"/></svg>"##).unwrap();
+        let image = ExportImage::Upload {
+            repo_relative_path: "illustration.svg".into(),
+            raw_url: None,
+            absolute_path: illustration,
+        };
+        parts[0].item.image_asset_id = "logo.svg".into();
+        parts[0].document.blocks.push(ExportBlock::Image {
+            image: image.clone(),
+            caption: String::new(),
+        });
+        let mut plate = part(
+            "image",
+            "An illustration",
+            vec![ExportBlock::Image {
+                image,
+                caption: "A full-page illustration".into(),
+            }],
+        );
+        plate.item.image_asset_id = "illustration.svg".into();
+        plate.item.caption = "A full-page illustration".into();
+        parts.insert(parts.len() - 1, plate);
+        let document = ExportDocument {
+            title: "A Book".into(),
+            language_code: "en".into(),
+            blocks: parts
+                .iter()
+                .flat_map(|part| part.document.blocks.clone())
+                .collect(),
+            book_parts: parts,
+        };
+        let cache_scope = test_image_cache_scope("book-smoke");
+        let options = PdfWorkspacePreparationOptions {
+            footnote_links_as_plain_text: true,
+            paper_size: "a5",
+            image_cache_scope: &cache_scope,
+        };
+        prepare_typst_workspace(
+            None,
+            "",
+            &workspace,
+            &document,
+            &options,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let source_path = workspace.join("chapter.typ");
+        let mut source = fs::read_to_string(&source_path).unwrap();
+        assert_eq!(source.matches("#gnosis-dropcap[").count(), 2);
+        assert_eq!(source.matches("#gnosis-title(\"Chapter").count(), 2);
+        assert!(source.contains("#pagebreak(to: \"even\")"));
+        assert!(source
+            .contains("numbering(entry.value.numbering, ..counter(page).at(entry.location()))"));
+        assert!(
+            source.find("#gnosis-title(\"Chapter Two\")").unwrap()
+                < source.find("#gnosis-contents(\"Mục lục\")").unwrap()
+        );
+        assert!(source.contains("size: 30pt"));
+        assert!(source.contains("#let gnosis-book-heading-font = (\"Alegreya\""));
+        let (Some(binary), Some(font_dir)) = (
+            std::env::var_os("GNOSIS_TYPST_BIN"),
+            std::env::var_os("GNOSIS_TYPST_SMOKE_FONT_DIR"),
+        ) else {
+            return;
+        };
+        source.push_str("\n#context [#metadata(query(<gnosis-book-entry>).map(entry => (title: entry.value.title, physical: entry.location().page(), page: counter(page).at(entry.location()).first(), numbering: entry.value.numbering))) <gnosis-page-audit>]\n");
+        fs::write(&source_path, source).unwrap();
+        let pdf_path = workspace.join("book.pdf");
+        let output = std::process::Command::new(&binary)
+            .arg("compile")
+            .arg("--root")
+            .arg(&workspace)
+            .arg("--font-path")
+            .arg(&font_dir)
+            .arg("--ignore-system-fonts")
+            .arg("--package-path")
+            .arg(workspace.join("packages"))
+            .arg(&source_path)
+            .arg(&pdf_path)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let query = std::process::Command::new(&binary)
+            .arg("query")
+            .arg("--root")
+            .arg(&workspace)
+            .arg("--font-path")
+            .arg(&font_dir)
+            .arg("--ignore-system-fonts")
+            .arg("--package-path")
+            .arg(workspace.join("packages"))
+            .arg("--field")
+            .arg("value")
+            .arg(&source_path)
+            .arg("<gnosis-page-audit>")
+            .output()
+            .unwrap();
+        assert!(
+            query.status.success(),
+            "{}",
+            String::from_utf8_lossy(&query.stderr)
+        );
+        let pages: serde_json::Value = serde_json::from_slice(&query.stdout).unwrap();
+        let pages = pages[0]
+            .as_array()
+            .unwrap_or_else(|| panic!("Unexpected page audit: {pages}"));
+        let one = pages
+            .iter()
+            .find(|entry| entry["title"] == "Chapter One")
+            .unwrap();
+        let two = pages
+            .iter()
+            .find(|entry| entry["title"] == "Chapter Two")
+            .unwrap();
+        assert_eq!(one["page"], 1);
+        assert!(two["page"].as_u64().unwrap() > 1);
+        assert!(!one["physical"].as_u64().unwrap().is_multiple_of(2));
+        assert!(!two["physical"].as_u64().unwrap().is_multiple_of(2));
+        assert!(!pages.iter().any(|entry| entry["title"] == "Copyright"
+            || entry["title"] == "A Book"
+            || entry["title"] == "Mục lục"));
+        if let Some(destination) = std::env::var_os("GNOSIS_BOOK_SMOKE_OUTPUT") {
+            fs::copy(pdf_path, destination).unwrap();
+        }
+    }
+
+    #[test]
+    fn project_book_export_starts_chapters_on_new_pages_without_promoting_the_first_title() {
+        let document = ExportDocument {
+            book_parts: Vec::new(),
+            title: "Book".into(),
+            language_code: "en".into(),
+            blocks: vec![ExportBlock::Text {
+                text_style: "chapter_heading".into(),
+                text: "Chapter One".into(),
+            }],
+        };
+        assert_eq!(leading_heading_title(&document), None);
+        assert_eq!(dropcap_block_index(&document.blocks, &[0], false), None);
+        assert_eq!(
+            render_typst_text_block("chapter_heading", "Chapter One", false),
+            "#pagebreak(weak: true)\n= Chapter One\n\n"
+        );
+        assert!(document_characters(&document).contains(&'B'));
+    }
+
+    #[test]
     fn images_are_capped_by_their_measured_caption_height() {
         let document = ExportDocument {
+            book_parts: Vec::new(),
             title: "Images".to_string(),
             language_code: "vi".to_string(),
             blocks: Vec::new(),
@@ -2335,13 +3503,37 @@ mod tests {
     }
 
     #[test]
+    fn typst_footnotes_use_a_fixed_hanging_gutter() {
+        let document = ExportDocument {
+            book_parts: Vec::new(),
+            title: "Footnotes".to_string(),
+            language_code: "vi".to_string(),
+            blocks: Vec::new(),
+        };
+        let preamble = typst_preamble(&document, "a4");
+
+        // The native in-text callout stays intact; only entries at the foot of the
+        // page are rebuilt with a baseline number and a stable text column.
+        assert!(preamble.contains("#set footnote.entry(indent: 0em)"));
+        assert!(preamble.contains("let marker-width = 12pt"));
+        assert!(preamble.contains("let marker-gap = 3pt"));
+        assert!(preamble.contains("number + [.]"));
+        assert!(preamble.contains("columns: (marker-width, 1fr)"));
+        assert!(preamble.contains("column-gutter: marker-gap"));
+        assert!(preamble.contains("align: (end + top, start + top)"));
+        assert!(preamble.contains("marker,\n    it.note.body"));
+    }
+
+    #[test]
     fn typst_font_selection_uses_crimson_pro_for_latin_body_and_headings() {
         let vietnamese = ExportDocument {
+            book_parts: Vec::new(),
             title: "Vietnamese".to_string(),
             language_code: "vi".to_string(),
             blocks: Vec::new(),
         };
         let japanese = ExportDocument {
+            book_parts: Vec::new(),
             title: "Japanese".to_string(),
             language_code: "ja".to_string(),
             blocks: Vec::new(),
@@ -2368,8 +3560,25 @@ mod tests {
         // families trail the letter's font list so an uncovered glyph falls back
         // to the body serif instead of tofu.
         assert!(vietnamese_preamble.contains(
-            "#let gnosis-dropcap(body) = dropcap(height: 3, gap: 0.35em, font: (\"Great Vibes\", \"Crimson Pro\", \"EB Garamond\", \"Cormorant Garamond Gnosis\"), body)"
+            "#let gnosis-dropcap(body) = dropcap(height: 3, gap: gnosis-dropcap-gap, sizing-transform: gnosis-dropcap-base, top-edge: \"cap-height\", bottom-edge: \"descender\", font: (\"Great Vibes\", \"Crimson Pro\", \"EB Garamond\", \"Cormorant Garamond Gnosis\"), body)"
         ));
+        // Vietnamese marks do not participate in sizing: the bare capital fixes
+        // the font size and baseline while the complete glyph remains visible.
+        assert!(vietnamese_preamble.contains("\"Ĩ\": \"I\""));
+        assert!(vietnamese_preamble.contains("\"Ỉ\": \"I\""));
+        assert!(vietnamese_preamble.contains("\"Ữ\": \"U\""));
+        // The gutter normally uses the bare capital's furthest right ink. The
+        // right-side horns on Ơ/Ư get their own family metrics.
+        assert!(vietnamese_preamble.contains("#let gnosis-dropcap-gap(letter)"));
+        assert!(vietnamese_preamble.contains("\"T\": 1.74em"));
+        assert!(vietnamese_preamble.contains("\"Ợ\": \"Ơ\""));
+        assert!(vietnamese_preamble.contains("\"Ự\": \"Ư\""));
+        assert!(vietnamese_preamble.contains("\"Ơ\": 0.65em, \"Ư\": 0.64em"));
+        assert!(vietnamese_preamble
+            .contains("gnosis-dropcap-clearance-base(letter) == \"Ư\" {\n  0.18em"));
+        assert!(vietnamese_preamble
+            .contains(".at(gnosis-dropcap-clearance-base(letter), default: 0pt)"));
+        assert!(!vietnamese_preamble.contains("\"Ĩ\": 1.20em"));
         assert!(vietnamese_preamble.contains("#import \"@preview/droplet:0.3.1\": dropcap"));
         // The chapter title is emitted as the first top float so a
         // `placement: auto` image can never be hoisted above it on page one.
@@ -2454,6 +3663,26 @@ mod tests {
             paragraph("Đức Cha là trí tuệ."),
         ];
         assert_eq!(dropcap_block_index(&blocks, &[0, 1], false), Some(1));
+    }
+
+    #[test]
+    fn dropcap_allows_opening_punctuation_before_the_first_letter() {
+        let blocks = vec![text_block(
+            "paragraph",
+            "“Ứng dụng bắt đầu bằng dấu ngoặc kép.",
+        )];
+        assert_eq!(dropcap_block_index(&blocks, &[0], false), Some(0));
+
+        let numbered = vec![text_block("paragraph", "1. A numbered opening.")];
+        assert_eq!(dropcap_block_index(&numbered, &[0], false), None);
+    }
+
+    #[test]
+    fn quote_body_retains_normal_size_and_alignment() {
+        let quote = render_typst_text_block("quote", "Quotation", false);
+        assert!(quote.contains("#quote(block: true)[#text(style: \"italic\")[Quotation]]"));
+        assert!(!quote.contains("size:"));
+        assert!(!quote.contains("#align"));
     }
 
     #[test]
@@ -2588,6 +3817,7 @@ mod tests {
         assert!(normalize_pdf_paper_size("custom); #panic(").is_err());
 
         let document = ExportDocument {
+            book_parts: Vec::new(),
             title: "Paper test".to_string(),
             language_code: "en".to_string(),
             blocks: Vec::new(),
@@ -2600,6 +3830,15 @@ mod tests {
         let caption = render_typst_image_caption("A <b>bold</b> caption");
         assert!(caption.starts_with("#text(size: 0.85em, style: \"italic\")["));
         assert!(caption.contains("#strong["));
+    }
+
+    #[test]
+    fn typst_inline_text_is_normalized_to_nfc() {
+        let decomposed = "“U\u{031b}\u{0301}ng dụng <i>E\u{0302}\u{0301}</i>";
+        let rendered = render_inline_typst(decomposed, false);
+        assert_eq!(rendered, "#text(\"“Ứng dụng \")#emph[#text(\"Ế\")]");
+        assert!(!rendered.contains('\u{031b}'));
+        assert!(!rendered.contains('\u{0302}'));
     }
 
     #[test]
@@ -2846,16 +4085,19 @@ mod tests {
         )
         .expect("write smoke image");
         let document = ExportDocument {
+            book_parts: Vec::new(),
             title: "Kiểm tra PDF tiếng Việt".to_string(),
             language_code: "vi".to_string(),
             blocks: vec![
                 ExportBlock::Text {
-                    text_style: "heading_1".to_string(),
+                    text_style: "heading1".to_string(),
                     text: "Một <b>tiêu đề tiếng Việt</b>".to_string(),
                 },
                 ExportBlock::Text {
                     text_style: "paragraph".to_string(),
-                    text: "Những dấu tiếng Việt <i>ấ ề ỗ ở ữ</i>, một <a href=\"https://example.com\">liên kết</a> và chú thích giữa đoạn [1]."
+                    // Starts with an opening quote and decomposed Ứ. The export
+                    // must normalize it and pass only Ứ—not “Ứ—to metric callbacks.
+                    text: "“U\u{031b}\u{0301}ng dụng tiếng Việt <i>ấ ề ỗ ở ữ</i>, một <a href=\"https://example.com\">liên kết</a> và chú thích giữa đoạn [1]."
                         .to_string(),
                 },
                 ExportBlock::Text {
@@ -2870,6 +4112,11 @@ mod tests {
                     // are pulled in by the content scan, not the declared language.
                     text: "Ông 伏羲, danh xưng אֱלֹהִים, và ॐ भूर्भुवः स्वः.".to_string(),
                 },
+                ExportBlock::Text {
+                    text_style: "quote".to_string(),
+                    text: "A quoted passage".to_string(),
+                },
+                ExportBlock::Attribution { text: "Quote Author".to_string() },
                 ExportBlock::Text {
                     text_style: "centered".to_string(),
                     text: "Centered text".to_string(),
@@ -2907,16 +4154,50 @@ mod tests {
                 },
             ],
         };
+        let image_cache_scope = test_image_cache_scope("smoke-chapter");
+        let options = PdfWorkspacePreparationOptions {
+            footnote_links_as_plain_text: true,
+            paper_size: "a4",
+            image_cache_scope: &image_cache_scope,
+        };
         prepare_typst_workspace(
             None,
             "",
             &workspace,
             &document,
-            true,
-            "a4",
+            &options,
             &AtomicBool::new(false),
         )
         .expect("render Typst source");
+        let chapter_path = workspace.join("chapter.typ");
+        let mut source = fs::read_to_string(&chapter_path).expect("read generated Typst");
+        let generated_dropcap = source
+            .lines()
+            .find(|line| line.starts_with("#gnosis-dropcap["))
+            .expect("generated drop cap");
+        assert!(generated_dropcap.contains("“Ứng dụng"));
+        assert!(!source.contains("U\u{031b}\u{0301}"));
+        // Exercise the vendored helper directly: punctuation stays in the
+        // rendered cap, while both callbacks must receive the core grapheme.
+        source.push_str(
+            r#"
+#let gnosis-test-base(letter) = {
+  assert(letter == "Ứ")
+  "U"
+}
+#let gnosis-test-gap(letter) = {
+  assert(letter == "Ứ")
+  0.35em
+}
+#dropcap(
+  height: 3,
+  gap: gnosis-test-gap,
+  sizing-transform: gnosis-test-base,
+  font: ("Great Vibes", "Crimson Pro"),
+)[“Ứng dụng kiểm tra dấu câu.]
+"#,
+        );
+        fs::write(&chapter_path, source).expect("extend Typst smoke source");
         let output = std::process::Command::new(typst_binary)
             .args([
                 "compile",

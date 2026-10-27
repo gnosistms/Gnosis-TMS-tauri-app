@@ -2,6 +2,7 @@ import { requireBrokerSession } from "./auth-flow.js";
 import { invoke } from "./runtime.js";
 import { queryClient, teamMetadataSyncKeys } from "./query-client.js";
 import { reportBackendNonfatalError } from "./telemetry.js";
+import { reconcileSelectedTeamAiAfterMetadataSync } from "./team-ai-flow.js";
 
 const METADATA_WRITE_RETRY_DELAYS_MS = [180, 420];
 const teamMetadataWriteQueues = new Map();
@@ -293,11 +294,22 @@ async function syncLocalTeamMetadataRepo(team) {
 const TEAM_METADATA_SYNC_STALE_MS = 30_000;
 
 function syncTeamMetadataRepoShared(team) {
-  return queryClient.fetchQuery({
+  const syncPromise = queryClient.fetchQuery({
     queryKey: teamMetadataSyncKeys.byInstallation(team.installationId),
-    queryFn: () => syncLocalTeamMetadataRepo(team),
+    queryFn: async () => {
+      const syncInfo = await syncLocalTeamMetadataRepo(team);
+      void reconcileSelectedTeamAiAfterMetadataSync(team, syncInfo).catch(() => null);
+      // The query cache rejects `undefined`; an empty answer is still a finished pull.
+      return syncInfo ?? null;
+    },
     staleTime: TEAM_METADATA_SYNC_STALE_MS,
   });
+  // Local record reads deliberately run in parallel with this sync. Attach a
+  // rejection observer immediately so a fast sync failure cannot become a global
+  // unhandled rejection while the local read is still pending. Callers still await
+  // the original promise and receive its rejection when it is relevant.
+  void syncPromise.catch(() => null);
+  return syncPromise;
 }
 
 export async function invalidateTeamMetadataSyncForTeam(team) {
@@ -700,7 +712,8 @@ export async function refreshQaListMetadataRecords(team) {
     .filter(Boolean);
 }
 
-export async function inspectAndMigrateLocalRepoBindings(team) {
+// `kinds` (e.g. ["glossary"]) limits the scan to those resources; omitted, all are scanned.
+export async function inspectAndMigrateLocalRepoBindings(team, { kinds = null } = {}) {
   if (!Number.isFinite(team?.installationId)) {
     return {
       issues: [],
@@ -711,6 +724,7 @@ export async function inspectAndMigrateLocalRepoBindings(team) {
   await ensureLocalTeamMetadataRepo(team);
   const result = await invoke("inspect_and_migrate_local_repo_bindings", {
     installationId: team.installationId,
+    ...(Array.isArray(kinds) ? { kinds } : {}),
   });
 
   return {

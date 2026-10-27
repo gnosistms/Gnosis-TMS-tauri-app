@@ -38,8 +38,10 @@ const {
 } = await import("./state.js");
 const { clearActiveStorageLogin, setActiveStorageLogin } = await import("./team-storage.js");
 const {
+  findStoredWordPressDestination,
   loadStoredEditorExportDefault,
   saveStoredEditorExportDefault,
+  upsertStoredWordPressDestination,
 } = await import("./editor-export-defaults.js");
 const { EDITOR_MODE_PREVIEW } = await import("./editor-preview.js");
 const {
@@ -51,15 +53,17 @@ const {
   closeWordPressExportSuccessModal,
   connectWordPress,
   currentWordPressExportState,
-  disconnectWordPress,
+  forgetWordPressSite,
   ensureWordPressPaneReady,
   handleWordPressAuthEvent,
   handleWordPressExportProgressEvent,
   loadWordPressConnection,
   searchWordPressPosts,
+  selectWordPressSite,
   selectWordPressPost,
   selectedWordPressPost,
   setWordPressExportMode,
+  showWordPressSitePicker,
   submitWordPressExport,
   updateWordPressSearchQuery,
   updateWordPressTitle,
@@ -154,7 +158,12 @@ test.afterEach(() => {
 test("a successful export remembers the post and reopening defaults to overwriting it", async () => {
   installWordPressFixture();
   setActiveStorageLogin("tester");
-  setWordPress({ jobId: "job-1" });
+  setWordPress({
+    jobId: "job-1",
+    connection: {
+      siteId: "wpcom:12345", kind: "wordpressCom", siteUrl: "https://example.wordpress.com",
+    },
+  });
   state.editorChapter = {
     ...state.editorChapter,
     exportModal: { ...state.editorChapter.exportModal, status: "exporting" },
@@ -171,7 +180,13 @@ test("a successful export remembers the post and reopening defaults to overwriti
 
   assert.deepEqual(loadStoredEditorExportDefault("chapter-1"), {
     optionId: "link:wordpress",
-    wordpress: { postId: 24994, postTitle: "Chương 3" },
+    wordpress: {
+      lastSiteId: "wpcom:12345",
+      destinations: [{
+        siteId: "wpcom:12345", postId: 24994, postTitle: "Chương 3",
+        siteKind: "wordpressCom", siteUrl: "https://example.wordpress.com",
+      }],
+    },
   });
 
   // Reopen: the modal defaults to WordPress overwrite of the remembered post.
@@ -187,7 +202,12 @@ test("a successful export remembers the post and reopening defaults to overwriti
 test("remembered wordpress post survives a later non-WordPress default and restores when selected", () => {
   installWordPressFixture();
   setActiveStorageLogin("tester");
-  setWordPress({ jobId: "job-1" });
+  setWordPress({
+    jobId: "job-1",
+    connection: {
+      siteId: "wpcom:12345", kind: "wordpressCom", siteUrl: "https://example.wordpress.com",
+    },
+  });
   state.editorChapter = {
     ...state.editorChapter,
     exportModal: { ...state.editorChapter.exportModal, status: "exporting" },
@@ -214,6 +234,28 @@ test("remembered wordpress post survives a later non-WordPress default and resto
   assert.equal(wordpress.mode, "overwrite");
   assert.equal(wordpress.selectedPostId, 24994);
   assert.equal(wordpress.searchResults[0].title, "Chương 3");
+});
+
+test("a successful export to another site preserves the first site's post", () => {
+  installWordPressFixture();
+  setActiveStorageLogin("tester");
+  upsertStoredWordPressDestination("chapter-1", {
+    siteId: "wpcom:1", siteKind: "wordpressCom", siteUrl: "https://one.example",
+    postId: 7, postTitle: "First post",
+  });
+  setWordPress({
+    jobId: "job-2",
+    connection: { siteId: "wpcom:2", kind: "wordpressCom", siteUrl: "https://two.example" },
+  });
+
+  handleWordPressExportProgressEvent({
+    jobId: "job-2", status: "success", postId: 8, postTitle: "Second post",
+  }, () => {});
+
+  const stored = loadStoredEditorExportDefault("chapter-1");
+  assert.equal(stored.wordpress.lastSiteId, "wpcom:2");
+  assert.equal(findStoredWordPressDestination(stored.wordpress, "wpcom:1").postId, 7);
+  assert.equal(findStoredWordPressDestination(stored.wordpress, "wpcom:2").postId, 8);
 });
 
 test("a draft export opens the success modal linking to the WordPress editor", () => {
@@ -288,20 +330,23 @@ test("ensureWordPressPaneReady seeds the title and loads the connection once", a
   ensureWordPressPaneReady(() => {}, {
     invoke: async (command) => {
       invokeCalls.push(command);
-      return { blogId: "12345", blogUrl: "https://example.wordpress.com" };
+      return [{ siteId: "wpcom:12345", kind: "wordpressCom", blogId: "12345", siteUrl: "https://example.wordpress.com" }];
     },
   });
   await Promise.resolve();
   await Promise.resolve();
 
-  assert.deepEqual(invokeCalls, ["get_wordpress_connection"]);
+  assert.deepEqual(invokeCalls, ["list_wordpress_connections"]);
   const wordpress = currentWordPressExportState();
   assert.equal(wordpress.title, "Chapter One");
-  assert.equal(wordpress.connectionStatus, "connected");
-  assert.deepEqual(wordpress.connection, {
+  assert.equal(wordpress.connectionStatus, "disconnected");
+  assert.equal(wordpress.connection, null);
+  assert.deepEqual(wordpress.connections, [{
+    siteId: "wpcom:12345",
+    kind: "wordpressCom",
     blogId: "12345",
-    blogUrl: "https://example.wordpress.com",
-  });
+    siteUrl: "https://example.wordpress.com",
+  }]);
 
   ensureWordPressPaneReady(() => {}, {
     invoke: async (command) => {
@@ -310,7 +355,7 @@ test("ensureWordPressPaneReady seeds the title and loads the connection once", a
     },
   });
   await Promise.resolve();
-  assert.deepEqual(invokeCalls, ["get_wordpress_connection"]);
+  assert.deepEqual(invokeCalls, ["list_wordpress_connections"]);
 });
 
 test("ensureWordPressPaneReady seeds the title from a leading H1 row", async () => {
@@ -415,6 +460,44 @@ test("loadWordPressConnection marks the pane disconnected without a stored conne
   assert.equal(currentWordPressExportState().connectionStatus, "disconnected");
 });
 
+test("loadWordPressConnection migrates an unscoped legacy post when exactly one site exists", async () => {
+  installWordPressFixture();
+  setActiveStorageLogin("tester");
+  saveStoredEditorExportDefault("chapter-1", {
+    optionId: "link:wordpress",
+    wordpress: { postId: 7, postTitle: "Legacy post" },
+  });
+  setWordPress({ connectionStatus: "unknown", connection: null, selectedPostId: null });
+  const site = { siteId: "wpcom:1", kind: "wordpressCom", siteUrl: "https://one.example" };
+
+  await loadWordPressConnection(() => {}, { invoke: async () => [site] });
+
+  assert.equal(currentWordPressExportState().connection.siteId, site.siteId);
+  assert.equal(currentWordPressExportState().selectedPostId, 7);
+  const stored = loadStoredEditorExportDefault("chapter-1");
+  assert.equal(stored.wordpress.legacyDestination, undefined);
+  assert.equal(findStoredWordPressDestination(stored.wordpress, site.siteId).postTitle, "Legacy post");
+});
+
+test("loadWordPressConnection does not guess a site for an unscoped legacy post", async () => {
+  installWordPressFixture();
+  setActiveStorageLogin("tester");
+  saveStoredEditorExportDefault("chapter-1", {
+    optionId: "link:wordpress",
+    wordpress: { postId: 7, postTitle: "Legacy post" },
+  });
+  setWordPress({ connectionStatus: "unknown", connection: null, selectedPostId: null });
+
+  await loadWordPressConnection(() => {}, { invoke: async () => [
+    { siteId: "wpcom:1", kind: "wordpressCom", siteUrl: "https://one.example" },
+    { siteId: "wpcom:2", kind: "wordpressCom", siteUrl: "https://two.example" },
+  ] });
+
+  assert.equal(currentWordPressExportState().connectionStatus, "disconnected");
+  assert.equal(currentWordPressExportState().connection, null);
+  assert.equal(loadStoredEditorExportDefault("chapter-1").wordpress.legacyDestination.postId, 7);
+});
+
 test("connectWordPress opens the broker auth URL and waits for the callback", async () => {
   installWordPressFixture();
   const openedUrls = [];
@@ -444,33 +527,109 @@ test("handleWordPressAuthEvent applies success and error callbacks", () => {
   assert.equal(currentWordPressExportState().connection.blogId, "12345");
 
   handleWordPressAuthEvent({ status: "error", message: "Sign-in failed." }, () => {});
-  assert.equal(currentWordPressExportState().connectionStatus, "disconnected");
+  assert.equal(currentWordPressExportState().connectionStatus, "connected");
+  assert.equal(currentWordPressExportState().reauthRequired, true);
   assert.equal(state.editorChapter.exportModal.error, "Sign-in failed.");
 });
 
-test("disconnectWordPress clears the connection and search state", async () => {
+test("showWordPressSitePicker clears session selection without deleting remembered posts", () => {
   installWordPressFixture();
+  setActiveStorageLogin("tester");
+  saveStoredEditorExportDefault("chapter-1", {
+    optionId: "link:wordpress",
+    wordpress: { siteId: "wpcom:12345", siteKind: "wordpressCom", siteUrl: "https://example.wordpress.com", postId: 7, postTitle: "Hello" },
+  });
   setWordPress({
     connectionStatus: "connected",
-    connection: { blogId: "12345", blogUrl: "https://example.wordpress.com" },
+    connection: { siteId: "wpcom:12345", siteUrl: "https://example.wordpress.com" },
     searchResults: [{ id: 7, title: "Hello", status: "publish", link: "", modified: "" }],
     selectedPostId: 7,
     searchStatus: "done",
   });
 
-  const invokeCalls = [];
-  await disconnectWordPress(() => {}, {
-    invoke: async (command) => {
-      invokeCalls.push(command);
-    },
-  });
-
-  assert.deepEqual(invokeCalls, ["disconnect_wordpress"]);
+  const storedBeforeSwitch = loadStoredEditorExportDefault("chapter-1");
+  showWordPressSitePicker(() => {});
   const wordpress = currentWordPressExportState();
   assert.equal(wordpress.connectionStatus, "disconnected");
   assert.equal(wordpress.connection, null);
   assert.deepEqual(wordpress.searchResults, []);
   assert.equal(wordpress.selectedPostId, null);
+  assert.deepEqual(loadStoredEditorExportDefault("chapter-1"), storedBeforeSwitch);
+});
+
+test("site selection restores each site's remembered post while switching back and forth", () => {
+  installWordPressFixture();
+  setActiveStorageLogin("tester");
+  const first = { siteId: "wpcom:1", kind: "wordpressCom", siteUrl: "https://one.example" };
+  const second = { siteId: "wpcom:2", kind: "wordpressCom", siteUrl: "https://two.example" };
+  upsertStoredWordPressDestination("chapter-1", {
+    ...first, siteKind: first.kind, postId: 7, postTitle: "First post",
+  });
+  upsertStoredWordPressDestination("chapter-1", {
+    ...second, siteKind: second.kind, postId: 8, postTitle: "Second post",
+  });
+  setWordPress({ connectionStatus: "disconnected", connection: null, connections: [first, second] });
+
+  selectWordPressSite(() => {}, first.siteId);
+  assert.equal(currentWordPressExportState().mode, "overwrite");
+  assert.equal(currentWordPressExportState().selectedPostId, 7);
+  assert.equal(selectedWordPressPost(currentWordPressExportState()).title, "First post");
+
+  showWordPressSitePicker(() => {});
+  selectWordPressSite(() => {}, second.siteId);
+  assert.equal(currentWordPressExportState().selectedPostId, 8);
+  assert.equal(selectedWordPressPost(currentWordPressExportState()).title, "Second post");
+
+  showWordPressSitePicker(() => {});
+  selectWordPressSite(() => {}, first.siteId);
+  assert.equal(currentWordPressExportState().selectedPostId, 7);
+  assert.equal(selectedWordPressPost(currentWordPressExportState()).title, "First post");
+});
+
+test("selecting a site without a remembered post starts in create mode", () => {
+  installWordPressFixture();
+  setActiveStorageLogin("tester");
+  const site = { siteId: "wpcom:new", kind: "wordpressCom", siteUrl: "https://new.example" };
+  setWordPress({ connectionStatus: "disconnected", connection: null, connections: [site], mode: "overwrite" });
+
+  selectWordPressSite(() => {}, site.siteId);
+  assert.equal(currentWordPressExportState().mode, "create");
+  assert.equal(currentWordPressExportState().selectedPostId, null);
+});
+
+test("site selection is in-session and forgetting a site unlinks only that site's memories", async () => {
+  installWordPressFixture();
+  setActiveStorageLogin("tester");
+  const site = { siteId: "wpcom:12345", kind: "wordpressCom", siteUrl: "https://example.wordpress.com" };
+  setWordPress({ connectionStatus: "disconnected", connections: [site] });
+  const storedBeforeSelection = loadStoredEditorExportDefault("chapter-1");
+  selectWordPressSite(() => {}, site.siteId);
+  assert.equal(currentWordPressExportState().connection.siteId, site.siteId);
+  assert.deepEqual(loadStoredEditorExportDefault("chapter-1"), storedBeforeSelection);
+
+  for (const chapterId of ["chapter-1", "chapter-2"]) {
+    upsertStoredWordPressDestination(chapterId, {
+      siteId: "wpcom:other", siteKind: "wordpressCom", siteUrl: "https://other.example",
+      postId: 8, postTitle: "Other",
+    });
+    upsertStoredWordPressDestination(chapterId, {
+      siteId: site.siteId, siteKind: site.kind, siteUrl: site.siteUrl,
+      postId: 7, postTitle: "Hello",
+    });
+  }
+  const calls = [];
+  await forgetWordPressSite(() => {}, site.siteId, {
+    confirm: () => true,
+    invoke: async (command, args) => calls.push({ command, args }),
+  });
+  assert.equal(calls[0].command, "forget_wordpress_connection");
+  for (const chapterId of ["chapter-1", "chapter-2"]) {
+    const stored = loadStoredEditorExportDefault(chapterId);
+    assert.equal(stored.wordpress.lastSiteId, undefined);
+    assert.equal(findStoredWordPressDestination(stored.wordpress, site.siteId), null);
+    assert.equal(findStoredWordPressDestination(stored.wordpress, "wpcom:other").postId, 8);
+  }
+  assert.equal(currentWordPressExportState().connection, null);
 });
 
 test("search and post selection drive the overwrite picker", async () => {
@@ -529,9 +688,32 @@ test("submitWordPressExport sends content, footnotes, and a job id for create", 
   assert.match(input.content, /<!-- wp:footnotes \/-->/);
   assert.equal(input.footnotes.length, 1);
   assert.equal(input.footnotes[0].content, "footnote 1");
+  assert.equal(input.refreshWordPressImages, false);
   assert.ok(input.jobId);
   assert.equal(state.editorChapter.exportModal.status, "exporting");
   assert.equal(currentWordPressExportState().jobId, input.jobId);
+});
+
+test("submitWordPressExport can bypass and refresh cached images", async () => {
+  installWordPressFixture();
+  setWordPress({
+    connectionStatus: "connected",
+    connection: { blogId: "12345", blogUrl: "https://example.wordpress.com" },
+  });
+  updateWordPressTitle("Refresh image metadata");
+
+  const invokeCalls = [];
+  await submitWordPressExport(
+    () => {},
+    readyWordPressSubmitOperations({
+      invoke: async (command, payload) => invokeCalls.push({ command, payload }),
+    }),
+    { refreshWordPressImages: true },
+  );
+
+  assert.equal(invokeCalls.length, 1);
+  assert.equal(invokeCalls[0].command, "export_chapter_to_wordpress");
+  assert.equal(invokeCalls[0].payload.input.refreshWordPressImages, true);
 });
 
 test("submitWordPressExport refreshes after pending writes before serializing quote styles", async () => {
@@ -681,7 +863,7 @@ test("submitWordPressExport validates the form before invoking", async () => {
 
   setWordPress({ mode: "create", connectionStatus: "disconnected" });
   await submitWordPressExport(() => {}, operations);
-  assert.equal(state.editorChapter.exportModal.error, "Connect your WordPress.com account first.");
+  assert.equal(state.editorChapter.exportModal.error, "Choose a connected WordPress site first.");
 
   assert.equal(invokeCalls.length, 0);
 });
@@ -736,4 +918,51 @@ test("export error events reopen the form with the error message", () => {
   assert.equal(state.editorChapter.exportModal.status, "idle");
   assert.match(state.editorChapter.exportModal.error, /invalid token/);
   assert.equal(currentWordPressExportState().jobId, "");
+});
+
+test("project WordPress export combines saved chapter snapshots without changing the open editor", async () => {
+  installWordPressFixture();
+  const first = state.projects[0].chapters[0];
+  state.projects[0].chapters = [
+    { ...first, id: "chapter-2", name: "Chapter 2" },
+    { ...first, id: "chapter-1", name: "Chapter 1" },
+  ];
+  const { openProjectExportOptions } = await import("./editor-export-flow.js");
+  openProjectExportOptions(() => {}, "project-1");
+  setWordPress({ connectionStatus: "connected", connection: { siteId: "site-1" }, title: "Book", mode: "create" });
+  const calls = [];
+  await submitWordPressExport(() => {}, {
+    waitForRepoQueue: async () => {},
+    flushDirtyEditorRows: async () => assert.fail("Project export must not reload the unrelated editor"),
+    invoke: async (command, args) => {
+      calls.push({ command, ...args });
+      if (command === "load_gtms_chapter_editor_data") return {
+        fileTitle: args.input.chapterId,
+        languages: [{ code: "vi" }],
+        rows: [{ rowId: args.input.chapterId, fields: { vi: `Saved ${args.input.chapterId}` } }],
+      };
+    },
+  });
+  assert.deepEqual(calls.map((call) => call.command), ["load_gtms_chapter_editor_data", "load_gtms_chapter_editor_data", "export_chapter_to_wordpress"]);
+  assert.match(calls[2].input.content, /Saved chapter-1[\s\S]*Saved chapter-2/);
+  assert.equal(calls[2].input.title, "Book");
+  assert.equal(state.editorChapter.chapterId, "chapter-1");
+  assert.equal(state.editorChapter.rows[0].fields.vi, "Text one[1]");
+});
+
+test("project WordPress completion remembers its own destination and shows success without an open editor", async () => {
+  installWordPressFixture();
+  setActiveStorageLogin("project-wordpress-tester");
+  const { openProjectExportOptions } = await import("./editor-export-flow.js");
+  openProjectExportOptions(() => {}, "project-1");
+  state.editorChapter.chapterId = "";
+  setWordPress({ jobId: "project-job", connection: { siteId: "site-1", kind: "wordpressCom", siteUrl: "https://example.wordpress.com" } });
+  handleWordPressExportProgressEvent({
+    jobId: "project-job", status: "success", postId: 32, postTitle: "Book", postStatus: "draft",
+    postEditLink: "https://example.wordpress.com/wp-admin/post.php?post=32",
+  }, () => {});
+  assert.equal(state.editorChapter.wordpressExportSuccessModal.isOpen, true);
+  assert.equal(state.editorChapter.wordpressExportSuccessModal.isDraft, true);
+  assert.equal(loadStoredEditorExportDefault("project:project-1").wordpress.destinations[0].postId, 32);
+  assert.equal(loadStoredEditorExportDefault("chapter-1"), null);
 });

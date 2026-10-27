@@ -25,6 +25,7 @@ use html::{parse_html_file, HtmlRowMetadata};
 use rtf::extract_rtf_plain_text;
 pub(super) use srt::format_srt_timestamp;
 use srt::{parse_srt_file, SrtImportSummary, SrtRowMetadata};
+pub(crate) use srt::{parse_translation_srt, SubtitleCue};
 #[cfg(test)]
 use std::io::Cursor;
 #[cfg(test)]
@@ -490,6 +491,17 @@ pub(super) fn extract_project_translation_text_sync(
         .and_then(|value| value.to_str())
         .unwrap_or_default()
         .to_ascii_lowercase();
+    if extension == "srt" {
+        let cues = parse_translation_srt(&input.bytes, file_name)?;
+        return Ok(ExtractProjectTranslationTextResponse {
+            unit_count: cues.len(),
+            plain_text: cues
+                .into_iter()
+                .map(|cue| cue.text)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        });
+    }
     let blocks = match extension.as_str() {
         "txt" => {
             let parsed = parse_txt_file(ImportTxtInput {
@@ -516,7 +528,7 @@ pub(super) fn extract_project_translation_text_sync(
         "rtf" => extract_rtf_plain_text(&input.bytes)?,
         _ => {
             return Err(
-                "Only TXT, DOCX, and RTF files can be used to add translations.".to_string(),
+                "Only TXT, DOCX, RTF, and SRT files can be used to add translations.".to_string(),
             )
         }
     };
@@ -587,12 +599,10 @@ pub(super) fn import_project_files_to_gtms_sync(
         }
 
         emit_batch_progress(app, &batch_id, index + 1, total, &file.file_name);
+        let file_name = file.file_name.clone();
         match parse_project_import_file(installation_id, &repo_name, project_id.clone(), file) {
             Ok(parsed) => parsed_workbooks.push(parsed),
-            Err(error) => failed_files.push(ImportProjectFileFailure {
-                file_name: error_file_name(&error),
-                error,
-            }),
+            Err(error) => failed_files.push(ImportProjectFileFailure { file_name, error }),
         }
     }
 
@@ -760,7 +770,12 @@ fn parse_project_import_file(
         }),
         _ => Err(format!("Unsupported file type for {file_name}.")),
     }
-    .map_err(|error| format!("{file_name}: {error}"))
+    .map_err(
+        |error| match error.strip_prefix("PROJECT_IMPORT_INVALID_FORMAT:") {
+            Some(detail) => format!("PROJECT_IMPORT_INVALID_FORMAT: {file_name}:{}", detail),
+            None => format!("{file_name}: {error}"),
+        },
+    )
 }
 
 fn required_source_language_code(file: &ImportProjectFileInput) -> Result<String, String> {
@@ -801,15 +816,6 @@ fn import_project_file_bytes(file: &ImportProjectFileInput) -> Result<Vec<u8>, S
         .ok_or_else(|| "The file could not be read.".to_string())?;
     ensure_within_import_size_limit(bytes.len() as u64, file_label)?;
     Ok(bytes)
-}
-
-fn error_file_name(error: &str) -> String {
-    error
-        .split_once(':')
-        .map(|(file_name, _)| file_name.trim())
-        .filter(|file_name| !file_name.is_empty())
-        .unwrap_or("file")
-        .to_string()
 }
 
 fn humanize_file_stem(file_name: &str) -> String {
@@ -1002,6 +1008,90 @@ mod tests {
     }
 
     #[test]
+    fn extracts_srt_translation_text_without_cue_numbers_or_timing() {
+        let response = extract_project_translation_text_sync(ExtractProjectTranslationTextInput {
+            file_name: "translation.SRT".to_string(),
+            bytes: "\u{feff}7\r\n00:00:05,000 --> 00:00:06,000\r\n Primera línea \r\nSegunda línea\r\n\r\n3\r\n00:00:03,000 --> 00:00:04,000\r\nÚltima línea\r\n".as_bytes().to_vec(),
+        })
+        .expect("SRT translation text should extract in file order");
+
+        assert_eq!(
+            response.plain_text,
+            " Primera línea \nSegunda línea\nÚltima línea"
+        );
+        assert_eq!(response.unit_count, 2);
+    }
+
+    #[test]
+    fn extracts_utf16_srt_translation_text() {
+        let text = "1\n00:00:01,000 --> 00:00:02,000\nこんにちは\n";
+        for little_endian in [true, false] {
+            let mut bytes = if little_endian {
+                vec![0xff, 0xfe]
+            } else {
+                vec![0xfe, 0xff]
+            };
+            for unit in text.encode_utf16() {
+                bytes.extend_from_slice(&if little_endian {
+                    unit.to_le_bytes()
+                } else {
+                    unit.to_be_bytes()
+                });
+            }
+            let response =
+                extract_project_translation_text_sync(ExtractProjectTranslationTextInput {
+                    file_name: "translation.srt".to_string(),
+                    bytes,
+                })
+                .expect("UTF-16 SRT translation should extract");
+
+            assert_eq!(response.plain_text, "こんにちは");
+            assert_eq!(response.unit_count, 1);
+        }
+    }
+
+    #[test]
+    fn srt_translation_text_extraction_rejects_invalid_or_empty_subtitles() {
+        for (text, expected_error) in [
+            ("1\ninvalid timing\nText\n", "Line 2:"),
+            ("\n\n", "does not contain any SRT subtitle entries"),
+        ] {
+            let error = extract_project_translation_text_sync(ExtractProjectTranslationTextInput {
+                file_name: "translation.srt".to_string(),
+                bytes: text.as_bytes().to_vec(),
+            })
+            .expect_err("invalid or empty SRT should fail");
+
+            assert!(error.contains(expected_error), "unexpected error: {error}");
+        }
+    }
+
+    #[test]
+    fn srt_translation_text_extraction_counts_blank_cues() {
+        let response = extract_project_translation_text_sync(ExtractProjectTranslationTextInput {
+            file_name: "blank.srt".to_string(),
+            bytes: b"1\n00:00:01,000 --> 00:00:02,000\n\n2\n00:00:02,000 --> 00:00:03,000\n"
+                .to_vec(),
+        })
+        .expect("valid blank cues should retain their subtitle count");
+        assert_eq!(response.plain_text, "\n");
+        assert_eq!(response.unit_count, 2);
+    }
+
+    #[test]
+    fn srt_translation_text_extraction_counts_cues_instead_of_text_lines() {
+        let mut bytes = b"1\n00:00:01,000 --> 00:00:02,000\n".to_vec();
+        bytes.extend_from_slice("Text\n".repeat(20_001).as_bytes());
+        let response = extract_project_translation_text_sync(ExtractProjectTranslationTextInput {
+            file_name: "translation.srt".to_string(),
+            bytes,
+        })
+        .expect("multiline cues do not enter AI alignment");
+
+        assert_eq!(response.unit_count, 1);
+    }
+
+    #[test]
     fn translation_text_extraction_rejects_unsupported_files() {
         let error = extract_project_translation_text_sync(ExtractProjectTranslationTextInput {
             file_name: "translation.html".to_string(),
@@ -1009,7 +1099,7 @@ mod tests {
         })
         .expect_err("HTML should not be accepted for Add translations");
 
-        assert!(error.contains("Only TXT, DOCX, and RTF"));
+        assert!(error.contains("Only TXT, DOCX, RTF, and SRT"));
     }
 
     #[test]

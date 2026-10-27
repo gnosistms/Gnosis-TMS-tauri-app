@@ -285,8 +285,6 @@ pub struct AiTranslationResponse {
     pub translated_image_caption: String,
     #[serde(default)]
     pub prompt_text: String,
-    #[serde(default)]
-    pub provider_continuation: Option<AiProviderContinuationMetadata>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -295,6 +293,12 @@ pub struct AiTranslationBatchRowInput {
     pub row_id: String,
     #[serde(default)]
     pub source_text: String,
+    /// Context belonging to this row, including independently sampled rows.
+    /// It is source evidence only, not another row to translate.
+    #[serde(default)]
+    pub source_context_before: Vec<String>,
+    #[serde(default)]
+    pub source_context_after: Vec<String>,
     #[serde(default)]
     pub source_footnote: String,
     #[serde(default)]
@@ -326,6 +330,15 @@ pub struct AiTranslationBatchRequest {
     pub context_after: Vec<AiAssistantRowWindowEntry>,
     #[serde(default)]
     pub rows: Vec<AiTranslationBatchRowInput>,
+    /// The rows are adjacent cues of a subtitle chapter, so the model may move
+    /// words between neighbouring rows.
+    #[serde(default)]
+    pub subtitle_cues: bool,
+    /// Explicit editor sentence groups may contain intentionally empty cues.
+    #[serde(default)]
+    pub sentence_group: bool,
+    #[serde(default)]
+    pub sentence_source_text: String,
     #[serde(default)]
     pub installation_id: Option<i64>,
 }
@@ -348,6 +361,10 @@ pub struct AiTranslationBatchResponse {
     pub rows: Vec<AiTranslationBatchRowResult>,
     #[serde(default)]
     pub prompt_text: String,
+    /// Kept for IPC compatibility. Translation batches now reject the entire
+    /// response on unexpected labels, so successful responses leave this empty.
+    #[serde(default)]
+    pub unknown_row_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -399,6 +416,17 @@ pub struct AiReviewBatchRequest {
     pub context_after: Vec<AiAssistantRowWindowEntry>,
     #[serde(default)]
     pub rows: Vec<AiReviewBatchRowInput>,
+    /// The rows are adjacent cues of a subtitle chapter, whose translations may
+    /// have moved words between neighbouring rows.
+    #[serde(default)]
+    pub subtitle_cues: bool,
+    /// Explicit editor sentence groups may contain intentionally empty cues.
+    #[serde(default)]
+    pub sentence_group: bool,
+    #[serde(default)]
+    pub sentence_source_text: String,
+    #[serde(default)]
+    pub sentence_target_text: String,
     #[serde(default)]
     pub installation_id: Option<i64>,
 }
@@ -422,6 +450,10 @@ pub struct AiReviewBatchResponse {
     pub rows: Vec<AiReviewBatchRowResult>,
     #[serde(default)]
     pub prompt_text: String,
+    /// Row ids the model returned that were not requested (trimmed, deduped,
+    /// response order), for diagnostics when review rows are retried.
+    #[serde(default)]
+    pub unknown_row_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -429,14 +461,24 @@ pub struct AiPromptRequest {
     pub provider_id: AiProviderId,
     pub model_id: String,
     pub prompt: String,
-    pub previous_response_id: Option<String>,
     pub output_format: AiPromptOutputFormat,
+    /// The prompt split at cache boundaries. Claude sends these as separate
+    /// content blocks; every other provider sends `prompt`, which they
+    /// concatenate to.
+    pub prompt_blocks: Option<Vec<AiPromptBlock>>,
+}
+
+/// One segment of a prompt. `cache` marks the end of a prefix that is worth
+/// caching because later requests repeat it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AiPromptBlock {
+    pub text: String,
+    pub cache: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AiPromptResponse {
     pub text: String,
-    pub provider_response_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -452,15 +494,6 @@ pub enum AiPromptOutputFormat {
         name: String,
         schema: serde_json::Value,
     },
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct AiProviderContinuationMetadata {
-    #[serde(default)]
-    pub previous_response_id: Option<String>,
-    #[serde(default)]
-    pub provider_response_id: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -535,6 +568,10 @@ pub struct AiAssistantRowContext {
     #[serde(default)]
     pub target_text: String,
     #[serde(default)]
+    pub target_footnotes: Vec<AiReviewFootnote>,
+    #[serde(default)]
+    pub target_image_caption: String,
+    #[serde(default)]
     pub source_footnote: String,
     #[serde(default)]
     pub source_image_caption: String,
@@ -595,8 +632,6 @@ pub struct AiAssistantTurnRequest {
     pub reply_language_hint: String,
     #[serde(default)]
     pub installation_id: Option<i64>,
-    #[serde(default)]
-    pub provider_continuation: Option<AiProviderContinuationMetadata>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -609,8 +644,6 @@ pub struct AiAssistantTurnResponse {
     pub prompt_text: String,
     #[serde(default)]
     pub raw_response: String,
-    #[serde(default)]
-    pub provider_continuation: Option<AiProviderContinuationMetadata>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

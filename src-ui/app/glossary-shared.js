@@ -165,6 +165,9 @@ export function normalizeGlossaryTerm(term) {
       typeof term.notesToTranslators === "string" ? term.notesToTranslators : "",
     footnote: typeof term.footnote === "string" ? term.footnote : "",
     untranslated: term.untranslated === true,
+    siblingTermIds: Array.isArray(term.siblingTermIds)
+      ? term.siblingTermIds.filter((id) => typeof id === "string" && id)
+      : [],
     lifecycleState: isDeletedLifecycleState ? "deleted" : "active",
     freshness: "fresh",
     remotelyDeleted: false,
@@ -181,14 +184,17 @@ export function applyGlossaryEditorPayload(payload) {
     ?? null;
   const repoName = state.glossaryEditor?.repoName || existingSummary?.repoName || selectedGlossaryRepoName();
   const repoId =
-    Number.isFinite(state.glossaryEditor?.repoId)
-      ? state.glossaryEditor.repoId
-      : Number.isFinite(existingSummary?.repoId)
-        ? existingSummary.repoId
-        : null;
-  const fullName = state.glossaryEditor?.fullName || existingSummary?.fullName || "";
+    Number.isFinite(payload?.repoId)
+      ? payload.repoId
+      : Number.isFinite(state.glossaryEditor?.repoId)
+        ? state.glossaryEditor.repoId
+        : Number.isFinite(existingSummary?.repoId)
+          ? existingSummary.repoId
+          : null;
+  const fullName = payload?.fullName || state.glossaryEditor?.fullName || existingSummary?.fullName || "";
   const defaultBranchName =
-    state.glossaryEditor?.defaultBranchName
+    payload?.defaultBranchName
+    || state.glossaryEditor?.defaultBranchName
     || existingSummary?.defaultBranchName
     || "main";
   const defaultBranchHeadOid =
