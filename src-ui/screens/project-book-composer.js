@@ -41,10 +41,10 @@ function field(name, value, placeholder, className = "") {
   return `<input class="book-page__input ${className}" type="text" data-book-field="${name}" aria-label="${placeholder}" placeholder="${placeholder}" value="${escapeHtml(value || "")}" />`;
 }
 function titleInfoField(name, value, label, multiline = false) {
-  const attributes = `data-book-field="${name}" aria-label="${label}" placeholder="${label}"`;
-  return `<label class="field book-title-editor__field"><span>${label}</span>${multiline
-    ? `<textarea rows="3" ${attributes}>${escapeHtml(value || "")}</textarea>`
-    : `<input type="text" ${attributes} value="${escapeHtml(value || "")}" data-modal-enter-ignores-default />`}</label>`;
+  const attributes = `data-book-field="${name}" aria-label="${label}" placeholder="Enter ${label.toLowerCase()}"`;
+  return `<label class="field book-title-editor__field"><span class="field__label">${label}</span>${multiline
+    ? `<textarea class="field__textarea" rows="3" ${attributes}>${escapeHtml(value || "")}</textarea>`
+    : `<input class="field__input" type="text" ${attributes} value="${escapeHtml(value || "")}" data-modal-enter-ignores-default />`}</label>`;
 }
 
 export function renderBookTitleProof(modal) {
@@ -70,7 +70,7 @@ function titlePageEditor(modal, item) {
       ${titleInfoField("subtitle", item.subtitle, "Subtitle")}
       ${titleInfoField("author", item.author, "Author")}
       ${titleInfoField("translator", item.translator, "Translator")}
-      <div class="book-title-editor__logo"><span>Publisher logo</span>${imageEditor(item, true)}</div>
+      <div class="book-title-editor__logo"><span class="field__label">Publisher logo</span>${imageEditor(item, true)}</div>
     </section>
     <section class="book-title-preview" aria-label="Title page PDF preview">
       <div class="book-title-preview__output">${renderBookTitleProof(modal)}</div>

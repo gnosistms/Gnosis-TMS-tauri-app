@@ -48,10 +48,7 @@
 .book-title-layout { display: grid; grid-template-columns: minmax(250px, .8fr) minmax(300px, 1.2fr); height: 100%; min-height: 0; }
 .book-title-editor { overflow: auto; padding: 22px; background: var(--panel-surface); border-right: 1px solid var(--surface-border); }
 .book-title-editor h3 { margin: 0 0 20px; font-size: 17px; }
-.book-title-editor__field { display: flex; flex-direction: column; gap: 6px; margin: 0 0 16px; }
-.book-title-editor__field > span, .book-title-editor__logo > span { font-size: 12px; font-weight: 600; color: var(--muted); }
-.book-title-editor__field input, .book-title-editor__field textarea { box-sizing: border-box; width: 100%; padding: 9px 11px; border: 1px solid var(--surface-border); border-radius: 7px; background: var(--panel-surface); color: var(--text); font: inherit; line-height: 1.4; }
-.book-title-editor__field textarea { resize: vertical; min-height: 80px; }
+.book-title-editor__field { margin: 0 0 16px; }
 .book-title-editor__hint { margin: -9px 0 18px; color: var(--muted); font-size: 11px; }
 .book-title-editor__logo .book-image { margin: 10px 0 0; }
 .book-title-preview { display: flex; flex-direction: column; min-height: 0; min-width: 0; }

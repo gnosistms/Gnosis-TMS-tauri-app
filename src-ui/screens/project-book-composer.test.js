@@ -25,7 +25,7 @@ test("front matter uses per-language editing controls, and copyright has the lim
     current.book.items = addBookSection(current.book.items, kind, "Book", "Mục lục");
     current.book.selectedItemId = current.book.items.find((item) => item.kind === kind).id;
     const html = renderProjectBookComposer(current);
-    if (kind === "title") for (const placeholder of ["Title", "Subtitle", "Author", "Translator"]) assert.match(html, new RegExp(`placeholder="${placeholder}"`));
+    if (kind === "title") for (const placeholder of ["title", "subtitle", "author", "translator"]) assert.match(html, new RegExp(`placeholder="Enter ${placeholder}"`));
     if (kind === "copyright" || kind === "dedication") {
       assert.match(html, /contenteditable="true"/);
       assert.match(html, /book-copyright:italic/);
