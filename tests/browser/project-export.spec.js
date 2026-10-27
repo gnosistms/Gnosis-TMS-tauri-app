@@ -445,22 +445,24 @@ test("chapter numbers are read-only, optional, consecutive, and saved in the exp
   const row = (index) => modal.locator(`[data-book-item="fixture-chapter-0-${index}"]`);
   const numbers = () => modal.locator('[data-book-list="included"] [data-book-chapter-number]').allTextContents();
   await expect.poll(numbers).toEqual(["1.", "2.", "3."]);
-  await expect(row(0).getByRole("checkbox", { name: "Numbered", exact: true })).toBeChecked();
-  await expect(modal.getByRole("checkbox", { name: "Numbered", exact: true })).toHaveCount(1);
+  await expect(modal.getByRole("checkbox", { name: "Numbered", exact: true })).toHaveCount(0);
+  await expect(modal.getByRole("button", { name: "Settings", exact: true })).toHaveCount(3);
   await expect(row(0).locator("[data-book-chapter-title]")).toHaveValue("File 001");
   await expect(row(0).locator("[data-book-chapter-number]")).toHaveJSProperty("isContentEditable", false);
   await row(1).getByRole("button", { name: "Preview chapter: File 002", exact: true }).click();
-  const numbered = row(1).getByRole("checkbox", { name: "Numbered", exact: true });
-  await expect(numbered).toBeChecked();
+  const settings = row(1).getByRole("button", { name: "Settings", exact: true });
+  await settings.click();
+  const numbered = modal.getByRole("menuitemcheckbox", { name: "Numbered", exact: true });
+  await expect(numbered).toHaveAttribute("aria-checked", "true");
   await page.evaluate(() => {
     window.__numberingList = document.querySelector(".book-composer__list");
-    window.__numberingCheckbox = document.querySelector('[data-book-numbered-item="fixture-chapter-0-1"]');
+    window.__numberingSettings = document.querySelector('[data-book-settings-button="fixture-chapter-0-1"]');
   });
-  await row(1).getByText("Numbered", { exact: true }).click();
-  await expect(numbered).not.toBeChecked();
-  await expect(numbered).toBeFocused();
+  await numbered.click();
+  await expect(numbered).toHaveCount(0);
+  await expect(settings).toBeFocused();
   expect(await page.evaluate(() => document.querySelector(".book-composer__list") === window.__numberingList
-    && document.querySelector('[data-book-numbered-item="fixture-chapter-0-1"]') === window.__numberingCheckbox)).toBe(true);
+    && document.querySelector('[data-book-settings-button="fixture-chapter-0-1"]') === window.__numberingSettings)).toBe(true);
   await expect.poll(numbers).toEqual(["1.", "", "2."]);
   await expect(modal.locator(".book-chapter__number")).toHaveCount(0);
   await expect(row(1).locator("[data-book-chapter-title]")).toHaveValue("File 002");
@@ -478,7 +480,9 @@ test("chapter numbers are read-only, optional, consecutive, and saved in the exp
   await modal.getByRole("button", { name: "Cancel", exact: true }).click();
   await page.locator('[data-action="export-project:fixture-project-001"]').click();
   await row(1).getByRole("button", { name: "Preview chapter: File 002", exact: true }).click();
-  await expect(row(1).getByRole("checkbox", { name: "Numbered", exact: true })).not.toBeChecked();
+  await settings.click();
+  await expect(numbered).toHaveAttribute("aria-checked", "false");
+  await numbered.press("Escape");
   await expect(modal.locator(".book-chapter__number")).toHaveCount(0);
   await page.screenshot({ path: test.info().outputPath("optional-chapter-numbering.png") });
   await modal.getByRole("button", { name: "Next", exact: true }).click();
@@ -1064,7 +1068,10 @@ test("Git export settings load locally first, then require acknowledgement for t
   await notice.getByRole("button", { name: "Ok", exact: true }).click();
   await expect(notice).toBeHidden();
   await expect(title).toHaveValue("GitHub title");
-  await expect(modal.locator('[data-book-numbered-item="fixture-chapter-0-0"]')).not.toBeChecked();
+  await modal.locator('[data-book-settings-button="fixture-chapter-0-0"]').click();
+  const numbered = modal.getByRole("menuitemcheckbox", { name: "Numbered", exact: true });
+  await expect(numbered).toHaveAttribute("aria-checked", "false");
+  await numbered.press("Escape");
 });
 
 test("other-language Git changes overwrite quietly and language selection uses them", async ({ page }) => {
@@ -1196,4 +1203,64 @@ test("selecting front matter focuses its navigation button instead of a chapter 
   await page.locator('[data-action="export-project:fixture-project-001"]').click();
   await expect(modal.locator('.book-item__select[data-action][aria-pressed="true"]')).toBeFocused();
   await expect(chapter).not.toBeFocused();
+});
+
+
+test("chapter gear menus reuse app controls and stay accessible at list edges", async ({ page }) => {
+  await mountProjectExport(page, false, false, 40);
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  const row = (index) => modal.locator(`[data-book-item="fixture-chapter-0-${index}"]`);
+  const gear = (index) => row(index).getByRole("button", { name: "Settings", exact: true });
+  const menu = modal.getByRole("menu", { name: "Chapter settings", exact: true });
+  const numbered = menu.getByRole("menuitemcheckbox", { name: "Numbered", exact: true });
+  await expect(gear(0).locator("..")).toHaveAttribute("data-tooltip", "Settings");
+  await expect(gear(0)).toHaveClass(/term-variant-row__action-button/);
+  await expect(gear(0).locator("svg")).toHaveAttribute("aria-hidden", "true");
+  await gear(0).focus();
+  await gear(0).press("ArrowDown");
+  await expect(numbered).toBeFocused();
+  await expect(numbered).toHaveAttribute("aria-checked", "true");
+  await expect(numbered.locator("[aria-hidden]" )).toHaveText("✓");
+  await expect(menu.locator("button")).toHaveCount(1);
+  await numbered.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await expect(gear(0)).toBeFocused();
+  await expect(modal).toBeVisible();
+  await gear(0).click();
+  await numbered.press("Tab");
+  await expect(menu).toHaveCount(0);
+  await expect(row(0).locator(".book-item__toggle")).toBeFocused();
+  await gear(0).click();
+  await modal.locator(".book-composer__list").evaluate((list) => { list.scrollTop = list.scrollHeight; });
+  await expect(menu).toHaveCount(0);
+  for (const width of [1440, 1000, 700]) {
+    await page.setViewportSize({ width, height: 900 });
+    await gear(39).scrollIntoViewIfNeeded();
+    const before = await modal.locator(".book-composer__list").evaluate((list) => list.scrollTop);
+    await gear(39).click();
+    await expect(numbered).toBeFocused();
+    const cardBox = await modal.boundingBox(), menuBox = await menu.boundingBox();
+    expect(menuBox.x).toBeGreaterThanOrEqual(cardBox.x);
+    expect(menuBox.y).toBeGreaterThanOrEqual(cardBox.y);
+    expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(cardBox.x + cardBox.width);
+    expect(menuBox.y + menuBox.height).toBeLessThanOrEqual(cardBox.y + cardBox.height);
+    const gearBox = await gear(39).boundingBox(), toggleBox = await row(39).locator(".book-item__toggle").boundingBox();
+    expect(gearBox.x + gearBox.width).toBeLessThanOrEqual(toggleBox.x);
+    expect(Math.abs(gearBox.y - toggleBox.y)).toBeLessThan(1);
+    expect(await modal.locator(".book-composer__list").evaluate((list) => list.scrollTop)).toBe(before);
+    if (width === 1000) await page.screenshot({ path: test.info().outputPath("chapter-gear-menu.png") });
+    await numbered.press("Escape");
+  }
+  await row(39).locator(".book-item__toggle").click();
+  await gear(39).scrollIntoViewIfNeeded();
+  await expect(row(39)).toHaveAttribute("data-book-included", "false");
+  await gear(39).click();
+  await numbered.click();
+  await gear(39).click();
+  await expect(numbered).toHaveAttribute("aria-checked", "false");
+  await expect(numbered.locator("[aria-hidden]")).toHaveText("");
+  await modal.getByRole("button", { name: "+ Add new", exact: true }).click();
+  await expect(menu).toHaveCount(0);
+  await expect(gear(39)).toHaveAttribute("aria-expanded", "false");
+  await expect(modal.locator('[data-book-item="fixture-chapter-0-0"]')).toHaveClass(/is-selected/);
 });

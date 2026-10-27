@@ -2,6 +2,7 @@ import { importBookImage, moveProjectBookItem, updateBookField } from "../projec
 import { escapeHtml } from "../../lib/ui.js";
 import { state } from "../state.js";
 import { renderSelectedBookPage } from "../../screens/project-book-composer.js";
+import { dismissBookChapterMenu, dismissBookChapterMenuOutside, handleBookChapterMenuClick, handleBookChapterMenuKeydown } from "../project-book-chapter-menu.js";
 let drag = null;
 function cancel() {
   drag?.preview?.remove();
@@ -9,9 +10,14 @@ function cancel() {
   drag = null;
 }
 export function registerProjectBookEvents(render) {
+  document.addEventListener("click", (event) => handleBookChapterMenuClick(event, render));
+  document.addEventListener("keydown", handleBookChapterMenuKeydown);
+  document.addEventListener("scroll", (event) => dismissBookChapterMenuOutside(event.target), true);
+  window.addEventListener("resize", () => dismissBookChapterMenu());
+  window.addEventListener("blur", () => dismissBookChapterMenu());
   document.addEventListener("input", (event) => {
     const field = event.target.closest?.("[data-book-field]");
-    if (field) updateBookField(field, field.dataset.bookField === "numbered" ? () => render?.({ scope: "project-book-preview" }) : field.dataset.bookChapterTitle ? () => {
+    if (field) updateBookField(field, field.dataset.bookChapterTitle ? () => {
       const preview = document.querySelector(".book-composer__page-scroll");
       if (preview) preview.innerHTML = renderSelectedBookPage(state.editorChapter.exportModal);
     } : render);
@@ -27,7 +33,9 @@ export function registerProjectBookEvents(render) {
     updateBookField(editor);
   });
   document.addEventListener("pointerdown", (event) => {
-    if (event.target.closest?.("[data-book-numbered-control]")) return;
+    dismissBookChapterMenuOutside(event.target);
+    const settings = event.target.closest?.("[data-book-settings-button]");
+    if (settings && event.button === 0) { settings.focus({ preventScroll: true }); return; }
     const chapterRow = event.target.closest?.("[data-book-chapter-select]");
     const control = event.target.closest?.("input, textarea, button");
     // WebKit does not focus clicked buttons. Move focus before a section's

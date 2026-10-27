@@ -34,8 +34,10 @@ function itemRow(item, modal, numbers) {
         <span data-book-item-label="${escapeHtml(item.id)}">${escapeHtml(bookItemTitle(item))}</span>
         ${item.kind !== "chapter" && bookItemTitle(item) !== bookSectionLabel(item.kind) ? `<small>${escapeHtml(bookSectionLabel(item.kind))}</small>` : ""}
       </button>`}
+      <div class="book-item__actions">
+      ${item.kind === "chapter" ? `<span ${tooltipAttributes("Settings", { align: "end" })}><button type="button" class="term-variant-row__action-button book-item__settings" data-stop-row-action data-book-settings-button="${escapeHtml(item.id)}" aria-label="Settings" aria-haspopup="menu" aria-expanded="false"><svg class="book-item__settings-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 3 .5-2h4l.5 2 2 .8 1.8-1 2.8 2.8-1 1.8.9 2.1 2 .5v4l-2 .5-.8 2 1 1.8-2.8 2.8-1.8-1-2.1.9-.5 2h-4l-.5-2-2-.8-1.8 1-2.8-2.8 1-1.8-.9-2.1-2-.5v-4l2-.5.8-2-1-1.8 2.8-2.8 1.8 1z"/><circle cx="12" cy="12" r="3"/></svg></button></span>` : ""}
       <span ${tooltipAttributes(help, { align: "end" })}><button type="button" class="${included ? "term-variant-row__action-button term-variant-row__action-button--remove" : "term-lane__add-button"} book-item__toggle" aria-label="${help}" data-action="book-${included ? "exclude" : "include"}:${escapeHtml(item.id)}" ${unavailable}><span class="${included ? "term-variant-row__remove-icon" : "term-lane__add-icon"}" aria-hidden="true"></span></button></span>
-    ${item.kind === "chapter" ? `<label class="book-item__numbered" data-book-numbered-control ${modal.book.selectedItemId === item.id ? "" : "hidden"} data-stop-row-action><input type="checkbox" data-book-field="numbered" data-book-numbered-item="${escapeHtml(item.id)}" ${item.numbered !== false ? "checked" : ""}> Numbered</label>` : ""}
+      </div>
     </div>
   </li>`;
 }

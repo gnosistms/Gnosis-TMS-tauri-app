@@ -163,12 +163,11 @@ async function loadContentsHeadings(render, current, operations) {
 
 export function updateBookField(element, render) {
   const current = modal();
-  const item = current?.book?.items.find((entry) => entry.id === (element.dataset.bookChapterTitle || element.dataset.bookNumberedItem || current.book.selectedItemId));
+  const item = current?.book?.items.find((entry) => entry.id === (element.dataset.bookChapterTitle || current.book.selectedItemId));
   const field = element.dataset.bookField;
-  if (!item || !["title", "subtitle", "author", "translator", "text", "caption", "includeH1Headings", "numbered"].includes(field)) return;
-  if (field === "numbered" && item.kind !== "chapter") return;
+  if (!item || !["title", "subtitle", "author", "translator", "text", "caption", "includeH1Headings"].includes(field)) return;
   const edited = element.hasAttribute("contenteditable") ? bookEditorText(element) : element.value;
-  const value = ["includeH1Headings", "numbered"].includes(field) ? element.checked : field === "text" ? edited : edited.replaceAll("\u2028", "\n");
+  const value = field === "includeH1Headings" ? element.checked : field === "text" ? edited : edited.replaceAll("\u2028", "\n");
   if (element.hasAttribute("contenteditable")) element.dataset.bookEmpty = String(!value);
   if (element.dataset.bookChapterTitle) {
     const measure = element.parentElement?.querySelector("[data-book-title-size]");
@@ -258,6 +257,9 @@ export async function handleProjectBookAction(action, render) {
         ? () => render?.({ scope: "project-book-preview" }) : render);
       void loadSelectedBookPreview(render);
     }
+  } else if (action.startsWith("book-numbered:")) {
+    const id = action.slice(14);
+    update({ book: { ...book, items: book.items.map((item) => item.id === id && item.kind === "chapter" ? { ...item, numbered: item.numbered === false } : item) }, pdfFontStatus: "idle", pdfFontInspectionKey: "" }, () => render?.({ scope: "project-book-preview" }));
   } else if (action.startsWith("book-exclude:") || action.startsWith("book-include:")) {
     const include = action.startsWith("book-include:");
     const id = action.slice(13);

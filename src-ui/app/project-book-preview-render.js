@@ -54,12 +54,6 @@ export function renderProjectBookPreview(root, state) {
     const selected = row.dataset.bookItem === modal.book.selectedItemId;
     row.classList.toggle("is-selected", selected);
     row.querySelector("[data-book-preview-select]")?.setAttribute("aria-pressed", String(selected));
-    const item = items.get(row.dataset.bookItem);
-    const control = row.querySelector("[data-book-numbered-control]");
-    if (control && item) {
-      control.hidden = !selected;
-      control.querySelector("input").checked = item.numbered !== false;
-    }
     const number = numbers.get(row.dataset.bookItem);
     const label = row.querySelector("[data-book-chapter-number]");
     if (label) {
