@@ -66,6 +66,20 @@ pub(crate) fn start_project_book_title_preview(
     Ok(())
 }
 
+fn title_preview_document(item: BookItemInput, section: ExportDocument) -> ExportDocument {
+    ExportDocument {
+        title: item.title.clone(),
+        language_code: section.language_code.clone(),
+        // Shared image/font preparation scans the flattened blocks, while the
+        // book renderer reads book_parts. Keep both views, as full export does.
+        blocks: section.blocks.clone(),
+        book_parts: vec![BookPart {
+            item,
+            document: section,
+        }],
+    }
+}
+
 async fn render_title_preview(
     app: &AppHandle,
     input: TitlePagePreviewInput,
@@ -76,15 +90,7 @@ async fn render_title_preview(
     let (prepared, font_dir) = tauri::async_runtime::spawn_blocking(move || {
         check_cancelled(&prepare_cancelled)?;
         let section = section_document(&prepare_app, &input.item, &input.language_code, &[])?;
-        let document = ExportDocument {
-            title: input.item.title.clone(),
-            language_code: input.language_code,
-            blocks: Vec::new(),
-            book_parts: vec![BookPart {
-                item: input.item,
-                document: section,
-            }],
-        };
+        let document = title_preview_document(input.item, section);
         let font_dir = ensure_fonts(
             &prepare_app,
             &input.request_id,
@@ -158,6 +164,108 @@ fn read_preview_pages(workspace: &Path) -> Result<Vec<String>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn publisher_logo_is_prepared_in_the_title_preview_and_compiles() {
+        let workspace = pdf_workspace().unwrap();
+        let _cleanup = WorkspaceCleanup(workspace.clone());
+        let logo = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../src-ui/assets/brand/gnosisvn-caduceus-logo.svg"
+        ));
+        let logo = crate::project_import::chapter_editor::book_svg::sanitize(logo).unwrap();
+        let path = workspace.join("publisher.svg");
+        fs::write(&path, logo).unwrap();
+        let item = BookItemInput {
+            id: "title".into(),
+            kind: "title".into(),
+            title: "Hôn Nhân Hoàn Hảo".into(),
+            image_asset_id: "publisher.svg".into(),
+            ..Default::default()
+        };
+        let section = ExportDocument {
+            title: item.title.clone(),
+            language_code: "vi".into(),
+            book_parts: Vec::new(),
+            blocks: vec![
+                ExportBlock::Text {
+                    text_style: "heading1".into(),
+                    text: item.title.clone(),
+                },
+                ExportBlock::Image {
+                    image: ExportImage::Upload {
+                        repo_relative_path: "publisher.svg".into(),
+                        raw_url: None,
+                        absolute_path: path,
+                    },
+                    caption: String::new(),
+                },
+            ],
+        };
+        let document = title_preview_document(item, section);
+        let session = PdfImageCacheSession {
+            scope: PdfImageCacheScope {
+                installation_id: 0,
+                repo_name: String::new(),
+                project_id: None,
+                project_full_name: None,
+                target: PdfImageCacheTarget::Book,
+            },
+            generation: None,
+        };
+        let options = PdfWorkspacePreparationOptions {
+            paper_size: "a5",
+            footnote_links_as_plain_text: true,
+            image_cache_session: &session,
+        };
+        prepare_typst_workspace(
+            None,
+            "",
+            &workspace,
+            &document,
+            &options,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(document.blocks, document.book_parts[0].document.blocks);
+        let source = fs::read_to_string(workspace.join("chapter.typ")).unwrap();
+        assert!(source.contains("images/image-0.svg"));
+        assert!(source.contains("width: 1.105in, height: 0.595in"));
+        let (Some(binary), Some(fonts)) = (
+            std::env::var_os("GNOSIS_TYPST_BIN"),
+            std::env::var_os("GNOSIS_TYPST_SMOKE_FONT_DIR"),
+        ) else {
+            return;
+        };
+        for output_name in ["title-{p}.svg", "title.pdf"] {
+            let output = std::process::Command::new(&binary)
+                .args(["compile", "--ignore-system-fonts", "--font-path"])
+                .arg(&fonts)
+                .arg("--root")
+                .arg(&workspace)
+                .arg("--package-path")
+                .arg(workspace.join("packages"))
+                .arg(workspace.join("chapter.typ"))
+                .arg(workspace.join(output_name))
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        assert_eq!(read_preview_pages(&workspace).unwrap().len(), 1);
+        if let Some(destination) = std::env::var_os("GNOSIS_LOGO_SMOKE_OUTPUT") {
+            let destination = PathBuf::from(destination);
+            fs::copy(workspace.join("title.pdf"), &destination).unwrap();
+            fs::copy(
+                workspace.join("title-1.svg"),
+                destination.with_extension("svg"),
+            )
+            .unwrap();
+        }
+    }
 
     #[test]
     fn reads_every_rendered_page_as_image_data_and_reports_missing_output() {
