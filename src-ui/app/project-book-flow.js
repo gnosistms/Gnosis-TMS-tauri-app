@@ -14,7 +14,7 @@ import { normalizeEditorRows } from "./editor-state-flow.js";
 import { openLocalFilePicker } from "./local-file-picker.js";
 import { enforceImportFileSizeLimit } from "./import-file-limit.js";
 import { formatErrorForDisplay } from "./error-display.js";
-import { addBookSection, bookChapterDefaultTitle, bookItemIncluded, bookContentsItems, bookLanguages, includeBookItem, reconcileBookLayout, reorderBookItems } from "./project-book-model.js";
+import { addBookSection, bookChapterDefaultTitle, bookItemIncluded, bookSectionLabel, bookContentsItems, bookLanguages, includeBookItem, reconcileBookLayout, reorderBookItems } from "./project-book-model.js";
 import { loadBookSettings, loadContentsTitle, saveBookSettings, saveContentsTitle } from "./project-book-settings.js";
 
 const modal = () => state.editorChapter?.exportModal;
@@ -179,7 +179,7 @@ export function updateBookField(element, render) {
   if (item.kind === "title") requestBookTitlePreview(render);
   if (field === "includeH1Headings" && value) void loadSelectedBookPreview(render);
   if (item.kind === "contents" && field === "title") saveContentsTitle(current.languageCode, value);
-  if (field === "title" && item.kind !== "chapter") document.querySelector(`[data-book-item-label="${CSS.escape(item.id)}"]`)?.replaceChildren(document.createTextNode(value || (item.kind === "contents" ? "Table of contents" : "Title page")));
+  if (field === "title" && item.kind !== "chapter") document.querySelector(`[data-book-item-label="${CSS.escape(item.id)}"]`)?.replaceChildren(document.createTextNode(item.kind === "title" ? bookSectionLabel("title") : value || bookSectionLabel(item.kind)));
 }
 
 export async function importBookImage(render, file, operations = {}) {

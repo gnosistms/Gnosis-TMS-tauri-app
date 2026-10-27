@@ -20,6 +20,7 @@ export function bookNavButton(direction, disabled = false) {
 }
 
 function itemRow(item, modal, numbers) {
+  const label = item.kind === "title" ? bookSectionLabel("title") : bookItemTitle(item);
   const included = bookItemIncluded(item);
   const number = numbers.get(item.id);
   const language = modal.languages.find((entry) => entry.code === modal.languageCode);
@@ -28,11 +29,11 @@ function itemRow(item, modal, numbers) {
     ? `disabled aria-disabled="true" aria-description="${escapeHtml(`This chapter does not contain a translation in ${language?.name || modal.languageCode}.`)}"` : "";
   return `<li class="term-variant-row book-item ${modal.book.selectedItemId === item.id ? "is-selected" : ""}" data-book-item="${escapeHtml(item.id)}" data-book-included="${included}">
     <div class="term-variant-row__shell" ${item.kind === "chapter" ? `data-book-chapter-select data-action="book-select:${escapeHtml(item.id)}"` : ""}>
-      ${included ? `<button type="button" class="term-variant-row__drag-handle" data-book-drag-handle data-stop-row-action aria-label="Reorder ${escapeHtml(bookItemTitle(item))}" ${tooltipAttributes("Drag to change the export order.")}><span class="term-variant-row__drag-dots" aria-hidden="true">${"<span></span>".repeat(6)}</span></button>` : '<span class="term-variant-row__drag-spacer"></span>'}
+      ${included ? `<button type="button" class="term-variant-row__drag-handle" data-book-drag-handle data-stop-row-action aria-label="Reorder ${escapeHtml(label)}" ${tooltipAttributes("Drag to change the export order.")}><span class="term-variant-row__drag-dots" aria-hidden="true">${"<span></span>".repeat(6)}</span></button>` : '<span class="term-variant-row__drag-spacer"></span>'}
       ${item.kind === "chapter" ? `<div class="book-item__chapter-select"><span class="book-item__chapter-number" data-book-chapter-number ${number ? `aria-label="Chapter ${number}"` : "hidden"}>${number ? `${number}.` : ""}</span><span class="book-item__title-wrap"><span class="book-item__title-size" data-book-title-size aria-hidden="true">${escapeHtml(item.title || item.defaultTitle || item.name)}</span><textarea rows="1" wrap="soft" class="book-item__select book-item__title" data-book-chapter-title="${escapeHtml(item.id)}" data-book-field="title" data-modal-enter-blur data-modal-enter-ignores-default aria-label="Chapter title: ${escapeHtml(item.name)}" ${tooltipAttributes("Edit the chapter title for this export language.")} placeholder="${escapeHtml(item.defaultTitle || item.name)}">${escapeHtml(item.title ?? bookItemTitle(item))}</textarea>
         </span><button type="button" class="book-item__preview-select" data-book-preview-select ${modal.book.selectedItemId === item.id ? "data-modal-initial-focus" : ""} aria-label="Preview chapter: ${escapeHtml(item.name)}" aria-pressed="${modal.book.selectedItemId === item.id}"></button></div>` : `<button type="button" class="book-item__select" data-book-section-select ${modal.book.selectedItemId === item.id ? "data-modal-initial-focus" : ""} data-action="book-select:${escapeHtml(item.id)}" aria-pressed="${modal.book.selectedItemId === item.id}">
-        <span data-book-item-label="${escapeHtml(item.id)}">${escapeHtml(bookItemTitle(item))}</span>
-        ${item.kind !== "chapter" && bookItemTitle(item) !== bookSectionLabel(item.kind) ? `<small>${escapeHtml(bookSectionLabel(item.kind))}</small>` : ""}
+        <span data-book-item-label="${escapeHtml(item.id)}">${escapeHtml(label)}</span>
+        ${!["title", "contents"].includes(item.kind) && bookItemTitle(item) !== bookSectionLabel(item.kind) ? `<small>${escapeHtml(bookSectionLabel(item.kind))}</small>` : ""}
       </button>`}
       <div class="book-item__actions">
       ${item.kind === "chapter" ? `<span ${tooltipAttributes("Settings", { align: "end" })}><button type="button" class="term-variant-row__action-button book-item__settings" data-stop-row-action data-book-settings-button="${escapeHtml(item.id)}" aria-label="Settings" aria-haspopup="menu" aria-expanded="false"><svg class="book-item__settings-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 3 .5-2h4l.5 2 2 .8 1.8-1 2.8 2.8-1 1.8.9 2.1 2 .5v4l-2 .5-.8 2 1 1.8-2.8 2.8-1.8-1-2.1.9-.5 2h-4l-.5-2-2-.8-1.8 1-2.8-2.8 1-1.8-.9-2.1-2-.5v-4l2-.5.8-2-1-1.8 2.8-2.8 1.8 1z"/><circle cx="12" cy="12" r="3"/></svg></button></span>` : ""}
