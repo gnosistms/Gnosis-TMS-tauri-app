@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { state } from "../app/state.js";
 import { newStudioStudy, STUDIO_STEPS, buildStudioDraft, stableSignature, entryBatchSignature, studioStepNumber } from "../app/glossary-research-studio-workflow.js";
-import { studioRecommendationKey } from "../app/glossary-research-studio-recommendations.js";
+import { STUDIO_SKIP_PROMPTS, studioRecommendationKey } from "../app/glossary-research-studio-recommendations.js";
 import { renderGlossaryResearchStudio } from "./glossary-research-studio.js";
 
 test("source neighbors are escaped and clearly separated from the sampled paragraph and its translation", () => {
@@ -36,6 +36,9 @@ test("every studio stage renders through the page shell for a non-Spanish source
       const html = renderGlossaryResearchStudio(state);
       assert(html.includes("Glossary") || html.includes("Research"), step.id);
       assert(html.includes(`${studioStepNumber(step.id)} · ${step.label}`), step.id);
+      assert(!html.includes('data-action="studio:back"'), step.id);
+      assert.doesNotMatch(html, /Research comparison|Rerun this step for comparison|studio:compare-run/, step.id);
+      if (step.id === "2a") assert.doesNotMatch(html, /data-action="studio:recommend"/);
       assert(!html.includes("[object Object]"), step.id);
     }
     study.step = "1";
@@ -43,15 +46,16 @@ test("every studio stage renders through the page shell for a non-Spanish source
   } finally { state.glossaryResearchStudio = previous; }
 });
 
-test("Export research uses the shared tooltip on every study step", () => {
+test("Export research is available from step 4.2 onward with the shared tooltip", () => {
   const previous = state.glossaryResearchStudio;
   try {
     const s = newStudioStudy({ sourceLanguage: { code: "es", name: "Spanish" }, targetLanguage: { code: "en", name: "English" } }, "export-tip");
     state.glossaryResearchStudio = { study: s, history: [] };
-    for (const step of STUDIO_STEPS) {
+    for (const [index, step] of STUDIO_STEPS.entries()) {
       s.step = step.id;
       const html = renderGlossaryResearchStudio(state);
-      assert.match(html, /data-action="studio:export"[^>]*data-tooltip="export a summary of the data uncovered during the research process in a JSON format appropriate for sending it to an AI for further discussion\."/);
+      if (index < STUDIO_STEPS.findIndex((st) => st.id === "4.2")) assert.doesNotMatch(html, /data-action="studio:export"/);
+      else assert.match(html, /data-action="studio:export"[^>]*data-tooltip="export a summary of the data uncovered during the research process in a JSON format appropriate for sending it to an AI for further discussion\."/);
     }
     state.glossaryResearchStudio.exporting = true;
     assert.match(renderGlossaryResearchStudio(state), /data-action="studio:export"[^>]*disabled/);
@@ -116,7 +120,7 @@ test("optional dictionary research explains the action and cannot continue befor
     state.glossaryResearchStudio = { study, busy: false };
     const html = renderGlossaryResearchStudio(state);
     assert(html.includes("Look up definitions, grammatical uses and etymology"));
-    assert.match(html, /data-action="studio:next"[^>]*disabled/u);
+    assert.doesNotMatch(html, /data-action="studio:next"/u);
     assert(html.includes("Skip this step"));
     study.steps["4.1"] = { value: { meanings: [] } };
     assert(renderGlossaryResearchStudio(state).includes("Refresh dictionary research"));
@@ -130,19 +134,75 @@ test("skip advice is escaped and advisory, stale advice is hidden, and the summa
     s.step = "4.3"; s.skipRecommendations = { "4.3": { contextKey: studioRecommendationKey(s), recommendation: "Skip", reason: "<script>Untrusted source</script>" } };
     state.glossaryResearchStudio = { study: s, busy: false };
     let html = renderGlossaryResearchStudio(state);
-    assert(html.includes("AI recommendation: Skip"));
-    assert(html.includes("You decide whether to run or skip"));
+    assert(html.includes("AI recommendation: Skip it."));
+    assert.doesNotMatch(html, /You decide whether to run or skip|Uncertainty defaults to Run/);
     assert(html.includes("&lt;script&gt;Untrusted source&lt;/script&gt;"));
+    assert.match(html, /<details class="studio-recommendation-reason" data-studio-disclosure="recommendation-reason"><summary class="text-link">Show reasoning<\/summary>/);
     assert.match(html, /data-action="studio:run"/); assert.match(html, /data-action="studio:skip"/);
     s.scope.term = "different";
     html = renderGlossaryResearchStudio(state);
-    assert(!html.includes("AI recommendation: Skip"));
+    assert(!html.includes("AI recommendation: Skip it."));
     assert(html.includes("No current recommendation"));
     s.step = "4.4.4";
     html = renderGlossaryResearchStudio(state);
     assert.match(html, /<h2>4\.4\.3 · Source summary<\/h2>/);
     assert(!html.includes("4.4.4 · Source summary"));
     assert(html.includes("Skipping here discards the entire source-research branch"));
+  } finally { state.glossaryResearchStudio = previous; }
+});
+
+test("all run-or-skip recommendations disappear after a choice, including paused and revisited research", () => {
+  const previous = state.glossaryResearchStudio;
+  try {
+    for (const step of Object.keys(STUDIO_SKIP_PROMPTS)) {
+      const s = newStudioStudy({ term: "mundo", sourceLanguage: { code: "es", name: "Spanish" },
+        targetLanguage: { code: "en", name: "English" } }, "recommendation-visibility");
+      s.step = step;
+      s.skipRecommendations = { [step]: { contextKey: studioRecommendationKey(s), recommendation: "Run", reason: "Check the evidence." } };
+      const saved = structuredClone(s.skipRecommendations);
+      const view = { study: s, busy: false }; state.glossaryResearchStudio = view;
+      assert.match(renderGlossaryResearchStudio(state), /AI recommendation: Run it\./u, `${step}: before choice`);
+      view.busy = true; view.recommendingStep = step;
+      assert.match(renderGlossaryResearchStudio(state), /Considering whether this research step would help/u, `${step}: getting advice`);
+      view.recommendingStep = null;
+      assert.doesNotMatch(renderGlossaryResearchStudio(state), /class="studio-recommendation"/u, `${step}: running`);
+      view.busy = false;
+      s.activitySteps = { [step]: { items: [{ id: "work", label: "Saved work", status: "paused", children: [] }] } };
+      assert.doesNotMatch(renderGlossaryResearchStudio(state), /class="studio-recommendation"/u, `${step}: paused`);
+      delete s.activitySteps;
+      for (const status of ["awaiting-review", "complete", "skipped"]) {
+        s.steps[step] = { status, ...(status === "skipped" ? { approved: { skipped: true } } : {}) };
+        view.revisiting = status !== "awaiting-review";
+        assert.doesNotMatch(renderGlossaryResearchStudio(state), /class="studio-recommendation"/u, `${step}: ${status}`);
+      }
+      assert.deepEqual(s.skipRecommendations, saved, "advice remains saved for diagnostics");
+    }
+  } finally { state.glossaryResearchStudio = previous; }
+});
+
+test("completed optional steps hide Skip while unstarted and unfinished steps retain it", () => {
+  const previous = state.glossaryResearchStudio;
+  try {
+    for (const step of Object.keys(STUDIO_SKIP_PROMPTS)) {
+      const s = newStudioStudy({ term: "mundo", sourceLanguage: { code: "es", name: "Spanish" },
+        targetLanguage: { code: "en", name: "English" } }, "skip-visibility");
+      s.step = step;
+      const view = { study: s, busy: false }; state.glossaryResearchStudio = view;
+      for (const record of [undefined, { status: "undone" }, { status: "failed" }, { value: { pending: true } }]) {
+        if (record) s.steps[step] = record;
+        else delete s.steps[step];
+        assert.match(renderGlossaryResearchStudio(state), /data-action="studio:skip"/u, `${step}: ${JSON.stringify(record)}`);
+      }
+      for (const record of [{ value: { summary: "Completed research" } },
+        { status: "awaiting-review", value: {} }, { status: "complete" }, { status: "skipped" },
+        { status: "stale", approved: { summary: "Earlier research" } }]) {
+        s.steps[step] = record;
+        for (const revisiting of [false, true]) {
+          view.revisiting = revisiting;
+          assert.doesNotMatch(renderGlossaryResearchStudio(state), /data-action="studio:skip"/u, `${step}: ${JSON.stringify(record)}, revisiting=${revisiting}`);
+        }
+      }
+    }
   } finally { state.glossaryResearchStudio = previous; }
 });
 
@@ -181,7 +241,7 @@ test("an interrupted pending test offers resume and cannot approve unfinished wo
     state.glossaryResearchStudio = { study: s, busy: false };
     const html = renderGlossaryResearchStudio(state);
     assert(html.includes("Resume this step"));
-    assert.match(html, /data-action="studio:next"[^>]*disabled/u);
+    assert.doesNotMatch(html, /data-action="studio:next"/u);
   } finally { state.glossaryResearchStudio = previous; }
 });
 
@@ -546,7 +606,7 @@ test("the nested work list shows planned work, active siblings and escaped resul
   } finally { state.glossaryResearchStudio = previous; }
 });
 
-test("step timing report ranks elapsed work and distinguishes unknown AI time from measured execution", () => {
+test("saved timing diagnostics are not rendered on any research step", () => {
   const previous = state.glossaryResearchStudio;
   try {
     const study = newStudioStudy({ sourceLanguage: { code: "es", name: "Spanish" }, targetLanguage: { code: "en", name: "English" }, term: "fatal" }, "timed");
@@ -556,14 +616,88 @@ test("step timing report ranks elapsed work and distinguishes unknown AI time fr
       "4.4.1": { runs: [{ sequence: 1, status: "complete", elapsedMs: 166000, startedAt: "2026-10-16T00:00:00Z", operations: [{ label: "Source synthesis", status: "complete", elapsedMs: 165000, requestMs: 164000, cacheSource: "executed", aiOperationMs: 160000, path: ["consolidate"] }] }], saves: { count: 2, totalMs: 2000 } },
     } };
     state.glossaryResearchStudio = { study, busy: false };
-    const html = renderGlossaryResearchStudio(state);
-    assert(html.indexOf('<th scope="row">4.4.1') < html.indexOf('<th scope="row">4.1'));
-    assert.match(html, /2 min 46 s/);
-    assert.match(html, /Not measured/);
-    assert.match(html, /&lt;script&gt;dictionary/);
-    assert(!html.includes("<script>dictionary"));
-    assert.match(html, /not additive parts of elapsed time/);
-    assert.match(html, /included in Export research/);
+    const timing = JSON.stringify(study.timing);
+    for (const step of STUDIO_STEPS) {
+      study.step = step.id;
+      const html = renderGlossaryResearchStudio(state);
+      assert.doesNotMatch(html, /Step timings|Tool time:|Recorded research timings|Request and retry details/);
+      assert.doesNotMatch(html, /studio-timings|studio-work-timing|studio-timing-table/);
+    }
+    assert.equal(JSON.stringify(study.timing), timing);
+  } finally { state.glossaryResearchStudio = previous; }
+});
+
+test("completed corpus checks summarize attested forms and accurate paragraph counts with the full tree collapsed", () => {
+  const previous = state.glossaryResearchStudio;
+  try {
+    const s = newStudioStudy({ term: "Hierofantes", corpus: "samael", sourceLanguage: { code: "es", name: "Spanish" }, targetLanguage: { code: "vi", name: "Vietnamese" } }, "corpus-summary");
+    s.step = "2a";
+    s.formDiscovery = { version: 3, phase: "checking-origin", corpusResults: [
+      { text: "Hierofantes", paragraphCount: 113 }, { text: "hierofante", paragraphCount: 177 }, { text: "unattested", paragraphCount: 0 },
+    ] };
+    s.forms = [{ text: "Hierofantes", paragraphCount: 113 }];
+    s.activitySteps = { "2a": { items: [{ id: "forms", label: "Check forms against the corpus", status: "complete",
+      result: "Three proposed forms checked.", children: [{ id: "raw", label: "Raw exact check", status: "complete", result: "8 candidates." }] }] } };
+    state.glossaryResearchStudio = { study: s, busy: true };
+    let html = renderGlossaryResearchStudio(state);
+    assert.match(html, /We found 2 forms used in the Samael Aun Weor corpus:/);
+    assert.match(html, /<li>Hierofantes — 113 matching paragraphs/);
+    assert.match(html, /<li>hierofante — 177 matching paragraphs/);
+    assert(!html.includes("unattested"));
+    assert.match(html, /<details data-studio-disclosure="forms-corpus-details"><summary>Check details<\/summary>/);
+    delete s.formDiscovery.corpusResults; s.scope.corpus = "projects";
+    s.forms = [{ text: "walk", paragraphCount: 1 }, { text: "absent", paragraphCount: 0 }];
+    html = renderGlossaryResearchStudio(state);
+    assert.match(html, /We found 1 form used in the selected projects:/);
+    assert.match(html, /<li>walk — 1 matching paragraph<\/li>/);
+    s.forms = [{ text: "absent", paragraphCount: 0 }];
+    html = renderGlossaryResearchStudio(state);
+    assert.match(html, /We found 0 forms used in the selected projects\./);
+    assert(!html.includes('aria-label="Forms found in the corpus"'));
+    s.forms = [{ text: "unknown" }];
+    html = renderGlossaryResearchStudio(state);
+    assert(!html.includes("We found 0 forms"), "missing historical counts do not establish absence");
+  } finally { state.glossaryResearchStudio = previous; }
+});
+
+test("forms setup, active work, pause and review show the controls relevant to each phase", () => {
+  const previous = state.glossaryResearchStudio;
+  try {
+    const s = newStudioStudy({ term: "walk", sourceLanguage: { code: "en", name: "English" }, targetLanguage: { code: "vi", name: "Vietnamese" } }, "forms-phases");
+    s.step = "2a"; s.forms = [{ text: "walk", selected: true }];
+    s.activitySteps = { "2a": { items: [{ id: "discover", label: "Find forms", status: "waiting" }] } };
+    const view = state.glossaryResearchStudio = { study: s, busy: false };
+    let html = renderGlossaryResearchStudio(state);
+    assert.match(html, /aria-label="Entered forms"/);
+    assert.doesNotMatch(html, /type="checkbox"|data-studio-field="forms\./);
+    assert.doesNotMatch(html, /aria-label="Work in this step"/);
+    view.busy = true; view.recommendingStep = "2a";
+    html = renderGlossaryResearchStudio(state);
+    assert.match(html, /aria-label="Entered forms"/);
+    assert.doesNotMatch(html, /type="checkbox"|data-studio-field="forms\./);
+    assert.doesNotMatch(html, /aria-label="Work in this step"/);
+    view.recommendingStep = null;
+    html = renderGlossaryResearchStudio(state);
+    assert.doesNotMatch(html, /aria-label="Discovered forms"/);
+    assert.match(html, /aria-label="Work in this step"/);
+    s.formDiscovery = { version: 3, phase: "checking" }; view.busy = false;
+    html = renderGlossaryResearchStudio(state);
+    assert.doesNotMatch(html, /aria-label="Discovered forms"/);
+    assert.match(html, /aria-label="Work in this step"/);
+    view.error = "Provider unavailable";
+    html = renderGlossaryResearchStudio(state);
+    assert.doesNotMatch(html, /aria-label="Discovered forms"/);
+    assert.match(html, /Provider unavailable/);
+    view.error = ""; s.formDiscovery.phase = "complete";
+    s.forms[0].reason = "A verified form (/doc/book-34?line=21924). Dictionary: https://dle.rae.es/hierofante.";
+    s.steps["2a"] = { value: { forms: s.forms } };
+    html = renderGlossaryResearchStudio(state);
+    assert.match(html, /aria-label="Discovered forms"/);
+    assert.match(html, /data-action="studio:add-form"/);
+    assert(html.indexOf('data-studio-forms-review') > html.indexOf('aria-label="Work in this step"'));
+    assert.match(html, /A verified form\. Dictionary: https:\/\/dle.rae.es\/hierofante\./u);
+    assert.doesNotMatch(html, /\/doc\/book-34|line=21924/u);
+    assert(s.forms[0].reason.includes("/doc/book-34?line=21924"), "saved explanation keeps the audit locator");
   } finally { state.glossaryResearchStudio = previous; }
 });
 

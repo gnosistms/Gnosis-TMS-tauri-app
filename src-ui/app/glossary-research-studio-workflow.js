@@ -59,7 +59,7 @@ export function studioMatches(text, terms, languageCode = "es") {
 }
 
 export const STUDIO_STEPS = [
-  ["1", "Scope"], ["2a", "Forms and spellings", true], ["2b", "Existing entries"],
+  ["1", "Scope"], ["2a", "List other forms and spellings", true], ["2b", "Existing entries"],
   ["3", "Research sample"], ["4.1", "Dictionary", true], ["4.2", "Corpus meanings"],
   ["4.3", "Word parts", true], ["4.4.1", "Bibliographical sources", true],
   ["4.4.2", "Internet sources", true], ["4.4.4", "Source summary"],

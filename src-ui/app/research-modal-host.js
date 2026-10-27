@@ -6,7 +6,7 @@
 
 import { app } from "./runtime.js";
 import { renderGlossaryResearchModal } from "../screens/glossary-research-modal.js";
-import { renderGlossaryResearchPrepModal } from "../screens/glossary-research-prep-modal.js";
+import { renderEditorGlossaryEntryModal } from "../screens/editor-glossary-entry-modal.js";
 import { captureFocusedInputState, restoreFocusedInputState } from "./focused-input-state.js";
 import { captureModalRenderState, reconcileModalRenderState } from "./events/modal-dialog.js";
 import { syncLanguagePickerAlphabetIndexes } from "./language-picker-alphabet-index.js";
@@ -39,7 +39,7 @@ export function researchModalOpen() {
 export function researchModalsHtml(state) {
   const onGlossary = state.screen === "glossaryEditor";
   return (onGlossary ? renderGlossaryResearchModal(state) : "")
-    + (onGlossary || state.screen === "translate" ? renderGlossaryResearchPrepModal(state) : "");
+    + (state.screen === "translate" ? renderEditorGlossaryEntryModal(state) : "");
 }
 
 /**

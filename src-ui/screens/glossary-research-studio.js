@@ -1,19 +1,20 @@
-import { studioTimingSummary, studioActivityTiming, formatStudioDuration } from "../app/glossary-research-studio-timing.js";
 import { studioActivityItems } from "../app/glossary-research-studio-activity.js";
-import { escapeHtml, primaryButton, secondaryButton, errorButton, pageShell, loadingSpinner } from "../lib/ui.js";
+import { studioResultPresentation, studioNarrativeText } from "../app/glossary-research-studio-result.js";
+import { escapeHtml, primaryButton, secondaryButton, errorButton, actionNavButton, pageShell, loadingSpinner } from "../lib/ui.js";
 import { studioView, studioCanVisitStep } from "../app/glossary-research-studio-flow.js";
 import { STUDIO_STEPS, STUDIO_DICTIONARY_REVIEW_VERSION, activeMeanings, meaningNumber, studioTrialRoundLabel, sourceCollisions, selectedForms, uniqueTexts, witnessedSplitForms, reviewCompoundReport, buildStudioDraft, stableSignature, studioSourceContext, studioContextRequest, meaningTrialSignature, meaningTrialsAreCurrent, entryBatchSignature, entryTrialsAreCurrent, studioStepNumber, studioStepStatusLabel } from "../app/glossary-research-studio-workflow.js";
 import { studioGlossaryEntries } from "../app/glossary-research-studio-query.js";
 import { studyAssignments } from "../app/glossary-research-studio-testing.js";
-import { currentStudioRecommendation, sourceSummaryMustBeSkipped, studioCanRecommendSkip } from "../app/glossary-research-studio-recommendations.js";
+import { currentStudioRecommendation, sourceSummaryMustBeSkipped, studioCanRecommendSkip, studioFormsResearchStarted, studioResearchStarted } from "../app/glossary-research-studio-recommendations.js";
 
 const e = (value) => escapeHtml(value ?? "");
+const narrative = (value) => e(studioNarrativeText(value));
 const quantity = (value, noun) => `${value} ${noun}${value === 1 ? "" : "s"}`;
 const button = (label, name, options) => secondaryButton(label, `studio:${name}`, options);
 const field = (label, path, value, options = {}) => `<label class="field"><span class="field__label">${e(label)}</span>
   ${options.textarea ? `<textarea class="field__textarea" rows="${options.rows ?? 3}" data-studio-field="${e(path)}" ${options.sharedNote ? `data-studio-shared-note="${e(options.sharedNote)}"` : ""} ${options.disabled ? "disabled" : ""}>${e(value)}</textarea>`
     : `<input class="field__input" data-studio-field="${e(path)}" type="${options.type ?? "text"}" value="${e(value)}" ${options.disabled ? "disabled" : ""}>`}</label>`;
-const check = (label, path, checked, disabled = false, attributes = "") => `<label class="studio-check"><input type="checkbox" data-studio-field="${e(path)}" ${attributes} ${checked ? "checked" : ""} ${disabled ? "disabled" : ""}>${e(label)}</label>`;
+const check = (label, path, checked, disabled = false, attributes = "") => `<label class="field__checkbox studio-check"><input type="checkbox" data-studio-field="${e(path)}" ${attributes} ${checked ? "checked" : ""} ${disabled ? "disabled" : ""}>${e(label)}</label>`;
 function sourceSpellingNotice(assignments) {
   const count = assignments.filter((assignment) => assignment.preserveSourceSpelling).length;
   return count ? `<p>${count} ${count === 1 ? "occurrence retains" : "occurrences retain"} the original source spelling by human choice. These mentions are tested in context and excluded from target-variant usage counts.</p>` : "";
@@ -60,7 +61,7 @@ function evidenceHtml(value, seenUrls = new Set()) {
     const source = Array.isArray(passages) ? passages.find((p) => p.id === value) : null;
     const ids = Array.isArray(passages) ? passages.map((p) => p.id) : passages?.ids ?? [];
     if (source || ids.includes(value)) return `<p class="studio-source-reference">${e(source?.reference?.title ?? `Source paragraph ${ids.indexOf(value) + 1}`)}</p>${button("View source paragraph", `view-source:${value}`)}`;
-    return `<p>${e(value)}</p>`;
+    return `<p>${narrative(value)}</p>`;
   }
   if (Array.isArray(value)) return value.map((item) => evidenceHtml(item, seenUrls)).join("");
   if (typeof value !== "object") return "";
@@ -82,13 +83,13 @@ function evidenceHtml(value, seenUrls = new Set()) {
       .filter(([, items]) => Array.isArray(items) && items.length).map(([label, items]) => `<p><strong>${label}:</strong> ${e(items.join(", "))}</p>`).join("");
     const evidence = lists + evidenceHtml(value.evidence, localUrls);
     for (const url of localUrls) seenUrls.add(url);
-    return `<article class="studio-entry">${metadata ? `<p class="studio-source-reference"><small>${e(metadata)}</small></p>` : ""}<p>${e(value.definition)}</p>${evidenceDisclosure(evidence)}</article>`;
+    return `<article class="studio-entry">${metadata ? `<p class="studio-source-reference"><small>${e(metadata)}</small></p>` : ""}<p>${narrative(value.definition)}</p>${evidenceDisclosure(evidence)}</article>`;
   }
   const url = typeof value.url === "string" && /^https:\/\//u.test(value.url) ? value.url : null;
   let html = value.summary || value.report || value.reason || value.message
-    ? `<p>${e(value.summary ?? value.report ?? value.reason ?? value.message)}</p>` : "";
+    ? `<p>${narrative(value.summary ?? value.report ?? value.reason ?? value.message)}</p>` : "";
   if (value.headword) html += `<h4>${e(value.headword)}</h4>`;
-  if (value.etymology) html += `<p>${e(value.etymology)}</p>`;
+  if (value.etymology) html += `<p>${narrative(value.etymology)}</p>`;
   if (value.status) html += `<p>${e(value.status === "not_found" ? "No dictionary entry found" : value.status === "unreachable" ? "Source unreachable" : value.status)}</p>`;
   if (value.quotation) html += `<blockquote>${e(value.quotation)}</blockquote>`;
   if (value.reference) {
@@ -96,9 +97,9 @@ function evidenceHtml(value, seenUrls = new Set()) {
     const citation = typeof ref === "string" ? ref : [ref.title ?? ref.bookTitle,
       ref.chapterTitle ?? ref.chapter_title, ref.year,
       ref.page != null ? `Page ${ref.page}` : null, ref.line_id != null ? `Line ${ref.line_id}` : null].filter(Boolean).join(" · ");
-    if (citation) html += `<p class="studio-source-reference"><small>${e(citation)}</small></p>`;
+    if (citation) html += `<p class="studio-source-reference"><small>${narrative(citation)}</small></p>`;
   }
-  if (value.usageNote) html += `<p>${e(value.usageNote)}</p>`;
+  if (value.usageNote) html += `<p>${narrative(value.usageNote)}</p>`;
   if (value.cache?.reused) html += `<p class="studio-source-reference"><small>Saved DLE evidence · ${e(value.cache.retrievedAt)}${value.cache.provenance?.timeBasis === "original-cache-file-mtime" ? " · Date of the original saved lookup" : ""}</small></p>`;
   if (url && !seenUrls.has(url)) {
     seenUrls.add(url);
@@ -120,7 +121,7 @@ function meaningsReport(s) {
   return s.meanings.filter((m) => m.enabled !== false).map((m) => {
     const assignments = s.assignments.filter((a) => a.meaningId === m.id);
     const ids = new Set(assignments.map((a) => a.paragraphId));
-    return `<section class="studio-entry studio-meaning"><h3>Meaning ${meaningNumber(s, m.id)}${!m.unused ? ` · ${assignments.length} ${assignments.length === 1 ? "occurrence" : "occurrences"}` : ""}</h3><p class="studio-definition">${e(m.definition)}</p>
+    return `<section class="studio-entry studio-meaning"><h3>Meaning ${meaningNumber(s, m.id)}${!m.unused ? ` · ${assignments.length} ${assignments.length === 1 ? "occurrence" : "occurrences"}` : ""}</h3><p class="studio-definition">${narrative(m.definition)}</p>
       ${m.unused ? "<p>No corpus example found. Kept in the report only.</p>" : `<details data-studio-disclosure="${e(`meaning-examples:${m.id}`)}"><summary>Show usage examples (${ids.size} ${ids.size === 1 ? "paragraph" : "paragraphs"})</summary>${s.passages.filter((p) => ids.has(p.id)).map((p) => meaningPassage(p, s, assignments)).join("")}</details>`}</section>`;
   }).join("");
 }
@@ -149,10 +150,10 @@ function usageNoteReport(reports, id) {
   if (!visible.length) return "";
   return `<details class="studio-entry" data-studio-disclosure="${e(id)}"><summary>Research report · translation choices</summary>
     <p>Evidence and detailed explanations stay in this report. Only usage notes are sent as glossary guidance.</p>
-    ${visible.map((report) => `<section>${report.summary ? `<p>${e(report.summary)}</p>` : ""}
-      ${report.generalNoteReason ? `<p><strong>Why the shared note needs extra detail:</strong> ${e(report.generalNoteReason)}</p>` : ""}
+    ${visible.map((report) => `<section>${report.summary ? `<p>${narrative(report.summary)}</p>` : ""}
+      ${report.generalNoteReason ? `<p><strong>Why the shared note needs extra detail:</strong> ${narrative(report.generalNoteReason)}</p>` : ""}
       ${(report.candidates ?? []).map((candidate) => `<article><h4>${e(candidate.text)}</h4>
-        ${candidate.explanation ? `<p>${e(candidate.explanation)}</p>` : ""}
+        ${candidate.explanation ? `<p>${narrative(candidate.explanation)}</p>` : ""}
         ${candidate.longNoteReason ? `<p><strong>Why this note needs extra detail:</strong> ${e(candidate.longNoteReason)}</p>` : ""}</article>`).join("")}</section>`).join("")}
   </details>`;
 }
@@ -216,22 +217,27 @@ function stepContent(s, state) {
   if (!value && introduction) return `<p>${e(introduction)}</p><p>Choose Run this step to begin, or skip this optional research.</p>`;
   if (s.step === "4.1" && value?.dictionaryVersion !== STUDIO_DICTIONARY_REVIEW_VERSION) return "<p>Refresh this saved dictionary review before continuing.</p>";
   switch (s.step) {
-    case "1": return `${field("Term to research", "scope.term", s.scope.term, { disabled })}
-      ${field("Additional forms or spellings (one per line)", "scope.forms", s.scope.forms.join("\n"), { textarea: true, disabled })}
-      <p>${e(s.scope.sourceLanguage.name)} → ${e(s.scope.targetLanguage.name)}</p>
-      <label class="field"><span class="field__label">Research corpus</span><select class="field__input" data-studio-field="scope.corpus">
+    case "1": return `<label class="field"><span class="field__label">Research corpus</span><select class="field__select" data-studio-field="scope.corpus">
         ${s.scope.sourceLanguage.code.startsWith("es") ? `<option value="samael" ${s.scope.corpus === "samael" ? "selected" : ""}>Complete works of Samael Aun Weor</option>` : ""}
-        <option value="projects" ${s.scope.corpus === "projects" ? "selected" : ""}>Selected projects</option></select></label>
-      ${s.scope.corpus === "projects" ? `<label class="field"><span class="field__label">Projects</span><select class="field__input" multiple data-studio-field="scope.projectIds">${state.projects.filter((p) => p.lifecycleState !== "deleted").map((p) => `<option value="${e(p.id)}" ${s.scope.projectIds.includes(p.id) ? "selected" : ""}>${e(p.title ?? p.name)}</option>`).join("")}</select></label>` : ""}`;
+        <option value="projects" ${s.scope.corpus === "projects" ? "selected" : ""}>Select projects</option></select></label>
+      ${s.scope.corpus === "projects" ? `<label class="field"><span class="field__label">Projects</span><select class="field__input" multiple data-studio-field="scope.projectIds">${state.projects.filter((p) => p.lifecycleState !== "deleted").map((p) => `<option value="${e(p.id)}" ${s.scope.projectIds.includes(p.id) ? "selected" : ""}>${e(p.title ?? p.name)}</option>`).join("")}</select></label>` : ""}
+      ${field("Term to research", "scope.term", s.scope.term, { disabled })}
+      ${field("Additional forms or spellings (one per line)", "scope.forms", s.scope.forms.join("\n"), { textarea: true, disabled })}`;
     case "2a": {
       const reviewing = !disabled && value && s.formDiscovery?.version === 3 && s.formDiscovery.phase === "complete";
-      return `<p>${reviewing ? "Review the forms you entered together with the additional forms and spellings found by the search. Add any others you know, or uncheck forms to leave them out. Forms not found in the corpus are unchecked; you can override this." : value && s.formDiscovery?.version !== 3 ? "This saved forms review needs updated exact corpus-count checks. Run this step to refresh it, or skip it to use only your entered forms." : view.error ? "The search has not finished. Retry the search to finish checking these forms, or skip this step to use the forms you entered." : !s.formDiscovery ? "You entered these forms. Choose Run this step to search for more, or Skip this step to use only these." : "Forms appear below as they are found. We are checking their corpus evidence before you review the list."}</p>
+      if (disabled && view.recommendingStep !== s.step) return "";
+      if (studioFormsResearchStarted(s) && !value) return "";
+      if (s.formDiscovery?.version === 3 && !reviewing) return "";
+      const guidance = reviewing ? "Review the forms you entered together with the additional forms and spellings found by the search. Add any others you know, or uncheck forms to leave them out. Forms not found in the corpus are unchecked; you can override this." : value && s.formDiscovery?.version !== 3 ? "This saved forms review needs updated exact corpus-count checks. Run this step to refresh it, or skip it to use only your entered forms." : view.error ? "The search has not finished. Retry the search to finish checking these forms, or skip this step to use the forms you entered." : !s.formDiscovery ? "Choose Run this step to search for more, or Skip this step to use only these." : "";
+      const guidanceHtml = guidance ? `<p>${guidance}</p>` : "";
+      if (!reviewing) return `<div class="studio-entered-forms"><p>Word forms entered in step 1:</p><ul aria-label="Entered forms">${s.forms.map((form) => `<li>${e(form.text)}</li>`).join("")}</ul></div>${guidanceHtml}`;
+      return `${guidanceHtml}
         <div class="studio-forms" aria-label="Discovered forms" aria-busy="${disabled}">${s.forms.map((f, i) => `<article class="studio-form" aria-label="${e(f.text || "New source form")}">
           <div class="studio-form-heading">${check("Use", `forms.${i}.selected`, f.selected !== false, !reviewing)}${field("Source form", `forms.${i}.text`, f.text, { disabled: !reviewing })}</div>
           <p class="studio-form-status">${e(f.discoveryStatus ?? (Number.isInteger(f.paragraphCount)
             ? f.paragraphCount > 0 ? `Found in ${f.paragraphCount.toLocaleString()} distinct ${f.paragraphCount === 1 ? "paragraph" : "paragraphs"}` : "No exact match in the selected corpus"
             : "Corpus evidence needs checking"))}</p>
-          ${f.reason ? `<p class="studio-form-explanation">${e(f.reason)}</p>` : ""}
+          ${f.reason ? `<p class="studio-form-explanation">${narrative(f.reason)}</p>` : ""}
         </article>`).join("")}</div>
         ${reviewing ? `${button("Add spelling or form", "add-form")}${s.forms.some((f) => !Number.isInteger(f.paragraphCount)) ? button("Recheck corpus evidence", "recheck-forms") : ""}` : ""}`;
     }
@@ -244,24 +250,24 @@ function stepContent(s, state) {
       <details class="studio-entry"><summary>Review sample (${s.passages.length} paragraphs)</summary>${s.passages.map((p) => paragraph(p, s)).join("")}</details>`;
     case "4.5": return `<p>Review the author's meanings. Edit, split, or combine descriptions by editing this list and selecting the definitions to use.</p>
       ${s.meanings.map((m, i) => `<section class="studio-entry"><h3>Meaning ${meaningNumber(s, m.id)}</h3>${check("Use this definition", `meanings.${i}.enabled`, m.enabled !== false)}${field("Definition", `meanings.${i}.definition`, m.definition, { textarea: true })}${evidenceDisclosure(evidenceHtml(m.evidence))}</section>`).join("")}
-      ${(value?.excludedSources ?? []).length ? `<details class="studio-entry"><summary>Background findings not kept as separate meanings (${value.excludedSources.length})</summary>${value.excludedSources.map((row) => `<section><p>${e(row.definition)}</p><p>${e(row.reason)}</p></section>`).join("")}</details>` : ""}
+      ${(value?.excludedSources ?? []).length ? `<details class="studio-entry"><summary>Background findings not kept as separate meanings (${value.excludedSources.length})</summary>${value.excludedSources.map((row) => `<section><p>${narrative(row.definition)}</p><p>${narrative(row.reason)}</p></section>`).join("")}</details>` : ""}
       ${button("Add meaning", "add-meaning")}`;
     case "4.6": return `<p>${s.passages.length} research paragraphs containing ${s.assignments.length} occurrences. ${s.recoveryConsidered ?? 0} additional paragraphs checked for missing meanings.</p><p>Review the highlighted occurrences for each meaning. Use Review occurrence to correct an assignment while retaining the full paragraph.</p><p>Judge meanings from the original ${e(s.scope.sourceLanguage.name)} text. Preliminary bilingual reading aids are available on request, without glossary guidance. They are not used in later research decisions or counted as test results. Fresh glossary-guided translations are tested in steps 8 and 9.</p>${(s.recoveryConsidered ?? 0) < 500 && s.meanings.some((m) => m.unused) ? `<p>The bounded search leaves some meanings without a confirmed example; this does not establish corpus-wide absence.</p>${button("Search 100 more paragraphs", "expand-recovery", { disabled })}` : ""}${sourceSpellingNotice(s.assignments)}${meaningsReport(s)}`;
     case "4.7": {
       const proposals = (s.splitProposals ?? s.queue).map((proposal, index) => ({ proposal, index, forms: witnessedSplitForms(s, proposal) }));
       const witnessed = proposals.filter((item) => item.forms.length);
       const unverified = proposals.flatMap(({ proposal, forms }) => proposal.forms.filter((form) => !forms.includes(form)));
-      return `${value?.summary ? `<p>${e(meaningReferences(value.summary, s))}</p>` : ""}${(value?.unverifiedSplits ?? []).length ? `<details class="studio-entry"><summary>Expressions kept with the parent (${value.unverifiedSplits.length})</summary>${value.unverifiedSplits.map((row) => `<p><strong>${e(row.forms.join(", "))}</strong> · ${e(row.reason)}</p>`).join("")}</details>` : ""}${witnessed.length ? `<p>Choose which expressions to research as separate entries after this term. Unchecked expressions stay in the original study. Matching uses the longest selected expression.</p><div class="studio-actions">${button("Select all", "select-splits:all")}${button("Clear selection", "select-splits:none")}</div>${witnessed.map(({ proposal, index, forms }) => {
+      return `${value?.summary ? `<p>${narrative(meaningReferences(value.summary, s))}</p>` : ""}${(value?.unverifiedSplits ?? []).length ? `<details class="studio-entry"><summary>Expressions kept with the parent (${value.unverifiedSplits.length})</summary>${value.unverifiedSplits.map((row) => `<p><strong>${e(row.forms.join(", "))}</strong> · ${narrative(row.reason)}</p>`).join("")}</details>` : ""}${witnessed.length ? `<p>Choose which expressions to research as separate entries after this term. Unchecked expressions stay in the original study. Matching uses the longest selected expression.</p><div class="studio-actions">${button("Select all", "select-splits:all")}${button("Clear selection", "select-splits:none")}</div>${witnessed.map(({ proposal, index, forms }) => {
         const q = s.queue.find((item) => item.id === proposal.id);
-        return `<section class="studio-entry studio-split">${check("Create separate entry", `splitProposals.${index}.selected`, proposal.selected !== false)}<h3>${e(forms.join(", "))}</h3><p>Provisional translation: ${e((proposal.targetTerms ?? []).join(", "))}</p>${proposal.rationale ? `<p>${e(meaningReferences(proposal.rationale, s))}</p>` : ""}${q ? `<details><summary>Review ${q.assignments.length} ${q.assignments.length === 1 ? "occurrence" : "occurrences"} in ${q.passages.length} ${q.passages.length === 1 ? "paragraph" : "paragraphs"}</summary>${q.passages.map((p) => paragraph({ ...p, highlightOccurrences: p.occurrences }, s)).join("")}</details>` : ""}</section>`;
+        return `<section class="studio-entry studio-split">${check("Create separate entry", `splitProposals.${index}.selected`, proposal.selected !== false)}<h3>${e(forms.join(", "))}</h3><p>Provisional translation: ${e((proposal.targetTerms ?? []).join(", "))}</p>${proposal.rationale ? `<p>${narrative(meaningReferences(proposal.rationale, s))}</p>` : ""}${q ? `<details><summary>Review ${q.assignments.length} ${q.assignments.length === 1 ? "occurrence" : "occurrences"} in ${q.passages.length} ${q.passages.length === 1 ? "paragraph" : "paragraphs"}</summary>${q.passages.map((p) => paragraph({ ...p, highlightOccurrences: p.occurrences }, s)).join("")}</details>` : ""}</section>`;
       }).join("")}` : "<p>No separate entries are needed for the observed uses.</p>"}
         ${unverified.length ? `<details class="studio-entry"><summary>Unverified suggestions (${unverified.length})</summary><p>These expressions have no exact occurrence with the proposed meaning in this research sample and will not be queued.</p><ul>${unverified.map((form) => `<li>${e(form)}</li>`).join("")}</ul></details>` : ""}`;
     }
     case "5": {
       const report = reviewCompoundReport(s, value);
       return `${!report.compounds.length ? "<p>No qualifying recurring compounds or phrases were found in the research sample.</p>" : `<p>These expressions have verified examples in this research sample and will be saved for further consideration.</p>
-        ${report.compounds.map((c) => `<details class="studio-entry"><summary>${e((c.forms ?? [c.phrase]).join(", "))} · ${quantity(c.paragraphIds.length, "paragraph")}</summary><p>${e(c.explanation)}</p>${s.passages.filter((p) => c.paragraphIds.includes(p.id)).map((p) => paragraph(p, s)).join("")}</details>`).join("")}`}
-        ${report.unverifiedCompounds.length ? `<details class="studio-entry"><summary>Unverified suggestions (${report.unverifiedCompounds.length})</summary><p>These suggestions do not meet the research-witness requirement and will not be used for translation candidates.</p>${report.unverifiedCompounds.map((c) => `<p><strong>${e(c.phrase)}</strong> · ${e(c.reason)}</p>`).join("")}</details>` : ""}`;
+        ${report.compounds.map((c) => `<details class="studio-entry"><summary>${e((c.forms ?? [c.phrase]).join(", "))} · ${quantity(c.paragraphIds.length, "paragraph")}</summary><p>${narrative(c.explanation)}</p>${s.passages.filter((p) => c.paragraphIds.includes(p.id)).map((p) => paragraph(p, s)).join("")}</details>`).join("")}`}
+        ${report.unverifiedCompounds.length ? `<details class="studio-entry"><summary>Unverified suggestions (${report.unverifiedCompounds.length})</summary><p>These suggestions do not meet the research-witness requirement and will not be used for translation candidates.</p>${report.unverifiedCompounds.map((c) => `<p><strong>${e(c.phrase)}</strong> · ${narrative(c.reason)}</p>`).join("")}</details>` : ""}`;
     }
     case "6": {
       const preference = uniqueTexts(s.candidates.filter((c) => c.selected !== false && c.meaningIds.length).map((c) => c.text));
@@ -274,8 +280,8 @@ function stepContent(s, state) {
         </details>
         ${activeMeanings(s).map((m) => {
           const candidates = s.candidates.map((c, i) => ({ c, i })).filter(({ c }) => (c.proposedMeaningIds ?? c.meaningIds).includes(m.id));
-          return `<section class="studio-entry studio-meaning"><h3>Meaning ${meaningNumber(s, m.id)}</h3><p class="studio-definition">${e(m.definition)}</p>
-            <ul class="studio-candidate-choices" aria-label="Translations for meaning ${meaningNumber(s, m.id)}">${candidates.map(({ c, i }) => `<li><label class="studio-check"><input type="checkbox" data-studio-field="candidates.${i}.meaningIds" data-studio-meaning="${e(m.id)}" ${c.selected !== false && c.meaningIds.includes(m.id) ? "checked" : ""}><span data-studio-candidate-text="${i}">${e(c.text || "New translation")}</span></label></li>`).join("")}</ul>
+          return `<section class="studio-entry studio-meaning"><h3>Meaning ${meaningNumber(s, m.id)}</h3><p class="studio-definition">${narrative(m.definition)}</p>
+            <ul class="studio-candidate-choices" aria-label="Translations for meaning ${meaningNumber(s, m.id)}">${candidates.map(({ c, i }) => `<li><label class="field__checkbox studio-check"><input type="checkbox" data-studio-field="candidates.${i}.meaningIds" data-studio-meaning="${e(m.id)}" ${c.selected !== false && c.meaningIds.includes(m.id) ? "checked" : ""}><span data-studio-candidate-text="${i}">${e(c.text || "New translation")}</span></label></li>`).join("")}</ul>
             <details class="studio-meaning-editor" data-studio-disclosure="${e(`candidate-meaning:${m.id}`)}"><summary>Usage notes and editing</summary>
               <p>Selections apply to this meaning. Preference and usage notes apply to the complete entry.</p>
               ${candidates.map(({ c, i }) => `<article class="studio-candidate"><div class="studio-candidate-heading"><h4 data-studio-candidate-text="${i}">${e(c.text || "New translation")}</h4><span class="studio-priority">${preference.includes(c.text) ? `Preference ${preference.indexOf(c.text) + 1}` : "Not selected"}</span></div>
@@ -285,7 +291,7 @@ function stepContent(s, state) {
             </details></section>`;
         }).join("")}`;
     }
-    case "7": return (value?.decisions ?? []).length ? (value.decisions.map((d) => `<article class="studio-entry"><h3>${e(d.spelling)}</h3><p>${e(d.classification)} · ${e(d.reason)}</p>${evidenceHtml(d.evidence)}</article>`).join("")) : "<p>No unresolved spelling questions were identified.</p>";
+    case "7": return (value?.decisions ?? []).length ? (value.decisions.map((d) => `<article class="studio-entry"><h3>${e(d.spelling)}</h3><p>${e(d.classification)} · ${narrative(d.reason)}</p>${evidenceHtml(d.evidence)}</article>`).join("")) : "<p>No unresolved spelling questions were identified.</p>";
     case "8": case "9": return testingReport(s, view);
     case "10a": return `<p>Review translations of ${e(s.scope.term)}. Unused forms are unchecked for deletion; select any you want to keep.</p>
       <p>${quantity(studyAssignments(s).length, "researched occurrence")} across ${quantity(new Set(studyAssignments(s).map((a) => a.paragraphId)).size, "paragraph")}.</p>${sourceSpellingNotice(studyAssignments(s))}
@@ -311,8 +317,8 @@ function stepContent(s, state) {
           const author = meaning.author || "Source not identified";
           const group = authors.get(author) ?? []; group.push(meaning); authors.set(author, group);
         }
-        findings = `${value.summary ? `<details class="studio-entry"><summary>Source assessment</summary><p>${e(value.summary)}</p></details>` : ""}
-          ${(value.authorAssessments ?? []).length ? `<details class="studio-entry"><summary>Author assessments (${value.authorAssessments.length})</summary>${value.authorAssessments.map((a) => `<section><h4>${e(a.author)}</h4><p>${e(a.summary)}</p></section>`).join("")}</details>` : ""}
+        findings = `${value.summary ? `<details class="studio-entry"><summary>Source assessment</summary><p>${narrative(value.summary)}</p></details>` : ""}
+          ${(value.authorAssessments ?? []).length ? `<details class="studio-entry"><summary>Author assessments (${value.authorAssessments.length})</summary>${value.authorAssessments.map((a) => `<section><h4>${e(a.author)}</h4><p>${narrative(a.summary)}</p></section>`).join("")}</details>` : ""}
           ${authors.size ? "<p>Open an author to review the source meanings and supporting quotations.</p>" : "<p>No source meanings were identified.</p>"}
           ${[...authors].map(([author, meanings]) => `<details class="studio-entry studio-author-group"><summary>${e(author)} · ${quantity(meanings.length, "source meaning")}</summary>${evidenceHtml(meanings, seenUrls)}</details>`).join("")}`;
       } else findings = evidenceHtml(value && { ...value, evidence: null }, seenUrls);
@@ -329,7 +335,7 @@ function modal(s, view) {
   let title; let body; let actions;
   if (m?.kind === "redo") {
     title = "Redo this step?";
-    body = "<p>Redoing this step will clear the data from all the later steps that depend on data from this step.</p>";
+    body = "<p>Changing the data in this form means you will need to redo this step and any later steps that depend on it. Do you want to continue editing?</p>";
     actions = button("Cancel", "close-modal", { modalCancel: true, modalInitialFocus: true })
       + primaryButton("Continue", "studio:confirm-redo");
   } else if (m?.kind === "delete") {
@@ -357,7 +363,7 @@ function modal(s, view) {
         ${m.contextError ? `<p class="modal__error" role="alert">${e(m.contextError)}</p>` : ""}</div>` : ""}
       <label class="field"><span class="field__label">Meaning in this occurrence</span><select class="field__input" data-studio-decision="meaningReview" data-modal-initial-focus ${view.savingAssignment || m.loadingContext ? "disabled" : ""}>
       ${s.meanings.filter((meaning) => meaning.enabled !== false).map((meaning) => `<option value="${e(meaning.id)}" ${s.decisionInput?.meaningReview === meaning.id ? "selected" : ""}>${meaningNumber(s, meaning.id)}. ${e(meaning.definition)}</option>`).join("")}</select></label>
-      <label class="studio-check"><input type="checkbox" data-studio-decision="preserveSourceSpelling" ${s.decisionInput?.preserveSourceSpelling ? "checked" : ""} ${view.savingAssignment || m.loadingContext ? "disabled" : ""}>Retain this source spelling verbatim</label>
+      <label class="field__checkbox studio-check"><input type="checkbox" data-studio-decision="preserveSourceSpelling" ${s.decisionInput?.preserveSourceSpelling ? "checked" : ""} ${view.savingAssignment || m.loadingContext ? "disabled" : ""}>Retain this source spelling verbatim</label>
       <p>Use this only when the highlighted occurrence explicitly discusses the original spelling or pronunciation. It remains tested in context, but does not count as usage of a target translation. Ordinary references still use the glossary's target forms.</p>`;
     actions = button("Cancel", "close-modal", { modalCancel: true, disabled: view.savingAssignment })
       + primaryButton(view.savingAssignment ? "Saving…" : "Save meaning", "studio:save-assignment", { modalDefault: true, disabled: Boolean(view.savingAssignment || m.loadingContext) });
@@ -377,7 +383,7 @@ function modal(s, view) {
     title = "Choose a meaning";
     body = `<p>Review the highlighted occurrence of ${e(s.scope.term)}. Choose an existing definition, add a meaning, or remove the paragraph.</p>
       ${paragraph({ ...decision.paragraph, highlightOccurrence: decision.paragraph.occurrences.find((o) => o.id === decision.occurrenceId), translation: decision.recommendation.translation }, s)}
-      <label class="field"><span class="field__label">Existing meaning</span><select class="field__input" data-studio-decision="meaning"><option value="">Select a definition</option>${s.meanings.filter((m) => m.enabled !== false).map((m) => `<option value="${e(m.id)}" ${s.decisionInput?.meaning === m.id ? "selected" : ""}>${meaningNumber(s, m.id)}. ${e(m.definition)}</option>`).join("")}</select></label>
+      <label class="field"><span class="field__label">Existing meaning</span><select class="field__input" data-studio-decision="meaning"><option value="">Select a definition</option>${s.meanings.filter((m) => m.enabled !== false).map((m) => `<option value="${e(m.id)}" ${s.decisionInput?.meaning === m.id ? "selected" : ""}>${meaningNumber(s, m.id)}. ${narrative(m.definition)}</option>`).join("")}</select></label>
       <label class="field"><span class="field__label">New meaning</span><textarea class="field__textarea" data-studio-decision="definition">${e(s.decisionInput?.definition ?? decision.recommendation.definition)}</textarea></label>`;
     actions = button("Drop this paragraph", "decision:drop") + button("Assign selected meaning", "decision:assign", { disabled: !s.decisionInput?.meaning }) + button("Add new meaning", "decision:new");
   } else if (decision?.kind === "candidate") {
@@ -399,6 +405,7 @@ function modal(s, view) {
 }
 
 function activityProgress(s, view) {
+  if (s.step === "2a" && !studioFormsResearchStarted(s) && (!view.busy || view.recommendingStep === s.step)) return "";
   const items = studioActivityItems(s);
   if (!items.length) return view.busy || view.message ? `<div class="studio-progress" role="status" aria-live="polite">${view.busy ? loadingSpinner({ key: `studio-${s.id}-${s.step}`, label: "Research in progress" }) : ""}<span>${e(view.message || "Research in progress…")}</span></div>` : "";
   function list(nodes, path = []) {
@@ -413,13 +420,25 @@ function activityProgress(s, view) {
       if (state === "running" && !view.busy) state = "paused";
       const icon = state === "complete" ? "✓" : state === "failed" ? "!" : state === "paused" ? "Ⅱ" : "○";
       const singleOperation = children.length === 1 && children[0].id.startsWith("operation:") && !(children[0].children?.length) ? children[0] : null;
-      const result = node.result || singleOperation?.result || "";
-      const measurement = studioActivityTiming(s, s.step, key);
-      const summary = result.length > 300 ? `${result.slice(0, 300)}…` : result;
+      const originalFindings = s.step === "2a" && key.length === 2 && key[0] === "origin" && node.id === "search";
+      const result = (originalFindings && s.origin?.evidence?.summary) || node.result || singleOperation?.result || "";
+      const formatted = result ? studioResultPresentation(result) : null;
+      const reused = node.reused || singleOperation?.reused ? '<p class="studio-work-result studio-work-reused">Saved result reused.</p>' : "";
+      const sources = s.step === "2a" && key.length === 1 && node.id === "origin"
+        ? evidenceHtml({ citations: s.origin?.evidence?.citations }) : "";
+      const corpusChecks = s.formDiscovery?.corpusResults ?? s.forms;
+      const completedCorpus = s.step === "2a" && key.length === 1 && node.id === "forms" && state === "complete"
+        && corpusChecks.length > 0 && corpusChecks.every((form) => Number.isInteger(form.paragraphCount) && form.paragraphCount >= 0);
+      const corpusForms = completedCorpus ? corpusChecks
+        .filter((form) => Number.isInteger(form.paragraphCount) && form.paragraphCount > 0) : [];
+      const corpusName = s.scope.corpus === "samael" ? "the Samael Aun Weor corpus" : "the selected projects";
+      const childList = children.length && !singleOperation ? list(children, key) : "";
       return `<li class="studio-work-item" data-work-state="${e(state)}"><div class="studio-work-heading">${state === "running" ? loadingSpinner({ key: `work-${JSON.stringify(key)}`, label: `In progress: ${node.label}` }) : `<span class="studio-work-icon" aria-hidden="true">${icon}</span>`}<span>${e(node.label)}</span><span class="studio-work-state">${e(({ complete: "Completed", waiting: "Waiting", running: "In progress", paused: "Paused", failed: "Needs attention" })[state])}</span></div>
-        ${measurement ? `<p class="studio-work-timing">Tool time: ${e(formatStudioDuration(measurement.elapsedMs))} · ${measurement.attempts} ${measurement.attempts === 1 ? "attempt" : "attempts"}</p>` : ""}
-        ${result ? `<p class="studio-work-result">${e(summary)}${node.reused || singleOperation?.reused ? ' <span class="studio-work-reused">Saved result reused.</span>' : ""}</p>${result.length > 300 ? `<details data-studio-disclosure="${e(`activity:${JSON.stringify(key)}`)}"><summary>Read result summary</summary><p class="studio-work-result">${e(result)}</p></details>` : ""}` : ""}
-        ${node.error || singleOperation?.error ? `<p class="studio-work-error">${e(node.error || singleOperation.error)}</p>` : ""}${children.length && !singleOperation ? list(children, key) : ""}</li>`;
+        ${completedCorpus ? `<p class="studio-work-result">We found ${quantity(corpusForms.length, "form")} used in ${corpusName}${corpusForms.length ? ":" : "."}</p>
+          ${corpusForms.length ? `<ul class="studio-corpus-forms" aria-label="Forms found in the corpus">${corpusForms.map((form) => `<li>${e(form.text)} — ${e(form.paragraphCount.toLocaleString())} matching ${form.paragraphCount === 1 ? "paragraph" : "paragraphs"}</li>`).join("")}</ul>` : ""}`
+          : formatted ? `${formatted.long ? `<p class="studio-work-result">${e(formatted.preview)}</p><details data-studio-disclosure="${e(`activity:${JSON.stringify(key)}`)}"><summary>${originalFindings ? "Read full findings" : "Read result summary"}</summary><div class="studio-work-result studio-report">${formatted.html}</div></details>` : `<div class="studio-work-result studio-report">${formatted.html}</div>`}${reused}` : ""}
+        ${sources ? `<details data-studio-disclosure="original-spelling-sources"><summary>Evidence and sources</summary>${sources}</details>` : ""}
+        ${node.error || singleOperation?.error ? `<p class="studio-work-error">${e(node.error || singleOperation.error)}</p>` : ""}${completedCorpus && childList ? `<details data-studio-disclosure="forms-corpus-details"><summary>Check details</summary>${childList}</details>` : childList}</li>`;
     }).join("")}</ol>`;
   }
   function status(node) {
@@ -435,30 +454,21 @@ function activityProgress(s, view) {
 
 function skipRecommendation(s, view) {
   if (!studioCanRecommendSkip(s.step) || ["complete", "merged", "cancelled"].includes(s.status)) return "";
+  if (studioResearchStarted(s) || (view.busy && view.recommendingStep !== s.step)) return "";
   const recommendation = currentStudioRecommendation(s);
   const working = view.recommendingStep === s.step;
   return `<aside class="studio-recommendation" aria-label="AI step recommendation">
-    <div class="studio-recommendation-heading"><h3>AI recommendation${recommendation && !working ? `: ${e(recommendation.recommendation)}` : ""}</h3>
-    ${!view.busy ? button(recommendation ? "Refresh recommendation" : "Get AI recommendation", "recommend", { disabled: view.saving }) : ""}</div>
+    <div class="studio-recommendation-heading"><h3>AI recommendation${recommendation && !working ? `: ${e(recommendation.recommendation)} it.` : ""}</h3>
+    ${!view.busy && s.step !== "2a" ? button(recommendation ? "Refresh recommendation" : "Get AI recommendation", "recommend", { disabled: view.saving }) : ""}</div>
     ${working ? `<p class="studio-progress" role="status">${loadingSpinner({ key: "skip-recommendation", label: "Considering whether this research step would help" })}<span>Considering whether this research step would help…</span></p>`
-      : `<p>${e(recommendation?.reason ?? "No current recommendation. You can request advice, run the research, or skip it.")}</p>`}
-    <p class="studio-recommendation-guidance">You decide whether to run or skip. Uncertainty defaults to Run.</p>
+      : recommendation ? `<details class="studio-recommendation-reason" data-studio-disclosure="recommendation-reason"><summary class="text-link">Show reasoning</summary><p>${narrative(recommendation.reason)}</p></details>`
+        : "<p>No current recommendation. You can request advice, run the research, or skip it.</p>"}
     ${s.step === "4.4.4" ? "<p>Skipping here discards the entire source-research branch. A confirmation will explain this before anything is skipped.</p>" : ""}
   </aside>`;
 }
 
-function stepTimings(s) {
-  const rows = studioTimingSummary(s);
-  const duration = formatStudioDuration;
-  const label = (id) => id.startsWith("recommendation:") ? `AI recommendation · ${studioStepNumber(id.slice(15))} · ${STUDIO_STEPS.find((step) => step.id === id.slice(15))?.label ?? "Research"}`
-    : ({ "reading-aids": "Preliminary reading aids", counterfactual: "Omitted-interpretation audit" })[id] ?? `${studioStepNumber(id)} · ${STUDIO_STEPS.find((step) => step.id === id)?.label ?? "Research"}`;
-  return `${s.status === "complete" && !s.referenceStudyId ? button("Compare paragraph budgets", "compare-budgets") : ""}${s.referenceStudyId ? `<aside class="studio-entry"><strong>Controlled paragraph-budget comparison</strong><p>Discovery and recovery are measured separately. Focused and final translation tests use the fixed ${s.comparisonReference?.paragraphCount ?? 101}-paragraph reference and its original meaning assignments. The glossary is not overwritten by this comparison.</p>${!studioView().busy && s.steps[s.step]?.value && !s.pendingDecision && ["bibliography", "assignment"].includes(s.budgetComparisonPhase) ? button(s.budgetComparisonPhase === "bibliography" ? "Keep reference inventory and compare assignments" : "Keep reference sample and compare translations", "budget-next") : s.step === "9" && s.steps["9"]?.value?.complete && s.status !== "complete" ? button("Finish budget comparison", "budget-next") : s.budgetComparisonPhase === "complete" && !s.comparisonResults?.counterfactual ? button("Test omitted interpretation", "counterfactual", { disabled: studioView().busy }) : ""}${s.counterfactualSummary ? `<h4>Omitted-interpretation audit: ${e(s.counterfactualSummary.severity)}</h4><blockquote>${e(s.counterfactualSummary.translation)}</blockquote><p>${e(s.counterfactualSummary.explanation)}</p>` : ""}</aside>` : ""}<details class="studio-timings" data-studio-disclosure="step-timings"><summary>Step timings${rows.length ? ` · ${rows.length} steps measured` : ""}</summary>
-    <p>Automated elapsed time excludes human review and time between Pause and Resume. Steps are ordered by recorded elapsed time. Older work without timing data is not measured.</p>
-    ${rows.length ? `<div class="studio-timing-table"><table><caption>Recorded research timings</caption><thead><tr><th scope="col">Step</th><th scope="col">Automated elapsed</th><th scope="col">Runs</th><th scope="col">Tool attempts</th><th scope="col">Cache reuses</th><th scope="col">AI work (summed)</th><th scope="col">Save wait (summed)</th></tr></thead><tbody>${rows.map((row) => `<tr><th scope="row">${e(label(row.step))}</th><td>${row.runs ? `${e(duration(row.elapsedMs))}${row.incomplete ? " (partial)" : ""}` : "Not measured"}</td><td>${row.runs}</td><td>${row.operations}</td><td>${row.cacheHits}</td><td>${row.measuredAiCalls ? e(duration(row.aiMs)) : "Not measured"}</td><td>${e(duration(row.saveMs))}</td></tr>`).join("")}</tbody></table></div>
-    <p class="studio-timing-note">AI work sums measured new executions; parallel calls can overlap. Save wait includes preparation, queueing and storage and can also overlap. These values are not additive parts of elapsed time. A save's own timing is preserved at the next normal checkpoint. Unfinished runs show elapsed time only through the last checkpoint. Paused requests measure waiting up to Pause, not provider billing.</p>
-    <details data-studio-disclosure="timing-attempts"><summary>Request and retry details</summary>${rows.map((row) => `<section><h4>${e(label(row.step))}</h4>${(s.timing.steps[row.step].runs ?? []).map((run) => `<details data-studio-disclosure="${e(`timing-run:${row.step}:${run.sequence}`)}"><summary>Run ${run.sequence} · ${e(run.status)} · ${e(duration(run.elapsedMs))}</summary><p>Started ${e(run.startedAt)}${run.finishedAt ? ` · Finished ${e(run.finishedAt)}` : " · End not recorded"}</p><ol>${(run.operations ?? []).map((operation) => `<li><strong>${e(operation.label)}</strong> · ${e(operation.status)} · ${e(duration(operation.elapsedMs))}<p>Request wait: ${e(duration(operation.requestMs))} · AI: ${e(duration(operation.aiOperationMs))} · Save wait: ${e(duration(operation.saveMs))} · ${e(({ "study-cache": "Saved study result reused", "native-cache": "Native cached result reused", executed: "New tool execution", unknown: "Native cache status unavailable" })[operation.cacheSource] ?? "Interrupted before result")}</p></li>`).join("")}</ol></details>`).join("")}</section>`).join("")}</details>` : "<p>Timing will be recorded when work next runs. No research is started by opening this report.</p>"}
-    <p>The complete timing records are included in Export research.</p>
-    ${!studioView().busy && s.status === "active" && s.steps[s.step]?.value && !s.pendingDecision && !["1", "10a", "10b", "11", "12"].includes(s.step) && (!["8", "9"].includes(s.step) || (s.steps[s.step].value.complete && s.comparisonStarts?.[s.step])) ? `<p>${["8", "9"].includes(s.step) ? "This comparison restarts from the candidates and notes recorded before this step. Current edits and trials remain in the export; model calls run again." : "Rerunning replaces this step's draft with fresh AI results and may incur provider costs. Earlier results remain in the export; source retrievals may be reused."}</p>${button("Rerun this step for comparison", "compare-run")}` : ""}</details>`;
+function budgetComparisons(s) {
+  return `${s.status === "complete" && !s.referenceStudyId ? button("Compare paragraph budgets", "compare-budgets") : ""}${s.referenceStudyId ? `<aside class="studio-entry"><strong>Controlled paragraph-budget comparison</strong><p>Discovery and recovery are measured separately. Focused and final translation tests use the fixed ${s.comparisonReference?.paragraphCount ?? 101}-paragraph reference and its original meaning assignments. The glossary is not overwritten by this comparison.</p>${!studioView().busy && s.steps[s.step]?.value && !s.pendingDecision && ["bibliography", "assignment"].includes(s.budgetComparisonPhase) ? button(s.budgetComparisonPhase === "bibliography" ? "Keep reference inventory and compare assignments" : "Keep reference sample and compare translations", "budget-next") : s.step === "9" && s.steps["9"]?.value?.complete && s.status !== "complete" ? button("Finish budget comparison", "budget-next") : s.budgetComparisonPhase === "complete" && !s.comparisonResults?.counterfactual ? button("Test omitted interpretation", "counterfactual", { disabled: studioView().busy }) : ""}${s.counterfactualSummary ? `<h4>Omitted-interpretation audit: ${e(s.counterfactualSummary.severity)}</h4><blockquote>${e(s.counterfactualSummary.translation)}</blockquote><p>${narrative(s.counterfactualSummary.explanation)}</p>` : ""}</aside>` : ""}`;
 }
 
 export function renderGlossaryResearchStudio(state) {
@@ -470,35 +480,49 @@ export function renderGlossaryResearchStudio(state) {
     ${view.history.map((h) => `<article class="studio-entry"><h3>${e(h.term)}</h3><p>${e(h.status)} · ${e(STUDIO_STEPS.find((st) => st.id === h.step)?.label)}</p><div class="studio-actions">${button(view.openingStudyId === h.id ? "Opening…" : "Open study", `resume:${h.id}`, { disabled: view.openingStudyId === h.id })}${errorButton("Delete research", `studio:delete:${h.id}`)}</div></article>`).join("")}</div>`;
   else {
     const step = STUDIO_STEPS.find((st) => st.id === s.step);
+    const canExport = STUDIO_STEPS.indexOf(step) >= STUDIO_STEPS.findIndex((st) => st.id === "4.2");
     const needsResult = !["1", "10a", "10b", "11", "12"].includes(s.step);
     const unfinished = Boolean(s.steps[s.step]?.value?.pending);
+    const stepComplete = Boolean(s.steps[s.step]?.approved || ["complete", "skipped"].includes(s.steps[s.step]?.status)
+      || (s.steps[s.step]?.value && !unfinished && !s.pendingDecision));
     const entryNeedsRetest = s.step === "9" && !entryTrialsAreCurrent(s);
     const meaningNeedsRetest = s.step === "8" && !meaningTrialsAreCurrent(s);
     const staleDictionary = s.step === "4.1" && s.steps[s.step]?.value && s.steps[s.step].value.dictionaryVersion !== STUDIO_DICTIONARY_REVIEW_VERSION;
     const staleForms = s.step === "2a" && s.steps[s.step]?.value && s.formDiscovery?.version !== 3;
     const browsingCheckpoint = view.revisiting && (s.steps[s.step]?.approved || ["complete", "skipped"].includes(s.steps[s.step]?.status));
-    body = `<div class="studio-layout" data-studio-disclosure-context="${e(JSON.stringify([s.id, s.step]))}"><aside class="studio-outline" aria-label="Research steps"><ol>${STUDIO_STEPS.map((st) => {
+    const continueDisabled = Boolean(view.saving) || !browsingCheckpoint && (Boolean(s.pendingDecision) || entryNeedsRetest || meaningNeedsRetest || (s.step === "9" && s.assignmentReviewPending) || unfinished || Boolean(staleDictionary) || Boolean(staleForms) || (needsResult && !s.steps[s.step]?.value) || (s.step === "2a" && (s.formDiscovery && s.formDiscovery.phase !== "complete")));
+    const needsRun = needsResult && (!s.steps[s.step]?.value || (unfinished && !s.pendingDecision) || view.error || staleDictionary || staleForms);
+    const emphasizeRun = !view.busy && !s.pendingDecision && needsRun && continueDisabled && currentStudioRecommendation(s)?.recommendation === "Run";
+    const runButton = emphasizeRun ? (label, action, options) => primaryButton(label, `studio:${action}`, options) : button;
+    const content = stepContent(s, state);
+    const formsReview = s.step === "2a" && s.formDiscovery?.phase === "complete" && Boolean(content);
+    const contentHtml = content ? `<div class="studio-step"${formsReview ? ' data-studio-forms-review' : ""}>${content}</div>` : "";
+    body = `<div class="studio-layout" data-studio-disclosure-context="${e(JSON.stringify([s.id, s.step]))}"><aside class="studio-outline" aria-label="Research steps"><h2>Research steps</h2><ol>${STUDIO_STEPS.map((st) => {
       const status = studioStepStatusLabel(s.steps[st.id]);
       return `<li ${st.id === s.step ? 'aria-current="step"' : ""}><button type="button" class="studio-step-link" data-action="studio:visit:${e(st.id)}" ${studioCanVisitStep(s, st.id) ? "" : "disabled"} ${st.id === s.step ? 'aria-current="step"' : ""}>${e(studioStepNumber(st.id))} · ${e(st.label)}${status ? status === "✓" ? " ✓" : ` · ${e(status)}` : ""}</button></li>`;
     }).join("")}</ol>${Object.values(s.steps).some((record) => record.status === "stale") ? "<p>Needs review: earlier inputs changed. Saved results remain available.</p>" : ""}</aside>
-      <section class="studio-main stack"><header><p>${e(s.scope.sourceLanguage.name)} → ${e(s.scope.targetLanguage.name)}</p><h2>${e(studioStepNumber(step.id))} · ${e(step.label)}</h2></header>
+      <section class="studio-main"><header class="studio-step-header"><h2>${e(studioStepNumber(step.id))} · ${e(step.label)}</h2><p>${e(s.scope.sourceLanguage.name)} → ${e(s.scope.targetLanguage.name)}</p></header>
+      <div class="studio-content">
       ${["complete", "merged", "cancelled"].includes(s.status) ? `<p role="status">Study ${e(s.status)}. All research remains saved.</p>` : ""}
-      ${stepTimings(s)}
-      ${skipRecommendation(s, view)}
+      ${s.step !== "2a" ? skipRecommendation(s, view) : ""}
       ${["4.4.1", "4.4.2", "4.4.4"].includes(s.step) || (s.step === "4.5" && sourceSummaryMustBeSkipped(s)) ? `<p class="studio-step-rule">If both source searches are skipped, the source summary (4.4.3) is skipped automatically.${sourceSummaryMustBeSkipped(s) ? " This rule has been applied." : ""}</p>` : ""}
+      ${s.step === "2a" && !formsReview ? contentHtml : ""}
+      ${s.step === "2a" ? skipRecommendation(s, view) : ""}
       ${activityProgress(s, view)}
       ${view.error ? `<p class="modal__error" role="alert">${e(view.error)}</p>` : ""}
-      <div class="studio-step">${stepContent(s, state)}</div>
-      <footer class="studio-actions">${button("Back", "back")}${s.pendingDecision && view.hideDecision ? button("Review paused research", "review-decision") : ""}
-      ${button("Export research", "export", { disabled: view.exporting, tooltip: "export a summary of the data uncovered during the research process in a JSON format appropriate for sending it to an AI for further discussion." })}
-      ${view.busy ? button("Pause research", "pause") : `${step.optional || s.step === "4.4.4" ? button("Skip this step", "skip") : ""}
+      ${s.step !== "2a" || formsReview ? contentHtml : ""}
+      ${budgetComparisons(s)}</div>
+      <footer class="studio-actions studio-footer" data-studio-step="${e(s.step)}">${s.pendingDecision && view.hideDecision ? button("Review paused research", "review-decision") : ""}
+      ${canExport ? button("Export research", "export", { disabled: view.exporting, tooltip: "export a summary of the data uncovered during the research process in a JSON format appropriate for sending it to an AI for further discussion.", tooltipOptions: { align: "start" } }) : ""}
+      ${view.busy ? button("Pause research", "pause") : `${(step.optional || s.step === "4.4.4") && !stepComplete ? button("Skip this step", "skip") : ""}
       ${view.revisiting && s.steps[s.step]?.value && !s.steps[s.step].value.pending && !["1", "10a", "10b", "11", "12"].includes(s.step) ? button("Redo this step", "redo") : ""}
       ${s.step === "9" && s.assignmentReviewPending ? button("Retest meanings", "retest-meanings")
-        : ["8", "9"].includes(s.step) && !s.pendingDecision ? button(s.steps[s.step]?.value?.complete ? s.step === "8" ? "Retest meanings" : "Retest entry" : view.error ? "Retry this step" : unfinished ? "Resume this step" : "Run this step", "run", { disabled: !entryNeedsRetest && !meaningNeedsRetest })
-        : needsResult && (!s.steps[s.step]?.value || (unfinished && !s.pendingDecision) || view.error || staleDictionary || staleForms) ? button(staleDictionary ? "Refresh dictionary research" : staleForms ? "Refresh forms research" : s.step === "2a" && s.formDiscovery ? "Retry search" : view.error ? "Retry this step" : unfinished ? "Resume this step" : "Run this step", "run") : ""}
-      ${primaryButton(view.saving ? "Saving…" : s.step === "11" ? "Open term editor" : s.step === "12" ? s.status === "complete" ? "Return to glossary" : s.queue.some((q) => q.status === "queued") ? "Continue split-entry queue" : "Finish research" : "Save and continue", s.step === "12" && s.status === "complete" ? "studio:exit" : "studio:next", { disabled: Boolean(view.saving) || !browsingCheckpoint && (Boolean(s.pendingDecision) || entryNeedsRetest || meaningNeedsRetest || (s.step === "9" && s.assignmentReviewPending) || unfinished || Boolean(staleDictionary) || Boolean(staleForms) || (needsResult && !s.steps[s.step]?.value) || (s.step === "2a" && (s.formDiscovery && s.formDiscovery.phase !== "complete"))) })}`}
+        : ["8", "9"].includes(s.step) && !s.pendingDecision ? runButton(s.steps[s.step]?.value?.complete ? s.step === "8" ? "Retest meanings" : "Retest entry" : view.error ? "Retry this step" : unfinished ? "Resume this step" : "Run this step", "run", { disabled: !entryNeedsRetest && !meaningNeedsRetest })
+        : needsRun ? runButton(staleDictionary ? "Refresh dictionary research" : staleForms ? "Refresh forms research" : s.step === "2a" && s.formDiscovery ? "Retry search" : view.error ? "Retry this step" : unfinished ? "Resume this step" : "Run this step", "run") : ""}
+      ${needsRun && continueDisabled ? "" : primaryButton(view.saving ? "Saving…" : s.step === "1" ? "Begin research" : s.step === "11" ? "Open term editor" : s.step === "12" ? s.status === "complete" ? "Return to glossary" : s.queue.some((q) => q.status === "queued") ? "Continue split-entry queue" : "Finish research" : "Save and continue", s.step === "12" && s.status === "complete" ? "studio:exit" : "studio:next", { disabled: continueDisabled })}`}
       </footer></section></div>`;
   }
   return pageShell({ title: s?.scope.term ? `Research: ${s.scope.term}` : "Glossary research studio",
-    navButtons: [button("Back to glossary", "exit")], body, tools: "", leftTools: "", noticeText: "" }) + modal(s, view);
+    headerClass: "studio-page-header", bodyClass: s ? "page-body--studio" : "",
+    navButtons: [actionNavButton("Glossary", "studio:exit", true, { isBack: true })], body, tools: "", leftTools: "", noticeText: "" }) + modal(s, view);
 }

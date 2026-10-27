@@ -1,4 +1,4 @@
-import { STUDIO_STEPS, stableSignature, studioStepNumber, uniqueTexts } from "./glossary-research-studio-workflow.js";
+import { STUDIO_STEPS, stableSignature, studioToolSignature, studioStepNumber, uniqueTexts } from "./glossary-research-studio-workflow.js";
 
 // Recommendations inspect a small preview, never the saved evidence ledger.
 const VERSION = 1;
@@ -61,7 +61,25 @@ export function studioRecommendationInput(study, step = study.step) {
     model: study.model };
 }
 
-export const studioRecommendationKey = (study, step = study.step) => stableSignature(studioRecommendationInput(study, step));
+export function studioRecommendationKey(study, step = study.step) {
+  const input = studioRecommendationInput(study, step);
+  if (step === "2a") {
+    input.term = study.scope.term;
+    input.forms = uniqueTexts([study.scope.term, ...study.scope.forms]);
+  }
+  return stableSignature(input);
+}
+
+export function studioResearchStarted(study, step = study.step) {
+  // A saved plan alone does not mean the user has run the research.
+  const started = (node) => Boolean(node.status && node.status !== "waiting"
+    || node.result || node.error || node.children?.some(started));
+  const record = study.steps[step];
+  return Boolean((step === "2a" && study.formDiscovery) || record?.value || record?.approved
+    || ["running", "failed", "awaiting-review", "complete", "skipped"].includes(record?.status)
+    || study.activitySteps?.[step]?.items?.some(started));
+}
+export const studioFormsResearchStarted = (study) => studioResearchStarted(study, "2a");
 export function currentStudioRecommendation(study) {
   const record = study.skipRecommendations?.[study.step];
   return record?.contextKey === studioRecommendationKey(study) ? record : null;
@@ -71,7 +89,7 @@ export async function recommendStudioStep(study, tools, { refresh = false } = {}
   const step = study.step;
   if (!studioCanRecommendSkip(step)) throw new Error("This research step cannot be skipped.");
   const input = studioRecommendationInput(study);
-  const contextKey = stableSignature(input);
+  const contextKey = studioRecommendationKey(study);
   const previous = currentStudioRecommendation(study);
   if (previous && !refresh) return previous;
   const number = studioStepNumber(step);
@@ -79,7 +97,9 @@ export async function recommendStudioStep(study, tools, { refresh = false } = {}
     + "Consider Skip, Run, or not sure internally. If uncertain, missing evidence, or unable to make a recommendation, output Run. Recommend Skip only with positive support that this research is unnecessary for a useful accurate glossary. Do not perform the research, browse, generate definitions, or decide for the user. Return only Skip or Run in the recommendation field, never an uncertainty category. Explain the basis in one short sentence (at most 40 words), in the target language. "
     + STUDIO_SKIP_PROMPTS[step];
   try {
-    const result = await tools.ask(question, { ...input, ...(refresh ? { refresh: crypto.randomUUID() } : {}) },
+    // Full scope changes must invalidate tool caches even outside the AI preview.
+    const inputFingerprint = contextKey !== stableSignature(input) ? await studioToolSignature("recommendation", null, contextKey) : null;
+    const result = await tools.ask(question, { ...input, ...(inputFingerprint ? { inputFingerprint } : {}), ...(refresh ? { refresh: crypto.randomUUID() } : {}) },
       '{"recommendation":"Skip or Run","reason":"one short sentence"}', `Recommending Skip or Run for step ${number}`);
     tools.assertCurrent();
     const valid = ["Skip", "Run"].includes(result?.recommendation) && typeof result?.reason === "string" && result.reason.trim();

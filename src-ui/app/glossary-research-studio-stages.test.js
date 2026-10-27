@@ -11,6 +11,12 @@ function study() {
   return s;
 }
 
+function deferred() {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
 function meaningReply(data, meaningFor) {
   if (data.missingMeaningIds) return { matches: data.missingMeaningIds.flatMap((meaningId) => {
     for (const p of data.paragraphs) for (const [i, o] of p.occurrences.entries()) if (meaningFor(p, o, i) === meaningId) return [{ meaningId, paragraphId: p.id, occurrenceId: o.id }];
@@ -154,6 +160,29 @@ test("French dictionaries use the native edition then English, independently of 
   assert.equal(result.evidence.englishEdition.status, "found");
 });
 
+test("original-language dictionary evidence uses the resolved edition without duplicate English lookups", async () => {
+  for (const status of ["found", "not_found", "unreachable"]) {
+    const s = study(); s.step = "4.1";
+    s.origin = { proposal: { originLanguage: "grc", originTerm: "ἱεροφάντης" } };
+    const calls = [];
+    const result = await runResearchStage(s, {
+      run: async (kind, payload, purpose) => {
+        calls.push({ kind, payload, purpose });
+        return kind === "web" ? { summary: "Cited source" } : { status: payload.language === "grc" ? status : "found", edition: payload.language === "grc" ? "en" : payload.language, language: payload.language };
+      },
+      ask: async (_question, data) => {
+        assert.equal(data.original.native.edition, "en");
+        assert.equal(data.original.native.language, "grc");
+        return { meanings: [], summary: "Dictionary findings" };
+      },
+    }, []);
+    assert.equal(result.original.native.status, status);
+    assert.deepEqual(calls.filter((c) => c.kind === "dictionary").map((c) => c.payload.language), ["fr", "grc"]);
+    assert.equal(calls.some((c) => c.purpose.includes("grc Wiktionary")), false);
+    assert.equal(calls.filter((c) => c.kind === "web").length, status === "found" ? 0 : 1);
+  }
+});
+
 test("form discovery publishes incremental candidates and corpus evidence before the final identity verdict", async () => {
   const s = study(); s.step = "2a"; s.scope.corpus = "samael"; const updates = [];
   await runResearchStage(s, {
@@ -172,6 +201,170 @@ test("form discovery publishes incremental candidates and corpus evidence before
   assert(updates.some((u) => u.phase === "verifying"));
   assert.equal(s.formDiscovery.phase, "complete");
   assert.deepEqual(s.forms.map((f) => [f.text, f.selected]), [["marche", true], ["marches", false]]);
+});
+
+test("corpus checks overlap a slow origin search and publish counts while identity waits for both", async () => {
+  const s = study(); s.step = "2a"; s.scope.corpus = "samael";
+  const updates = []; const calls = [];
+  let releaseSearch; const heldSearch = new Promise((resolve) => { releaseSearch = resolve; });
+  let searchStarted; const started = new Promise((resolve) => { searchStarted = resolve; });
+  const corpusDone = deferred();
+  const cited = { summary: "Original spelling found in a cited source.", citations: [{ url: "https://example.org/original" }] };
+  const running = runResearchStage(s, {
+    checkpoint: async (message) => {
+      updates.push({ message, forms: structuredClone(s.forms), origin: structuredClone(s.origin) });
+      if (message.startsWith("Corpus checks complete")) corpusDone.resolve();
+    },
+    ask: async (q, data) => {
+      if (q.startsWith("List genuine")) return { forms: ["marches"], originLanguage: "la", originTerm: "original" };
+      calls.push("identity"); assert.deepEqual(data.origin, cited);
+      assert(updates.some((u) => u.origin?.evidence?.summary === cited.summary));
+      return { forms: ["marche", "marches"].map((text) => ({ text, sameWord: true, reason: "Same word." })) };
+    },
+    run: async (kind, payload) => {
+      if (kind === "web") { calls.push("web"); searchStarted(); await heldSearch; return cited; }
+      if (payload.path === "/api/search/forms") return { candidates: [] };
+      calls.push(`corpus:${payload.params.forms}`);
+      return { population_distinct: 7, items: [{ text: payload.params.forms }] };
+    },
+  }, []);
+  await Promise.all([started, corpusDone.promise]);
+  assert.equal(calls[0], "web");
+  assert.deepEqual(calls.slice(1), ["corpus:marche", "corpus:marches"]);
+  assert.equal(s.formDiscovery.phase, "checking-origin");
+  assert.deepEqual(s.formDiscovery.corpusResults, [{ text: "marche", paragraphCount: 7 }, { text: "marches", paragraphCount: 7 }]);
+  assert(s.forms.every((f) => f.paragraphCount === 7));
+  assert(updates.at(-1).forms.every((f) => f.paragraphCount === 7));
+  assert.equal(updates.at(-1).origin.proposal.originTerm, "original");
+  releaseSearch(); await running;
+  assert.equal(s.formDiscovery.phase, "complete");
+  assert.deepEqual(s.origin.evidence, cited);
+  assert.equal(calls.filter((c) => c === "web").length, 1);
+});
+
+test("two form checks overlap, early origin findings persist, and out-of-order results preserve complete ordered evidence", async () => {
+  const s = study(); s.step = "2a"; s.scope.corpus = "samael";
+  const proposed = ["marche", "marches", "marchant"];
+  const alternatives = ["marché", "marchons", "marchâmes"];
+  const gates = Object.fromEntries([...proposed, ...alternatives].map((form) => [form, deferred()]));
+  const started = Object.fromEntries([...proposed, ...alternatives].map((form) => [form, deferred()]));
+  const originDone = deferred(); const requests = []; let review = null;
+  const cited = { summary: "Cited original spelling.", citations: [{ url: "https://example.org/original" }] };
+  let active = 0; let peak = 0;
+  const running = runResearchStage(s, {
+    checkpoint: async (message) => { if (message === "Original-spelling findings received") originDone.resolve(); },
+    ask: async (q, data) => {
+      if (q.startsWith("List genuine")) return { forms: proposed, originLanguage: "la", originTerm: "original" };
+      review = structuredClone(data);
+      return { forms: [...proposed, ...alternatives].map((text) => ({ text, sameWord: true, reason: "Supported form." })) };
+    },
+    run: async (kind, payload) => {
+      requests.push({ kind, payload: structuredClone(payload) });
+      if (kind === "web") return cited;
+      active++; peak = Math.max(peak, active);
+      try {
+        if (payload.path === "/api/search/forms") {
+          const index = proposed.indexOf(payload.params.q);
+          started[payload.params.q].resolve(); await gates[payload.params.q].promise;
+          return { candidates: [{ form: alternatives[index], relation: "spelling", examples: [{ text: `${alternatives[index]} witness` }] }] };
+        }
+        const form = payload.params.forms;
+        if (alternatives.includes(form)) { started[form].resolve(); await gates[form].promise; }
+        return { population_distinct: [...proposed, ...alternatives].indexOf(form) + 1,
+          items: [{ text: `${form} exact witness.`, representative: { doc_id: form } }] };
+      } finally { active--; }
+    },
+  }, []);
+  await Promise.all([started.marche.promise, started.marches.promise, originDone.promise]);
+  assert.equal(requests.filter((r) => r.payload.path === "/api/search/forms").length, 2);
+  assert.deepEqual(s.origin.evidence, cited);
+  assert.equal(s.formDiscovery.phase, "checking"); assert.equal(review, null);
+  gates.marches.resolve(); await started.marchant.promise;
+  gates.marchant.resolve(); gates.marche.resolve();
+  await Promise.all([started[alternatives[0]].promise, started[alternatives[1]].promise]);
+  assert.equal(requests.filter((r) => r.payload.path === "/api/sample" && alternatives.includes(r.payload.params.forms)).length, 2);
+  assert.deepEqual(review.proposed, proposed);
+  assert.deepEqual(review.candidateForms, [...proposed, ...alternatives]);
+  assert.deepEqual(review.exactWitnesses.map((row) => [row.form, row.paragraphCount]), proposed.map((form, i) => [form, i + 1]));
+  assert(review.exactWitnesses.every((row) => row.examples[0].text === `${row.form} exact witness.`));
+  assert.deepEqual(review.origin, cited);
+  gates[alternatives[1]].resolve(); await started[alternatives[2]].promise;
+  gates[alternatives[2]].resolve(); gates[alternatives[0]].resolve();
+  const result = await running;
+  assert.equal(peak, 2);
+  assert.deepEqual(result.forms.map((form) => [form.text, form.paragraphCount]), [...proposed, ...alternatives].map((form, i) => [form, i + 1]));
+  assert.deepEqual(s.formDiscovery.corpusResults.map((form) => form.text), proposed);
+  assert.equal(requests.filter((r) => r.kind === "web").length, 1);
+  assert.equal(requests.find((r) => r.kind === "web").payload.query,
+    "marche original original spelling la transliteration French English");
+  assert.equal(requests.filter((r) => r.payload.path === "/api/search/forms").length, 3);
+  assert.equal(requests.filter((r) => r.payload.path === "/api/sample").length, 6, "accepted proposed forms reuse exact checks");
+  assert(requests.filter((r) => r.payload.path === "/api/sample").every((r) => r.payload.params.n === "3" && r.payload.params.context === "0"));
+});
+
+test("a failed concurrent form stops queued checks, drains siblings, and retains the failed request identity", async () => {
+  const s = study(); s.step = "2a"; s.scope.corpus = "samael";
+  const failed = deferred(); const sibling = deferred(); const origin = deferred(); const started = [];
+  const failure = Object.assign(new Error("Exact corpus result incomplete"), { studioToolSignature: "failed-form" });
+  let identity = false;
+  const running = runResearchStage(s, {
+    ask: async (q) => {
+      if (q.startsWith("List genuine")) return { forms: ["marche", "marches", "marchant"], originLanguage: "la" };
+      identity = true; return {};
+    },
+    run: async (kind, payload) => {
+      if (kind === "web") { await origin.promise; return { summary: "Preserved original evidence." }; }
+      started.push(payload.params.q ?? payload.params.forms);
+      if (payload.params.q === "marche") { failed.resolve(); throw failure; }
+      if (payload.params.q === "marches") { await sibling.promise; s.lastToolSignature = "later-sibling"; return { candidates: [] }; }
+      return { population_distinct: 1, items: [{ text: payload.params.forms }] };
+    },
+  }, []);
+  let settled = false;
+  const observed = assert.rejects(running, (error) => { settled = true; return error === failure; });
+  await failed.promise;
+  assert.equal(settled, false);
+  sibling.resolve(); origin.resolve();
+  await observed;
+  assert(!started.includes("marchant"));
+  assert.equal(identity, false);
+  assert.equal(s.lastToolSignature, "failed-form");
+  assert.equal(s.origin.evidence.summary, "Preserved original evidence.");
+  assert.notEqual(s.formDiscovery.phase, "complete");
+});
+
+test("concurrent project forms share one in-flight snapshot and keep independent exact counts", async () => {
+  const s = study(); s.step = "2a"; s.scope.corpus = "projects";
+  const read = deferred(); const started = deferred(); let requests = 0;
+  const running = runResearchStage(s, {
+    ask: async (q) => q.startsWith("List genuine") ? { forms: ["marche", "marches"], originLanguage: null }
+      : { forms: ["marche", "marches"].map((text) => ({ text, sameWord: true })) },
+    run: async (kind) => {
+      assert.equal(kind, "projects"); requests++; started.resolve(); await read.promise;
+      return { items: [{ id: "one", text: "marche" }, { id: "two", text: "marches" }, { id: "three", text: "Les marches." }] };
+    },
+  }, []);
+  await started.promise;
+  read.resolve(); const result = await running;
+  assert.equal(requests, 1);
+  assert.deepEqual(result.forms.map((form) => [form.text, form.paragraphCount]), [["marche", 1], ["marches", 2]]);
+});
+
+test("lexical explanations reach checkpoints before newly accepted alternatives finish checking", async () => {
+  const s = study(); s.step = "2a"; s.scope.corpus = "samael";
+  const updates = [];
+  await runResearchStage(s, {
+    checkpoint: async () => updates.push(structuredClone(s.forms)),
+    ask: async (q) => q.startsWith("List genuine") ? { forms: [], originLanguage: null }
+      : { forms: [{ text: "marche", sameWord: true, reason: "Original form confirmed." }, { text: "marches", sameWord: true, reason: "Plural confirmed." }] },
+    run: async (_kind, payload) => {
+      if (payload.path === "/api/search/forms") return { candidates: [{ form: "marches" }] };
+      if (payload.params.forms === "marches") {
+        assert(updates.some((rows) => rows.some((f) => f.text === "marche" && f.reason === "Original form confirmed.")));
+      }
+      return { population_distinct: 2, items: [{ text: payload.params.forms }] };
+    },
+  }, []);
 });
 
 test("mundo case variants collapse and exact plural counts determine inclusion independently of AI found flags", async () => {

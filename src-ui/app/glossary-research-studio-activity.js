@@ -28,6 +28,7 @@ export function summarizeStudioActivity(value) {
   if (Array.isArray(value.confirmIds)) lines.push(`${value.confirmIds.length} existing candidate forms selected for confirmation.`);
   if (Array.isArray(value.newForms)) lines.push(`${value.newForms.length} new forms proposed${value.newForms.length ? `: ${value.newForms.map((form) => form.text).join(", ")}` : "."}`);
   if (value.originTerm) lines.push(`Original term: ${value.originTerm}.`);
+  if (value.edition === "en" && value.language !== "en") lines.push("Looked up in the English Wiktionary edition.");
   if (value.status) lines.push(`Source status: ${value.status}.`);
   return clip(lines.join("\n") || "Completed. Results are available in the research report.");
 }
@@ -79,7 +80,7 @@ export function createStudioActivity(study, changed, isCurrent) {
 export function studioStageActivities(s) {
   const nodes = (rows) => rows.map(([id, label]) => ({ id, label }));
   const plans = {
-    "2a": [["discover", "Find additional forms and spellings"], ["forms", "Check forms against the corpus"], ["identity", "Review which forms belong to this word"], ["accepted", "Verify accepted alternatives"]],
+    "2a": [["discover", "Find additional forms and spellings"], ["forms", "Check forms against the corpus"], ["origin", "Verify original spelling"], ["identity", "Review which forms belong to this word"], ["accepted", "Verify accepted alternatives"]],
     "3": [["population", "Find matching corpus paragraphs"], ["sample", "Select research examples"]],
     "4.1": [["dictionary", "Look up the source word"], ["origin", "Check its original-language form"], ["analysis", "Review dictionary meanings"]],
     "4.2": [["examples", "Read usage examples for each form"], ["analysis", "Identify meanings in the corpus"]],
@@ -103,6 +104,28 @@ export function studioStageActivities(s) {
 // Older studies can display their saved bibliography without rerunning research.
 export function studioActivityItems(study) {
   const saved = study.activitySteps?.[study.step]?.items;
+  if (study.step === "2a" && saved?.length) {
+    // Saved checklists may predate the original-spelling item or append it last.
+    // Merge for display so opening an old study does not change its evidence.
+    const planned = studioStageActivities(study);
+    const ids = new Set(planned.map((item) => item.id));
+    return [...planned.map((item) => {
+      const recorded = saved.find((node) => node.id === item.id);
+      if (item.id === "identity" && recorded?.status === "complete" && /^\d+ forms accepted as the same word\.$/u.test(recorded.result)) {
+        const accepted = saved.find((node) => node.id === "accepted")?.children ?? [];
+        if (accepted.length > 0 && accepted.length === Number.parseInt(recorded.result, 10) && accepted.every((node) => typeof node.label === "string" && node.label.trim())) {
+          return { ...recorded, result: `${accepted.length} ${accepted.length === 1 ? "form" : "forms"} accepted as the same word: ${accepted.map((node) => node.label).join(", ")}.` };
+        }
+      }
+      if (recorded) return recorded;
+      if (item.id === "origin" && study.origin?.proposal) {
+        if (!study.origin.proposal.originLanguage) return { ...item, status: "complete",
+          result: "No borrowed origin identified; no original-spelling search needed." };
+        if (study.origin.evidence) return { ...item, status: "complete", result: "Saved original-spelling findings are available." };
+      }
+      return { ...item, status: "waiting" };
+    }), ...saved.filter((item) => !ids.has(item.id))];
+  }
   if (saved?.length) return saved;
   const items = studioStageActivities(study);
   const report = study.steps?.[study.step]?.approved ?? study.steps?.[study.step]?.value;

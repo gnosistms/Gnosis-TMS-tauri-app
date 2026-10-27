@@ -36,7 +36,7 @@ export function invalidateAuthSession() {
 }
 
 import {
-  createGlossaryResearchPrepState,
+  createEditorGlossaryEntryState,
   createGlossaryResearchReportState,
   createGlossaryResearchState,
 } from "./glossary-research-state.js";
@@ -133,7 +133,7 @@ export const state = {
   qaListPermanentDeletion: createQaListPermanentDeletionState(),
   glossaryTermEditor: createGlossaryTermEditorState(),
   glossaryResearch: createGlossaryResearchState(),
-  glossaryResearchPrep: createGlossaryResearchPrepState(),
+  editorGlossaryEntry: createEditorGlossaryEntryState(),
   glossaryResearchReport: createGlossaryResearchReportState(),
   qaTermEditor: createQaTermEditorState(),
   aiReviewMissingKeyModal: createAiReviewMissingKeyModalState(),
