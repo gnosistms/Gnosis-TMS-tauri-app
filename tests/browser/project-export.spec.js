@@ -1543,3 +1543,36 @@ test("accepted Git settings do not show a second notice when unchanged on reopen
   await expect(settingsDialog(page)).toHaveCount(0);
   await expect(modal.locator('[data-book-chapter-title="fixture-chapter-0-0"]')).toHaveValue("GitHub title");
 });
+
+
+test("redundant images use page-one chapter titles and optional numbers in shared rounded rows", async ({ page }) => {
+  await mountProjectExport(page, false, false, 5);
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  const row = (index) => modal.locator(`[data-book-item="fixture-chapter-0-${index}"]`);
+  await row(4).locator("[data-book-chapter-title]").fill("The great battle");
+  await row(1).getByRole("button", { name: "Settings", exact: true }).click();
+  await modal.getByRole("menuitemcheckbox", { name: "Numbered", exact: true }).click();
+  await row(0).locator('[data-action^="book-exclude:"]').click();
+  const radius = await row(4).locator(".term-variant-row__shell").evaluate((element) => getComputedStyle(element).borderRadius);
+  await page.evaluate(() => {
+    const picture = (chapter) => ({ id: `picture-${chapter}`, itemId: `fixture-chapter-0-${chapter}`, rowId: `row-${chapter}`, kind: "image", marker: 0, signature: `signature-${chapter}`, chapterName: "Stale native chapter title", imageSrc: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='100'%3E%3Crect width='160' height='100' rx='8' fill='%23ef9a32'/%3E%3C/svg%3E" });
+    window.__redundancyResult = { images: [{ id: "repeated", occurrences: [picture(1), picture(3), picture(4)] }], footnotes: [], warnings: [] };
+  });
+  await modal.getByRole("button", { name: "Next", exact: true }).click();
+  const images = modal.locator('[data-book-redundancy-section="images"]');
+  await expect(images.getByRole("heading", { name: "Chapters that include this image:", exact: true })).toBeVisible();
+  await expect(images.locator("[data-book-redundancy-chapter-title]")).toHaveText(["File 002", "2. File 004", "3. The great battle"]);
+  await expect(images.getByText("Stale native chapter title", { exact: true })).toHaveCount(0);
+  const shells = images.locator(".term-variant-row__shell");
+  expect(await shells.evaluateAll((elements) => elements.map((element) => getComputedStyle(element).borderRadius))).toEqual([radius, radius, radius]);
+  const battle = images.getByRole("checkbox", { name: "Include in export: 3. The great battle", exact: true });
+  await expect(shells.last().getByText("Include in export", { exact: true })).toBeVisible();
+  await battle.check();
+  await page.screenshot({ path: test.info().outputPath("redundancy-chapter-rows.png") });
+  await modal.getByRole("button", { name: "Previous", exact: true }).click();
+  await dragBefore(page, row(4).locator("[data-book-drag-handle]"), row(3));
+  await expect(row(4).locator("[data-book-chapter-number]")).toHaveText("2.");
+  await modal.getByRole("button", { name: "Next", exact: true }).click();
+  await expect(images.locator("[data-book-redundancy-chapter-title]")).toHaveText(["File 002", "3. File 004", "2. The great battle"]);
+  await expect(images.getByRole("checkbox", { name: "Include in export: 2. The great battle", exact: true })).toBeChecked();
+});

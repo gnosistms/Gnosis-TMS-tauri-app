@@ -2,11 +2,16 @@ import { extractInlineMarkupVisibleText } from "../app/editor-inline-markup.js";
 import { escapeHtml, loadingSpinner, secondaryButton } from "../lib/ui.js";
 import { convertLocalFileSrc } from "../app/runtime.js";
 import { bookNavButton, renderBookSettingsNotice } from "./project-book-composer.js";
+import { bookChapterNumbers, bookItemTitle, bookSectionLabel } from "../app/project-book-model.js";
 import { imageReviewChoices, reviewChoiceIncluded } from "../app/project-book-redundancy-model.js";
 function checkbox(id, included, description) {
-  return `<label class="field__checkbox"><input type="checkbox" data-book-redundancy-choice="${escapeHtml(id)}" aria-label="Include ${escapeHtml(description)}" ${included ? "checked" : ""}><span>Include</span></label>`;
+  return `<label class="field__checkbox"><input type="checkbox" data-book-redundancy-choice="${escapeHtml(id)}" aria-label="Include in export: ${escapeHtml(description)}" ${included ? "checked" : ""}><span>Include in export</span></label>`;
 }
-function section(review, kind) {
+function section(modal, kind) {
+  const review = modal.book.redundancy || {};
+  const numbers = bookChapterNumbers(modal.book.items || []);
+  const labels = new Map((modal.book.items || []).map((item) => [item.id,
+    `${numbers.has(item.id) ? `${numbers.get(item.id)}. ` : ""}${item.kind === "title" ? bookSectionLabel("title") : bookItemTitle(item) || ""}`]));
   const result = review.result || {};
   const status = review[`${kind}Status`] || review.status || "loading";
   const groups = result[kind] || [];
@@ -24,7 +29,10 @@ function section(review, kind) {
     content = groups.map((group) => {
       if (kind === "images") {
         const src = group.occurrences[0].imageSrc;
-        return `<article class="book-redundancy__group"><img class="book-redundancy__thumbnail" src="${escapeHtml(/^(https?:|data:image\/)/.test(src) ? src : convertLocalFileSrc(src))}" alt="Repeated image" loading="lazy"><ul>${imageReviewChoices(group).map((entry, index) => `<li><span>${escapeHtml(entry.chapterName)}${entry.occurrences.length > 1 ? ` · ${entry.occurrences.length} occurrences (keeps the first here)` : ""}</span>${checkbox(entry.choiceId, reviewChoiceIncluded(review.choices, entry.choiceId, index), entry.chapterName)}</li>`).join("")}</ul></article>`;
+        return `<article class="book-redundancy__group"><img class="book-redundancy__thumbnail" src="${escapeHtml(/^(https?:|data:image\/)/.test(src) ? src : convertLocalFileSrc(src))}" alt="Repeated image" loading="lazy"><h4 class="book-redundancy__chapters-heading">Chapters that include this image:</h4><ul class="book-redundancy__chapters">${imageReviewChoices(group).map((entry, index) => {
+          const title = labels.get(entry.itemId) || entry.chapterName;
+          return `<li class="term-variant-row book-item book-redundancy__chapter"><div class="term-variant-row__shell"><div class="book-redundancy__chapter-name"><span data-book-redundancy-chapter-title="${escapeHtml(entry.choiceId)}">${escapeHtml(title)}</span>${entry.occurrences.length > 1 ? `<small>${entry.occurrences.length} occurrences (keeps the first here)</small>` : ""}</div>${checkbox(entry.choiceId, reviewChoiceIncluded(review.choices, entry.choiceId, index), title)}</div></li>`;
+        }).join("")}</ul></article>`;
       }
       return `<article class="book-redundancy__group"><blockquote>${escapeHtml(group.anchor)}</blockquote><ul>${group.occurrences.map((entry, index) => `<li><div><strong>${escapeHtml(entry.chapterName)} · note ${entry.marker}</strong><p>${escapeHtml(extractInlineMarkupVisibleText(entry.text))}</p><small>${escapeHtml(entry.context)}</small></div>${checkbox(entry.id, reviewChoiceIncluded(review.choices, entry.id, index), `${entry.chapterName}, note ${entry.marker}`)}</li>`).join("")}</ul></article>`;
     }).join("") || `<p class="modal__supporting">${warnings.length ? `No redundant ${kind} confirmed so far.` : `No redundant ${kind} found.`}</p>`;
@@ -43,7 +51,7 @@ function messages(review) {
 function contents(modal) {
   const review = modal.book.redundancy || {};
   return `<div data-book-redundancy-results>
-    ${messages(review)}${section(review, "images")}${section(review, "footnotes")}</div>`;
+    ${messages(review)}${section(modal, "images")}${section(modal, "footnotes")}</div>`;
 }
 export function renderBookRedundancy(modal) {
   return `<div class="modal-backdrop"><section class="card modal-card modal-card--book-redundancy" role="dialog" aria-modal="true" aria-label="Export project" data-modal-dialog="editor-export" tabindex="-1"><div class="card__body modal-card__body">
@@ -62,7 +70,15 @@ export function updateBookRedundancyView(root, appState) {
       const controls = new Map([...previous.querySelectorAll("[data-book-redundancy-choice]")].map((input) => [input.dataset.bookRedundancyChoice, input]));
       for (const input of next.querySelectorAll("[data-book-redundancy-choice]")) {
         const existing = controls.get(input.dataset.bookRedundancyChoice);
-        if (existing) existing.checked = input.checked;
+        if (existing) {
+          existing.checked = input.checked;
+          existing.setAttribute("aria-label", input.getAttribute("aria-label"));
+        }
+      }
+      const titles = new Map([...previous.querySelectorAll("[data-book-redundancy-chapter-title]")].map((node) => [node.dataset.bookRedundancyChapterTitle, node]));
+      for (const title of next.querySelectorAll("[data-book-redundancy-chapter-title]")) {
+        const existing = titles.get(title.dataset.bookRedundancyChapterTitle);
+        if (existing && existing.textContent !== title.textContent) existing.textContent = title.textContent;
       }
     } else if (next.outerHTML !== previous.outerHTML) previous.replaceWith(next);
   }
