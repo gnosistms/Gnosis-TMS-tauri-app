@@ -16,6 +16,16 @@ export function normalizeEditorCommentSeenRevisions(seenRevisions) {
   );
 }
 
+export function mergeEditorCommentSeenRevisions(...revisionMaps) {
+  const merged = {};
+  for (const revisions of revisionMaps) {
+    for (const [rowId, revision] of Object.entries(normalizeEditorCommentSeenRevisions(revisions))) {
+      merged[rowId] = Math.max(merged[rowId] ?? 0, revision);
+    }
+  }
+  return merged;
+}
+
 export function sortEditorCommentsNewestFirst(entries) {
   return [...(Array.isArray(entries) ? entries : [])].sort((left, right) => {
     const leftCreatedAt = typeof left?.createdAt === "string" ? left.createdAt : "";

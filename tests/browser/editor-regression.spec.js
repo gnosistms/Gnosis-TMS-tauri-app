@@ -6626,6 +6626,9 @@ test.describe("editor regressions", () => {
     await page.getByRole("button", { name: "Save comment" }).click();
 
     await expect(page.locator(".history-item__content")).toContainText("Check the final clause.");
+    await expect(page.locator(
+      '[data-action="open-editor-comments"][data-row-id="fixture-row-0001"][data-language-code="vi"]',
+    )).not.toHaveClass(/is-unread/);
     const deleteCommentButton = page.locator('[data-action^="delete-editor-comment:"]');
     await expect(deleteCommentButton).toBeVisible();
 
@@ -6634,6 +6637,33 @@ test.describe("editor regressions", () => {
     await expect(page.locator(
       '[data-action="open-editor-comments"][data-row-id="fixture-row-0001"][data-language-code="vi"]',
     )).not.toHaveClass(/is-active/);
+  });
+
+  test("a comment saved after selecting another row stays read for its author", async ({ page }) => {
+    await page.addInitScript(() => {
+      globalThis.__gnosisMockTauriHandlers = {
+        async save_gtms_editor_row_comment({ input }) {
+          await new Promise(resolve => { window.__releaseOwnCommentSave = resolve; });
+          return { rowId: input.rowId, commentCount: 1, commentsRevision: 1,
+            comments: [{ commentId: "own-comment", authorLogin: "fixture-user", authorName: "Fixture User",
+              body: input.body, createdAt: "2026-04-13T09:12:33Z" }] };
+        },
+      };
+    });
+    await mountEditorFixture(page, { rowCount: 6 }, { mockTauri: true });
+    const marker = page.locator('[data-action="open-editor-comments"][data-row-id="fixture-row-0001"][data-language-code="vi"]');
+    await marker.click();
+    await page.locator("[data-editor-comment-draft]").fill("My own comment.");
+    await page.getByRole("button", { name: "Save comment" }).click();
+    await page.waitForFunction(() => typeof window.__releaseOwnCommentSave === "function");
+    await page.locator('[data-editor-display-field][data-row-id="fixture-row-0002"][data-language-code="vi"]').click();
+    await expect.poll(() => page.evaluate(() => window.__gnosisDebug.readEditorState().activeRowId)).toBe("fixture-row-0002");
+    await page.evaluate(() => window.__releaseOwnCommentSave());
+    await expect(marker).toHaveClass(/is-active/);
+    await expect(marker).not.toHaveClass(/is-unread/);
+    await expect.poll(() => page.evaluate(() => window.__gnosisDebug.readEditorState().commentSeenRevisions))
+      .toMatchObject({ "fixture-row-0001": 1 });
+    await expect.poll(() => page.evaluate(() => window.__gnosisDebug.readEditorState().activeRowId)).toBe("fixture-row-0002");
   });
 
   // Scroll guarantee acceptance suite — pins the invariants listed in

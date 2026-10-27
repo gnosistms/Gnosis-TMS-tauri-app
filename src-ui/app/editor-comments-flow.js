@@ -12,12 +12,14 @@ import {
   applyEditorCommentsSelection,
   applyEditorCommentSeenRevisions,
   applyEditorRowCommentSeen,
+  applyEditorRowCommentSummary,
   applyEditorSidebarTab,
   nextEditorCommentsRequestKey,
   currentEditorCommentsForRow,
   currentEditorCommentsRequestMatches,
 } from "./editor-comments-state.js";
-import { normalizeEditorSidebarTab } from "./editor-comments.js";
+import { mergeEditorCommentSeenRevisions, normalizeEditorSidebarTab } from "./editor-comments.js";
+import { getActiveStorageLogin } from "./team-storage.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
 import {
   loadStoredEditorCommentSeenRevisions,
@@ -344,6 +346,7 @@ export async function saveActiveEditorRowComment(render) {
   }
 
   const operationValue = {
+    storageLogin: getActiveStorageLogin() ?? state.auth.session?.login?.trim().toLowerCase() ?? null,
     input: {
       installationId: team.installationId,
       projectId: context.project.id,
@@ -397,15 +400,25 @@ export async function saveActiveEditorRowComment(render) {
     },
     onSuccess: (payload, operation) => {
       const value = operation?.value ?? operationValue;
-      if (state.editorChapter?.chapterId !== value.chapterId || state.editorChapter.activeRowId !== value.rowId) {
+      // The author has already read their own comment, even if they selected
+      // another row/chapter (or signed out) while the local commit was running.
+      const seenRevisions = saveStoredEditorCommentSeenRevision(
+        value.chapterId, value.rowId, payload?.commentsRevision, value.storageLogin,
+      );
+      if (state.editorChapter?.chapterId !== value.chapterId
+        || selectedProjectsTeam()?.id !== value.permissionContext.team?.id
+        || selectedProjectsTeam()?.installationId !== value.input.installationId
+        || (getActiveStorageLogin() ?? state.auth.session?.login?.trim().toLowerCase() ?? null) !== value.storageLogin) {
         return;
       }
 
       state.editorChapter = {
-        ...applyEditorCommentSaveSucceeded(state.editorChapter, value.rowId, payload),
+        ...(state.editorChapter.activeRowId === value.rowId
+          ? applyEditorCommentSaveSucceeded(state.editorChapter, value.rowId, payload)
+          : applyEditorRowCommentSummary(state.editorChapter, value.rowId, payload)),
         chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
+        commentSeenRevisions: mergeEditorCommentSeenRevisions(state.editorChapter.commentSeenRevisions, seenRevisions),
       };
-      markRowCommentsSeen(value.rowId, payload?.commentsRevision ?? 0);
       renderEditorCommentsSidebarAndBody(render);
     },
     onError: (error, operation) => {

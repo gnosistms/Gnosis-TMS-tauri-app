@@ -135,7 +135,7 @@ export function saveStoredEditorCommentSeenRevision(chapterId, rowId, revision, 
 
   const chapterMap = loadStoredEditorCommentSeenRevisionMap(login);
   const chapterRevisions = normalizeStoredCommentSeenRevisionMap(chapterMap[chapterId]);
-  chapterRevisions[rowId] = normalizedRevision;
+  chapterRevisions[rowId] = Math.max(chapterRevisions[rowId] ?? 0, normalizedRevision);
   chapterMap[chapterId] = chapterRevisions;
   saveStoredEditorCommentSeenRevisionMap(chapterMap, login);
   return { ...chapterRevisions };

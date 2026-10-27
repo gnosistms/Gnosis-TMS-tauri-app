@@ -5,7 +5,7 @@ import {
   normalizeEditorAssistantState,
 } from "./editor-ai-assistant-state.js";
 import { normalizeEditorAiTranslateState } from "./editor-ai-translate-state.js";
-import { normalizeEditorSidebarTab } from "./editor-comments.js";
+import { mergeEditorCommentSeenRevisions, normalizeEditorSidebarTab } from "./editor-comments.js";
 import { pruneEditorCommentSeenRevisionsForRows } from "./editor-comments-state.js";
 import { currentEditorHistoryForSelection } from "./editor-history-state.js";
 import { compactDirtyRowIds, reconcileDirtyTrackedEditorRows } from "./editor-dirty-row-state.js";
@@ -458,10 +458,10 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
       previousEditorChapter,
       isSameChapter,
     ),
-    commentSeenRevisions:
-      isSameChapter && previousEditorChapter?.commentSeenRevisions && typeof previousEditorChapter.commentSeenRevisions === "object"
-        ? previousEditorChapter.commentSeenRevisions
-        : {},
+    commentSeenRevisions: mergeEditorCommentSeenRevisions(
+      nextEditorChapter?.commentSeenRevisions,
+      isSameChapter ? previousEditorChapter?.commentSeenRevisions : null,
+    ),
     chapterBaseCommitSha:
       typeof nextEditorChapter?.chapterBaseCommitSha === "string" && nextEditorChapter.chapterBaseCommitSha.trim()
         ? nextEditorChapter.chapterBaseCommitSha
