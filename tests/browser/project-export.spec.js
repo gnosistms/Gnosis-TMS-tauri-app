@@ -143,6 +143,109 @@ async function addSection(modal, kind) {
   await modal.locator(`[data-action="book-add:${kind}"]`).click();
 }
 
+test("background project refresh draws once and retains an unrelated export dialog", async ({ page }) => {
+  await mountProjectExport(page);
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  await expect(modal.locator(".book-page--chapter")).toBeVisible();
+  await addSection(modal, "title");
+  const title = modal.locator('[data-book-field="title"]');
+  await title.fill("My draft title");
+  await title.evaluate((element) => element.setSelectionRange(3, 8));
+  await page.evaluate(async () => {
+    const { state } = await import("/app/state.js");
+    const { createProjectsQuerySnapshot, applyProjectsQuerySnapshotToState } = await import("/app/project-query.js");
+    window.__refreshProjects = structuredClone(state.projects);
+    window.__refreshPage = document.querySelector("#app").firstElementChild;
+    window.__refreshModal = document.querySelector('[data-modal-dialog="editor-export"]');
+    window.__refreshTitle = document.querySelector('[data-book-field="title"]');
+    const scroll = document.querySelector(".book-composer__page-scroll");
+    scroll.scrollTop = 72;
+    window.__refreshScroll = scroll.scrollTop;
+    window.__refreshDraws = { page: 0, modal: 0 };
+    new MutationObserver((records) => {
+      for (const record of records) for (const node of record.removedNodes) {
+        if (node.nodeType !== Node.ELEMENT_NODE) continue;
+        if (node.matches('.screen--page')) window.__refreshDraws.page++;
+        if (node.matches('[data-modal-dialog="editor-export"]') || node.querySelector('[data-modal-dialog="editor-export"]')) window.__refreshDraws.modal++;
+      }
+    }).observe(document.querySelector("#app"), { childList: true });
+    window.__publishProjectsRefresh = (fetching, change = "") => {
+      const projects = structuredClone(window.__refreshProjects);
+      if (change === "other") projects.push({ ...projects[0], id: "other", name: "other", title: "Other project", chapters: [] });
+      if (change === "active") projects[0].title = "Updated project";
+      applyProjectsQuerySnapshotToState(createProjectsQuerySnapshot({ items: projects, discovery: { status: "ready" } }), {
+        teamId: state.selectedTeamId, isFetching: fetching,
+      });
+      window.__gnosisDebug.renderProjectsBackground();
+    };
+  });
+  await page.evaluate(() => {
+    for (let i = 0; i < 8; i++) window.__publishProjectsRefresh(true, i % 2 ? "active" : "other");
+  });
+  expect(await page.evaluate(() => ({
+    draws: window.__refreshDraws,
+    page: document.querySelector("#app").firstElementChild === window.__refreshPage,
+    title: document.activeElement === window.__refreshTitle,
+    selection: [window.__refreshTitle.selectionStart, window.__refreshTitle.selectionEnd],
+  }))).toEqual({ draws: { page: 0, modal: 0 }, page: true, title: true, selection: [3, 8] });
+
+  // No net change, even though intermediate snapshots changed this project.
+  await page.evaluate(() => { window.__publishProjectsRefresh(false); window.__publishProjectsRefresh(false); });
+  expect(await page.evaluate(() => window.__refreshDraws)).toEqual({ page: 0, modal: 0 });
+
+  // Another project changes: redraw the list once, retain the focused dialog.
+  await page.evaluate(() => {
+    window.__publishProjectsRefresh(true, "other");
+    window.__publishProjectsRefresh(false, "other");
+    window.__publishProjectsRefresh(false, "other");
+  });
+  expect(await page.evaluate(() => ({
+    draws: window.__refreshDraws,
+    sameDialog: document.querySelector('[data-modal-dialog="editor-export"]') === window.__refreshModal,
+    title: document.activeElement === window.__refreshTitle,
+    selection: [window.__refreshTitle.selectionStart, window.__refreshTitle.selectionEnd],
+    scrollUnchanged: document.querySelector(".book-composer__page-scroll").scrollTop === window.__refreshScroll,
+  }))).toEqual({ draws: { page: 1, modal: 0 }, sameDialog: true, title: true, selection: [3, 8], scrollUnchanged: true });
+  await expect(title).toHaveValue("My draft title");
+
+  // This project changes: one final dialog redraw, with the draft preserved.
+  await page.evaluate(() => {
+    window.__publishProjectsRefresh(true, "active");
+    window.__publishProjectsRefresh(true, "active");
+    window.__publishProjectsRefresh(false, "active");
+    window.__publishProjectsRefresh(false, "active");
+  });
+  expect(await page.evaluate(() => window.__refreshDraws)).toEqual({ page: 2, modal: 1 });
+  await expect(title).toHaveValue("My draft title");
+  await modal.getByRole("button", { name: "Next", exact: true }).click();
+  await expect(modal.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
+});
+
+test("background migration progress updates without rebuilding the projects page or export", async ({ page }) => {
+  await mountProjectExport(page);
+  await expect(page.locator(".book-page--chapter")).toBeVisible();
+  await page.evaluate(async () => {
+    const { state } = await import("/app/state.js");
+    window.__migrationPage = document.querySelector("#app").firstElementChild;
+    window.__migrationExport = document.querySelector('[data-modal-dialog="editor-export"]');
+    state.projectsPage.isRefreshing = true;
+    state.teamResourceMigrationModal = { isOpen: true, message: "Preparing migration…" };
+    window.__gnosisDebug.renderProjectsBackground();
+  });
+  const progress = page.locator('[data-modal-dialog="team-resource-migration"]');
+  await expect(progress).toContainText("Preparing migration…");
+  await page.evaluate(async () => {
+    const { state } = await import("/app/state.js");
+    state.teamResourceMigrationModal.message = "Synchronizing project…";
+    window.__gnosisDebug.renderProjectsBackground();
+  });
+  await expect(progress).toContainText("Synchronizing project…");
+  expect(await page.evaluate(() => ({
+    page: document.querySelector("#app").firstElementChild === window.__migrationPage,
+    modal: document.querySelector('[data-modal-dialog="editor-export"]') === window.__migrationExport,
+  }))).toEqual({ page: true, modal: true });
+});
+
 test("book contents include H1 headings only when the saved checkbox is selected", async ({ page }) => {
   await mountProjectExport(page);
   const modal = page.getByRole("dialog", { name: "Export project", exact: true });

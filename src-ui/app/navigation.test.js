@@ -70,7 +70,7 @@ test("projects navigation clears the page refresh flag after project data loads"
 
   assert.match(
     source,
-    /if \(navTarget === "projects" && state\.selectedTeamId\) \{[\s\S]*?try \{[\s\S]*?await loadTeamProjects\(render, state\.selectedTeamId\);[\s\S]*?\} finally \{[\s\S]*?setResourcePageRefreshing\(state\.projectsPage, false\);[\s\S]*?clearScopedSyncBadge\("projects", render\);[\s\S]*?render\(\);[\s\S]*?\}[\s\S]*?return null;/,
+    /if \(navTarget === "projects" && state\.selectedTeamId\) \{[\s\S]*?try \{[\s\S]*?await loadTeamProjects\(render, state\.selectedTeamId\);[\s\S]*?\} finally \{[\s\S]*?setResourcePageRefreshing\(state\.projectsPage, false\);[\s\S]*?clearScopedSyncBadge\("projects", render\);[\s\S]*?render\(\{ scope: "projects-background" \}\);[\s\S]*?\}[\s\S]*?return null;/,
   );
 });
 

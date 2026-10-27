@@ -3,6 +3,7 @@ import { createMutationObserver, glossaryKeys, projectKeys, queryClient, subscri
 import { authSessionGeneration, state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { applyProjectSnapshotToState } from "./project-top-level-state.js";
+import { projectBackgroundRender } from "./projects-background-render.js";
 import {
   applyLocalProjectSnapshotHardDeleteState,
   loadProjectSnapshotForTeam,
@@ -646,6 +647,7 @@ function createProjectsQueryProgressPublisher(team, teamId, options = {}) {
 }
 
 export function createProjectsQueryOptions(team, options = {}) {
+  options = { ...options, render: projectBackgroundRender(options.render) };
   const teamId = options.teamId ?? team?.id ?? null;
   return {
     queryKey: projectKeys.byTeam(teamId),
@@ -785,6 +787,7 @@ export async function publishCreatedProjectToQuery(team, created) {
 }
 
 export function ensureProjectsQueryObserver(render, team, options = {}) {
+  render = projectBackgroundRender(render);
   const teamId = options.teamId ?? team?.id ?? null;
   const queryKey = projectKeys.byTeam(teamId);
   const currentKey = JSON.stringify(queryKey);
