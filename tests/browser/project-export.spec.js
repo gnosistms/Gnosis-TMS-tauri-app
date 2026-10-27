@@ -354,6 +354,33 @@ test("editing adjacent chapter titles keeps focus and long-list scroll through p
   await expect(next).toHaveValue("Edited chapter 26");
 });
 
+test("Enter finishes and saves a chapter title without advancing the export modal", async ({ page }) => {
+  await mountProjectExport(page);
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  const title = modal.locator('[data-book-chapter-title="fixture-chapter-0-0"]');
+  await title.click();
+  await title.fill("A title saved with Enter");
+  // Return used to confirm an IME composition must leave the field focused.
+  await title.dispatchEvent("keydown", { key: "Enter", isComposing: true, bubbles: true });
+  await expect(title).toBeFocused();
+  const before = await modal.locator(".book-composer__list").evaluate((list) => {
+    window.__enterTitleList = list;
+    return list.scrollTop;
+  });
+  await title.press("Enter");
+  await expect(title).not.toBeFocused();
+  await expect(title).toHaveValue("A title saved with Enter");
+  await expect(modal.locator(".book-step")).toContainText("1 of 2");
+  expect(await page.evaluate(() => ({
+    sameList: document.querySelector(".book-composer__list") === window.__enterTitleList,
+    scrollTop: document.querySelector(".book-composer__list").scrollTop,
+    exports: window.__projectExports.length,
+  }))).toEqual({ sameList: true, scrollTop: before, exports: 0 });
+  await modal.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.locator('[data-action="export-project:fixture-project-001"]').click();
+  await expect(title).toHaveValue("A title saved with Enter");
+});
+
 test("chapter export titles use opening H1s, edit inline, and persist independently by language", async ({ page }) => {
   await mountProjectExport(page, true, true);
   const modal = page.getByRole("dialog", { name: "Export project", exact: true });
