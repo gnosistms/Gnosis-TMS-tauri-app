@@ -23,3 +23,31 @@ Confirmed issues and implementation sequence:
 5. Run focused regressions, relevant export tests, full JS/native suites where
    appropriate, build/lint/Clippy/format checks, then push focused fixes to PR #384.
    Update this document with verified results. No live paid AI call is required.
+
+Additional confirmed race: Next awaited only the save promise existing at click
+time. A later checkbox write could remain pending, and Back/Cancel during the
+wait allowed the old Next continuation to advance a replacement book to page 3.
+Flush until the queue is stable and return a scope-valid result; navigation must
+stop when the initiating review is no longer current. Add controlled async tests
+and a browser Back-during-save regression before committing this follow-up.
+
+
+Completed and verified:
+- Same-path uploaded-image replacements/deletions invalidate the reviewed chapter.
+  New image-read warnings cannot be hidden by a previously clean cached result.
+- Omitting [1] preserves literal [01], [+1], and [ 1] text, links and escaped markers.
+- Cache reads, writes and jobs validate the initiating login. Queued saves stop on
+  account changes; only the latest save controls the failure state. Failed saves
+  have an explicit Retry action and recovered errors do not leak onto page 3.
+- Choice writes return only choices instead of parsing/transferring all evidence.
+- Footnote identity excludes unrelated images. Verified aliases retain and migrate
+  existing unchecked/checked choices, including recovery if the app closes before
+  a migration write completes. Changed note bodies do not inherit those aliases.
+- Next waits for all current writes and cannot advance a cancelled/replaced review.
+  Both original navigation races were reproduced by failing controlled tests.
+
+Validation: 3,117 frontend unit/screen tests, 25 workflow tests, 957 native tests
+(13 existing opt-in checks ignored), and all 33 project-export Chrome workflows
+passed. The 20 focused native redundancy tests and 13 focused JS tests pass.
+Build, changed-module ESLint, strict all-target Clippy, formatting and whitespace
+checks pass. No paid live AI requests were made.

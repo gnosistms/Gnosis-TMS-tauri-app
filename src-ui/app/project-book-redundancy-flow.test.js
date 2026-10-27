@@ -124,3 +124,36 @@ test("migrated unchecked choices are saved after fresh detection and reload", as
   await startBookRedundancy(() => {}, operations);await flushBookRedundancyChoices();
   assert.equal(state.editorChapter.exportModal.book.redundancy.choices.current, false);
 });
+
+test("flushing waits for checkbox writes queued after Next was clicked", async () => {
+  const { calls, operations, result } = setup();
+  await startBookRedundancy(() => {}, operations);
+  const started = calls.find((call) => call.name === "start_book_redundancy");
+  deliver({ payload: { requestId: started.args.input.requestId, complete: true, result } });
+  const releases = [];
+  const save = { invoke: async () => new Promise((resolve) => releases.push(resolve)) };
+  setBookRedundancyChoice("first", true, save);await tick();
+  let finished = false;
+  const flushed = flushBookRedundancyChoices().then(() => { finished = true; });
+  setBookRedundancyChoice("second", true, save);
+  releases[0]();await tick();
+  const finishedBeforeLatestSave = finished;
+  releases[1]();await flushed;
+  assert.equal(finishedBeforeLatestSave, false);
+});
+test("Next cannot advance after its pending review was cancelled or replaced", async () => {
+  const { calls, operations, result } = setup();
+  await startBookRedundancy(() => {}, operations);
+  const started = calls.find((call) => call.name === "start_book_redundancy");
+  deliver({ payload: { requestId: started.args.input.requestId, complete: true, result } });
+  let release;
+  setBookRedundancyChoice("saved", true, { invoke: async () => new Promise((resolve) => { release = resolve; }) });
+  await tick();
+  const { handleProjectBookAction } = await import("./project-book-flow.js");
+  const next = handleProjectBookAction("book-next", () => {});
+  cancelBookRedundancy();
+  const modal = state.editorChapter.exportModal;
+  state.editorChapter.exportModal = { ...modal, page: 1, book: { ...modal.book, previewCache: new Map() } };
+  release();await next;
+  assert.equal(state.editorChapter.exportModal.page, 1);
+});

@@ -54,6 +54,7 @@ export async function startBookRedundancy(render, operations = {}) {
     })).catch((error) => { subscribed = null; throw error; });
     await subscribed;
     await pendingChoiceSave;
+    if (!matches(request)) return;
     const cached = await request.invoke("book_redundancy_cache", { input: request.scope });
     if (!matches(request)) return;
     publishResult(request, cached.result, cached.choices || {}, { stage: "Checking for new images and footnotes…" });
@@ -114,4 +115,15 @@ export function retryBookRedundancyChoiceSave() {
   if (active && matches(active) && modal().book.redundancy?.status === "ready") queueChoiceSave(active, modal().book.redundancy.choices);
 }
 
-export async function flushBookRedundancyChoices() { await pendingChoiceSave; if (active?.saveError) throw active.saveError; }
+export async function flushBookRedundancyChoices() {
+  const request = active;
+  if (!request) return false;
+  while (true) {
+    const pending = pendingChoiceSave;
+    await pending;
+    if (!matches(request)) return false;
+    if (pending !== pendingChoiceSave) continue;
+    if (request.saveError) throw request.saveError;
+    return true;
+  }
+}

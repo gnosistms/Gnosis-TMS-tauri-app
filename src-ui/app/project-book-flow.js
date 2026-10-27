@@ -242,7 +242,7 @@ export async function handleProjectBookAction(action, render) {
       update({ page: 2 }, render);
       void startBookRedundancy(render);
     } else if (["ready", "error"].includes(book.redundancy?.status)) {
-      try { await flushBookRedundancyChoices(); } catch (error) { update({ error: formatErrorForDisplay(error) }, render); return true; }
+      try { if (!(await flushBookRedundancyChoices())) return true; } catch (error) { update({ error: formatErrorForDisplay(error) }, render); return true; }
       cancelBookRedundancy();
       update({ page: 3, error: "" }, render);
       if (current.selectedOptionId === "file:pdf") void import("./editor-export-flow.js").then((module) => module.refreshPdfFontInspection(render));

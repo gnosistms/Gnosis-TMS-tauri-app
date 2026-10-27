@@ -31,6 +31,7 @@ async function mountProjectExport(page, multilingual = false, chapterTitles = fa
           window.__projectExports.push({ command, ...args });
         }
         if (command === "book_redundancy_cache") {
+          if (args.input.choices && window.__holdRedundancySave) await new Promise((resolve) => { window.__releaseRedundancySave = resolve; });
           if (args.input.choices && window.__failRedundancySave) throw new Error("Review choices could not be saved");
           if (args.input.choices) window.__redundancyChoices = args.input.choices;
           return { result: window.__redundancyResult, choices: window.__redundancyChoices };
@@ -1410,4 +1411,24 @@ test("legacy footnote choices migrate locally and failed saves have an explicit 
   await modal.getByRole("button", { name: "Next", exact: true }).click();
   await expect(modal.getByRole("button", { name: "Save", exact: true })).toBeVisible();
   await expect(modal.locator(".modal__error")).toHaveCount(0);
+});
+
+
+test("Back during a pending choice save cancels the old Next navigation", async ({ page }) => {
+  await mountProjectExport(page);
+  await page.evaluate(() => {
+    const note = (id, itemId) => ({ id, itemId, rowId: `${itemId}-row`, kind: "footnote", marker: 1, signature: "sig", chapterName: itemId, text: "Definition", context: "term" });
+    window.__redundancyResult = { images: [], warnings: [], footnotes: [{ id: "group", anchor: "term", occurrences: [note("first", "fixture-chapter-0-0"), note("second", "fixture-chapter-0-1")] }] };
+    window.__holdRedundancySave = true;
+  });
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  await modal.getByRole("button", { name: "Next", exact: true }).click();
+  await modal.locator("[data-book-redundancy-choice]").first().uncheck();
+  await expect.poll(() => page.evaluate(() => typeof window.__releaseRedundancySave)).toBe("function");
+  await modal.getByRole("button", { name: "Next", exact: true }).click();
+  await modal.getByRole("button", { name: "Previous", exact: true }).click();
+  await page.evaluate(() => { window.__holdRedundancySave = false; window.__releaseRedundancySave(); });
+  await expect.poll(() => page.evaluate(() => window.__redundancyChoices.first)).toBe(false);
+  await expect(modal.locator(".book-composer__list")).toBeVisible();
+  await expect(modal.getByRole("button", { name: "Save", exact: true })).toHaveCount(0);
 });
