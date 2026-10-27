@@ -12,10 +12,12 @@ function section(review, kind) {
   const groups = result[kind] || [];
   const imageWarnings = result.imageWarnings || [];
   const warnings = kind === "images" ? imageWarnings : (result.warnings || []).filter((warning) => !imageWarnings.includes(warning));
-  const key = JSON.stringify([status, groups, warnings]);
+  const phase = kind === "footnotes" ? review.footnotesPhase : "";
+  const key = JSON.stringify([status, phase, groups, warnings]);
   let content;
   if (status === "loading") {
-    content = `<p class="book-redundancy__checking">Checking for redundant ${kind}...${loadingSpinner({ key: `book-redundancy-${kind}`, label: `Checking for redundant ${kind}` })}</p>`;
+    const message = phase === "frequencies" ? "Computing word frequency counts..." : phase === "meanings" ? "Comparing footnote meanings..." : `Checking for redundant ${kind}...`;
+    content = `<p class="book-redundancy__checking">${message}${loadingSpinner({ key: `book-redundancy-${kind}-${phase}`, label: message })}</p>`;
   } else if (status === "error") {
     content = `<p class="modal__supporting">Could not finish checking for redundant ${kind}.</p>`;
   } else {

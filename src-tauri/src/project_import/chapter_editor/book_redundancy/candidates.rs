@@ -1,104 +1,144 @@
 use super::*;
 use std::collections::{HashMap, HashSet};
-fn units(text: &str) -> Vec<String> {
-    let text = normalized(text).to_lowercase();
-    text.graphemes(true)
-        .filter(|g| g.chars().any(|c| c.is_alphanumeric()))
-        .map(str::to_owned)
-        .collect()
-}
-fn patterns(text: &str, sizes: &[usize]) -> HashSet<String> {
-    let chars = units(text);
-    sizes
-        .iter()
-        .flat_map(|&n| chars.windows(n).map(|w| w.concat()).collect::<Vec<_>>())
-        .collect()
-}
-/// Candidate generation uses book-local frequency, never language dictionaries.
-/// Fixed suffix lengths and wider phrase lengths bound index work.
-pub(super) fn pairs(
-    notes: &[Occurrence],
-    book_texts: &[String],
-    near_cache: &mut BTreeMap<String, bool>,
-) -> BTreeSet<(usize, usize)> {
-    let mut index: HashMap<String, Vec<usize>> = HashMap::new();
-    let mut body_index: HashMap<String, Vec<usize>> = HashMap::new();
-    for (i, note) in notes.iter().enumerate() {
-        let tail = note
-            .context
+
+fn stripped(text: &str) -> String {
+    normalized(
+        &text
+            .nfc()
+            .collect::<String>()
+            .to_lowercase()
             .graphemes(true)
-            .rev()
-            .take(128)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect::<String>();
-        let tail_units = units(&tail);
-        let mut context_patterns = patterns(&tail, &[16, 32]);
-        for size in [1, 2, 4, 8, 16, 32, 64] {
-            if tail_units.len() >= size {
-                context_patterns.insert(tail_units[tail_units.len() - size..].concat());
-            }
-        }
-        for pattern in context_patterns {
-            index.entry(pattern).or_default().push(i);
-        }
-        body_index
-            .entry(format!("exact:{}", normalized(&note.text)))
-            .or_default()
-            .push(i);
-        if note.text.graphemes(true).count() >= 50 {
-            for p in patterns(&note.text, &[8]) {
-                body_index.entry(p).or_default().push(i);
-            }
-        }
+            .filter(|g| {
+                g.chars().any(|c| c.is_alphanumeric()) || g.chars().all(char::is_whitespace)
+            })
+            .collect::<String>(),
+    )
+}
+fn common_suffix<'a>(a: &[&'a str], b: &[&'a str]) -> String {
+    a.iter()
+        .zip(b)
+        .take_while(|(left, right)| left == right)
+        .map(|(unit, _)| *unit)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect()
+}
+fn word_boundary(text: &str, offset: usize) -> bool {
+    offset == 0
+        || text[offset..].starts_with(char::is_whitespace)
+        || text
+            .unicode_word_indices()
+            .any(|(start, _)| start == offset)
+}
+fn meaningful_suffix(
+    a: &str,
+    b: &str,
+    suffix: &str,
+    frequency: &HashMap<String, usize>,
+    population: usize,
+) -> bool {
+    if suffix.is_empty() {
+        return false;
     }
-    let mut frequencies: HashMap<String, usize> = HashMap::new();
+    let complete =
+        word_boundary(a, a.len() - suffix.len()) && word_boundary(b, b.len() - suffix.len());
+    let mut words = suffix.unicode_words();
+    if !complete {
+        // Drop a shared ending inside an ordinary word ("health"/"wealth").
+        // Long unsegmented runs still support Thai and other unspaced scripts.
+        let dense = [a, b].iter().all(|text| {
+            text.unicode_words()
+                .next_back()
+                .unwrap_or("")
+                .graphemes(true)
+                .count()
+                > 12
+        });
+        if dense && suffix.graphemes(true).count() >= 4 {
+            return true;
+        }
+        words.next();
+    }
+    let information: f64 = words
+        .map(|word| {
+            let count = *frequency.get(word).unwrap_or(&0);
+            ((population.max(20) as f64 + 1.0) / (count as f64 + 1.0))
+                .ln()
+                .max(0.0)
+        })
+        .sum();
+    information >= 2.5
+}
+#[derive(Default, Serialize, Deserialize)]
+pub(super) struct WordFrequencies {
+    population: usize,
+    words: HashMap<String, usize>,
+}
+pub(super) fn count_words(book_texts: &[String]) -> WordFrequencies {
+    let mut words = HashMap::<String, usize>::new();
     for text in book_texts {
-        for pattern in patterns(text, &[1, 2, 4, 8, 16, 32, 64]) {
-            if index.contains_key(&pattern) {
-                *frequencies.entry(pattern).or_default() += 1;
-            }
+        let clean = text.nfc().flat_map(char::to_lowercase).collect::<String>();
+        for word in clean.unicode_words().collect::<HashSet<_>>() {
+            *words.entry(word.to_owned()).or_default() += 1;
         }
     }
-    let mut result = BTreeSet::new();
-    for (pattern, members) in index {
-        let length = pattern.graphemes(true).count();
-        let frequency = *frequencies.get(&pattern).unwrap_or(&1);
-        // Estimate information from this book, with a small-corpus prior. A
-        // boilerplate ending occurring everywhere supplies little evidence even
-        // when long. Body matching remains an independent route into review.
-        let population = book_texts.len().max(20) as f64;
-        let information = ((population + 1.0) / (frequency as f64 + 1.0))
-            .ln()
-            .max(0.0);
-        if length as f64 * information < 1.5 {
-            continue;
-        }
-        for (offset, &a) in members.iter().enumerate() {
-            for &b in &members[offset + 1..] {
-                result.insert((a, b));
+    WordFrequencies {
+        population: book_texts.len(),
+        words,
+    }
+}
+/// Reverse punctuation-stripped contexts, sort, then compare ONLY neighbors.
+/// Matching adjacent notes chain into candidate groups for semantic splitting.
+pub(super) fn groups(notes: &[Occurrence], frequency: &WordFrequencies) -> Vec<Vec<usize>> {
+    if notes.len() < 2 {
+        return Vec::new();
+    }
+    #[cfg(debug_assertions)]
+    let phase = std::time::Instant::now();
+    let contexts = notes
+        .iter()
+        .map(|note| stripped(&note.context))
+        .collect::<Vec<_>>();
+    let reversed = contexts
+        .iter()
+        .map(|text| text.graphemes(true).rev().collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    let mut order = (0..notes.len()).collect::<Vec<_>>();
+    order.sort_by(|&a, &b| reversed[a].cmp(&reversed[b]));
+    let mut result = Vec::new();
+    let mut chain = Vec::new();
+    for adjacent in order.windows(2) {
+        let (a, b) = (adjacent[0], adjacent[1]);
+        let suffix = common_suffix(&reversed[a], &reversed[b]);
+        if meaningful_suffix(
+            &contexts[a],
+            &contexts[b],
+            &suffix,
+            &frequency.words,
+            frequency.population,
+        ) {
+            if chain.is_empty() {
+                chain.push(a);
             }
+            chain.push(b);
+        } else if chain.len() > 1 {
+            result.push(std::mem::take(&mut chain));
         }
     }
-    for members in body_index.values() {
-        for (offset, &a) in members.iter().enumerate() {
-            for &b in &members[offset + 1..] {
-                let mut bodies = [normalized(&notes[a].text), normalized(&notes[b].text)];
-                bodies.sort();
-                let key = digest(format!("{}\0{}", bodies[0], bodies[1]));
-                if bodies[0] == bodies[1]
-                    || *near_cache
-                        .entry(key)
-                        .or_insert_with(|| near(&bodies[0], &bodies[1]))
-                {
-                    result.insert((a, b));
-                }
-            }
-        }
+    if chain.len() > 1 {
+        result.push(chain);
     }
+    #[cfg(debug_assertions)]
+    eprintln!(
+        "[book redundancy] {} notes: {} neighbor comparisons including normalization/sort {:?}",
+        notes.len(),
+        notes.len() - 1,
+        phase.elapsed()
+    );
     result
 }
+
 pub(super) fn near(a: &str, b: &str) -> bool {
     let a = normalized(a);
     let b = normalized(b);
@@ -155,20 +195,13 @@ pub(super) fn near(a: &str, b: &str) -> bool {
         .unwrap_or(infinity)
         <= limit
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn near_threshold_and_unicode() {
-        assert!(!near("short", "short"));
-        let a = "a".repeat(100);
-        assert!(near(&a, &"a".repeat(95)));
-        assert!(!near(&a, &"a".repeat(94)));
-        assert!(near(&a, &format!("{}bbbbb", "a".repeat(95))));
-        assert!(!near(&a, &format!("{}bbbbbb", "a".repeat(94))));
-        assert!(near(&"字".repeat(50), &format!("{}文", "字".repeat(49))));
+    fn find_groups(notes: &[Occurrence], texts: &[String]) -> Vec<Vec<usize>> {
+        groups(notes, &count_words(texts))
     }
-
     fn note(id: usize, context: &str, body: &str) -> Occurrence {
         Occurrence {
             id: id.to_string(),
@@ -186,7 +219,41 @@ mod tests {
         }
     }
     #[test]
-    fn local_frequency_prunes_common_endings_in_every_script() {
+    fn neighboring_reversed_contexts_chain_without_cross_comparisons() {
+        let notes = vec![
+            note(0, "First: dependent origination!", "one"),
+            note(1, "Other term", "other"),
+            note(2, "Second dependent origination", "two"),
+            note(3, "Third dependent origination.", "three"),
+        ];
+        let texts = notes
+            .iter()
+            .map(|note| note.context.clone())
+            .collect::<Vec<_>>();
+        let found = find_groups(&notes, &texts);
+        assert_eq!(found.len(), 1);
+        assert_eq!(
+            found[0].iter().copied().collect::<BTreeSet<_>>(),
+            BTreeSet::from([0, 2, 3])
+        );
+        assert_eq!(found[0].windows(2).count(), 2);
+        assert!(find_groups(&[], &[]).is_empty());
+        assert!(find_groups(&notes[..1], &texts).is_empty());
+    }
+    #[test]
+    fn common_words_and_partial_word_endings_do_not_group() {
+        let notes = vec![
+            note(0, "First the", "one"),
+            note(1, "Second the", "two"),
+            note(2, "health", "three"),
+            note(3, "wealth", "four"),
+        ];
+        let mut texts = vec!["the".into(); 30];
+        texts.extend(["health".into(), "wealth".into()]);
+        assert!(find_groups(&notes, &texts).is_empty());
+    }
+    #[test]
+    fn meaningful_endings_work_without_language_dictionaries() {
         for (common, distinct) in [
             ("the", "Avalokiteśvara"),
             ("的", "緣起"),
@@ -199,28 +266,47 @@ mod tests {
                 note(2, distinct, "three"),
                 note(3, distinct, "four"),
             ];
-            let mut text = vec![common.to_string(); 30];
-            text.push(distinct.into());
-            let found = pairs(&notes, &text, &mut BTreeMap::new());
-            assert!(!found.contains(&(0, 1)), "common ending {common}");
-            assert!(found.contains(&(2, 3)), "distinct phrase {distinct}");
+            let mut texts = vec![common.to_string(); 30];
+            texts.push(distinct.into());
+            let found = find_groups(&notes, &texts);
+            assert!(
+                !found
+                    .iter()
+                    .any(|group| group.contains(&0) && group.contains(&1)),
+                "common {common}"
+            );
+            assert!(
+                found
+                    .iter()
+                    .any(|group| group.contains(&2) && group.contains(&3)),
+                "distinct {distinct}"
+            );
         }
     }
     #[test]
-    fn body_matching_survives_common_context_and_reuses_distance_evidence() {
+    fn body_matches_do_not_trigger_a_separate_all_pairs_search() {
         let body =
             "This is a sufficiently long explanation to qualify for near duplicate comparison.";
         let notes = vec![
-            note(0, "the", body),
-            note(1, "the", &body.replace("long", "full")),
+            note(0, "one unique referent", body),
+            note(1, "a different anchor", body),
         ];
-        let mut distances = BTreeMap::new();
-        let texts = vec!["the".to_string(); 30];
-        assert!(pairs(&notes, &texts, &mut distances).contains(&(0, 1)));
-        let saved = distances.clone();
-        assert!(!saved.is_empty());
-        assert!(pairs(&notes, &texts, &mut distances).contains(&(0, 1)));
-        assert_eq!(distances, saved);
+        let texts = notes
+            .iter()
+            .map(|note| note.context.clone())
+            .collect::<Vec<_>>();
+        assert!(find_groups(&notes, &texts).is_empty());
+        assert!(near(body, &body.replace("long", "full")));
+    }
+    #[test]
+    fn near_threshold_and_unicode() {
+        assert!(!near("short", "short"));
+        let a = "a".repeat(100);
+        assert!(near(&a, &"a".repeat(95)));
+        assert!(!near(&a, &"a".repeat(94)));
+        assert!(near(&a, &format!("{}bbbbb", "a".repeat(95))));
+        assert!(!near(&a, &format!("{}bbbbbb", "a".repeat(94))));
+        assert!(near(&"字".repeat(50), &format!("{}文", "字".repeat(49))));
     }
     #[test]
     fn benchmark_common_endings_1000_notes() {
@@ -229,21 +315,21 @@ mod tests {
                 note(
                     id,
                     &format!("Context {id} ends in the"),
-                    &format!("Distinct short note {id}"),
+                    &format!("Distinct note {id}"),
                 )
             })
             .collect::<Vec<_>>();
-        let texts = notes.iter().map(|n| n.context.clone()).collect::<Vec<_>>();
+        let texts = notes
+            .iter()
+            .map(|note| note.context.clone())
+            .collect::<Vec<_>>();
         let started = std::time::Instant::now();
-        let found = pairs(&notes, &texts, &mut BTreeMap::new());
+        let found = find_groups(&notes, &texts);
         eprintln!(
-            "1000 notes: {} candidates, {:?}",
+            "1000 notes: {} groups, {:?}",
             found.len(),
             started.elapsed()
         );
-        assert!(
-            found.len() < 100_000,
-            "common endings should not generate every pair"
-        );
+        assert!(found.is_empty());
     }
 }

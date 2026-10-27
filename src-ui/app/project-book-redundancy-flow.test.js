@@ -203,3 +203,20 @@ test("footnote completion preserves pending image choice save failures", async (
   retryBookRedundancyChoiceSave();await flushBookRedundancyChoices();
   assert.equal(state.editorChapter.exportModal.book.redundancy.choiceSaveError, "");
 });
+
+
+test("frequency and meaning progress are independent of completed images", async () => {
+  const { calls, operations, result } = setup();
+  await startBookRedundancy(() => {}, operations);
+  const requestId = calls.find((call) => call.name === "start_book_redundancy").args.input.requestId;
+  deliver({ payload: { requestId, phase: "images", result } });
+  deliver({ payload: { requestId, phase: "frequencies", status: "loading" } });
+  assert.equal(state.editorChapter.exportModal.book.redundancy.footnotesPhase, "frequencies");
+  deliver({ payload: { requestId, phase: "frequencies", status: "ready" } });
+  assert.equal(state.editorChapter.exportModal.book.redundancy.footnotesPhase, "contexts");
+  deliver({ payload: { requestId, phase: "meanings" } });
+  assert.equal(state.editorChapter.exportModal.book.redundancy.footnotesPhase, "meanings");
+  assert.equal(state.editorChapter.exportModal.book.redundancy.imagesStatus, "ready");
+  deliver({ payload: { requestId, complete: true, result } });
+  assert.equal(state.editorChapter.exportModal.book.redundancy.footnotesStatus, "ready");
+});

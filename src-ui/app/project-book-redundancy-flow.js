@@ -40,7 +40,7 @@ export async function startBookRedundancy(render, operations = {}) {
     teamId: team.id, login: getActiveStorageLogin(), session: current.book.previewCache, invoke: operations.invoke || invoke,
     scope: { login: getActiveStorageLogin() || "", installationId: team.installationId, projectId: current.projectId, languageCode: current.languageCode } };
   active = request;
-  publish(request, { status: "loading", imagesStatus: "loading", footnotesStatus: "loading", stage: "", error: "", choiceSaveError: "" });
+  publish(request, { status: "loading", imagesStatus: "loading", footnotesStatus: "loading", footnotesPhase: "contexts", stage: "", error: "", choiceSaveError: "" });
   try {
     if (!subscribed) subscribed = Promise.resolve((operations.listen || listen)("book-redundancy-progress", ({ payload }) => {
       const request = active;
@@ -49,6 +49,10 @@ export async function startBookRedundancy(render, operations = {}) {
       if (payload.phase === "images") {
         request.imagesPublished = true;
         publishResult(request, payload.result, modal().book.redundancy.choices || {}, { imagesStatus: "ready" });
+      } else if (payload.phase === "frequencies") {
+        publish(request, { footnotesPhase: payload.status === "loading" ? "frequencies" : "contexts" });
+      } else if (payload.phase === "meanings") {
+        publish(request, { footnotesPhase: "meanings" });
       } else if (payload.complete) {
         if (payload.error) fail(request, payload.error);
         else publishResult(request, payload.result, modal().book.redundancy.choices || {}, { status: "ready", imagesStatus: "ready", footnotesStatus: "ready", stage: "", error: "" });

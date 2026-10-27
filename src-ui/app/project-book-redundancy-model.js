@@ -29,14 +29,19 @@ export function bookRedundancyExclusions(modal, itemId) {
   return excluded.map(({ rowId, kind, marker, signature }) => ({ rowId, kind, marker, signature }));
 }
 
-// Legacy identities included unrelated image metadata. The native inventory
-// supplies aliases only when the annotation's row, marker, body and context match.
+// Native aliases preserve decisions when verified occurrences move from legacy
+// footnote/pixel identities to their current annotation or image identities.
 export function migrateBookRedundancyChoices(result, choices = {}) {
   let next = choices;
   for (const group of result?.footnotes || []) for (const occurrence of group.occurrences) {
     if (Object.hasOwn(next, occurrence.id)) continue;
     const alias = occurrence.choiceAliases?.find((id) => Object.hasOwn(choices, id));
     if (alias !== undefined) next = { ...next, [occurrence.id]: choices[alias] };
+  }
+  for (const group of result?.images || []) for (const entry of imageReviewChoices(group)) {
+    if (Object.hasOwn(next, entry.choiceId)) continue;
+    const alias = entry.choiceAliases?.find((id) => Object.hasOwn(choices, id));
+    if (alias !== undefined) next = { ...next, [entry.choiceId]: choices[alias] };
   }
   return next;
 }

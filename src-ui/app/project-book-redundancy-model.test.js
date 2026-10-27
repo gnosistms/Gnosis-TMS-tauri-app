@@ -37,3 +37,10 @@ test("legacy choices migrate only through verified aliases and preserve explicit
   const unrelated = { other: false };
   assert.equal(migrateBookRedundancyChoices(result, unrelated), unrelated);
 });
+
+
+test("image choices survive the change from pixel hashes to URL or asset identities", () => {
+  const result = { images: [{ id: "reference-v2:url:new", occurrences: [{ ...image("same-row", "chapter"), choiceAliases: ["image:old-pixel-hash:chapter"] }] }] };
+  const next = migrateBookRedundancyChoices(result, { "image:old-pixel-hash:chapter": false });
+  assert.equal(next["image:reference-v2:url:new:chapter"], false);
+});
