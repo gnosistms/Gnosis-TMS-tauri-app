@@ -62,7 +62,7 @@ const GLOSSARY_EDITOR_STATUS_SCOPE = "glossaryEditor";
 let nextOptimisticGlossaryTermId = 1;
 
 function normalizeSourceTermForDuplicateDetection(value) {
-  return extractGlossaryRubyBaseText(value).trim();
+  return extractGlossaryRubyBaseText(value).trim().toLowerCase();
 }
 
 function findRedundantSourceVariantIndices(

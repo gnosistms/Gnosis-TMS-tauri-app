@@ -28,11 +28,15 @@ pub(super) fn trim_non_empty_term_values(values: &[String]) -> Vec<String> {
 pub(super) fn has_duplicate_term_values(values: &[String]) -> bool {
     let mut seen = BTreeSet::new();
     for value in values {
-        if !seen.insert(value.clone()) {
+        if !seen.insert(source_term_key(value)) {
             return true;
         }
     }
     false
+}
+
+pub(super) fn source_term_key(value: &str) -> String {
+    value.trim().to_lowercase()
 }
 
 pub(super) fn conflicting_source_terms(
@@ -47,16 +51,16 @@ pub(super) fn conflicting_source_terms(
         }
 
         for source_term in &term.source_terms {
-            let normalized = source_term.trim();
+            let normalized = source_term_key(source_term);
             if !normalized.is_empty() {
-                existing_source_terms.insert(normalized.to_string());
+                existing_source_terms.insert(normalized);
             }
         }
     }
 
     source_terms
         .iter()
-        .filter(|source_term| existing_source_terms.contains(*source_term))
+        .filter(|source_term| existing_source_terms.contains(&source_term_key(source_term)))
         .cloned()
         .collect()
 }
@@ -112,6 +116,47 @@ fn merge_note_text(existing: &mut String, incoming: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn conflicts_ignore_capitalization_and_preserve_candidate_spelling() {
+        let existing = vec![
+            serde_json::from_value::<StoredGlossaryTermFile>(serde_json::json!({
+                "term_id": "existing",
+                "source_terms": ["Tal como es arriba es abajo", "Íntimo"],
+                "target_terms": [],
+                "lifecycle": { "state": "active" }
+            }))
+            .unwrap(),
+        ];
+        let candidates = [
+            "tal como es arriba, es abajo",
+            "tal como es arriba es abajo",
+            "ÍNTIMO",
+            "intimo",
+        ]
+        .map(String::from);
+        assert_eq!(
+            conflicting_source_terms(&existing, &candidates, None),
+            vec!["tal como es arriba es abajo", "ÍNTIMO"]
+        );
+        assert!(conflicting_source_terms(&existing, &candidates, Some("existing")).is_empty());
+    }
+
+    #[test]
+    fn duplicate_variants_ignore_capitalization_but_keep_punctuation_and_accents() {
+        assert!(has_duplicate_term_values(&[
+            "Íntimo".into(),
+            " ÍNTIMO ".into()
+        ]));
+        assert!(!has_duplicate_term_values(&[
+            "íntimo".into(),
+            "intimo".into()
+        ]));
+        assert!(!has_duplicate_term_values(&[
+            "Dag Dugpa".into(),
+            "Dag-Dugpa".into()
+        ]));
+    }
 
     #[test]
     fn conflicts_identify_exact_variants_and_ignore_current_and_deleted_terms() {

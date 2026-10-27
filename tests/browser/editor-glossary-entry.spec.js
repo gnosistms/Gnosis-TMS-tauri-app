@@ -9,11 +9,11 @@ const FIELDS = {
 
 // The editor fixture with Spanish → Vietnamese, an English column, and a
 // stand-in for the native side that answers the AI with window.entryAnswer.
-async function mountEditor(page) {
-  await page.addInitScript(() => {
+async function mountEditor(page, terms = []) {
+  await page.addInitScript((terms) => {
     window.entryCalls = [];
     window.entryAnswer = { found: false, confidence: "low", sourceText: null };
-    const glossary = { glossaryId: "fixture-glossary", title: "Fixture Glossary", terms: [], termCount: 0,
+    const glossary = { glossaryId: "fixture-glossary", title: "Fixture Glossary", terms, termCount: terms.length,
       sourceLanguage: { code: "es", name: "Spanish" }, targetLanguage: { code: "vi", name: "Vietnamese" } };
     window.__TAURI__ = { event: { listen: async () => () => {} }, core: { invoke: async (command, args = {}) => {
       window.entryCalls.push({ command, args });
@@ -38,7 +38,7 @@ async function mountEditor(page) {
       if (command.startsWith("list_")) return [];
       return null;
     } } };
-  });
+  }, terms);
   await page.goto("/");
   await page.waitForFunction(() => typeof window.__gnosisDebug?.mountEditorFixture === "function");
   await page.evaluate(async (fields) => {
@@ -75,6 +75,29 @@ async function highlight(page, languageCode, words) {
 }
 
 const dialog = (page) => page.locator('[data-modal-dialog="editor-glossary-entry"]');
+
+test("editor-row entries reject an existing source variant with different capitalization", async ({ page }) => {
+  await mountEditor(page, [{
+    termId: "existing", sourceTerms: ["Tal como es arriba es abajo"],
+    targetTerms: ["Trên sao thì dưới cũng vậy"], lifecycleState: "active",
+  }]);
+  await highlight(page, "es", "Ser interior");
+  await entryButton(page, "es").click();
+  await dialog(page).locator('[data-editor-glossary-entry-field="sourceTerm"]').fill("tal como es arriba es abajo");
+  await dialog(page).locator('[data-editor-glossary-entry-field="targetTerm"]').fill("trên sao thì dưới cũng vậy");
+  await dialog(page).getByRole("button", { name: "Save to glossary" }).click();
+  const modal = page.locator('.modal-card', { has: page.locator("#glossary-term-editor-modal-title") });
+  const source = modal.locator('[data-glossary-term-variant-input][data-variant-side="source"]').first();
+  await expect(source).toHaveValue("tal como es arriba es abajo");
+  await expect(source).toHaveAttribute("aria-invalid", "true");
+  await expect(modal.locator("[data-glossary-term-duplicate-warning]")).toBeVisible();
+  await modal.getByRole("button", { name: "Add Term", exact: true }).click();
+  await expect(modal).toBeVisible();
+  expect(await page.evaluate(() => window.entryCalls.some((call) => call.command === "upsert_gtms_glossary_term"))).toBe(false);
+  await source.fill("tal como es arriba, es abajo");
+  await expect(source).toHaveAttribute("aria-invalid", "false");
+  await expect(modal.locator("[data-glossary-term-duplicate-warning]")).toBeHidden();
+});
 
 test("the button waits for highlighted text and explains itself", async ({ page }) => {
   await mountEditor(page);
