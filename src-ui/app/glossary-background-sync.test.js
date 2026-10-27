@@ -1408,6 +1408,22 @@ test("saving a glossary term syncs first and then persists the user's modal draf
 });
 
 for (const termId of [null, "term-1"]) {
+  test(`glossary ${termId ? "edits" : "creates"} reject case-only source collisions before saving`, async () => {
+    installGlossaryEditorFixture({ terms: [glossaryTerm({ termId: "existing", sourceTerms: ["Tal como es arriba es abajo", "Íntimo"] })] });
+    state.glossaryTermEditor = {
+      ...createGlossaryTermEditorState(), isOpen: true, glossaryId: "glossary-1", termId,
+      sourceTerms: ["tal como es arriba, es abajo", "tal como es arriba es abajo", "ÍNTIMO"],
+      targetTerms: ["trên sao thì dưới cũng vậy"],
+    };
+    await submitGlossaryTermEditor(() => {});
+    assert.equal(syncInvocationCount("upsert_gtms_glossary_term"), 0);
+    assert.equal(state.glossaryTermEditor.isOpen, true);
+    assert.deepEqual(state.glossaryTermEditor.redundantSourceVariantIndices, [1, 2]);
+    updateGlossaryTermVariant("source", 1, "Unique phrase");
+    updateGlossaryTermVariant("source", 2, "intimo");
+    assert.deepEqual(state.glossaryTermEditor.redundantSourceVariantIndices, []);
+  });
+
   test(`backend duplicate rejection marks the recovered ${termId ? "edited" : "new"} draft and tracks variant changes`, async () => {
     installGlossaryEditorFixture();
     state.glossaryTermEditor = {

@@ -1280,6 +1280,30 @@ fn prepare_local_gtms_qa_list_repo_sync(
     )
 }
 
+fn qa_term_text_duplicates_existing_term(
+    terms: &[StoredQaListTermFile],
+    text: &str,
+    term_id: Option<&str>,
+    is_case_sensitive: bool,
+    is_regular_expression: bool,
+) -> bool {
+    let key = |value: &str| {
+        if is_case_sensitive || is_regular_expression {
+            value.trim().to_string()
+        } else {
+            value.trim().to_lowercase()
+        }
+    };
+    let candidate = key(text);
+    terms.iter().any(|term| {
+        term.lifecycle.state == "active"
+            && term_id != Some(term.term_id.as_str())
+            && term.is_case_sensitive == is_case_sensitive
+            && term.is_regular_expression == is_regular_expression
+            && key(&term.text) == candidate
+    })
+}
+
 fn upsert_gtms_qa_list_term_sync(
     app: &AppHandle,
     input: UpsertQaListTermInput,
@@ -1299,6 +1323,15 @@ fn upsert_gtms_qa_list_term_sync(
     let text = input.text.trim();
     if text.is_empty() {
         return Err("Enter QA term text.".to_string());
+    }
+    if qa_term_text_duplicates_existing_term(
+        &load_qa_list_terms(&repo_path.join("terms"))?,
+        text,
+        input.term_id.as_deref(),
+        input.is_case_sensitive,
+        input.is_regular_expression,
+    ) {
+        return Err("This QA term is redundant with another QA term in this QA list. Please change it before saving.".to_string());
     }
     if input.is_regular_expression {
         validate_qa_regular_expression(text, input.is_case_sensitive)?;
@@ -1614,6 +1647,49 @@ mod tests {
             lifecycle: StoredLifecycle {
                 state: "active".to_string(),
             },
+        }
+    }
+
+    #[test]
+    fn duplicate_qa_terms_respect_case_and_regex_settings() {
+        let terms = vec![matcher_term("Íntimo", false, false)];
+        assert!(qa_term_text_duplicates_existing_term(
+            &terms,
+            " ÍNTIMO ",
+            None,
+            false,
+            false
+        ));
+        assert!(!qa_term_text_duplicates_existing_term(
+            &terms, "intimo", None, false, false
+        ));
+        assert!(!qa_term_text_duplicates_existing_term(
+            &terms,
+            "Íntimo",
+            Some("term-Íntimo"),
+            false,
+            false
+        ));
+        assert!(!qa_term_text_duplicates_existing_term(
+            &terms, "Íntimo", None, true, false
+        ));
+        let mut deleted = matcher_term("Íntimo", false, false);
+        deleted.lifecycle.state = "deleted".into();
+        assert!(!qa_term_text_duplicates_existing_term(
+            &[deleted],
+            "ÍNTIMO",
+            None,
+            false,
+            false
+        ));
+        for (sensitive, regex) in [(true, false), (false, true)] {
+            let terms = vec![matcher_term("Text", sensitive, regex)];
+            assert!(!qa_term_text_duplicates_existing_term(
+                &terms, "text", None, sensitive, regex
+            ));
+            assert!(qa_term_text_duplicates_existing_term(
+                &terms, "Text", None, sensitive, regex
+            ));
         }
     }
 

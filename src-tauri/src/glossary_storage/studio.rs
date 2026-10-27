@@ -86,10 +86,10 @@ fn ensure_no_new_source_conflicts(
             .find(|change| change.term_id == old.term_id)
             .map(|change| &change.source_terms)
             .unwrap_or(&old.source_terms);
-        retained.extend(sources.iter().cloned());
+        retained.extend(sources.iter().map(|source| terms::source_term_key(source)));
     }
     for form in source {
-        if !retained.insert(form.clone()) {
+        if !retained.insert(terms::source_term_key(form)) {
             return Err(format!(
                 "Remove or change these duplicate source variants before saving: {}",
                 json!([form])
@@ -331,6 +331,10 @@ mod tests {
             ensure_no_new_source_conflicts(&existing, &changes, "new", &["unrelated".into()])
                 .unwrap_err();
         assert!(error.contains("unrelated"));
+        assert!(
+            ensure_no_new_source_conflicts(&existing, &changes, "new", &["UNRELATED".into()])
+                .is_err()
+        );
         assert!(ensure_no_new_source_conflicts(
             &existing,
             &changes,

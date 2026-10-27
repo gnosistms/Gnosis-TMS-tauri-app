@@ -11,6 +11,7 @@ import {
   moveGlossaryTermVariantToIndex,
   removeGlossaryTermVariant,
   updateGlossaryTermVariantNote,
+  updateGlossaryTermVariant,
 } from "./glossary-term-draft.js";
 import {
   GLOSSARY_EMPTY_TARGET_VARIANT_SENTINEL,
@@ -41,6 +42,16 @@ test("target variant note edits stay aligned through add, remove, and move", () 
 
   assert.deepEqual(state.glossaryTermEditor.targetTerms, ["", "beta"]);
   assert.deepEqual(state.glossaryTermEditor.targetVariantNotes, ["C", "Updated B"]);
+});
+
+test("case-only source variants within a draft are marked together", () => {
+  openDraft();
+  state.glossaryTermEditor.sourceTerms = ["Íntimo", "ÍNTIMO", "intimo"];
+  state.glossaryTermEditor.sourceTermDuplicateWarning = "Check duplicates";
+  updateGlossaryTermVariant("source", 1, " ÍNTIMO ");
+  assert.deepEqual(state.glossaryTermEditor.redundantSourceVariantIndices, [0, 1]);
+  updateGlossaryTermVariant("source", 1, "Other");
+  assert.deepEqual(state.glossaryTermEditor.redundantSourceVariantIndices, []);
 });
 
 test("target pair sanitizing merges duplicate notes and keeps empty variant notes", () => {

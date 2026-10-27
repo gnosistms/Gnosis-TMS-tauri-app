@@ -44,8 +44,9 @@ function qaTermRecordsMatch(left, right) {
   );
 }
 
-function normalizeQaTermTextForDuplicateDetection(value) {
-  return extractGlossaryRubyBaseText(value).trim();
+function normalizeQaTermTextForDuplicateDetection(value, isCaseSensitive, isRegularExpression) {
+  const text = extractGlossaryRubyBaseText(value).trim();
+  return isCaseSensitive || isRegularExpression ? text : text.toLowerCase();
 }
 
 function qaTermTextDuplicatesExistingTerm(
@@ -55,7 +56,7 @@ function qaTermTextDuplicatesExistingTerm(
   isCaseSensitive = false,
   isRegularExpression = false,
 ) {
-  const normalizedText = normalizeQaTermTextForDuplicateDetection(text);
+  const normalizedText = normalizeQaTermTextForDuplicateDetection(text, isCaseSensitive, isRegularExpression);
   if (!normalizedText) {
     return false;
   }
@@ -66,7 +67,7 @@ function qaTermTextDuplicatesExistingTerm(
       && term.termId !== termId
       && (term.isCaseSensitive === true) === isCaseSensitive
       && (term.isRegularExpression === true) === isRegularExpression
-      && normalizeQaTermTextForDuplicateDetection(term.text) === normalizedText,
+      && normalizeQaTermTextForDuplicateDetection(term.text, isCaseSensitive, isRegularExpression) === normalizedText,
   );
 }
 
