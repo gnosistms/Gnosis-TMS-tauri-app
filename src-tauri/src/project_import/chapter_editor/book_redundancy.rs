@@ -326,7 +326,7 @@ fn remove_markers(text: &str, removed: &BTreeSet<usize>) -> String {
                 if text[index + 1..end]
                     .parse::<usize>()
                     .ok()
-                    .is_some_and(|n| removed.contains(&n))
+                    .is_some_and(|n| removed.contains(&n) && text[index..=end] == format!("[{n}]"))
                 {
                     index = end + 1;
                     continue;
@@ -1021,6 +1021,10 @@ mod tests {
     #[test]
     fn marker_removal_preserves_markup_and_escapes() {
         let removed = BTreeSet::from([1]);
+        assert_eq!(
+            remove_markers("A[1] B[01] C[+1] D[ 1]", &removed),
+            "A B[01] C[+1] D[ 1]"
+        );
         assert_eq!(
             remove_markers("x < y [1] and z > 0", &removed),
             "x < y  and z > 0"
