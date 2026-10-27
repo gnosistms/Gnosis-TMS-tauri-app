@@ -66,7 +66,6 @@ function titlePageEditor(modal, item) {
     <section class="book-title-editor" aria-label="Title page details">
       <h3>Title page</h3>
       ${titleInfoField("title", item.title, "Title", true)}
-      <p class="book-title-editor__hint">Press Enter to insert a line break.</p>
       ${titleInfoField("subtitle", item.subtitle, "Subtitle")}
       ${titleInfoField("author", item.author, "Author")}
       ${titleInfoField("translator", item.translator, "Translator")}

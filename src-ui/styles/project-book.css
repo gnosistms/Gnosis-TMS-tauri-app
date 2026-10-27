@@ -49,7 +49,6 @@
 .book-title-editor { overflow: auto; padding: 22px; background: var(--panel-surface); border-right: 1px solid var(--surface-border); }
 .book-title-editor h3 { margin: 0 0 20px; font-size: 17px; }
 .book-title-editor__field { margin: 0 0 16px; }
-.book-title-editor__hint { margin: -9px 0 18px; color: var(--muted); font-size: 11px; }
 .book-title-editor__logo .book-image { margin: 10px 0 0; }
 .book-title-preview { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .book-title-preview__output { flex: 1; min-height: 0; overflow: auto; padding: 0 20px 24px; }
