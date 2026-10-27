@@ -24,12 +24,69 @@ pub(super) struct BookItemInput {
     pub(super) caption: String,
     #[serde(default)]
     pub(super) image_asset_id: String,
+    #[serde(default)]
+    pub(super) include_h1_headings: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct BookPart {
     pub(super) item: BookItemInput,
     pub(super) document: ExportDocument,
+}
+
+// Front-matter LF is a paragraph boundary; U+2028 is an in-paragraph soft break.
+// Balance italics at each boundary so separate export paragraphs retain styling.
+pub(super) fn book_text_blocks(text: &str, text_style: &str) -> Vec<ExportBlock> {
+    fn paragraph(blocks: &mut Vec<ExportBlock>, text: &mut String, depth: usize, style: &str) {
+        text.push_str(&"</i>".repeat(depth));
+        blocks.push(ExportBlock::Text {
+            text_style: style.into(),
+            text: std::mem::take(text).replace('\u{2028}', "\n"),
+        });
+        text.push_str(&"<i>".repeat(depth));
+    }
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+    let mut remaining = normalized.as_str();
+    let mut blocks = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0usize;
+    let mut has_text = false;
+    let mut after_paragraph = false;
+    while !remaining.is_empty() {
+        if let Some(rest) = remaining.strip_prefix("<i>") {
+            depth += 1;
+            current.push_str("<i>");
+            remaining = rest;
+        } else if let Some(rest) = remaining.strip_prefix("</i>") {
+            if depth > 0 {
+                depth -= 1;
+                current.push_str("</i>");
+            }
+            remaining = rest;
+        } else if let Some(rest) = remaining.strip_prefix('\n') {
+            paragraph(&mut blocks, &mut current, depth, text_style);
+            has_text = false;
+            after_paragraph = true;
+            remaining = rest;
+        } else if let Some(rest) = remaining.strip_prefix("<hr>") {
+            if has_text {
+                paragraph(&mut blocks, &mut current, depth, text_style);
+                has_text = false;
+            }
+            blocks.push(ExportBlock::Separator);
+            after_paragraph = false;
+            remaining = rest;
+        } else if let Some(character) = remaining.chars().next() {
+            current.push(character);
+            has_text = true;
+            after_paragraph = false;
+            remaining = &remaining[character.len_utf8()..];
+        }
+    }
+    if has_text || after_paragraph || blocks.is_empty() {
+        paragraph(&mut blocks, &mut current, depth, text_style);
+    }
+    blocks
 }
 
 #[derive(Deserialize)]
@@ -191,21 +248,14 @@ pub(super) fn section_document(
             }
         }
         "dedication" | "copyright" => {
-            for (index, part) in item.text.split("<hr>").enumerate() {
-                if index > 0 {
-                    blocks.push(ExportBlock::Separator);
-                }
-                if !part.is_empty() {
-                    blocks.push(ExportBlock::Text {
-                        text_style: if item.kind == "dedication" {
-                            "centered".into()
-                        } else {
-                            "paragraph".into()
-                        },
-                        text: part.to_string(),
-                    });
-                }
-            }
+            blocks.extend(book_text_blocks(
+                &item.text,
+                if item.kind == "dedication" {
+                    "centered"
+                } else {
+                    "paragraph"
+                },
+            ));
         }
         "image" => {}
         _ => return Err("The book contains an unsupported section.".into()),
@@ -274,6 +324,36 @@ pub(super) fn svg_dimensions(bytes: &[u8]) -> (u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn book_text_paragraphs_preserve_soft_breaks_italics_and_blank_lines() {
+        let blocks = book_text_blocks(
+            "<i>First\r\n\r\nSecond\u{2028}soft<hr>Third</i>",
+            "centered",
+        );
+        assert_eq!(
+            blocks,
+            vec![
+                ExportBlock::Text {
+                    text_style: "centered".into(),
+                    text: "<i>First</i>".into()
+                },
+                ExportBlock::Text {
+                    text_style: "centered".into(),
+                    text: "<i></i>".into()
+                },
+                ExportBlock::Text {
+                    text_style: "centered".into(),
+                    text: "<i>Second\nsoft</i>".into()
+                },
+                ExportBlock::Separator,
+                ExportBlock::Text {
+                    text_style: "centered".into(),
+                    text: "<i>Third</i>".into()
+                },
+            ]
+        );
+        assert_eq!(book_text_blocks("First\n", "paragraph").len(), 2);
+    }
     #[test]
     fn book_svg_accepts_vectors_and_rejects_active_or_external_content() {
         assert!(validate_book_image(

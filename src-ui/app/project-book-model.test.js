@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { addBookSection, bookContentsItems, bookExportItems, bookItemIncluded, bookLanguages, includeBookItem, reconcileBookLayout, reorderBookItems } from "./project-book-model.js";
+import { addBookSection, bookContentsEntries, bookContentsItems, bookExportItems, bookItemIncluded, bookLanguages, includeBookItem, reconcileBookLayout, reorderBookItems } from "./project-book-model.js";
 import { loadBookSettings, loadContentsTitle, saveBookSettings, saveContentsTitle } from "./project-book-settings.js";
 import { setActiveStorageLogin, clearActiveStorageLogin } from "./team-storage.js";
 const chapters = () => [
@@ -39,7 +39,7 @@ test("new front matter follows standard order, but contents can be moved to the 
   const toc = items.find((item) => item.kind === "contents");
   items = reorderBookItems(items, toc.id, "10", true);
   assert.equal(items.filter(bookItemIncluded).at(-1).kind, "contents");
-  assert.deepEqual(bookContentsItems(items).map((item) => item.kind), ["dedication", "chapter", "chapter"]);
+  assert.deepEqual(bookContentsItems(items).map((item) => item.kind), ["chapter", "chapter"]);
   const exported = bookExportItems({ book: { items } });
   assert.equal(exported.at(-1).title, "Mục lục");
 });
@@ -64,4 +64,24 @@ test("the latest contents spelling becomes the per-language default across proje
   saveContentsTitle("vi", "MỤC LỤC");
   assert.equal(loadContentsTitle("vi"), "MỤC LỤC");
   assert.equal(loadContentsTitle("en"), "Table of Contents");
+});
+
+test("contents default to numbered chapters and optionally include H1 headings", () => {
+  const items = addBookSection(reconcileBookLayout(chapters(), "en").items, "contents", "Book", "Contents");
+  const contents = items.find((item) => item.kind === "contents");
+  assert.equal(contents.includeH1Headings, false);
+  assert.equal(bookExportItems({ book: { items } }).find((item) => item.kind === "contents").includeH1Headings, false);
+  assert.deepEqual(bookContentsEntries(items, { "2": ["A heading"] }), [
+    { title: "1. Chapter 2", level: 0 }, { title: "2. Chapter 10", level: 0 },
+  ]);
+  assert.deepEqual(bookContentsEntries(items, { "2": ["A heading"] }, true), [
+    { title: "1. Chapter 2", level: 0 }, { title: "A heading", level: 1 }, { title: "2. Chapter 10", level: 0 },
+  ]);
+  contents.includeH1Headings = true;
+  setActiveStorageLogin("contents-heading-test");
+  saveBookSettings({ projectId: "p", languageCode: "en", book: { items } });
+  const restored = reconcileBookLayout(chapters(), "en", loadBookSettings("p").layouts.en);
+  assert.equal(restored.items.find((item) => item.kind === "contents").includeH1Headings, true);
+  assert.equal(bookExportItems({ book: restored }).find((item) => item.kind === "contents").includeH1Headings, true);
+  assert.deepEqual(bookContentsEntries(includeBookItem(items, "2", false)), [{ title: "1. Chapter 10", level: 0 }]);
 });

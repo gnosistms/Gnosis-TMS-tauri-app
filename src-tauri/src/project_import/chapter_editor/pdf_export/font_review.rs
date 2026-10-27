@@ -320,7 +320,7 @@ mod tests {
         let options = PdfWorkspacePreparationOptions {
             paper_size: "a4",
             footnote_links_as_plain_text: true,
-            image_cache_scope: &scope,
+            image_cache_session: &scope,
         };
         let prepared = prepare(&workspace, &document, &options, &plan, &plan).unwrap();
         assert_eq!(
@@ -338,20 +338,20 @@ mod tests {
         assert!(!source.contains("example.invalid"));
         assert!(source.contains("size: 14.5pt"));
         assert!(source.contains("== #text(\"A heading"));
-        assert!(source.contains("#text(size: 0.85em, style: \"italic\")"));
+        assert!(source.contains("#text(size: 0.75em, style: \"italic\")"));
         assert!(source.contains("#super[#text(\"17\")]"));
         assert!(source.contains("#text(\"17.\")"));
         assert!(source.contains("margin: (x: 0.85in, y: 12pt)"));
     }
 
-    fn tests_scope() -> PdfImageCacheScope {
-        PdfImageCacheScope {
+    fn tests_scope() -> PdfImageCacheSession {
+        begin_pdf_image_cache(&PdfImageCacheScope {
             installation_id: 1,
             repo_name: "test".into(),
             project_id: None,
             project_full_name: None,
-            chapter_id: "test".into(),
-        }
+            target: PdfImageCacheTarget::Chapter("test".into()),
+        })
     }
 
     #[cfg(target_os = "macos")]
@@ -423,7 +423,7 @@ mod tests {
         let options = PdfWorkspacePreparationOptions {
             paper_size: "a4",
             footnote_links_as_plain_text: false,
-            image_cache_scope: &scope,
+            image_cache_session: &scope,
         };
         prepare_typst_workspace(None, "test", &workspace, &document, &options, &cancelled).unwrap();
         let full = fs::read_to_string(workspace.join("chapter.typ")).unwrap();
@@ -592,7 +592,7 @@ mod tests {
         let options = PdfWorkspacePreparationOptions {
             paper_size: "a4",
             footnote_links_as_plain_text: true,
-            image_cache_scope: &scope,
+            image_cache_session: &scope,
         };
         let prepared = prepare(&workspace, &document, &options, &plan, &plan).unwrap();
         // A local figure in the final document avoids any network during the test.

@@ -1005,17 +1005,17 @@ mod tests {
                 },
             ],
         };
-        let scope = PdfImageCacheScope {
+        let session = begin_pdf_image_cache(&PdfImageCacheScope {
             installation_id: 1,
             repo_name: "test".into(),
             project_id: None,
             project_full_name: None,
-            chapter_id: "another-document".into(),
-        };
+            target: PdfImageCacheTarget::Chapter("another-document".into()),
+        });
         let options = PdfWorkspacePreparationOptions {
             footnote_links_as_plain_text: false,
             paper_size: "a4",
-            image_cache_scope: &scope,
+            image_cache_session: &session,
         };
         let prepared =
             font_review::prepare(&workspace, &document, &options, &plan, &review).unwrap();

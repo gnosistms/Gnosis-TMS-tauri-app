@@ -12,7 +12,7 @@ async function mountProjectExport(page, multilingual = false) {
         if (command === "list_wordpress_connections") return window.__wordpressSites ?? [];
         if (command === "load_gtms_chapter_editor_data") return {
           fileTitle: args.input.chapterId, languages: [{ code: "en" }, { code: "vi" }],
-          rows: [{ rowId: `${args.input.chapterId}-row`, textStyle: "paragraph", fields: { en: `Opening ${args.input.chapterId}`, vi: `Bản dịch ${args.input.chapterId}` } }],
+          rows: window.__bookHeadingRows?.[args.input.chapterId] ?? [{ rowId: `${args.input.chapterId}-row`, textStyle: "paragraph", fields: { en: `Opening ${args.input.chapterId}`, vi: `Bản dịch ${args.input.chapterId}` } }],
         };
         if (command === "import_project_book_image") {
           if (args.input.fileName === "bad.png") throw new Error("The selected file is not a valid image.");
@@ -142,6 +142,46 @@ async function addSection(modal, kind) {
   await modal.locator('[data-action="book-add-menu"]').click();
   await modal.locator(`[data-action="book-add:${kind}"]`).click();
 }
+
+test("book contents include H1 headings only when the saved checkbox is selected", async ({ page }) => {
+  await mountProjectExport(page);
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  await page.evaluate(() => {
+    window.__bookHeadingRows = Object.fromEntries([0, 1, 2].map((index) => [
+      `fixture-chapter-0-${index}`, [
+        { rowId: `title-${index}`, textStyle: "heading1", fields: { en: `Promoted title ${index}` } },
+        { rowId: `body-${index}`, textStyle: "paragraph", fields: { en: "Opening paragraph." } },
+        { rowId: `h1-${index}`, textStyle: "heading1", fields: { en: `Inside chapter ${index}` } },
+        { rowId: `h2-${index}`, textStyle: "heading2", fields: { en: `Second-level heading ${index}` } },
+      ],
+    ]));
+  });
+  await addSection(modal, "contents");
+  const checkbox = modal.getByRole("checkbox", { name: "Include H1 headings", exact: true });
+  await expect(checkbox).not.toBeChecked();
+  await expect(modal.locator(".book-contents__subheading")).toHaveCount(0);
+  await checkbox.check();
+  await expect(modal.locator(".book-contents__subheading")).toHaveCount(3);
+  await expect(modal.locator(".book-contents")).toContainText("Inside chapter 0");
+  await expect(modal.locator(".book-contents")).not.toContainText("Promoted title");
+  await expect(modal.locator(".book-contents")).not.toContainText("Second-level heading");
+  await modal.locator('[data-action="book-exclude:fixture-chapter-0-2"]').click();
+  await expect(modal.locator(".book-contents__subheading")).toHaveCount(2);
+  await page.evaluate(() => { window.__bookHeadingRows["fixture-chapter-0-2"][2].fields.en = "Updated inside chapter 2"; });
+  await modal.locator('[data-action="book-include:fixture-chapter-0-2"]').click();
+  await expect(modal.locator(".book-contents")).toContainText("Updated inside chapter 2");
+  await modal.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.locator('[data-action="export-project:fixture-project-001"]').click();
+  await expect(checkbox).toBeChecked();
+  await expect(modal.locator(".book-contents__subheading")).toHaveCount(3);
+  await page.screenshot({ path: test.info().outputPath("book-contents-headings.png") });
+  await modal.getByRole("button", { name: "Next", exact: true }).click();
+  await modal.locator('[data-action="select-editor-export-option:file:pdf"]').click();
+  await modal.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.__projectExports.some((call) => call.command === "start_gtms_chapter_pdf_export"))).toBe(true);
+  const contents = await page.evaluate(() => window.__projectExports.findLast((call) => call.command === "start_gtms_chapter_pdf_export").input.bookItems.find((item) => item.kind === "contents"));
+  expect(contents.includeH1Headings).toBe(true);
+});
 async function dragBefore(page, source, target) {
   const from = await source.boundingBox();
   const to = await target.boundingBox();
@@ -150,6 +190,54 @@ async function dragBefore(page, source, target) {
   await page.mouse.move(to.x + 30, to.y + 4, { steps: 10 });
   await page.mouse.up();
 }
+
+test("front matter keeps Return paragraphs distinct from Shift+Return line breaks", async ({ page }) => {
+  await mountProjectExport(page);
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  for (const kind of ["copyright", "dedication"]) {
+    await addSection(modal, kind);
+    const editor = modal.locator("[data-book-copyright-editor]");
+    await editor.click();
+    await page.keyboard.insertText("First paragraph");
+    await page.keyboard.press("Enter");
+    await page.keyboard.insertText("Second paragraph");
+    await page.keyboard.press("Shift+Enter");
+    await page.keyboard.insertText("soft line");
+    const itemId = await modal.locator(".book-item.is-selected").getAttribute("data-book-item");
+    const saved = await page.evaluate(async (id) => {
+      const { state } = await import("/app/state.js");
+      return state.editorChapter.exportModal.book.items.find((item) => item.id === id).text;
+    }, itemId);
+    expect(saved).toBe("First paragraph\nSecond paragraph\u2028soft line");
+    const spacing = await editor.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return { line: parseFloat(style.lineHeight) / parseFloat(style.fontSize), paragraph: parseFloat(getComputedStyle(element.firstElementChild).marginBottom) / parseFloat(style.fontSize) };
+    });
+    expect(spacing).toEqual({ line: 1.25, paragraph: .75 });
+    await modal.locator('[data-action="book-select:fixture-chapter-0-0"]').click();
+    await modal.locator(`[data-action="book-select:${itemId}"]`).click();
+    await expect(editor.locator(":scope > p")).toHaveCount(2);
+    await expect(editor.locator("p").nth(1).locator("br")).toHaveCount(1);
+    const blocks = await page.evaluate(async (id) => {
+      const { state } = await import("/app/state.js");
+      const { loadProjectExportBlocks } = await import("/app/project-export-context.js");
+      return (await loadProjectExportBlocks(state.editorChapter.exportModal)).filter((block) => block.bookItemId === id);
+    }, itemId);
+    expect(blocks.map((block) => block.text)).toEqual(["First paragraph", "Second paragraph\nsoft line"]);
+    await editor.selectText();
+    await editor.evaluate((element) => {
+      const clipboardData = new DataTransfer();
+      clipboardData.setData("text/plain", "Pasted first\nPasted second");
+      element.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData }));
+    });
+    await expect(editor.locator(":scope > p")).toHaveCount(2);
+    const pasted = await page.evaluate(async (id) => {
+      const { state } = await import("/app/state.js");
+      return state.editorChapter.exportModal.book.items.find((item) => item.id === id).text;
+    }, itemId);
+    expect(pasted).toBe("Pasted first\nPasted second");
+  }
+});
 
 test("book composer saves independent language layouts, sections, and format settings immediately", async ({ page }) => {
   await mountProjectExport(page, true);

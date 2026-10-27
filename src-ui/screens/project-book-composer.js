@@ -1,9 +1,11 @@
+import { extractVellumLeadingHeadingTitle } from "../app/vellum-text-editor-content.js";
 import { escapeHtml, secondaryButton, tooltipAttributes, renderChevronIcon } from "../lib/ui.js";
 import { renderExportSelect } from "./export-fields.js";
-import { BOOK_SECTION_TYPES, bookContentsItems, bookItemIncluded, bookItemTitle, bookSectionLabel } from "../app/project-book-model.js";
+import { BOOK_SECTION_TYPES, bookContentsItems, bookContentsEntries, bookItemIncluded, bookItemTitle, bookSectionLabel } from "../app/project-book-model.js";
 import { bookImageSrc } from "../app/project-book-flow.js";
 import { renderEditorPreviewDocumentHtml } from "../app/editor-preview.js";
 import { convertLocalFileSrc } from "../app/runtime.js";
+import { renderBookTextHtml } from "../app/project-book-text.js";
 import flourish from "../../src-tauri/src/project_import/chapter_editor/chapter_flourish.svg?raw";
 
 export function bookNavButton(direction, disabled = false) {
@@ -44,9 +46,6 @@ function imageEditor(item, logo = false) {
       : `<button type="button" class="book-image__target" data-action="book-image-pick">+ ${logo ? "Publisher Logo" : "Add image"}<small>Drop an image or click to choose</small></button>`}
   </div>`;
 }
-function copyrightHtml(value) {
-  return String(value || "").split(/(<\/?i>|<hr>)/g).map((part) => ["<i>", "</i>", "<hr>"].includes(part) ? part : escapeHtml(part).replaceAll("\n", "<br>")).join("");
-}
 function selectedPage(modal) {
   const { book } = modal;
   const item = book.items.find((entry) => entry.id === book.selectedItemId);
@@ -55,16 +54,26 @@ function selectedPage(modal) {
     if (book.previewStatus === "error") return `<p class="modal__error">${escapeHtml(book.previewError)}</p>`;
     if (book.previewChapterId !== item.chapterId || book.previewStatus === "loading") return '<p class="modal__supporting" role="status">Loading chapter preview…</p>';
     if (item.available === false) return '<p class="modal__supporting">This chapter is not available in the selected language.</p>';
-    const html = renderEditorPreviewDocumentHtml(book.previewBlocks, { resolveImageSrc: (image) => image.kind === "url" ? image.url : convertLocalFileSrc(image.filePath || "") }).html;
-    return `<article class="book-page book-page--chapter translate-preview" aria-label="Chapter preview">${html.replace(/ data-(?:preview-block|row-id|tooltip)="[^"]*"/g, "")}</article>`;
+    const title = extractVellumLeadingHeadingTitle(book.previewBlocks);
+    const bodyBlocks = title ? book.previewBlocks.slice(1) : book.previewBlocks;
+    const number = bookContentsItems(book.items).findIndex((entry) => entry.id === item.id) + 1;
+    const html = renderEditorPreviewDocumentHtml(bodyBlocks, { resolveImageSrc: (image) => image.kind === "url" ? image.url : convertLocalFileSrc(image.filePath || "") }).html;
+    return `<article class="book-page book-page--chapter translate-preview" aria-label="Chapter preview"><header class="book-chapter__header"><span class="book-chapter__number">${number}</span><h1>${escapeHtml(title || bookItemTitle(item))}</h1>${flourish}</header>${html.replace(/ data-(?:preview-block|row-id|tooltip)="[^"]*"/g, "")}</article>`;
   }
   let body = "";
-  if (item.kind === "title") body = `<div class="book-page__title-group">${field("title", item.title, "Title", "book-page__title")}${field("subtitle", item.subtitle, "Subtitle", "book-page__subtitle")}</div><div class="book-page__contributors">${field("author", item.author, "Author", "book-page__author")}${field("translator", item.translator, "Translator", "book-page__translator")}</div>${imageEditor(item, true)}`;
+  if (item.kind === "title") body = `<div class="book-page__title-group">${field("title", item.title, "Title", "book-page__title")}${field("subtitle", item.subtitle, "Subtitle", "book-page__subtitle")}</div><div class="book-page__title-ornament">${flourish}</div><div class="book-page__contributors">${field("author", item.author, "Author", "book-page__author")}${field("translator", item.translator, "Translator", "book-page__translator")}</div>${imageEditor(item, true)}`;
 
   if (item.kind === "image") body = `${imageEditor(item)}${field("caption", item.caption, "Enter image caption.", "book-page__caption")}`;
-  if (item.kind === "contents") body = `${field("title", item.title, "Table of Contents", "book-page__contents-title")}<ol class="book-contents">${bookContentsItems(book.items).map((entry) => `<li><span>${escapeHtml(bookItemTitle(entry))}</span><span class="book-contents__leader"></span></li>`).join("")}</ol><p class="book-contents__hint">Page numbers are calculated from the final layout at export.</p>`;
-  if (["copyright", "dedication"].includes(item.kind)) body = `<div class="book-copyright__toolbar" role="toolbar" aria-label="${item.kind === "copyright" ? "Copyright" : "Dedication"} formatting"><button type="button" class="text-action" data-action="book-copyright:italic" ${tooltipAttributes("Italicise selected text")}><i>I</i></button><button type="button" class="text-action" data-action="book-copyright:symbol" ${tooltipAttributes("Insert copyright symbol")}>©</button><button type="button" class="text-action book-copyright__flourish" data-action="book-copyright:flourish" ${tooltipAttributes("Insert separator")}>${flourish}</button></div><div class="book-copyright__editor" contenteditable="true" role="textbox" aria-multiline="true" aria-label="${item.kind === "copyright" ? "Copyright text" : "Dedication text"}" data-book-copyright-editor data-book-field="text" data-placeholder="${item.kind === "copyright" ? "Enter copyright text." : "Enter dedication here."}">${copyrightHtml(item.text)}</div>`;
+  if (item.kind === "contents") body = `${field("title", item.title, "Table of Contents", "book-page__contents-title")}<ol class="book-contents">${bookContentsEntries(book.items, book.contentsHeadings, item.includeH1Headings).map((entry) => `<li class="${entry.level ? "book-contents__subheading" : ""}"><span>${escapeHtml(entry.title)}</span><span class="book-contents__leader"></span></li>`).join("")}</ol><p class="book-contents__hint">Page numbers are calculated from the final layout at export.</p>`;
+  if (["copyright", "dedication"].includes(item.kind)) body = `<div class="book-copyright__editor" contenteditable="true" role="textbox" aria-multiline="true" aria-label="${item.kind === "copyright" ? "Copyright text" : "Dedication text"}" data-book-copyright-editor data-book-empty="${!item.text}" data-book-field="text" data-placeholder="${item.kind === "copyright" ? "Enter copyright text." : "Enter dedication here."}">${renderBookTextHtml(item.text)}</div>`;
   return `<article class="book-page book-page--${item.kind}" aria-label="${escapeHtml(bookSectionLabel(item.kind))}" style="--book-flourish: url('data:image/svg+xml,${encodeURIComponent(flourish)}')">${body}</article>`;
+}
+
+function formattingToolbar(modal) {
+  const item = modal.book.items.find((entry) => entry.id === modal.book.selectedItemId);
+  if (item?.kind === "contents") return `<label class="book-contents__options"><input type="checkbox" data-book-field="includeH1Headings" ${item.includeH1Headings ? "checked" : ""}> Include H1 headings</label>`;
+  if (!["copyright", "dedication"].includes(item?.kind)) return "";
+  return `<div class="book-copyright__toolbar" role="toolbar" aria-label="${item.kind === "copyright" ? "Copyright" : "Dedication"} formatting"><button type="button" class="text-action" data-action="book-copyright:italic" aria-label="Italicise selected text" ${tooltipAttributes("Italicise selected text")}><svg class="book-copyright__icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4h9M5 20h9M15 4 9 20"/></svg></button><button type="button" class="text-action" data-action="book-copyright:symbol" aria-label="Insert copyright symbol" ${tooltipAttributes("Insert copyright symbol")}><svg class="book-copyright__icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15 9a4.25 4.25 0 1 0 0 6"/></svg></button><button type="button" class="text-action book-copyright__flourish" data-action="book-copyright:flourish" aria-label="Insert separator" ${tooltipAttributes("Insert separator")}>${flourish}</button></div>`;
 }
 
 export function renderProjectBookComposer(modal) {
@@ -76,7 +85,7 @@ export function renderProjectBookComposer(modal) {
       <div class="book-composer__toolbar">${renderExportSelect({ id: "editor-export-language", label: "Export language", selectAttributes: { "data-editor-export-language-select": true }, options: modal.languages.map((language) => ({ value: language.code, label: `${language.name || language.code} (${language.code})` })), value: modal.languageCode })}
         <div class="book-add"><button type="button" class="button button--secondary" data-action="book-add-menu" aria-expanded="${modal.book.addMenuOpen}" ${tooltipAttributes("Add sections such as table of contents, title page, dedication, copyright page, etc.", { align: "end" })}>+ Add section</button>${modal.book.addMenuOpen ? `<div class="book-add__menu">${BOOK_SECTION_TYPES.map((type) => `<button type="button" data-action="book-add:${type.kind}">${type.label}</button>`).join("")}</div>` : ""}</div>
       </div>
-      <div class="book-composer"><nav class="book-composer__list" aria-label="Book items"><h3>Included <span>${included.length}</span></h3><ul>${included.map((item) => itemRow(item, modal)).join("")}</ul>${!included.length ? '<p class="modal__supporting">Include an item to continue.</p>' : ""}${excluded.length ? `<h3 class="book-excluded-heading">Excluded <span>${excluded.length}</span></h3><ul>${excluded.map((item) => itemRow(item, modal)).join("")}</ul>` : ""}</nav><div class="book-composer__preview">${selectedPage(modal)}</div></div>
+      <div class="book-composer"><nav class="book-composer__list" aria-label="Book items"><h3>Included <span>${included.length}</span></h3><ul>${included.map((item) => itemRow(item, modal)).join("")}</ul>${!included.length ? '<p class="modal__supporting">Include an item to continue.</p>' : ""}${excluded.length ? `<h3 class="book-excluded-heading">Excluded <span>${excluded.length}</span></h3><ul>${excluded.map((item) => itemRow(item, modal)).join("")}</ul>` : ""}</nav><div class="book-composer__preview">${formattingToolbar(modal)}<div class="book-composer__page-scroll">${selectedPage(modal)}</div></div></div>
       ${modal.error ? `<p class="modal__error book-composer__error" role="alert">${escapeHtml(modal.error)}</p>` : ""}
       <footer class="book-composer__footer">${secondaryButton("Cancel", "close-editor-export-options", { modalCancel: true })}</footer>
     </div></section></div>`;

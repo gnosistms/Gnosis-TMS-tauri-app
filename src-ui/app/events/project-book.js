@@ -1,4 +1,5 @@
 import { importBookImage, moveProjectBookItem, updateBookField } from "../project-book-flow.js";
+import { escapeHtml } from "../../lib/ui.js";
 let drag = null;
 function cancel() {
   drag?.preview?.remove();
@@ -6,13 +7,15 @@ function cancel() {
   drag = null;
 }
 export function registerProjectBookEvents(render) {
-  document.addEventListener("input", (event) => { const field = event.target.closest?.("[data-book-field]"); if (field) updateBookField(field); });
+  document.addEventListener("input", (event) => { const field = event.target.closest?.("[data-book-field]"); if (field) updateBookField(field, render); });
   document.addEventListener("mousedown", (event) => { if (event.target.closest?.('[data-action^="book-copyright:"]')) event.preventDefault(); });
   document.addEventListener("paste", (event) => {
     const editor = event.target.closest?.("[data-book-copyright-editor]");
     if (!editor) return;
     event.preventDefault();
-    document.execCommand("insertText", false, event.clipboardData.getData("text/plain"));
+    const paragraphs = event.clipboardData.getData("text/plain").split(/\r\n?|\n/)
+      .map((line) => `<p>${escapeHtml(line).replaceAll("\u2028", "<br>") || "<br>"}</p>`).join("");
+    document.execCommand("insertHTML", false, paragraphs);
     updateBookField(editor);
   });
   document.addEventListener("pointerdown", (event) => {

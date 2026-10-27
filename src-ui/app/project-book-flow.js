@@ -1,3 +1,6 @@
+import { extractInlineMarkupVisibleText } from "./editor-inline-markup/serialize.js";
+import { extractVellumLeadingHeadingTitle } from "./vellum-text-editor-content.js";
+import { bookEditorText } from "./project-book-text.js";
 import { state } from "./state.js";
 import { invoke, convertLocalFileSrc } from "./runtime.js";
 import { findChapterContext, selectedProjectsTeam } from "./project-context.js";
@@ -7,7 +10,7 @@ import { normalizeEditorRows } from "./editor-state-flow.js";
 import { openLocalFilePicker } from "./local-file-picker.js";
 import { enforceImportFileSizeLimit } from "./import-file-limit.js";
 import { formatErrorForDisplay } from "./error-display.js";
-import { addBookSection, bookItemIncluded, bookLanguages, includeBookItem, reconcileBookLayout, reorderBookItems } from "./project-book-model.js";
+import { addBookSection, bookItemIncluded, bookContentsItems, bookLanguages, includeBookItem, reconcileBookLayout, reorderBookItems } from "./project-book-model.js";
 import { loadBookSettings, loadContentsTitle, saveBookSettings, saveContentsTitle } from "./project-book-settings.js";
 
 const modal = () => state.editorChapter?.exportModal;
@@ -48,7 +51,9 @@ let previewGeneration = 0;
 export async function loadSelectedBookPreview(render, operations = {}) {
   const current = modal();
   const item = current?.book?.items.find((entry) => entry.id === current.book.selectedItemId);
-  if (!current?.isOpen || item?.kind !== "chapter") return;
+  if (!current?.isOpen) return;
+  if (item?.kind === "contents" && item.includeH1Headings) return loadContentsHeadings(render, current, operations);
+  if (item?.kind !== "chapter") return;
   if (item.available === false) {
     update({ book: { ...current.book, previewStatus: "ready", previewBlocks: [], previewChapterId: item.chapterId } }, render);
     return;
@@ -70,29 +75,43 @@ export async function loadSelectedBookPreview(render, operations = {}) {
   }
 }
 
-export function updateBookField(element) {
+async function loadContentsHeadings(render, current, operations) {
+  const team = selectedProjectsTeam();
+  const record = project();
+  const request = `contents:${++previewGeneration}:${current.projectId}:${current.languageCode}`;
+  const isCurrent = () => modal()?.isOpen && modal()?.book?.previewRequest === request;
+  update({ book: { ...current.book, previewRequest: request } });
+  try {
+    await (operations.waitForRepoQueue ?? waitForRepoWriteQueueIdle)(projectRepoScope({ team, project: record }));
+    const headings = {};
+    for (const item of bookContentsItems(current.book.items)) {
+      const payload = await (operations.invoke ?? invoke)("load_gtms_chapter_editor_data", { input: {
+        installationId: team.installationId, projectId: current.projectId, repoName: record.name, chapterId: item.chapterId,
+      } });
+      if (!isCurrent()) return;
+      const blocks = buildEditorPreviewDocument(normalizeEditorRows(payload?.rows), current.languageCode);
+      const body = extractVellumLeadingHeadingTitle(blocks) ? blocks.slice(1) : blocks;
+      headings[item.chapterId] = body.filter((block) => block.kind === "text" && block.textStyle === "heading1")
+        .map((block) => extractInlineMarkupVisibleText(block.text));
+    }
+    if (isCurrent()) update({ book: { ...modal().book, contentsHeadings: headings }, error: "" }, render);
+  } catch (error) {
+    if (isCurrent()) update({ error: formatErrorForDisplay(error) }, render);
+  }
+}
+
+export function updateBookField(element, render) {
   const current = modal();
   const item = current?.book?.items.find((entry) => entry.id === current.book.selectedItemId);
   const field = element.dataset.bookField;
-  if (!item || !["title", "subtitle", "author", "translator", "text", "caption"].includes(field)) return;
-  const value = element.hasAttribute("contenteditable") ? copyrightEditorText(element) : element.value;
+  if (!item || !["title", "subtitle", "author", "translator", "text", "caption", "includeH1Headings"].includes(field)) return;
+  const value = field === "includeH1Headings" ? element.checked : element.hasAttribute("contenteditable") ? bookEditorText(element) : element.value;
+  if (element.hasAttribute("contenteditable")) element.dataset.bookEmpty = String(!value);
   const items = current.book.items.map((entry) => entry.id === item.id ? { ...entry, [field]: value } : entry);
-  update({ book: { ...current.book, items }, pdfFontStatus: "idle", pdfFontInspectionKey: "" });
+  update({ book: { ...current.book, items, ...(field === "includeH1Headings" ? { previewRequest: "" } : {}) }, pdfFontStatus: "idle", pdfFontInspectionKey: "" }, field === "includeH1Headings" ? render : undefined);
+  if (field === "includeH1Headings" && value) void loadSelectedBookPreview(render);
   if (item.kind === "contents" && field === "title") saveContentsTitle(current.languageCode, value);
   if (field === "title") document.querySelector(`[data-book-item-label="${CSS.escape(item.id)}"]`)?.replaceChildren(document.createTextNode(value || (item.kind === "contents" ? "Table of contents" : "Title page")));
-}
-
-function copyrightEditorText(element) {
-  const walk = (node) => {
-    if (node.nodeType === 3) return node.textContent;
-    if (node.nodeType !== 1) return "";
-    if (node.tagName === "HR") return "<hr>";
-    if (node.tagName === "BR") return "\n";
-    const body = [...node.childNodes].map(walk).join("");
-    if (["I", "EM"].includes(node.tagName)) return `<i>${body}</i>`;
-    return ["DIV", "P"].includes(node.tagName) ? `${body}\n` : body;
-  };
-  return [...element.childNodes].map(walk).join("").replace(/\n$/, "");
 }
 
 export async function importBookImage(render, file, operations = {}) {
@@ -161,6 +180,7 @@ export async function handleProjectBookAction(action, render) {
     const include = action.startsWith("book-include:");
     const id = action.slice(13);
     update({ book: { ...book, items: includeBookItem(book.items, id, include) }, pdfFontStatus: "idle", pdfFontInspectionKey: "" }, render);
+    if (book.items.find((item) => item.id === book.selectedItemId)?.kind === "contents") void loadSelectedBookPreview(render);
   } else if (action === "book-image-pick") await importBookImage(render, await openLocalFilePicker({ accept: BOOK_IMAGE_ACCEPT }));
   else if (action === "book-image-remove") update({ book: { ...book, items: book.items.map((item) => item.id === book.selectedItemId ? { ...item, image: null } : item) }, pdfFontStatus: "idle" }, render);
   else if (action.startsWith("book-copyright:")) {
@@ -169,7 +189,7 @@ export async function handleProjectBookAction(action, render) {
       editor.focus();
       const command = action.slice(15);
       if (command === "italic") document.execCommand("italic");
-      else document.execCommand("insertHTML", false, command === "symbol" ? "©" : "<hr><br>");
+      else document.execCommand("insertHTML", false, command === "symbol" ? "©" : "<hr><p><br></p>");
       updateBookField(editor);
     }
   }

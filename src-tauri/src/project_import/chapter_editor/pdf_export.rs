@@ -54,12 +54,18 @@ enum ResolvedPdfImage {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+enum PdfImageCacheTarget {
+    Chapter(String),
+    Book,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct PdfImageCacheScope {
     installation_id: i64,
     repo_name: String,
     project_id: Option<String>,
     project_full_name: Option<String>,
-    chapter_id: String,
+    target: PdfImageCacheTarget,
 }
 
 impl PdfImageCacheScope {
@@ -69,9 +75,20 @@ impl PdfImageCacheScope {
             repo_name: input.repo_name.clone(),
             project_id: input.project_id.clone(),
             project_full_name: input.project_full_name.clone(),
-            chapter_id: input.chapter_id.clone(),
+            target: if input.chapter_ids.is_empty() && input.book_items.is_empty() {
+                PdfImageCacheTarget::Chapter(input.chapter_id.clone())
+            } else {
+                PdfImageCacheTarget::Book
+            },
         }
     }
+}
+
+#[derive(Clone)]
+struct PdfImageCacheSession {
+    scope: PdfImageCacheScope,
+    // None disables reuse if the optional cache was unavailable at job start.
+    generation: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -84,40 +101,55 @@ struct CachedPreparedPdfImage {
 #[derive(Default)]
 struct PdfImagePreparationCache {
     scope: Option<PdfImageCacheScope>,
+    generation: u64,
     entries: HashMap<String, CachedPreparedPdfImage>,
 }
 
 struct PdfWorkspacePreparationOptions<'a> {
     footnote_links_as_plain_text: bool,
     paper_size: &'a str,
-    image_cache_scope: &'a PdfImageCacheScope,
+    image_cache_session: &'a PdfImageCacheSession,
 }
 
 impl PdfImagePreparationCache {
-    fn use_scope(&mut self, scope: &PdfImageCacheScope) {
+    fn begin_export(&mut self, scope: &PdfImageCacheScope) -> PdfImageCacheSession {
         if self.scope.as_ref() != Some(scope) {
             self.scope = Some(scope.clone());
+            self.generation = self.generation.wrapping_add(1);
             self.entries.clear();
         }
+        PdfImageCacheSession {
+            scope: scope.clone(),
+            generation: Some(self.generation),
+        }
+    }
+
+    fn matches(&self, session: &PdfImageCacheSession) -> bool {
+        self.scope.as_ref() == Some(&session.scope) && session.generation == Some(self.generation)
     }
 
     fn get(
         &self,
-        scope: &PdfImageCacheScope,
+        session: &PdfImageCacheSession,
         key: &str,
         fingerprint: &str,
     ) -> Option<CachedPreparedPdfImage> {
-        (self.scope.as_ref() == Some(scope))
+        self.matches(session)
             .then(|| self.entries.get(key))
             .flatten()
             .filter(|entry| entry.fingerprint == fingerprint)
             .cloned()
     }
 
-    fn insert(&mut self, scope: &PdfImageCacheScope, key: String, entry: CachedPreparedPdfImage) {
-        // A slower export for the previous chapter must not repopulate the cache
-        // after a newer export has switched its single-chapter scope.
-        if self.scope.as_ref() == Some(scope) {
+    fn insert(
+        &mut self,
+        session: &PdfImageCacheSession,
+        key: String,
+        entry: CachedPreparedPdfImage,
+    ) {
+        // An older export must not reactivate an evicted target, including after
+        // chapter -> book -> the same chapter switches back to a fresh generation.
+        if self.matches(session) {
             self.entries.insert(key, entry);
         }
     }
@@ -126,6 +158,17 @@ impl PdfImagePreparationCache {
 fn pdf_image_preparation_cache() -> &'static Mutex<PdfImagePreparationCache> {
     static CACHE: OnceLock<Mutex<PdfImagePreparationCache>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(PdfImagePreparationCache::default()))
+}
+
+fn begin_pdf_image_cache(scope: &PdfImageCacheScope) -> PdfImageCacheSession {
+    pdf_image_preparation_cache()
+        .lock()
+        .ok()
+        .map(|mut cache| cache.begin_export(scope))
+        .unwrap_or_else(|| PdfImageCacheSession {
+            scope: scope.clone(),
+            generation: None,
+        })
 }
 
 pub(crate) type PdfChapterExportInput = ExportChapterFileInput;
@@ -642,6 +685,9 @@ pub(crate) fn start_gtms_chapter_pdf_export(
         }
         jobs.insert(job_id.clone(), cancelled.clone());
     }
+    // Accept the target in request order, before asynchronous loading/font work.
+    // Image workers cannot reactivate an older target after a newer request.
+    let image_cache_session = begin_pdf_image_cache(&PdfImageCacheScope::from_input(&input));
     let task_app = app.clone();
     let task_job_id = job_id.clone();
     tauri::async_runtime::spawn(async move {
@@ -649,7 +695,14 @@ pub(crate) fn start_gtms_chapter_pdf_export(
             job_id: task_job_id.clone(),
             cancelled: cancelled.clone(),
         };
-        let result = run_pdf_export(&task_app, &task_job_id, input, cancelled).await;
+        let result = run_pdf_export(
+            &task_app,
+            &task_job_id,
+            input,
+            cancelled,
+            image_cache_session,
+        )
+        .await;
         match result {
             Ok(()) => emit_progress(
                 &task_app,
@@ -685,9 +738,9 @@ async fn run_pdf_export(
     job_id: &str,
     input: PdfChapterExportInput,
     cancelled: Arc<AtomicBool>,
+    image_cache_session: PdfImageCacheSession,
 ) -> Result<(), String> {
     let paper_size = normalize_pdf_paper_size(&input.paper_size)?;
-    let image_cache_scope = PdfImageCacheScope::from_input(&input);
     emit_progress(
         app,
         job_id,
@@ -737,7 +790,7 @@ async fn run_pdf_export(
         let options = PdfWorkspacePreparationOptions {
             footnote_links_as_plain_text,
             paper_size,
-            image_cache_scope: &image_cache_scope,
+            image_cache_session: &image_cache_session,
         };
         prepare_pdf_workspace(
             &prep_app,
@@ -1320,7 +1373,7 @@ fn prepare_typst_workspace(
         job_id,
         workspace,
         document,
-        options.image_cache_scope,
+        options.image_cache_session,
         cancelled,
     )?;
     fs::write(workspace.join("flourish.svg"), CHAPTER_FLOURISH_SVG)
@@ -1333,6 +1386,7 @@ fn prepare_typst_workspace(
             &image_paths,
             options,
             cancelled,
+            None,
         )?);
     } else {
         source.push_str(&render_typst_book(
@@ -1353,6 +1407,7 @@ fn render_typst_chapter(
     image_paths: &HashMap<String, PreparedTypstImage>,
     options: &PdfWorkspacePreparationOptions<'_>,
     cancelled: &AtomicBool,
+    chapter_number: Option<usize>,
 ) -> Result<String, String> {
     let mut anchored_footnotes: HashMap<usize, Vec<(usize, String)>> = HashMap::new();
     let mut anchored_numbers = HashSet::new();
@@ -1377,7 +1432,13 @@ fn render_typst_chapter(
     let mut source = String::new();
     // No spacer after the title: it is a top float now, and its `clearance`
     // provides the gap to whatever the page starts with.
-    source.push_str(&format!("#gnosis-title({})\n", typst_string(title)));
+    source.push_str(&format!(
+        "#gnosis-title({}{})\n",
+        typst_string(title),
+        chapter_number
+            .map(|number| format!(", number: {number}"))
+            .unwrap_or_default()
+    ));
     let (emission_order, trailing_start) =
         typst_block_emission_order(&document.blocks, image_paths);
     let dropcap_index = if latin_body(&document.language_code) {
@@ -1385,6 +1446,7 @@ fn render_typst_chapter(
     } else {
         None
     };
+    let mut indent_next = false;
     for block_index in emission_order {
         let block = &document.blocks[block_index];
         check_cancelled(cancelled)?;
@@ -1403,11 +1465,31 @@ fn render_typst_chapter(
                         .unwrap_or_default(),
                     options.footnote_links_as_plain_text,
                 );
-                let text_block = render_typst_text_block(
+                let style = export_text_style(Some(text_style));
+                let plain = !matches!(
+                    style.as_str(),
+                    "heading1" | "heading2" | "quote" | "blockquote" | "centered" | "indented"
+                );
+                if latin_body(&document.language_code) {
+                    let amount = if plain && indent_next && Some(block_index) != dropcap_index {
+                        "1.5em"
+                    } else {
+                        "0pt"
+                    };
+                    source.push_str(&format!(
+                        "#set par(first-line-indent: (amount: {amount}, all: true))\n"
+                    ));
+                }
+                let mut text_block = render_typst_text_block(
                     text_style,
                     &inline,
                     Some(block_index) == dropcap_index,
                 );
+                if chapter_number.is_some() && style == "heading1" {
+                    // Keep the metadata outside heading content (where a label
+                    // binds to the heading itself), and move both as one unit.
+                    text_block = format!("#block(sticky: true, breakable: false)[#metadata((title: {}, numbering: \"1\", level: 1)) <gnosis-book-entry>\n{text_block}]\n", typst_string(&inline_visible_text(text)));
+                }
                 if matches!(
                     document.blocks.get(block_index + 1),
                     Some(ExportBlock::Attribution { .. })
@@ -1418,14 +1500,19 @@ fn render_typst_chapter(
                 } else {
                     source.push_str(&text_block);
                 }
+                if !inline_visible_text(text).trim().is_empty() {
+                    indent_next = plain;
+                }
             }
             ExportBlock::Attribution { text } => {
+                indent_next = false;
                 source.push_str(&format!(
-                    "#align(right)[#text(size: 0.9em)[{}]]\n\n",
+                    "#align(right)[#text(size: 0.8em, tracking: 0.06em)[#upper[{}]]]\n\n",
                     render_inline_typst(text, false)
                 ));
             }
             ExportBlock::Separator => {
+                indent_next = false;
                 source.push_str("#line(length: 100%, stroke: 0.5pt)\n#v(0.8em)\n")
             }
             ExportBlock::Footnote { number, text, .. } if !anchored_numbers.contains(number) => {
@@ -1436,6 +1523,7 @@ fn render_typst_chapter(
             }
             ExportBlock::Footnote { .. } => {}
             ExportBlock::Image { image, caption } => {
+                indent_next = false;
                 let prepared = image_paths
                     .get(&export_image_key(image))
                     .ok_or_else(|| "An image could not be prepared for the PDF.".to_string())?;
@@ -1482,28 +1570,43 @@ fn render_typst_chapter(
 // Typst resolves these metadata locations against the final paginated document.
 // A contents section can be anywhere; no guessed page counts or extra render jobs.
 const BOOK_LAYOUT_RULES: &str = r#"
-#set page(numbering: none, footer: context {
+#set page(numbering: none, header: context {
+  let p = here().page()
+  let starts = query(<gnosis-chapter-start>)
+  let ends = query(<gnosis-chapter-end>)
+  for range in starts.zip(ends) {
+    if range.first().location().page() < p and p <= range.last().location().page() {
+      let label = if calc.rem(p, 2) == 0 { gnosis-book-author } else { gnosis-book-title }
+      if label != "" { align(center, text(font: gnosis-book-heading-font, size: 8pt, tracking: 0.1em)[#upper(label)]) }
+    }
+  }
+}, footer: context {
   let p = here().page()
   let starts = query(<gnosis-print-start>)
   let ends = query(<gnosis-print-end>)
   for range in starts.zip(ends) {
     if range.first().location().page() <= p and p <= range.last().location().page() {
-      align(center, counter(page).display(range.first().value))
+      align(center, text(size: 9pt, counter(page).display(range.first().value)))
     }
   }
 })
-#let gnosis-contents(t) = {
+#let gnosis-contents(t, include-h1: false) = {
+  set par(justify: false, first-line-indent: 0pt)
   show link: set text(fill: black)
-  align(center, text(font: gnosis-book-heading-font, size: 20pt, t))
-  v(1.8em)
+  align(center, text(font: gnosis-book-heading-font, size: 20pt, tracking: 0.08em)[#upper(t)])
+  v(2em)
   context {
     for entry in query(<gnosis-book-entry>) {
-      block(width: 100%, above: 0.65em, below: 0.65em)[
-        #link(entry.location())[#grid(columns: (1fr, auto), column-gutter: 1em,
-          entry.value.title,
-          numbering(entry.value.numbering, ..counter(page).at(entry.location())),
-        )]
-      ]
+      if entry.value.level == 0 or include-h1 {
+        block(width: 100%, above: if entry.value.level == 0 { 1em } else { 0.78em }, below: 0.78em)[
+          #pad(left: if entry.value.level == 0 { 0em } else { 1.5em })[
+            #link(entry.location())[#grid(columns: (1fr, auto), column-gutter: 1em,
+              if entry.value.level == 0 { text(font: gnosis-book-heading-font)[#str(entry.value.chapter). #upper(entry.value.title)] } else { entry.value.title },
+              numbering(entry.value.numbering, ..counter(page).at(entry.location())),
+            )]
+          ]
+        ]
+      }
     }
   }
 }
@@ -1517,6 +1620,18 @@ fn render_typst_book(
 ) -> Result<String, String> {
     let mut source = BOOK_LAYOUT_RULES.to_string();
     let mut body_started = false;
+    let mut chapter_number = 0usize;
+    let title_page = document
+        .book_parts
+        .iter()
+        .find(|part| part.item.kind == "title");
+    let book_author = title_page
+        .map(|part| part.item.author.as_str())
+        .unwrap_or("");
+    let book_title = title_page
+        .map(|part| part.item.title.as_str())
+        .filter(|title| !title.trim().is_empty())
+        .unwrap_or(&document.title);
     let heading_fonts = heading_font_families(document)
         .into_iter()
         .map(typst_string)
@@ -1524,7 +1639,7 @@ fn render_typst_book(
         .join(", ");
     source.insert_str(
         0,
-        &format!("#let gnosis-book-heading-font = ({heading_fonts})\n"),
+        &format!("#let gnosis-book-heading-font = ({heading_fonts})\n#let gnosis-book-author = {}\n#let gnosis-book-title = {}\n", typst_string(book_author), typst_string(book_title)),
     );
     for (index, part) in document.book_parts.iter().enumerate() {
         check_cancelled(cancelled)?;
@@ -1552,14 +1667,15 @@ fn render_typst_book(
             body_started = true;
         }
         let numbering = if body_started { "1" } else { "i" };
-        if !matches!(item.kind.as_str(), "title" | "copyright" | "contents") {
+        if item.kind == "chapter" {
+            chapter_number += 1;
             let title = if item.kind == "chapter" {
                 leading_heading_title(&part.document).unwrap_or_else(|| part.document.title.clone())
             } else {
                 item.title.clone()
             };
             source.push_str(&format!(
-                "#metadata((title: {}, numbering: \"{numbering}\")) <gnosis-book-entry>\n",
+                "#metadata((title: {}, numbering: \"{numbering}\", level: 0, chapter: {chapter_number})) <gnosis-book-entry>\n",
                 typst_string(&title)
             ));
         }
@@ -1570,29 +1686,33 @@ fn render_typst_book(
             ));
         }
         if item.kind == "chapter" {
+            source.push_str("#metadata(none) <gnosis-chapter-start>\n");
             source.push_str(&render_typst_chapter(
                 &part.document,
                 image_paths,
                 options,
                 cancelled,
+                Some(chapter_number),
             )?);
+            source.push_str("#metadata(none) <gnosis-chapter-end>\n");
         } else if item.kind == "contents" {
             source.push_str(&format!(
-                "#gnosis-contents({})\n",
-                typst_string(&item.title)
+                "#gnosis-contents({}, include-h1: {})\n",
+                typst_string(&item.title),
+                item.include_h1_headings
             ));
         } else if item.kind == "title" {
-            source.push_str(&format!("#align(center)[\n#v(0.2fr)\n#text(font: ({heading_fonts}), size: 30pt, weight: \"medium\")[{}]\n", render_inline_typst(&item.title, false)));
+            source.push_str(&format!("#align(center)[\n#v(0.2fr)\n#text(font: ({heading_fonts}), size: 30pt, weight: \"medium\")[#upper[{}]]\n", render_inline_typst(&item.title, false)));
             if !item.subtitle.trim().is_empty() {
                 source.push_str(&format!(
-                    "#v(1em)\n#text(font: ({heading_fonts}), size: 18pt)[{}]\n",
+                    "#v(1em)\n#text(font: ({heading_fonts}), size: 18pt)[#upper[{}]]\n",
                     render_inline_typst(&item.subtitle, false)
                 ));
             }
-            source.push_str("#v(2.5em)\n");
+            source.push_str("#v(1.4em)\n#image(\"flourish.svg\", width: 0.75in)\n#v(2.5em)\n");
             if !item.author.trim().is_empty() {
                 source.push_str(&format!(
-                    "#text(size: 15pt)[{}]\n",
+                    "#text(font: ({heading_fonts}), size: 15pt)[#upper[{}]]\n",
                     render_inline_typst(&item.author, false)
                 ));
             }
@@ -1605,7 +1725,7 @@ fn render_typst_book(
             source.push_str("#v(1fr)\n");
             if let Some(path) = section_prepared_image(&part.document, image_paths) {
                 source.push_str(&format!(
-                    "#image({}, width: 1.3in, height: 0.7in, fit: \"contain\")\n",
+                    "#image({}, width: 1.105in, height: 0.595in, fit: \"contain\")\n",
                     typst_string(path)
                 ));
             }
@@ -1621,7 +1741,7 @@ fn render_typst_book(
             }
             if !item.caption.trim().is_empty() {
                 source.push_str(&format!(
-                    "#v(0.65em)\n{}\n",
+                    "#v(0.85em)\n{}\n",
                     render_typst_image_caption(&item.caption)
                 ));
             }
@@ -1633,16 +1753,27 @@ fn render_typst_book(
             if item.kind == "dedication" {
                 source.push_str("#v(0.22fr)\n#align(center)[\n");
             }
-            for (index, text) in item.text.split("<hr>").enumerate() {
-                if index > 0 {
-                    source.push_str("#v(1em)\n#align(center, image(\"flourish.svg\", width: 0.66in))\n#v(1em)\n");
-                }
-                source.push_str(&render_inline_typst(
-                    text,
-                    options.footnote_links_as_plain_text,
-                ));
-                source.push_str("\n\n");
+            source.push_str(
+                "#[\n#set par(leading: 0.68em, spacing: 1.43em, first-line-indent: 0pt)\n",
+            );
+            if item.kind == "copyright" {
+                source.push_str("#set text(size: 0.8em)\n");
             }
+            for block in super::book_export::book_text_blocks(&item.text, "paragraph") {
+                match block {
+                    ExportBlock::Separator => source.push_str("#v(1em)\n#align(center, image(\"flourish.svg\", width: 0.66in))\n#v(1em)\n"),
+                    ExportBlock::Text { text, .. } => {
+                        if inline_visible_text(&text).is_empty() {
+                            source.push_str("#v(1.25em)\n");
+                        } else {
+                            source.push_str(&render_inline_typst(&text, options.footnote_links_as_plain_text));
+                            source.push_str("#parbreak()\n");
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            source.push_str("]\n");
             if item.kind == "dedication" {
                 source.push_str("]\n#v(1fr)\n");
             }
@@ -1830,7 +1961,7 @@ fn render_typst_text_block(style: &str, inline: &str, dropcap: bool) -> String {
         "heading1" => format!("= {inline}\n\n"),
         "heading2" => format!("== {inline}\n\n"),
         "quote" | "blockquote" => {
-            format!("#quote(block: true)[#text(style: \"italic\")[{inline}]]\n\n")
+            format!("#quote(block: true)[#set par(first-line-indent: 0pt)\n#text(size: 0.9em, style: \"normal\")[{inline}]]\n\n")
         }
         "centered" => format!("#align(center)[{inline}]\n\n"),
         "indented" => format!("#pad(left: 2em)[{inline}]\n\n"),
@@ -1844,12 +1975,29 @@ fn prepare_typst_images(
     job_id: &str,
     workspace: &Path,
     document: &ExportDocument,
-    cache_scope: &PdfImageCacheScope,
+    cache_session: &PdfImageCacheSession,
     cancelled: &AtomicBool,
 ) -> Result<HashMap<String, PreparedTypstImage>, String> {
-    if let Ok(mut cache) = pdf_image_preparation_cache().lock() {
-        cache.use_scope(cache_scope);
-    }
+    prepare_typst_images_with_cache(
+        app,
+        job_id,
+        workspace,
+        document,
+        cache_session,
+        cancelled,
+        pdf_image_preparation_cache(),
+    )
+}
+
+fn prepare_typst_images_with_cache(
+    app: Option<&AppHandle>,
+    job_id: &str,
+    workspace: &Path,
+    document: &ExportDocument,
+    cache_session: &PdfImageCacheSession,
+    cancelled: &AtomicBool,
+    image_cache: &Mutex<PdfImagePreparationCache>,
+) -> Result<HashMap<String, PreparedTypstImage>, String> {
     let mut unique = Vec::new();
     let mut seen = HashSet::new();
     for block in &document.blocks {
@@ -1879,10 +2027,10 @@ fn prepare_typst_images(
     for (key, image, caption) in unique {
         check_cancelled(cancelled)?;
         let (fingerprint, source_bytes) = pdf_image_fingerprint(&image)?;
-        let cached = pdf_image_preparation_cache()
+        let cached = image_cache
             .lock()
             .ok()
-            .and_then(|cache| cache.get(cache_scope, &key, &fingerprint));
+            .and_then(|cache| cache.get(cache_session, &key, &fingerprint));
         if let Some(cached) = cached {
             cached_images.insert(key, cached);
         } else {
@@ -1898,7 +2046,11 @@ fn prepare_typst_images(
             job_id,
             "running",
             "preparing-images",
-            &format!("Preparing images ({cached_count} of {total_images})…"),
+            &if pending_images.is_empty() {
+                format!("Reusing prepared images ({total_images} of {total_images})…")
+            } else {
+                format!("Preparing images ({cached_count} of {total_images})…")
+            },
             PdfProgressValue::determinate(cached_count, total_images, "items"),
         );
     }
@@ -1979,9 +2131,9 @@ fn prepare_typst_images(
                 fs::write(workspace.join(&relative), bytes.as_slice()).map_err(|error| {
                     format!("Could not prepare an image for PDF export: {error}")
                 })?;
-                if let Ok(mut cache) = pdf_image_preparation_cache().lock() {
+                if let Ok(mut cache) = image_cache.lock() {
                     cache.insert(
-                        cache_scope,
+                        cache_session,
                         key.clone(),
                         CachedPreparedPdfImage {
                             fingerprint,
@@ -2029,7 +2181,7 @@ fn pdf_image_fingerprint(image: &ExportImage) -> Result<(String, Option<Vec<u8>>
     match image {
         ExportImage::Url(url) => {
             // A changed URL is a changed image input. Keeping the successful bytes
-            // avoids another network request on repeated exports of the chapter.
+            // avoids another network request on repeated exports of this target.
             digest.update(b"url\0");
             digest.update(url.as_bytes());
             Ok((format!("{:x}", digest.finalize()), None))
@@ -2365,8 +2517,8 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
         (
             vec!["Crimson Pro", "EB Garamond", "Cormorant Garamond Gnosis"],
             "ltr",
-            11.0,
-            0.65,
+            11.5,
+            0.78,
         )
     };
     let family_list = families
@@ -2393,7 +2545,7 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     let heading_rule = if latin {
-        format!("#show heading: set text(font: ({heading_family_list}))\n")
+        format!("#show heading: set text(font: ({heading_family_list}), weight: \"regular\")\n#show heading.where(level: 1): set text(size: 13pt)\n#show heading.where(level: 2): set text(size: 11.5pt)\n#show heading: set block(above: 1.3em, below: 0.5em)\n")
     } else {
         String::new()
     };
@@ -2426,10 +2578,20 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
     // then a wider clearance before the body begins. Kindred style: the title
     // renders in the heading family, all caps with a little letterspacing.
     let title_rule = format!(
-        "#let gnosis-title(t) = place(top, float: true, clearance: 4.6em, block(width: 100%, align(center)[#text(font: ({heading_family_list}), size: 14.5pt, tracking: 0.12em)[#upper(t)]#v(1.2em, weak: true)#image(\"flourish.svg\", width: 0.66in)]))\n"
+        "#let gnosis-title(t, number: none) = place(top, float: true, clearance: 6em, block(width: 100%, align(center)[#v(5.5em, weak: false)#if number != none {{ text(font: ({heading_family_list}), size: 12pt, str(number)); v(0.75em) }}#text(font: ({heading_family_list}), size: 16pt, weight: \"regular\", tracking: 0.1em)[#upper(t)]#v(1.2em, weak: false)#image(\"flourish.svg\", width: 0.75in)]))\n"
     );
+    let margins = if paper_size == "a5" {
+        "(inside: 22mm, outside: 19mm, top: 20mm, bottom: 20mm)"
+    } else {
+        "(x: 0.85in, y: 0.8in)"
+    };
+    let word_spacing = if latin {
+        "#set text(spacing: 110%)\n"
+    } else {
+        ""
+    };
     format!(
-        "#set page(paper: \"{paper_size}\", margin: (x: 0.85in, y: 0.8in), numbering: \"1\")\n#set text(font: ({family_list}), size: {size_pt}pt, lang: {}, dir: {direction})\n#set par(justify: true, leading: {leading_em}em)\n{GNOSIS_FOOTNOTE_RULE}{greek_rule}{heading_rule}{dropcap_rule}{title_rule}#show link: set text(fill: rgb(\"245c8a\"))\n{GNOSIS_IMAGE_RULE}\n",
+        "#set page(paper: \"{paper_size}\", margin: {margins}, numbering: \"1\")\n#set text(font: ({family_list}), size: {size_pt}pt, lang: {}, dir: {direction})\n{word_spacing}#set par(justify: true, leading: {leading_em}em, spacing: {leading_em}em)\n{GNOSIS_FOOTNOTE_RULE}{greek_rule}{heading_rule}{dropcap_rule}{title_rule}#show link: set text(fill: rgb(\"245c8a\"))\n{GNOSIS_IMAGE_RULE}\n",
         typst_string(&document.language_code)
     )
 }
@@ -2475,7 +2637,7 @@ const GNOSIS_FOOTNOTE_RULE: &str = r#"#set footnote.entry(indent: 0em)
 /// The measurement uses absolute lengths taken from `layout`: `measure` has no
 /// container to resolve a relative width against, so `width: 100%` there reports the
 /// wrong height and the cap never applies.
-const GNOSIS_IMAGE_RULE: &str = "#let gnosis-image(path, caption: none) = layout(region => {\n  let width = region.width\n  let reserved = if caption == none { 0pt } else {\n    measure(block(width: width, caption)).height + (0.65em).to-absolute()\n  }\n  let limit = region.height - reserved - (1.5em).to-absolute()\n  let natural = measure(image(path, width: width))\n  if natural.height > limit { align(center, image(path, height: limit)) } else { image(path, width: width) }\n})\n";
+const GNOSIS_IMAGE_RULE: &str = "#let gnosis-image(path, caption: none) = layout(region => {\n  let width = region.width\n  let reserved = if caption == none { 0pt } else {\n    measure(block(width: width, caption)).height + (0.85em).to-absolute()\n  }\n  let limit = region.height - reserved - (1.5em).to-absolute()\n  let natural = measure(image(path, width: width))\n  if natural.height > limit { align(center, image(path, height: limit)) } else { image(path, width: width) }\n})\n";
 
 fn render_inline_typst(text: &str, show_link_urls: bool) -> String {
     let normalized = text.nfc().collect::<String>();
@@ -2517,10 +2679,10 @@ fn leading_heading_title(document: &ExportDocument) -> Option<String> {
 }
 
 fn render_typst_image_caption(caption: &str) -> String {
-    // 0.85em matches Typst's default footnote text size, so captions read at the
-    // same slightly-smaller scale as the footnotes at the foot of the page.
+    // Vellum's reference captions use approximately 75% of body size and
+    // centered, non-justified lines.
     format!(
-        "#text(size: 0.85em, style: \"italic\")[{}]",
+        "#align(center)[#set par(justify: false, first-line-indent: 0pt)\n#text(size: 0.75em, style: \"italic\")[{}]]",
         render_inline_typst(caption, false)
     )
 }
@@ -2535,7 +2697,7 @@ fn render_typst_image_caption(caption: &str) -> String {
 fn render_typst_figure(body: &str, caption: &str, floating: bool) -> String {
     let placement = if floating { ", placement: auto" } else { "" };
     format!(
-        "#figure({body}, caption: [{}], numbering: none{placement})",
+        "#figure({body}, caption: [{}], gap: 0.85em, numbering: none{placement})",
         render_typst_image_caption(caption)
     )
 }
@@ -3006,8 +3168,210 @@ mod tests {
             repo_name: "book".to_string(),
             project_id: Some("project-1".to_string()),
             project_full_name: Some("team/book".to_string()),
-            chapter_id: chapter_id.to_string(),
+            target: PdfImageCacheTarget::Chapter(chapter_id.to_string()),
         }
+    }
+
+    #[test]
+    fn pdf_image_cache_scope_tracks_book_identity_instead_of_its_anchor_or_layout() {
+        let mut input: PdfChapterExportInput = serde_json::from_value(serde_json::json!({
+            "installationId": 7, "repoName": "book", "projectId": "project-1",
+            "projectFullName": "team/book", "chapterId": "chapter-5",
+            "languageCode": "en", "format": "pdf", "outputPath": "/tmp/first.pdf"
+        }))
+        .unwrap();
+        let chapter = PdfImageCacheScope::from_input(&input);
+        assert_eq!(
+            chapter.target,
+            PdfImageCacheTarget::Chapter("chapter-5".into())
+        );
+        input.chapter_ids = vec!["chapter-5".into(), "chapter-6".into()];
+        let book = PdfImageCacheScope::from_input(&input);
+        assert_eq!(book.target, PdfImageCacheTarget::Book);
+        assert_ne!(chapter, book);
+        input.chapter_id = "chapter-6".into();
+        input.chapter_ids.reverse();
+        input.project_title = "Revised title".into();
+        input.language_code = "vi".into();
+        input.paper_size = "a5".into();
+        input.output_path = "/tmp/revised.pdf".into();
+        input.omit_custom_html = true;
+        assert_eq!(book, PdfImageCacheScope::from_input(&input));
+        input.chapter_ids.truncate(1);
+        assert_eq!(book, PdfImageCacheScope::from_input(&input));
+        input.chapter_ids.clear();
+        input.book_items.push(BookItemInput {
+            id: "title".into(),
+            kind: "title".into(),
+            ..Default::default()
+        });
+        assert_eq!(book, PdfImageCacheScope::from_input(&input));
+        input.project_id = Some("another-project".into());
+        assert_ne!(book, PdfImageCacheScope::from_input(&input));
+    }
+
+    #[test]
+    fn pdf_image_cache_rejects_stale_workers_even_after_switching_back() {
+        let chapter = test_image_cache_scope("chapter-5");
+        let book = PdfImageCacheScope {
+            target: PdfImageCacheTarget::Book,
+            ..chapter.clone()
+        };
+        let entry = || CachedPreparedPdfImage {
+            fingerprint: "v1".into(),
+            bytes: Arc::new(vec![1]),
+            aspect: None,
+        };
+        let mut cache = PdfImagePreparationCache::default();
+        let old_chapter = cache.begin_export(&chapter);
+        cache.insert(&old_chapter, "image".into(), entry());
+        let old_book = cache.begin_export(&book);
+        assert!(cache.entries.is_empty());
+        cache.insert(&old_chapter, "stale".into(), entry());
+        assert!(cache.entries.is_empty());
+        let new_chapter = cache.begin_export(&chapter);
+        cache.insert(&old_chapter, "stale".into(), entry());
+        cache.insert(&old_book, "stale".into(), entry());
+        assert!(cache.entries.is_empty());
+        cache.insert(&new_chapter, "image".into(), entry());
+        let repeat = cache.begin_export(&chapter);
+        assert!(cache.get(&repeat, "image", "v1").is_some());
+        assert!(cache.get(&old_chapter, "image", "v1").is_none());
+        let disabled = PdfImageCacheSession {
+            scope: chapter,
+            generation: None,
+        };
+        assert!(cache.get(&disabled, "image", "v1").is_none());
+        cache.insert(&disabled, "disabled".into(), entry());
+        assert!(!cache.entries.contains_key("disabled"));
+    }
+
+    #[test]
+    fn pdf_image_cache_pipeline_reuses_whole_books_and_evicts_on_target_switch() {
+        let sources = pdf_workspace().unwrap();
+        let _source_cleanup = WorkspaceCleanup(sources.clone());
+        let first_path = sources.join("chapter-5.webp");
+        let second_path = sources.join("chapter-6.webp");
+        let logo_path = sources.join("publisher.png");
+        fs::write(&first_path, webp_fixture(40, 30, [200, 0, 0, 255])).unwrap();
+        fs::write(&second_path, webp_fixture(40, 30, [0, 200, 0, 255])).unwrap();
+        fs::write(&logo_path, png_fixture(30, 20)).unwrap();
+        let image_block = |path: &Path| ExportBlock::Image {
+            image: ExportImage::Upload {
+                repo_relative_path: path.file_name().unwrap().to_string_lossy().into(),
+                raw_url: None,
+                absolute_path: path.into(),
+            },
+            caption: String::new(),
+        };
+        let chapter_doc = ExportDocument {
+            title: "Chapter 5".into(),
+            language_code: "en".into(),
+            blocks: vec![image_block(&first_path)],
+            book_parts: vec![],
+        };
+        let mut book_doc = ExportDocument {
+            title: "Book".into(),
+            language_code: "en".into(),
+            blocks: vec![
+                image_block(&first_path),
+                image_block(&second_path),
+                image_block(&logo_path),
+                image_block(&first_path),
+            ],
+            book_parts: vec![],
+        };
+        let chapter = test_image_cache_scope("chapter-5");
+        let book = PdfImageCacheScope {
+            target: PdfImageCacheTarget::Book,
+            ..chapter.clone()
+        };
+        let cache = Mutex::new(PdfImagePreparationCache::default());
+        let prepare = |scope: &PdfImageCacheScope, document: &ExportDocument| {
+            let session = cache.lock().unwrap().begin_export(scope);
+            let workspace = pdf_workspace().unwrap();
+            let _cleanup = WorkspaceCleanup(workspace.clone());
+            let prepared = prepare_typst_images_with_cache(
+                None,
+                "test",
+                &workspace,
+                document,
+                &session,
+                &AtomicBool::new(false),
+                &cache,
+            )
+            .unwrap();
+            let snapshot = cache.lock().unwrap().entries.clone();
+            assert_eq!(prepared.len(), snapshot.len());
+            for (key, image) in prepared {
+                let PreparedTypstImage::File { path, .. } = image else {
+                    panic!("Expected a prepared image")
+                };
+                assert_eq!(
+                    fs::read(workspace.join(path)).unwrap(),
+                    *snapshot[&key].bytes
+                );
+            }
+            snapshot
+        };
+        let chapter_first = prepare(&chapter, &chapter_doc);
+        let book_first = prepare(&book, &book_doc);
+        let first_key = export_image_key(&match &chapter_doc.blocks[0] {
+            ExportBlock::Image { image, .. } => image.clone(),
+            _ => unreachable!(),
+        });
+        let second_key = export_image_key(&match &book_doc.blocks[1] {
+            ExportBlock::Image { image, .. } => image.clone(),
+            _ => unreachable!(),
+        });
+        assert_eq!(
+            book_first.len(),
+            3,
+            "Duplicate images in the book prepare once"
+        );
+        assert_eq!(
+            typst_image_extension(&book_first[&first_key].bytes),
+            Some("jpg")
+        );
+        assert!(!Arc::ptr_eq(
+            &chapter_first[&first_key].bytes,
+            &book_first[&first_key].bytes
+        ));
+        let book_repeat = prepare(&book, &book_doc);
+        for (key, entry) in &book_first {
+            assert!(Arc::ptr_eq(&entry.bytes, &book_repeat[key].bytes));
+        }
+        fs::write(second_path, webp_fixture(40, 30, [0, 0, 200, 255])).unwrap();
+        let revised = prepare(&book, &book_doc);
+        for (key, entry) in &book_repeat {
+            assert_eq!(
+                Arc::ptr_eq(&entry.bytes, &revised[key].bytes),
+                key != &second_key
+            );
+        }
+        book_doc.blocks.reverse();
+        book_doc.title = "Revised book title".into();
+        let reordered = prepare(&book, &book_doc);
+        for (key, entry) in &revised {
+            assert!(Arc::ptr_eq(&entry.bytes, &reordered[key].bytes));
+        }
+        let chapter_again = prepare(&chapter, &chapter_doc);
+        assert_eq!(chapter_again.len(), 1);
+        assert!(!Arc::ptr_eq(
+            &chapter_again[&first_key].bytes,
+            &reordered[&first_key].bytes
+        ));
+        let chapter_repeat = prepare(&chapter, &chapter_doc);
+        assert!(Arc::ptr_eq(
+            &chapter_repeat[&first_key].bytes,
+            &chapter_again[&first_key].bytes
+        ));
+        let book_again = prepare(&book, &book_doc);
+        assert_eq!(book_again.len(), 3);
+        assert!(!Arc::ptr_eq(
+            &book_again[&first_key].bytes,
+            &chapter_repeat[&first_key].bytes
+        ));
     }
 
     #[test]
@@ -3015,9 +3379,9 @@ mod tests {
         let chapter_a = test_image_cache_scope("chapter-a");
         let chapter_b = test_image_cache_scope("chapter-b");
         let mut cache = PdfImagePreparationCache::default();
-        cache.use_scope(&chapter_a);
+        let session_a = cache.begin_export(&chapter_a);
         cache.insert(
-            &chapter_a,
+            &session_a,
             "file:first".to_string(),
             CachedPreparedPdfImage {
                 fingerprint: "first-v1".to_string(),
@@ -3026,7 +3390,7 @@ mod tests {
             },
         );
         cache.insert(
-            &chapter_a,
+            &session_a,
             "file:second".to_string(),
             CachedPreparedPdfImage {
                 fingerprint: "second-v1".to_string(),
@@ -3035,12 +3399,12 @@ mod tests {
             },
         );
 
-        assert!(cache.get(&chapter_a, "file:first", "first-v1").is_some());
-        assert!(cache.get(&chapter_a, "file:first", "first-v2").is_none());
-        assert!(cache.get(&chapter_a, "file:second", "second-v1").is_some());
+        assert!(cache.get(&session_a, "file:first", "first-v1").is_some());
+        assert!(cache.get(&session_a, "file:first", "first-v2").is_none());
+        assert!(cache.get(&session_a, "file:second", "second-v1").is_some());
 
-        cache.use_scope(&chapter_b);
-        assert!(cache.get(&chapter_b, "file:first", "first-v1").is_none());
+        let session_b = cache.begin_export(&chapter_b);
+        assert!(cache.get(&session_b, "file:first", "first-v1").is_none());
         assert!(cache.entries.is_empty());
     }
 
@@ -3298,20 +3662,31 @@ mod tests {
                 "chapter",
                 "Chapter One",
                 vec![
-                    text("An opening paragraph in the chapter style."),
+                    text("An opening paragraph in the chapter style, long enough to continue beside the decorative initial for several complete lines. The next paragraph should begin with the traditional first-line indent. This representative text also checks that normal word spacing and line spacing remain comfortable on a small A5 page."),
+                    text("The second paragraph starts with an indent and no blank line above it. This is the ordinary rhythm used throughout the body of the book."),
+                    text_block("heading1", "A first-level heading"),
                     text(&"A paragraph to fill the book and verify pagination. ".repeat(700)),
+                    text_block("heading2", "A second-level heading"),
+                    text_block("quote", "A quotation keeps its upright default and can retain <i>an explicitly italic phrase</i>."),
+                    ExportBlock::Attribution { text: "— An Example Author".into() },
                 ],
             ),
             part(
                 "chapter",
                 "Chapter Two",
-                vec![text(
+                vec![text_block("heading1", "Chapter Two"), text(
                     "Another opening paragraph, with a drop cap of its own.",
                 )],
             ),
             // Contents deliberately follows the chapters.
             part("contents", "Mục lục", vec![text("Mục lục")]),
         ];
+        parts
+            .iter_mut()
+            .find(|part| part.item.kind == "contents")
+            .unwrap()
+            .item
+            .include_h1_headings = true;
         let illustration = workspace.join("illustration.svg");
         fs::write(&illustration, br##"<svg xmlns="http://www.w3.org/2000/svg" width="300" height="500"><rect width="300" height="500" fill="#b79858"/><circle cx="150" cy="240" r="90" fill="#fff4da"/></svg>"##).unwrap();
         let image = ExportImage::Upload {
@@ -3344,11 +3719,11 @@ mod tests {
                 .collect(),
             book_parts: parts,
         };
-        let cache_scope = test_image_cache_scope("book-smoke");
+        let cache_session = begin_pdf_image_cache(&test_image_cache_scope("book-smoke"));
         let options = PdfWorkspacePreparationOptions {
             footnote_links_as_plain_text: true,
             paper_size: "a5",
-            image_cache_scope: &cache_scope,
+            image_cache_session: &cache_session,
         };
         prepare_typst_workspace(
             None,
@@ -3367,11 +3742,15 @@ mod tests {
         assert!(source
             .contains("numbering(entry.value.numbering, ..counter(page).at(entry.location()))"));
         assert!(
-            source.find("#gnosis-title(\"Chapter Two\")").unwrap()
-                < source.find("#gnosis-contents(\"Mục lục\")").unwrap()
+            source.find("#gnosis-title(\"Chapter Two\",").unwrap()
+                < source.find("#gnosis-contents(\"Mục lục\",").unwrap()
         );
         assert!(source.contains("size: 30pt"));
         assert!(source.contains("#let gnosis-book-heading-font = (\"Alegreya\""));
+        assert!(
+            source.contains("#set par(leading: 0.68em, spacing: 1.43em, first-line-indent: 0pt)")
+        );
+        assert!(source.contains("#text(\"© Example\")#parbreak()"));
         let (Some(binary), Some(font_dir)) = (
             std::env::var_os("GNOSIS_TYPST_BIN"),
             std::env::var_os("GNOSIS_TYPST_SMOKE_FONT_DIR"),
@@ -3530,11 +3909,12 @@ mod tests {
         // Kindred style: Alegreya leads body headings on Latin-script exports,
         // with the body fallbacks behind it.
         assert!(vietnamese_preamble.contains(
-            "#show heading: set text(font: (\"Alegreya\", \"EB Garamond\", \"Cormorant Garamond Gnosis\"))"
+            "#show heading: set text(font: (\"Alegreya\", \"EB Garamond\", \"Cormorant Garamond Gnosis\"), weight: \"regular\")"
         ));
         assert!(!vietnamese_preamble.contains("Noto Serif"));
-        assert!(vietnamese_preamble.contains("size: 11pt"));
-        assert!(vietnamese_preamble.contains("leading: 0.65em"));
+        assert!(vietnamese_preamble.contains("size: 11.5pt"));
+        assert!(vietnamese_preamble.contains("leading: 0.78em"));
+        assert!(vietnamese_preamble.contains("spacing: 110%"));
         // Greek runs are forced to EB Garamond: Crimson Pro carries five stray
         // Greek glyphs (Δ Σ Ω μ π), so per-glyph fallback would split a Greek word
         // across typefaces — dropping this rule broke Greek quotations in 0.8.68.
@@ -3568,9 +3948,10 @@ mod tests {
         // `placement: auto` image can never be hoisted above it on page one.
         // Kindred style: Alegreya, all caps, tracked, with the flourish one line
         // below and a wider clearance before the body text.
-        assert!(vietnamese_preamble.contains(
-            "#let gnosis-title(t) = place(top, float: true, clearance: 4.6em, block(width: 100%, align(center)[#text(font: (\"Alegreya\", \"EB Garamond\", \"Cormorant Garamond Gnosis\"), size: 14.5pt, tracking: 0.12em)[#upper(t)]#v(1.2em, weak: true)#image(\"flourish.svg\", width: 0.66in)]))"
-        ));
+        assert!(vietnamese_preamble.contains("#let gnosis-title(t, number: none)"));
+        assert!(vietnamese_preamble.contains("clearance: 6em"));
+        assert!(vietnamese_preamble.contains("#v(5.5em, weak: false)"));
+        assert!(vietnamese_preamble.contains("size: 16pt, weight: \"regular\", tracking: 0.1em"));
         let japanese_preamble = typst_preamble(&japanese, "a4");
         assert!(japanese_preamble.contains("\"Shippori Mincho\", \"EB Garamond\""));
         assert!(japanese_preamble.contains("size: 11pt"));
@@ -3584,9 +3965,10 @@ mod tests {
         assert!(!japanese_preamble.contains("dropcap"));
         // Non-Latin body faces carry their own Greek coverage, so no Greek run rule.
         assert!(!japanese_preamble.contains(GREEK_RUN_RULE_PREFIX));
-        assert!(japanese_preamble.contains(
-            "#let gnosis-title(t) = place(top, float: true, clearance: 4.6em, block(width: 100%, align(center)[#text(font: (\"Shippori Mincho\", \"EB Garamond\"), size: 14.5pt, tracking: 0.12em)[#upper(t)]#v(1.2em, weak: true)#image(\"flourish.svg\", width: 0.66in)]))"
-        ));
+        assert!(japanese_preamble.contains("#let gnosis-title(t, number: none)"));
+        assert!(
+            japanese_preamble.contains("font: (\"Shippori Mincho\", \"EB Garamond\"), size: 16pt")
+        );
     }
 
     #[test]
@@ -3662,10 +4044,10 @@ mod tests {
     }
 
     #[test]
-    fn quote_body_retains_normal_size_and_alignment() {
+    fn quotes_use_smaller_upright_text_and_preserve_inline_emphasis() {
         let quote = render_typst_text_block("quote", "Quotation", false);
-        assert!(quote.contains("#quote(block: true)[#text(style: \"italic\")[Quotation]]"));
-        assert!(!quote.contains("size:"));
+        assert!(quote.contains("#quote(block: true)"));
+        assert!(quote.contains("#text(size: 0.9em, style: \"normal\")[Quotation]"));
         assert!(!quote.contains("#align"));
     }
 
@@ -3745,7 +4127,8 @@ mod tests {
     #[test]
     fn image_captions_are_wrapped_in_italic_text() {
         let caption = render_typst_image_caption("A <b>bold</b> caption");
-        assert!(caption.starts_with("#text(size: 0.85em, style: \"italic\")["));
+        assert!(caption.starts_with("#align(center)"));
+        assert!(caption.contains("#text(size: 0.75em, style: \"italic\")["));
         assert!(caption.contains("#strong["));
     }
 
@@ -3766,7 +4149,9 @@ mod tests {
             true,
         );
         assert!(figure.starts_with("#figure(image("));
-        assert!(figure.contains("caption: [#text(size: 0.85em, style: \"italic\")"));
+        assert!(figure.contains("caption: [#align(center)"));
+        assert!(figure.contains("size: 0.75em"));
+        assert!(figure.contains("gap: 0.85em"));
         assert!(figure.contains("numbering: none"));
         // Floats fill the gap an oversized image would otherwise leave at the
         // bottom of a page.
@@ -4071,11 +4456,11 @@ mod tests {
                 },
             ],
         };
-        let image_cache_scope = test_image_cache_scope("smoke-chapter");
+        let image_cache_session = begin_pdf_image_cache(&test_image_cache_scope("smoke-chapter"));
         let options = PdfWorkspacePreparationOptions {
             footnote_links_as_plain_text: true,
             paper_size: "a4",
-            image_cache_scope: &image_cache_scope,
+            image_cache_session: &image_cache_session,
         };
         prepare_typst_workspace(
             None,

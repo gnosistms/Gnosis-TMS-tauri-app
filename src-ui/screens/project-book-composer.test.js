@@ -35,3 +35,18 @@ test("front matter uses per-language editing controls, and copyright has the lim
     if (kind === "image") { assert.match(html, /data-book-image-dropzone/); assert.match(html, /Enter image caption\./); }
   }
 });
+
+test("contents expose an off-page H1 checkbox and render optional subentries", () => {
+  const current = modal();
+  current.book.items = addBookSection(current.book.items, "contents", "Book", "Contents");
+  const contents = current.book.items.find((item) => item.kind === "contents");
+  current.book.selectedItemId = contents.id;
+  let html = renderProjectBookComposer(current);
+  assert.match(html, /type="checkbox" data-book-field="includeH1Headings" > Include H1 headings/);
+  assert.ok(html.indexOf("includeH1Headings") < html.indexOf('<article class="book-page'));
+  contents.includeH1Headings = true;
+  current.book.contentsHeadings = { a: ["Inside the chapter"] };
+  html = renderProjectBookComposer(current);
+  assert.match(html, /data-book-field="includeH1Headings" checked/);
+  assert.match(html, /book-contents__subheading"><span>Inside the chapter/);
+});

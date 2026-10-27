@@ -1,3 +1,4 @@
+import { bookTextParts } from "./project-book-text.js";
 import { extractVellumLeadingHeadingTitle } from "./vellum-text-editor-content.js";
 import { bookExportItems, bookContentsItems, bookItemTitle } from "./project-book-model.js";
 import { state } from "./state.js";
@@ -72,7 +73,9 @@ function bookSectionPreviewBlocks(item, modal) {
   const result = [];
   if (item.kind === "title") result.push(text(item.title, "heading1"), text(item.subtitle, "heading2"), text(item.author, "centered"), text(item.translator, "centered"));
   if (item.kind === "contents") result.push(text(item.title, "heading1"), ...bookContentsItems(modal.book.items).map((entry) => text(bookItemTitle(entry))));
-  if (["copyright", "dedication"].includes(item.kind)) result.push(text(item.text, item.kind === "dedication" ? "centered" : "paragraph"));
+  if (["copyright", "dedication"].includes(item.kind)) result.push(...bookTextParts(item.text).map((part) => part.kind === "separator"
+    ? { kind: "separator", rowId: item.id, languageCode: modal.languageCode }
+    : text(part.text.replaceAll("\u2028", "\n"), item.kind === "dedication" ? "centered" : "paragraph")));
   const source = modal.book.items.find((entry) => entry.id === item.id);
   if (source?.image) result.push({ kind: "image", rowId: item.id, languageCode: modal.languageCode, image: { kind: "upload", path: source.image.assetId, filePath: source.image.vellumFilePath || source.image.filePath, fileName: source.image.fileName }, caption: item.caption || "" });
   return result.map((block) => ({ ...block, bookItemId: item.id }));

@@ -70,7 +70,7 @@ function insertBookSection(items, item) {
 export function addBookSection(items, kind, projectTitle, contentsTitle) {
   if (!BOOK_SECTION_TYPES.some((type) => type.kind === kind)) return items;
   const id = globalThis.crypto?.randomUUID?.() || `section-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const item = { id, kind, excluded: false, available: true, title: kind === "title" ? projectTitle : kind === "contents" ? contentsTitle : "", subtitle: "", author: "", translator: "", text: "", caption: "", image: null };
+  const item = { id, kind, excluded: false, available: true, title: kind === "title" ? projectTitle : kind === "contents" ? contentsTitle : "", subtitle: "", author: "", translator: "", text: "", caption: "", image: null, ...(kind === "contents" ? { includeH1Headings: false } : {}) };
   const next = [...items];
   insertBookSection(next, item);
   return next;
@@ -86,7 +86,14 @@ export function reorderBookItems(items, id, targetId, after) {
 }
 
 export function bookContentsItems(items) {
-  return items.filter((item) => bookItemIncluded(item) && !["title", "copyright", "contents"].includes(item.kind));
+  return items.filter((item) => bookItemIncluded(item) && item.kind === "chapter");
+}
+
+export function bookContentsEntries(items, headings = {}, includeH1 = false) {
+  return bookContentsItems(items).flatMap((item, index) => [
+    { title: `${index + 1}. ${bookItemTitle(item)}`, level: 0 },
+    ...(includeH1 ? (headings[item.chapterId] || []).map((title) => ({ title, level: 1 })) : []),
+  ]);
 }
 
 export function bookExportItems(modal) {
@@ -94,5 +101,6 @@ export function bookExportItems(modal) {
     id: item.id, kind: item.kind, chapterId: item.chapterId || "", title: bookItemTitle(item),
     subtitle: item.subtitle || "", author: item.author || "", translator: item.translator || "",
     text: item.text || "", caption: item.caption || "", imageAssetId: item.image?.assetId || "",
+    ...(item.kind === "contents" ? { includeH1Headings: item.includeH1Headings === true } : {}),
   }));
 }
