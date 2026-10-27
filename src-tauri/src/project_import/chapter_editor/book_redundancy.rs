@@ -52,6 +52,8 @@ struct Group {
 #[serde(rename_all = "camelCase")]
 struct Detection {
     images: Vec<Group>,
+    #[serde(default)]
+    image_warnings: Vec<String>,
     footnotes: Vec<Group>,
     warnings: Vec<String>,
     cached: bool,
@@ -153,6 +155,67 @@ fn scope_root(
         .join("book-redundancy-v1")
         .join(key))
 }
+fn read_local<T: serde::de::DeserializeOwned>(root: &Path, name: &str) -> Option<T> {
+    fs::read(root.join(name))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+}
+fn read_image_evidence(root: &Path) -> BTreeMap<String, ImageEvidence> {
+    #[derive(Deserialize)]
+    struct OldImages {
+        #[serde(default)]
+        images: BTreeMap<String, ImageEvidence>,
+    }
+    read_local(root, "images.json")
+        .or_else(|| read_local::<OldImages>(root, "evidence.json").map(|old| old.images))
+        .unwrap_or_default()
+}
+fn read_review(root: &Path) -> Detection {
+    #[derive(Deserialize)]
+    struct OldReview {
+        #[serde(default)]
+        snapshot: Detection,
+    }
+    let mut snapshot = read_local(root, "review.json")
+        .or_else(|| read_local::<OldReview>(root, "evidence.json").map(|old| old.snapshot))
+        .unwrap_or_default();
+    if let Some(images) = read_local::<Detection>(root, "image-review.json") {
+        snapshot.images = images.images;
+        snapshot.image_warnings = images.image_warnings;
+        snapshot.revisions = images.revisions;
+    }
+    snapshot
+}
+fn image_checkpoint(
+    pictures: &[Occurrence],
+    warnings: &BTreeSet<String>,
+    revisions: &BTreeMap<String, String>,
+) -> Detection {
+    let mut groups: BTreeMap<String, Vec<Occurrence>> = BTreeMap::new();
+    for picture in pictures {
+        groups
+            .entry(picture.identity.clone())
+            .or_default()
+            .push(picture.clone());
+    }
+    let images = groups
+        .into_iter()
+        .filter(|(_, members)| members.len() > 1)
+        .map(|(id, occurrences)| Group {
+            id,
+            anchor: String::new(),
+            occurrences,
+        })
+        .collect();
+    let image_warnings = warnings.iter().cloned().collect::<Vec<_>>();
+    Detection {
+        images,
+        warnings: image_warnings.clone(),
+        image_warnings,
+        revisions: revisions.clone(),
+        ..Default::default()
+    }
+}
 fn read_cache(root: &Path) -> Cache {
     fs::read(root.join("evidence.json"))
         .ok()
@@ -188,7 +251,7 @@ fn cache_at(root: &Path, choices: Option<BTreeMap<String, bool>>) -> Result<Valu
         .ok()
         .and_then(|bytes| serde_json::from_slice::<BTreeMap<String, bool>>(&bytes).ok())
         .unwrap_or_default();
-    Ok(json!({"result":read_cache(root).snapshot,"choices":choices}))
+    Ok(json!({"result":read_review(root),"choices":choices}))
 }
 
 fn uploaded_revision(repo: &Path, image: Option<&StoredFieldImage>) -> Option<String> {
@@ -759,25 +822,11 @@ fn run(app: &AppHandle, input: &DetectionInput, cancel: &AtomicBool) -> Result<D
         project,
         &scope.language_code,
     )?;
-    static LOCKS: OnceLock<Mutex<BTreeMap<PathBuf, Arc<Mutex<()>>>>> = OnceLock::new();
-    let lock = {
-        let mut locks = LOCKS
-            .get_or_init(|| Mutex::new(BTreeMap::new()))
-            .lock()
-            .map_err(|_| "Book review cache is unavailable.")?;
-        locks
-            .entry(root.clone())
-            .or_insert_with(|| Arc::new(Mutex::new(())))
-            .clone()
+    let mut cache = Cache {
+        version: 1,
+        images: read_image_evidence(&root),
+        ..Default::default()
     };
-    let _guard = lock
-        .lock()
-        .map_err(|_| "Book review cache is unavailable.")?;
-    if cancel.load(AtomicOrdering::Acquire) {
-        return Err("Book review cancelled.".into());
-    }
-    let mut cache = read_cache(&root);
-    cache.version = 1;
     let repo = resolve_project_git_repo_path(
         app,
         scope.installation_id,
@@ -887,29 +936,63 @@ fn run(app: &AppHandle, input: &DetectionInput, cancel: &AtomicBool) -> Result<D
             }
         }
     }
+    if cancel.load(AtomicOrdering::Acquire) {
+        return Err("Book review cancelled.".into());
+    }
+    scope_root(
+        app,
+        &input.login,
+        scope.installation_id,
+        project,
+        &scope.language_code,
+    )?;
+    let image_result = image_checkpoint(&pictures, &warnings, &revisions);
+    // Publish and persist the independent image result BEFORE waiting on any
+    // previous footnote request or doing candidate generation/provider calls.
+    write_json(&root, "images.json", &cache.images)?;
+    write_json(&root, "image-review.json", &image_result)?;
+    let _ = app.emit(
+        "book-redundancy-progress",
+        json!({"requestId":input.request_id,"phase":"images","result":image_result}),
+    );
+    static LOCKS: OnceLock<Mutex<BTreeMap<PathBuf, Arc<Mutex<()>>>>> = OnceLock::new();
+    let lock = {
+        let mut locks = LOCKS
+            .get_or_init(|| Mutex::new(BTreeMap::new()))
+            .lock()
+            .map_err(|_| "Book review cache is unavailable.")?;
+        locks
+            .entry(root.clone())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    };
+    let _guard = lock
+        .lock()
+        .map_err(|_| "Book review cache is unavailable.")?;
+    if cancel.load(AtomicOrdering::Acquire) {
+        return Err("Book review cancelled.".into());
+    }
+    scope_root(
+        app,
+        &input.login,
+        scope.installation_id,
+        project,
+        &scope.language_code,
+    )?;
+    let mut latest = read_cache(&root);
+    latest.version = 1;
+    latest.images.extend(cache.images);
+    cache = latest;
     carry_choice_aliases(&mut notes, &cache.snapshot)?;
     let inventory = inventory_digest(&notes, &pictures);
     if let Some(mut snapshot) = reuse_snapshot(&cache, &inventory, &notes, &pictures, &warnings) {
         snapshot.revisions = revisions;
+        write_json(&root, "review.json", &snapshot)?;
         return Ok(snapshot);
     }
     let candidates = candidates::pairs(&notes, &book_texts, &mut cache.near);
-    let mut image_groups: BTreeMap<String, Vec<Occurrence>> = BTreeMap::new();
-    for picture in pictures {
-        image_groups
-            .entry(picture.identity.clone())
-            .or_default()
-            .push(picture);
-    }
-    let images = image_groups
-        .into_iter()
-        .filter(|(_, members)| members.len() > 1)
-        .map(|(id, occurrences)| Group {
-            id,
-            anchor: String::new(),
-            occurrences,
-        })
-        .collect();
+    let images = image_result.images;
+    let image_warnings = image_result.image_warnings;
     let mut positive = BTreeMap::new();
     let mut changed = false;
     let mut provider_failed = false;
@@ -1036,6 +1119,7 @@ fn run(app: &AppHandle, input: &DetectionInput, cancel: &AtomicBool) -> Result<D
         .collect();
     let result = Detection {
         images,
+        image_warnings,
         footnotes,
         warnings: warnings.into_iter().collect(),
         cached: !changed,
@@ -1044,6 +1128,7 @@ fn run(app: &AppHandle, input: &DetectionInput, cancel: &AtomicBool) -> Result<D
     cache.inventory = inventory;
     cache.snapshot = result.clone();
     write_json(&root, "evidence.json", &cache)?;
+    write_json(&root, "review.json", &result)?;
     Ok(result)
 }
 type Jobs = Mutex<BTreeMap<String, Arc<AtomicBool>>>;
@@ -1061,7 +1146,8 @@ pub(crate) fn cancel(id: &str) -> Result<(), String> {
     }
     Ok(())
 }
-/// Emits book-redundancy-progress with requestId, stage, and terminal result/error.
+/// Emits book-redundancy-progress with an independent phase=images checkpoint,
+/// optional footnote stages, and the terminal complete result/error, all request-scoped.
 pub(crate) fn start(app: AppHandle, input: DetectionInput) -> Result<(), String> {
     let flag = Arc::new(AtomicBool::new(false));
     {
@@ -1447,5 +1533,57 @@ mod tests {
         current[0].choice_aliases.clear();
         carry_choice_aliases(&mut current, &previous).expect("changed annotation");
         assert!(current[0].choice_aliases.is_empty());
+    }
+    #[test]
+    fn image_checkpoint_survives_interrupted_footnotes_and_unreadable_pair_cache() {
+        let folder =
+            std::env::temp_dir().join(format!("redundancy-phases-{}", uuid::Uuid::now_v7()));
+        let old = Cache {
+            version: 1,
+            snapshot: Detection {
+                footnotes: vec![Group {
+                    id: "old-note".into(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        write_json(&folder, "evidence.json", &old).expect("old cache");
+        assert_eq!(read_review(&folder).footnotes[0].id, "old-note");
+        let mut first = sample_note("first", "");
+        first.kind = "image".into();
+        first.identity = "same-pixels".into();
+        let mut repeat = first.clone();
+        repeat.id = "repeat".into();
+        repeat.item_id = "later".into();
+        let mut unique = first.clone();
+        unique.id = "unique".into();
+        unique.identity = "different-pixels".into();
+        let revisions = BTreeMap::from([("chapter".into(), "new-source".into())]);
+        let checkpoint = image_checkpoint(
+            &[first, repeat, unique],
+            &BTreeSet::from(["Unreadable image".into()]),
+            &revisions,
+        );
+        assert_eq!(checkpoint.images.len(), 1);
+        assert_eq!(checkpoint.images[0].occurrences[0].id, "first");
+        assert_eq!(checkpoint.images[0].occurrences[1].id, "repeat");
+        write_json(&folder, "review.json", &old.snapshot).expect("review summary");
+        write_json(&folder, "image-review.json", &checkpoint).expect("image checkpoint");
+        fs::write(folder.join("evidence.json"), "inaccessible pair evidence")
+            .expect("break evidence");
+        let loaded = cache_at(&folder, None).expect("read independent results");
+        assert_eq!(
+            loaded["result"]["images"][0]["occurrences"]
+                .as_array()
+                .expect("occurrences")
+                .len(),
+            2
+        );
+        assert_eq!(loaded["result"]["imageWarnings"][0], "Unreadable image");
+        assert_eq!(loaded["result"]["revisions"]["chapter"], "new-source");
+        assert_eq!(loaded["result"]["footnotes"][0]["id"], "old-note");
+        fs::remove_dir_all(folder).expect("cleanup");
     }
 }

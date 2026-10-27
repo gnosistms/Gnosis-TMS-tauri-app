@@ -189,3 +189,6 @@
   .book-redundancy__header h2 { order: -1; flex-basis: 100%; }
   .book-redundancy__header > div { margin-left: auto; }
 }
+
+.book-redundancy__checking { display: flex; align-items: center; gap: 8px; }
+.book-redundancy__checking .button__spinner { display: inline-block; border-color: currentColor; border-top-color: transparent; }

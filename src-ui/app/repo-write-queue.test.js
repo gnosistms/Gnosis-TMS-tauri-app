@@ -21,6 +21,7 @@ import {
   resolveProjectRepoScope,
   subscribeRepoInvalidations,
   subscribeRepoWriteQueue,
+  waitForRepoWriteQueueIdle,
 } from "./repo-write-queue.js";
 
 function delay(ms) {
@@ -629,4 +630,27 @@ test("durable queue errors and invalidations are stored independently of active 
   assert.equal(getRepoInvalidations().length, 1);
   assert.equal(consumeRepoInvalidations((item) => item.repoScope === "7:project-1:repo-one").length, 1);
   assert.deepEqual(getRepoInvalidations(), []);
+});
+
+
+test("local inventory waits for editor writes without waiting for settings sync", async () => {
+  const scope = "7:inventory:book";
+  const editor = deferred(), settings = deferred();
+  const editorWrite = enqueueRepoWrite({ scope, operationType: "localEditorWrite", run: () => editor.promise });
+  const settingsWrite = enqueueRepoWrite({ scope, operationType: "localMetadataWrite", run: () => settings.promise });
+  let inventoryReady = false, allReady = false;
+  const inventory = waitForRepoWriteQueueIdle(scope, { operationTypes: ["localEditorWrite"] }).then(() => { inventoryReady = true; });
+  const all = waitForRepoWriteQueueIdle(scope).then(() => { allReady = true; });
+  try {
+    await delay(0);
+    assert.equal(inventoryReady, false);
+    editor.resolve();await editorWrite;await inventory;
+    assert.equal(inventoryReady, true);
+    assert.equal(allReady, false);
+    await waitForRepoWriteQueueIdle(scope, { operationTypes: ["localEditorWrite"] });
+    assert.equal(repoWriteQueueHasActiveWrites(scope), true);
+  } finally {
+    editor.resolve();settings.resolve();
+    await Promise.all([editorWrite, settingsWrite, all]);
+  }
 });

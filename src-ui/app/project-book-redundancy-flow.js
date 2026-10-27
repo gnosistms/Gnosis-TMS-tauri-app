@@ -5,7 +5,7 @@ import { selectedProjectsTeam } from "./project-context.js";
 import { getActiveStorageLogin } from "./team-storage.js";
 import { bookExportItems } from "./project-book-model.js";
 import { projectRepoScope, waitForRepoWriteQueueIdle } from "./repo-write-queue.js";
-import { ensureSharedAiActionConfigurationLoaded, resolveAiReviewProviderAndModel } from "./ai-settings-flow.js";
+import { applyStoredSelectedTeamAiActionPreferences, resolveAiReviewProviderAndModel } from "./ai-settings-flow.js";
 import { formatErrorForDisplay } from "./error-display.js";
 let active;
 let subscribed;
@@ -40,29 +40,30 @@ export async function startBookRedundancy(render, operations = {}) {
     teamId: team.id, login: getActiveStorageLogin(), session: current.book.previewCache, invoke: operations.invoke || invoke,
     scope: { login: getActiveStorageLogin() || "", installationId: team.installationId, projectId: current.projectId, languageCode: current.languageCode } };
   active = request;
-  publish(request, { status: "loading", stage: "Checking saved results…", error: "" });
+  publish(request, { status: "loading", imagesStatus: "loading", footnotesStatus: "loading", stage: "", error: "", choiceSaveError: "" });
   try {
     if (!subscribed) subscribed = Promise.resolve((operations.listen || listen)("book-redundancy-progress", ({ payload }) => {
       const request = active;
       if (!request || payload?.requestId !== request.id) return;
       if (!matches(request)) { cancelBookRedundancy(); return; }
-      if (payload.complete) {
-        if (payload.error) publish(request, { status: "error", error: payload.error, result: null });
-        else publishResult(request, payload.result, modal().book.redundancy.choices || {}, { status: "ready", stage: "", error: "" });
+      if (payload.phase === "images") {
+        request.imagesPublished = true;
+        publishResult(request, payload.result, modal().book.redundancy.choices || {}, { imagesStatus: "ready" });
+      } else if (payload.complete) {
+        if (payload.error) fail(request, payload.error);
+        else publishResult(request, payload.result, modal().book.redundancy.choices || {}, { status: "ready", imagesStatus: "ready", footnotesStatus: "ready", stage: "", error: "" });
       }
-      else publish(request, { stage: payload.stage });
     })).catch((error) => { subscribed = null; throw error; });
     await subscribed;
     await pendingChoiceSave;
     if (!matches(request)) return;
     const cached = await request.invoke("book_redundancy_cache", { input: request.scope });
     if (!matches(request)) return;
-    publishResult(request, cached.result, cached.choices || {}, { stage: "Checking for new images and footnotes…" });
-    await (operations.waitForRepoQueue || waitForRepoWriteQueueIdle)(projectRepoScope({ team, project }));
+    publishResult(request, cached.result, cached.choices || {}, {});
+    await (operations.waitForRepoQueue || waitForRepoWriteQueueIdle)(projectRepoScope({ team, project }), { operationTypes: ["localEditorWrite"] });
     let selection = {};
     try {
-      await (operations.loadAiConfiguration || ensureSharedAiActionConfigurationLoaded)(null);
-      if (!matches(request)) return;
+      (operations.applyAiPreferences || applyStoredSelectedTeamAiActionPreferences)(null);
       selection = (operations.resolveModel || resolveAiReviewProviderAndModel)();
     } catch { /* Native detection reports incomplete AI work; image review still works. */ }
     if (!matches(request)) return;
@@ -75,11 +76,19 @@ export async function startBookRedundancy(render, operations = {}) {
         chapterIds: bookItems.filter((item) => item.kind === "chapter").map((item) => item.chapterId),
         projectTitle: current.projectTitle, bookItems, format: "pdf", outputPath: "", projectFullName: project.fullName || null },
     } });
-  } catch (error) { publish(request, { status: "error", error: formatErrorForDisplay(error), result: null }); }
+  } catch (error) { fail(request, formatErrorForDisplay(error)); }
+}
+function fail(request, error) {
+  const review = modal()?.book?.redundancy;
+  const imagesReady = request.imagesPublished && review?.imagesStatus === "ready";
+  publish(request, { status: "error", imagesStatus: imagesReady ? "ready" : "error", footnotesStatus: "error", error,
+    result: imagesReady ? { ...review.result, footnotes: [] } : null });
 }
 export function setBookRedundancyChoice(id, included, operations = {}) {
   const current = modal(), request = active;
-  if (!request || !matches(request) || current.book.redundancy?.status !== "ready") return;
+  if (!request || !matches(request)) return;
+  const review = current.book.redundancy;
+  if (review?.status !== "ready" && !(id.startsWith("image:") && review?.imagesStatus === "ready")) return;
   const choices = { ...current.book.redundancy.choices, [id]: included };
   request.saveError = null;
   // Leave the checkbox, focus and scrolling list mounted.
@@ -103,16 +112,16 @@ function queueChoiceSave(request, choices, invokeCommand = request.invoke) {
     await invokeCommand("book_redundancy_cache", { input: { ...request.scope, choices } });
     if (request.choiceVersion === version) {
       request.saveError = null;
-      if (matches(request) && modal().book.redundancy.error) publish(request, { error: "" });
+      if (matches(request) && modal().book.redundancy.choiceSaveError) publish(request, { choiceSaveError: "" });
     }
   }).catch((error) => {
     if (request.choiceVersion !== version) return;
     request.saveError = error;
-    publish(request, { error: formatErrorForDisplay(error) });
+    publish(request, { choiceSaveError: formatErrorForDisplay(error) });
   });
 }
 export function retryBookRedundancyChoiceSave() {
-  if (active && matches(active) && modal().book.redundancy?.status === "ready") queueChoiceSave(active, modal().book.redundancy.choices);
+  if (active && matches(active) && (modal().book.redundancy?.status === "ready" || modal().book.redundancy?.imagesStatus === "ready")) queueChoiceSave(active, modal().book.redundancy.choices);
 }
 
 export async function flushBookRedundancyChoices() {

@@ -17,7 +17,7 @@ function setup() {
   } };
   const calls = [];
   const result = { images: [], footnotes: [], warnings: [], cached: true };
-  const operations = { listen: async (_name, callback) => { deliver = callback; }, waitForRepoQueue: async () => {}, loadAiConfiguration: async () => {}, resolveModel: () => ({ providerId: "openai", modelId: "configured" }),
+  const operations = { listen: async (_name, callback) => { deliver = callback; }, waitForRepoQueue: async () => {}, applyAiPreferences: () => {}, resolveModel: () => ({ providerId: "openai", modelId: "configured" }),
     invoke: async (name, args) => { calls.push({ name, args }); if (name === "book_redundancy_cache") return { choices: { saved: false }, result }; },
   };
   return { calls, operations, result };
@@ -156,4 +156,50 @@ test("Next cannot advance after its pending review was cancelled or replaced", a
   state.editorChapter.exportModal = { ...modal, page: 1, book: { ...modal.book, previewCache: new Map() } };
   release();await next;
   assert.equal(state.editorChapter.exportModal.page, 1);
+});
+
+
+test("images publish and save independently before footnotes finish or fail", async () => {
+  const { calls, operations } = setup();
+  let filters;
+  operations.waitForRepoQueue = async (_scope, options) => { filters = options; };
+  operations.loadAiConfiguration = () => { throw new Error("Network settings must not gate local checks"); };
+  await startBookRedundancy(() => {}, operations);
+  assert.deepEqual(filters, { operationTypes: ["localEditorWrite"] });
+  const requestId = calls.find((call) => call.name === "start_book_redundancy").args.input.requestId;
+  const images = [{ id: "picture", occurrences: [{ id: "original", itemId: "a", imageSrc: "thumbnail" }, { id: "repeat", itemId: "b", imageSrc: "thumbnail" }] }];
+  const result = { images, footnotes: [], warnings: [], imageWarnings: [], revisions: { a: "source" } };
+  deliver({ payload: { requestId, phase: "images", result } });
+  let review = state.editorChapter.exportModal.book.redundancy;
+  assert.equal(review.status, "loading");
+  assert.equal(review.imagesStatus, "ready");
+  assert.equal(review.footnotesStatus, "loading");
+  setBookRedundancyChoice("image:picture:b", true);
+  setBookRedundancyChoice("unverified-note", false);
+  await flushBookRedundancyChoices();
+  assert.equal(calls.at(-1).args.input.choices["image:picture:b"], true);
+  assert.equal(calls.at(-1).args.input.choices["unverified-note"], undefined);
+  deliver({ payload: { requestId, complete: true, error: "Footnote check failed" } });
+  review = state.editorChapter.exportModal.book.redundancy;
+  assert.equal(review.imagesStatus, "ready");
+  assert.equal(review.footnotesStatus, "error");
+  assert.deepEqual(review.result.images, images);
+  assert.deepEqual(review.result.footnotes, []);
+  assert.equal(review.choices["image:picture:b"], true);
+  retryBookRedundancyChoiceSave();await flushBookRedundancyChoices();
+  assert.equal(state.editorChapter.exportModal.book.redundancy.error, "Footnote check failed");
+});
+
+test("footnote completion preserves pending image choice save failures", async () => {
+  const { calls, operations, result } = setup();
+  await startBookRedundancy(() => {}, operations);
+  const requestId = calls.find((call) => call.name === "start_book_redundancy").args.input.requestId;
+  deliver({ payload: { requestId, phase: "images", result } });
+  setBookRedundancyChoice("image:picture:a", false, { invoke: async () => { throw new Error("Disk failure"); } });
+  await assert.rejects(flushBookRedundancyChoices(), /Disk failure/);
+  deliver({ payload: { requestId, complete: true, result } });
+  assert.match(state.editorChapter.exportModal.book.redundancy.choiceSaveError, /Disk failure/);
+  await assert.rejects(flushBookRedundancyChoices(), /Disk failure/);
+  retryBookRedundancyChoiceSave();await flushBookRedundancyChoices();
+  assert.equal(state.editorChapter.exportModal.book.redundancy.choiceSaveError, "");
 });
