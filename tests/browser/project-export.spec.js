@@ -1264,3 +1264,63 @@ test("chapter gear menus reuse app controls and stay accessible at list edges", 
   await expect(gear(39)).toHaveAttribute("aria-expanded", "false");
   await expect(modal.locator('[data-book-item="fixture-chapter-0-0"]')).toHaveClass(/is-selected/);
 });
+
+test("contents preview follows PDF entry gaps and leading for wrapped chapters and H1s", async ({ page }) => {
+  await page.addInitScript(() => {
+    const row = (textStyle, text) => ({ rowId: crypto.randomUUID(), textStyle, fields: { en: text } });
+    window.__bookHeadingRows = {
+      "fixture-chapter-0-0": [row("paragraph", "Opening"), row("heading1", "A short subheading")],
+      "fixture-chapter-0-1": [row("paragraph", "Opening"), row("heading1", "A long subheading with enough words to wrap onto another line while checking the contents spacing")],
+    };
+  });
+  await mountProjectExport(page);
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  await addSection(modal, "contents");
+  const long = "Hạnh phúc, âm nhạc, vũ điệu và nụ hôn trong cuộc sống của chúng ta";
+  await modal.locator('[data-book-chapter-title="fixture-chapter-0-1"]').fill(long);
+  const measure = () => modal.locator(".book-page--contents").evaluate((paper) => {
+    const baseline = (element, last = false) => {
+      const probe = document.createElement("i");
+      probe.style.cssText = "display:inline-block;width:0;height:0;vertical-align:baseline";
+      if (last) element.append(probe); else element.prepend(probe);
+      const y = probe.getBoundingClientRect().top;
+      probe.remove(); return y;
+    };
+    const rows = [...paper.querySelectorAll(".book-contents li")].map((item) => {
+      const style = getComputedStyle(item), text = item.firstElementChild;
+      const first = baseline(text), last = baseline(text, true);
+      const cap = text.getBoundingClientRect().height - (last - first);
+      return { first, last,
+        cap, size: parseFloat(style.fontSize), line: parseFloat(style.lineHeight),
+        subheading: item.classList.contains("book-contents__subheading"), caps: style.textTransform };
+    });
+    return { trimmed: CSS.supports("text-box", "trim-both cap alphabetic"),
+      title: baseline(paper.querySelector(".book-page__contents-title")), rows };
+  });
+  const check = async (withHeadings) => {
+    await expect(modal.locator(".book-contents li")).toHaveCount(withHeadings ? 5 : 3);
+    const result = await measure();
+    for (let index = 0; index < result.rows.length; index++) {
+      const row = result.rows[index];
+      expect(row.caps).toBe(row.subheading ? "none" : "uppercase");
+      expect(row.line / row.size).toBeCloseTo(row.subheading ? 1.3532421875 : 1.417, 2);
+      const lines = (row.last - row.first) / row.line;
+      expect(lines).toBeCloseTo(Math.round(lines), 2);
+      if (result.trimmed) {
+        // The PDF places trimmed text in blocks with weak 1em/.78em gaps.
+        const gap = row.first - (index ? result.rows[index - 1].last : result.title);
+        const expected = row.cap + row.size * (index ? (row.subheading ? .78 : 1) : 3);
+        expect(Math.abs(gap - expected) / row.size).toBeLessThan(.03);
+      }
+    }
+    return result;
+  };
+  await chooseBookOption(modal, "editor-export-paper-size", "A5 (148 × 210 mm)");
+  const chapters = await check(false);
+  expect(chapters.rows[1].last).toBeGreaterThan(chapters.rows[1].first);
+  await modal.getByRole("checkbox", { name: "Include H1 headings", exact: true }).check();
+  await check(true);
+  await page.screenshot({ path: test.info().outputPath("contents-print-spacing-a5.png") });
+  await chooseBookOption(modal, "editor-export-paper-size", "A4 (210 × 297 mm)");
+  await check(true);
+});

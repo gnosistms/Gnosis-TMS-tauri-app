@@ -117,9 +117,19 @@
 .book-page__caption { font-size: .75em; font-style: italic; margin-top: calc(var(--book-paper-font) * .85); }
 .book-page__dedication { margin-top: 70px; min-height: 250px; width: 100%; resize: vertical; background: transparent; border: 0; font: italic 18px/1.7 "Noto Serif", serif; color: inherit; text-align: center; }
 .book-page__contents-title { font-family: var(--book-heading-font); font-size: calc(var(--book-paper-mm) * 7.055556); font-weight: 400; letter-spacing: .08em; text-transform: uppercase; line-height: var(--book-heading-line-height); margin-bottom: calc(var(--book-paper-font) * 2); }
-.book-contents { list-style: none; margin: 0; padding: 0; }
-.book-contents li { display: flex; align-items: baseline; gap: 1em; margin: 1em 0 .78em; font-family: var(--book-heading-font); text-transform: uppercase; }
-.book-contents .book-contents__subheading { margin: .78em 0 .78em 1.5em; font: inherit; text-transform: none; }
+.book-contents { display: flow-root; list-style: none; margin: 0; padding: 0; }
+/* Typst contents entries use cap-to-baseline text boxes, .78em leading,
+   and weak block gaps: 1em before chapters, .78em before/after H1 entries.
+   Older webviews keep full line boxes, so remove their extra leading from gaps. */
+.book-contents li { display: flex; align-items: baseline; gap: 1em; margin: calc(1em + 1cap - 1lh) 0 0; font-family: var(--book-heading-font); line-height: var(--book-heading-line-height); text-transform: uppercase; }
+.book-contents .book-contents__subheading { margin: calc(.78em + 1cap - 1lh) 0 0 1.5em; font: inherit; text-transform: none; }
+@supports (text-box: trim-both cap alphabetic) {
+  /* The editable field's 1px underline is not part of the printed title gap. */
+  .book-page__contents-title { min-height: 0; margin-bottom: calc(var(--book-paper-font) * 2 - 1px); }
+  .book-page__contents-title, .book-contents li > span:first-child { text-box: trim-both cap alphabetic; }
+  .book-contents li { margin-block: 1em .78em; }
+  .book-contents .book-contents__subheading { margin-block: .78em; }
+}
 .book-contents__options { display: flex; flex: none; align-items: center; gap: 8px; padding: 12px 18px; border-bottom: 1px solid var(--surface-border); background: var(--panel-surface); font-size: 13px; }
 .book-contents__options input { accent-color: var(--link); }
 .book-contents__leader { flex: 1; }
