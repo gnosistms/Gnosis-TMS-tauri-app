@@ -1659,6 +1659,8 @@ fn render_typst_book(
         .map(|part| part.item.title.as_str())
         .filter(|title| !title.trim().is_empty())
         .unwrap_or(&document.title);
+    // Title-page line breaks are layout choices; running headers use a single line.
+    let header_title = book_title.split_whitespace().collect::<Vec<_>>().join(" ");
     let heading_fonts = heading_font_families(document)
         .into_iter()
         .map(typst_string)
@@ -1666,7 +1668,7 @@ fn render_typst_book(
         .join(", ");
     source.insert_str(
         0,
-        &format!("#let gnosis-book-heading-font = ({heading_fonts})\n#let gnosis-book-author = {}\n#let gnosis-book-title = {}\n", typst_string(book_author), typst_string(book_title)),
+        &format!("#let gnosis-book-heading-font = ({heading_fonts})\n#let gnosis-book-author = {}\n#let gnosis-book-title = {}\n", typst_string(book_author), typst_string(&header_title)),
     );
     for (index, part) in document.book_parts.iter().enumerate() {
         check_cancelled(cancelled)?;
