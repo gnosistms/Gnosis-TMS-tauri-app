@@ -1016,7 +1016,7 @@ test("project clipboard export reads all chapters and preserves content order an
     writeClipboard: async (formats) => { clipboard = formats; },
   });
   assert.deepEqual(chaptersRead, ["chapter-2", "chapter-10"]);
-  assert.match(clipboard["text/html"], /chapter-2[\s\S]*Content chapter-2[\s\S]*chapter-10[\s\S]*Content chapter-10/);
+  assert.match(clipboard["text/html"], /Chapter 2[\s\S]*Content chapter-2[\s\S]*Chapter 10[\s\S]*Content chapter-10/);
   assert.match(clipboard["text/html"], /Note chapter-2/);
   assert.match(clipboard["text/html"], /Note chapter-10/);
   assert.doesNotMatch(clipboard["text/plain"], /Text one/);
@@ -1039,6 +1039,53 @@ test("project PDF inspection and export share the complete chapter scope", async
     assert.deepEqual(call.input.chapterIds, ["chapter-2", "chapter-10"]);
     assert.equal(call.input.projectTitle, "Project");
   }
+});
+
+test("project clipboard titles and contents honor overrides without promoting a later H1", async () => {
+  installProjectExportFixture();
+  const { openProjectExportOptions } = await import("./editor-export-flow.js");
+  openProjectExportOptions(() => {}, "project-1");
+  const modal = state.editorChapter.exportModal;
+  modal.book.items.find((item) => item.chapterId === "chapter-2").title = "Custom Vietnamese Title";
+  modal.book.items.unshift({ id: "contents", kind: "contents", title: "Contents" });
+  selectEditorExportOption(() => {}, "copy:html");
+  let clipboard;
+  await submitEditorExport(() => {}, {
+    waitForRepoQueue: async () => {},
+    invoke: async (_command, { input }) => ({
+      languages: [{ code: "vi" }], fileTitle: "Internal file title",
+      rows: [
+        { rowId: "opening", textStyle: input.chapterId === "chapter-2" ? "heading1" : "paragraph", fields: { vi: "Original opening" } },
+        { rowId: "later", textStyle: "heading1", fields: { vi: "Later heading" } },
+      ],
+    }),
+    writeClipboard: async (formats) => { clipboard = formats; },
+  });
+  assert.match(clipboard["text/html"], /<h1[^>]*>Custom Vietnamese Title<\/h1>/);
+  assert.match(clipboard["text/html"], /<h1[^>]*>Chapter 10<\/h1>[\s\S]*Original opening[\s\S]*Later heading/);
+  assert.doesNotMatch(clipboard["text/html"], /Internal file title/);
+  assert.match(clipboard["text/plain"], /Contents[\s\S]*Custom Vietnamese Title[\s\S]*Chapter 10/);
+});
+
+test("project Vellum titles honor overrides and opening headings that have notes", async () => {
+  installNavigator({ platform: "MacIntel" });
+  installProjectExportFixture();
+  const { openProjectExportOptions } = await import("./editor-export-flow.js");
+  openProjectExportOptions(() => {}, "project-1");
+  state.editorChapter.exportModal.book.items.find((item) => item.chapterId === "chapter-2").title = "Edited Vellum Title";
+  selectEditorExportOption(() => {}, "copy:vellum");
+  let vellum;
+  await submitEditorExport(() => {}, {
+    waitForRepoQueue: async () => {},
+    invoke: async (_command, { input }) => ({
+      languages: [{ code: "vi" }],
+      rows: [{ rowId: input.chapterId, textStyle: "heading1", fields: { vi: "Translated heading" }, footnotes: { vi: "Heading note" } }],
+    }),
+    copyVellumTextEditorContent: async (input) => { vellum = input; },
+  });
+  assert.match(vellum.ogElementPrivateDecodedPropertyListXml, /Edited Vellum Title/);
+  assert.match(vellum.ogElementPrivateDecodedPropertyListXml, /Translated heading/);
+  assert.doesNotMatch(vellum.ogElementPrivateDecodedPropertyListXml, /<string>Chapter 10<\/string>/);
 });
 
 test("project export offers all languages and gates SRT on included chapters", async () => {

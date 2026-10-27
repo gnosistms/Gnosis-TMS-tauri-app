@@ -531,7 +531,7 @@ test("SRT rows hide all row and inline formatting controls and quote attribution
 
 test("empty Quote attribution has a click prompt and a native placeholder for editing", () => {
   const html = renderTranslationContentRow({ ...rowWithSection({ canEdit: true }), textStyle: "quote", canEdit: true });
-  assert.match(html, /Click here to enter attribution\.<\/span>/);
+  assert.match(html, /Enter attribution<\/span>/);
   assert.match(html, /aria-label="Quote attribution" placeholder="Enter attribution here\."/);
   assert.match(html, /data-content-kind="attribution"[^>]*><\/textarea>/);
 });
@@ -539,7 +539,7 @@ test("empty Quote attribution has a click prompt and a native placeholder for ed
 test("empty Quote attribution is absent for read-only and AI-translating fields", () => {
   for (const section of [{ attribution: "" }, { attribution: " \n " }, { canEdit: true, isAiTranslating: true }]) {
     const html = renderTranslationContentRow({ ...rowWithSection(section), textStyle: "quote", canEdit: true });
-    assert.doesNotMatch(html, /data-content-kind="attribution"|Click here to enter attribution/);
+    assert.doesNotMatch(html, /data-content-kind="attribution"|Enter attribution/);
   }
 });
 

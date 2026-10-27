@@ -1,5 +1,5 @@
 import { initializeProjectBook, selectProjectBookLanguage, loadSelectedBookPreview } from "./project-book-flow.js";
-import { bookItemIncluded, bookExportItems } from "./project-book-model.js";
+import { bookChapterDefaultTitle, bookItemIncluded, bookExportItems } from "./project-book-model.js";
 import { saveBookSettings } from "./project-book-settings.js";
 import {
   exportDefaultKey, loadProjectExportBlocks, projectExportChapters,
@@ -916,7 +916,10 @@ async function submitEditorCopyExport(render, option, operations) {
       }
       const ogElementPrivateDecodedPropertyListXml = buildVellumOgElementPrivateDecodedXml(vellumBlocks, {
         title: modal.projectTitle || state.editorChapter?.fileTitle || context?.chapter?.name || "",
-        ...(modal.book ? { elements: bookExportItems(modal).map((item) => ({ ...item, blocks: groupedBlocks.get(item.id) || [] })) } : {}),
+        ...(modal.book ? { elements: bookExportItems(modal).map((item) => {
+          const blocks = groupedBlocks.get(item.id) || [];
+          return { ...item, title: item.kind === "chapter" ? bookChapterDefaultTitle(blocks, item.title) : item.title, blocks };
+        }) } : {}),
         showFootnoteLinkUrls,
       });
       await copyVellum({

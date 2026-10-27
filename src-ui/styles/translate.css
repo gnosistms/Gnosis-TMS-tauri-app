@@ -2960,7 +2960,8 @@
 .translation-language-panel__attribution-prompt {
   display: none;
   color: var(--muted);
-  font-size: calc(var(--translation-editor-font-size, 14px) * 0.9);
+  font-size: calc(var(--translation-editor-font-size, 14px) * 0.72);
+  font-style: italic;
   text-align: right;
   cursor: text;
 }

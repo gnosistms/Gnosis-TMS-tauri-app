@@ -3328,6 +3328,18 @@ mod tests {
             // Contents deliberately follows the chapters.
             part("contents", "Mục lục", vec![text("Mục lục")]),
         ];
+        parts[4].document.blocks.insert(
+            0,
+            ExportBlock::Text {
+                text_style: "heading1".into(),
+                text: "Original source title".into(),
+            },
+        );
+        parts[4].item.title_override = Some("Chapter Two".into());
+        parts[4].document = super::super::chapter_export::apply_book_chapter_title(
+            parts[4].document.clone(),
+            &parts[4].item,
+        );
         let illustration = workspace.join("illustration.svg");
         fs::write(&illustration, br##"<svg xmlns="http://www.w3.org/2000/svg" width="300" height="500"><rect width="300" height="500" fill="#b79858"/><circle cx="150" cy="240" r="90" fill="#fff4da"/></svg>"##).unwrap();
         let image = ExportImage::Upload {
@@ -3379,6 +3391,7 @@ mod tests {
         let mut source = fs::read_to_string(&source_path).unwrap();
         assert_eq!(source.matches("#gnosis-dropcap[").count(), 2);
         assert_eq!(source.matches("#gnosis-title(\"Chapter").count(), 2);
+        assert!(!source.contains("Original source title"));
         assert!(source.contains("#pagebreak(to: \"even\")"));
         assert!(source
             .contains("numbering(entry.value.numbering, ..counter(page).at(entry.location()))"));

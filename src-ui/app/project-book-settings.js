@@ -22,7 +22,7 @@ export function saveBookSettings(modal) {
     version: 1, languageCode: modal.languageCode, options,
     layouts: { ...previous.layouts, [modal.languageCode]: {
       selectedItemId: modal.book.selectedItemId,
-      items: modal.book.items.map(({ available: _available, ...item }) => item),
+      items: modal.book.items.map(({ available: _available, defaultTitle: _defaultTitle, ...item }) => item),
     } },
   };
   if (JSON.stringify(previous) !== JSON.stringify(next)) writePersistentValue(key(), { ...records, [modal.projectId]: next });
