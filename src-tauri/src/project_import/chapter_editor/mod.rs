@@ -1238,6 +1238,7 @@ pub(super) fn load_gtms_chapter_editor_data_sync(
         &rows,
         &input.export_language_code,
         &input.export_review_revision,
+        &repo_path,
     )?;
     book_redundancy::filter_rows(
         &mut rows,

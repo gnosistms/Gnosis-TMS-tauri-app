@@ -312,7 +312,7 @@ pub(super) fn load_export_chapters(
         }
         let mut rows = load_editor_rows(&path.join("rows"))?;
         if let Some(item) = input.book_items.iter().find(|item| item.kind == "chapter" && item.chapter_id == *id) {
-            super::book_redundancy::validate_revision(&rows, &input.language_code, &item.review_revision)?;
+            super::book_redundancy::validate_revision(&rows, &input.language_code, &item.review_revision, repo_path)?;
             super::book_redundancy::filter_rows(&mut rows, &input.language_code, &item.exclusions)?;
         }
         Ok((chapter, rows))

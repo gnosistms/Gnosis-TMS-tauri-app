@@ -174,7 +174,22 @@ pub(crate) fn cache(app: &AppHandle, input: CacheInput) -> Result<Value, String>
     Ok(json!({"result":read_cache(&root).snapshot,"choices":choices}))
 }
 
-pub(super) fn chapter_revision(rows: &[StoredRowFile], language: &str) -> Result<String, String> {
+fn uploaded_revision(repo: &Path, image: Option<&StoredFieldImage>) -> Option<String> {
+    let image = image.filter(|image| image.kind == "upload")?;
+    let path = image.path.as_deref()?;
+    let metadata = images::validated_uploaded_asset_relative_path(repo, path)
+        .ok()
+        .and_then(|relative| fs::metadata(repo.join(relative)).ok());
+    Some(match metadata {
+        Some(meta) => format!("{}:{:?}", meta.len(), meta.modified().ok()),
+        None => "unavailable".into(),
+    })
+}
+pub(super) fn chapter_revision(
+    rows: &[StoredRowFile],
+    language: &str,
+    repo: &Path,
+) -> Result<String, String> {
     let mut relevant = Vec::new();
     for row in rows.iter().filter(|row| row.lifecycle.state != "deleted") {
         if let Some(field) = row
@@ -185,7 +200,8 @@ pub(super) fn chapter_revision(rows: &[StoredRowFile], language: &str) -> Result
             relevant.push(json!([
                 row.row_id,
                 row.structure.order_key,
-                field_signature(field)?
+                field_signature(field)?,
+                uploaded_revision(repo, field.image.as_ref())
             ]));
         }
     }
@@ -197,8 +213,9 @@ pub(super) fn validate_revision(
     rows: &[StoredRowFile],
     language: &str,
     expected: &str,
+    repo: &Path,
 ) -> Result<(), String> {
-    if !expected.is_empty() && chapter_revision(rows, language)? != expected {
+    if !expected.is_empty() && chapter_revision(rows, language, repo)? != expected {
         return Err("The book has new or changed images or footnotes. Return to redundancy review before exporting.".into());
     }
     Ok(())
@@ -641,8 +658,12 @@ fn reuse_snapshot(
     inventory: &str,
     notes: &[Occurrence],
     pictures: &[Occurrence],
+    current_warnings: &BTreeSet<String>,
 ) -> Option<Detection> {
-    if cache.inventory != inventory || !cache.snapshot.warnings.is_empty() {
+    if cache.inventory != inventory
+        || !cache.snapshot.warnings.is_empty()
+        || !current_warnings.is_empty()
+    {
         return None;
     }
     let mut snapshot = cache.snapshot.clone();
@@ -758,7 +779,7 @@ fn run(app: &AppHandle, input: &DetectionInput, cancel: &AtomicBool) -> Result<D
             .ok_or("A selected chapter disappeared.")?;
         revisions.insert(
             item.id.clone(),
-            chapter_revision(rows, &scope.language_code)?,
+            chapter_revision(rows, &scope.language_code, &repo)?,
         );
         for row in rows.iter().filter(|r| r.lifecycle.state != "deleted") {
             let Some(field) = row.fields.get(&scope.language_code) else {
@@ -804,7 +825,7 @@ fn run(app: &AppHandle, input: &DetectionInput, cancel: &AtomicBool) -> Result<D
         }
     }
     let inventory = inventory_digest(&notes, &pictures);
-    if let Some(mut snapshot) = reuse_snapshot(&cache, &inventory, &notes, &pictures) {
+    if let Some(mut snapshot) = reuse_snapshot(&cache, &inventory, &notes, &pictures, &warnings) {
         snapshot.revisions = revisions;
         return Ok(snapshot);
     }
@@ -1182,12 +1203,20 @@ mod tests {
         };
         let reordered = vec![b, a];
         assert_eq!(inventory_digest(&reordered, &[]), inventory);
-        let reused = reuse_snapshot(&cached, &inventory, &reordered, &[]).expect("cache hit");
+        let reused = reuse_snapshot(&cached, &inventory, &reordered, &[], &BTreeSet::new())
+            .expect("cache hit");
         assert!(reused.cached);
         assert_eq!(reused.footnotes[0].occurrences[0].id, "b");
         let mut changed = reordered.clone();
         changed[0].signature = "changed field".into();
-        assert!(reuse_snapshot(&cached, &inventory_digest(&changed, &[]), &changed, &[]).is_none());
+        assert!(reuse_snapshot(
+            &cached,
+            &inventory_digest(&changed, &[]),
+            &changed,
+            &[],
+            &BTreeSet::new()
+        )
+        .is_none());
         changed = reordered.clone();
         changed[0].identity = "changed pixels".into();
         assert_ne!(inventory_digest(&changed, &[]), inventory);
@@ -1196,12 +1225,12 @@ mod tests {
     #[test]
     fn review_revision_detects_new_notes_even_when_nothing_was_excluded() {
         let mut rows = vec![stored_row()];
-        let reviewed = chapter_revision(&rows, "en").expect("revision");
-        validate_revision(&rows, "en", &reviewed).expect("unchanged");
+        let reviewed = chapter_revision(&rows, "en", Path::new(".")).expect("revision");
+        validate_revision(&rows, "en", &reviewed, Path::new(".")).expect("unchanged");
         let mut inserted = stored_row();
         inserted.row_id = "new row".into();
         rows.push(inserted);
-        assert!(validate_revision(&rows, "en", &reviewed).is_err());
+        assert!(validate_revision(&rows, "en", &reviewed, Path::new(".")).is_err());
         rows.pop();
         rows[0]
             .fields
@@ -1209,6 +1238,45 @@ mod tests {
             .expect("field")
             .footnote
             .push_str(" changed meaning");
-        assert!(validate_revision(&rows, "en", &reviewed).is_err());
+        assert!(validate_revision(&rows, "en", &reviewed, Path::new(".")).is_err());
+    }
+
+    #[test]
+    fn replaced_upload_at_same_path_invalidates_review() {
+        let repo = std::env::temp_dir().join(format!("redundancy-upload-{}", uuid::Uuid::now_v7()));
+        let relative = "chapters/chapter/images/picture.png";
+        fs::create_dir_all(repo.join("chapters/chapter/images")).expect("folder");
+        fs::write(repo.join(relative), b"old").expect("image");
+        let mut row = stored_row();
+        row.fields.get_mut("en").expect("field").image = Some(StoredFieldImage {
+            kind: "upload".into(),
+            path: Some(relative.into()),
+            url: None,
+        });
+        let rows = vec![row];
+        let reviewed = chapter_revision(&rows, "en", &repo).expect("review");
+        validate_revision(&rows, "en", &reviewed, &repo).expect("unchanged");
+        fs::write(repo.join(relative), b"replacement at the same path").expect("replace");
+        assert!(validate_revision(&rows, "en", &reviewed, &repo).is_err());
+        let changed = chapter_revision(&rows, "en", &repo).expect("changed");
+        fs::remove_file(repo.join(relative)).expect("delete");
+        assert!(validate_revision(&rows, "en", &changed, &repo).is_err());
+        fs::remove_dir_all(repo).expect("cleanup");
+    }
+    #[test]
+    fn fresh_image_warnings_prevent_warm_cache_reuse() {
+        let cached = Cache {
+            inventory: "same".into(),
+            ..Default::default()
+        };
+        assert!(reuse_snapshot(&cached, "same", &[], &[], &BTreeSet::new()).is_some());
+        assert!(reuse_snapshot(
+            &cached,
+            "same",
+            &[],
+            &[],
+            &BTreeSet::from(["New image unavailable".into()])
+        )
+        .is_none());
     }
 }
