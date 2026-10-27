@@ -1,6 +1,6 @@
 import { applyPendingMutations } from "./optimistic-collection.js";
 import { createMutationObserver, glossaryKeys, projectKeys, queryClient, subscribeQueryObserver } from "./query-client.js";
-import { state } from "./state.js";
+import { authSessionGeneration, state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
 import { applyProjectSnapshotToState } from "./project-top-level-state.js";
 import {
@@ -20,6 +20,7 @@ import { refreshInstallationResourcesForTeam } from "./installation-resources-qu
 import { loadStoredProjectsForTeam, loadStoredChapterPendingMutations } from "./project-cache.js";
 
 let activeProjectsQuerySubscription = null;
+const STALE_PROJECT_REFRESH_ERROR = "Stale project refresh ignored.";
 
 function cacheKeyForTeamId(teamId, cacheKey) {
   if (typeof cacheKey === "string" && cacheKey.trim()) {
@@ -593,7 +594,7 @@ function createProjectsQueryProgressPublisher(team, teamId, options = {}) {
       repoSyncByProjectId,
       persist = false,
     } = {}) => {
-      if (options.signal?.aborted) return;
+      if (!options.isCurrent()) return;
       latestSnapshot = createProjectsQuerySnapshot({
         items: Array.isArray(snapshot?.items)
           ? snapshot.items
@@ -625,7 +626,7 @@ function createProjectsQueryProgressPublisher(team, teamId, options = {}) {
       render,
       discovery,
     } = {}) => {
-      if (options.signal?.aborted) return;
+      if (!options.isCurrent()) return;
       latestSnapshot = createProjectsQuerySnapshot({
         items: latestSnapshot.snapshot.items,
         deletedItems: latestSnapshot.snapshot.deletedItems,
@@ -649,11 +650,23 @@ export function createProjectsQueryOptions(team, options = {}) {
   return {
     queryKey: projectKeys.byTeam(teamId),
     queryFn: async ({ signal } = {}) => {
-      const progressPublisher = createProjectsQueryProgressPublisher(team, teamId, { ...options, signal });
+      const generation = authSessionGeneration;
+      const syncVersion = state.projectSyncVersion;
+      let abandoned = false;
+      const isCurrent = () => (
+        !abandoned
+        && !signal?.aborted
+        && generation === authSessionGeneration
+        && state.screen === "projects"
+        && state.selectedTeamId === teamId
+        && state.projectSyncVersion === syncVersion
+      );
+      const progressPublisher = createProjectsQueryProgressPublisher(team, teamId, { ...options, isCurrent });
       const result = await loadProjectSnapshotForTeam(options.render, teamId, {
         ...options,
         signal,
         ...progressPublisher,
+        onDiscoveryStale: () => { abandoned = true; },
         teamId,
         preserveProjectLifecyclePatches: (snapshot) => {
           const snapshotWithPagePatches =
@@ -666,8 +679,12 @@ export function createProjectsQueryOptions(team, options = {}) {
           );
         },
       });
-      if (signal?.aborted || state.selectedTeamId !== teamId) {
-        throw new Error("Stale project refresh ignored.");
+      // Discovery stops when its page/context changes and returns its partial
+      // result (possibly still empty). That is not a successful collection
+      // snapshot: caching it can erase a chapter while its editor is suspended
+      // on the linked glossary/QA page. Gate late disk-listing progress above too.
+      if (!isCurrent()) {
+        throw new Error(STALE_PROJECT_REFRESH_ERROR);
       }
       const nextSnapshot = createProjectsQuerySnapshot(result);
       clearConfirmedProjectWriteIntents(nextSnapshot.snapshot);
@@ -790,6 +807,15 @@ export function ensureProjectsQueryObserver(render, team, options = {}) {
       render,
     }),
     (result) => {
+      if (result.error?.message === STALE_PROJECT_REFRESH_ERROR) {
+        if (state.selectedTeamId === teamId) {
+          setResourcePageRefreshing(state.projectsPage, result.isFetching === true);
+        }
+        // On an error QueryObserver retains the previous completed data, which
+        // can be older than progress already on screen. Do not replay it.
+        render?.();
+        return;
+      }
       if (result.data) {
         applyProjectsQuerySnapshotToState(result.data, {
           teamId,

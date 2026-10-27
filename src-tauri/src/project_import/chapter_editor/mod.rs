@@ -35,6 +35,7 @@ use super::{
 };
 
 mod aligned_translation;
+mod book_export;
 mod changed_after_my_edit;
 mod chapter_export;
 mod chapter_selection;
@@ -50,10 +51,13 @@ mod shared;
 mod team_copy;
 
 pub(crate) use self::aligned_translation::{
-    apply_aligned_translation_to_gtms_chapter_sync,
-    preflight_aligned_translation_to_gtms_chapter_sync, AlignedTranslationApplyInput,
-    AlignedTranslationApplyResponse, AlignedTranslationPreflightInput,
-    AlignedTranslationPreflightResponse,
+    add_subtitle_translation_sync, apply_aligned_translation_to_gtms_chapter_sync,
+    preflight_aligned_translation_to_gtms_chapter_sync, AddSubtitleTranslationInput,
+    AlignedTranslationApplyInput, AlignedTranslationApplyResponse,
+    AlignedTranslationPreflightInput, AlignedTranslationPreflightResponse,
+};
+pub(crate) use self::book_export::{
+    import_project_book_image_sync, ImportBookImageInput, ImportedBookImage,
 };
 pub(super) use self::changed_after_my_edit::{
     load_gtms_editor_changed_after_my_edit_sync, LoadEditorChangedAfterMyEditInput,
@@ -98,8 +102,9 @@ pub(super) use self::images::{
     upload_gtms_editor_language_image_sync,
 };
 pub(crate) use self::pdf_export::{
-    cancel_gtms_chapter_pdf_export, inspect_gtms_chapter_pdf_fonts, start_gtms_chapter_pdf_export,
-    PdfChapterExportInput, PdfFontInspection, PdfFontInspectionInput,
+    approve_gtms_chapter_pdf_fonts, cancel_gtms_chapter_pdf_export, forget_gtms_pdf_font_approval,
+    inspect_gtms_chapter_pdf_fonts, start_gtms_chapter_pdf_export, PdfChapterExportInput,
+    PdfFontInspection, PdfFontInspectionInput,
 };
 pub(crate) use self::project_transfer::{
     acknowledge_project_transfer_status, get_project_transfer_status,
@@ -134,8 +139,8 @@ use self::shared::{
     ensure_editor_field_object_defaults, load_editor_rows, load_project_chapter_summaries,
     load_word_counts, normalize_editor_footnote_value, normalize_editor_image_caption_value,
     normalize_editor_text_style_value, refresh_cached_chapter_source_word_count,
-    row_fields_object_mut, row_footnote_map, row_image_caption_map, row_object_mut,
-    row_plain_text_map, row_text_style, sanitize_chapter_languages,
+    row_attribution_map, row_fields_object_mut, row_footnote_map, row_image_caption_map,
+    row_object_mut, row_plain_text_map, row_text_style, sanitize_chapter_languages,
     write_row_files_and_commit_with_removals, write_row_files_and_commit_with_removals_locked,
 };
 pub(crate) use self::team_copy::{start_team_chapter_copy, TeamChapterCopyInput};
@@ -300,6 +305,8 @@ pub(crate) struct UpdateEditorRowFieldsInput {
     footnotes: BTreeMap<String, String>,
     #[serde(default)]
     image_captions: BTreeMap<String, String>,
+    #[serde(default)]
+    attributions: BTreeMap<String, String>,
     // Image conflicts are only resolved through this command when an image URL
     // conflict is being finalized; otherwise these stay empty and images are
     // left untouched. Each value is `null` to clear the image.
@@ -314,6 +321,8 @@ pub(crate) struct UpdateEditorRowFieldsInput {
     base_footnotes: BTreeMap<String, String>,
     #[serde(default)]
     base_image_captions: BTreeMap<String, String>,
+    #[serde(default)]
+    base_attributions: BTreeMap<String, String>,
     #[serde(default)]
     base_images: BTreeMap<String, Option<EditorFieldImageInput>>,
     #[serde(default)]
@@ -336,10 +345,28 @@ pub(crate) struct EditorFieldTimingInput {
 pub(crate) struct UpdateEditorRowFieldsBatchRowInput {
     row_id: String,
     fields: BTreeMap<String, String>,
+    /// Present for manual sentence-group edits; validate/merge all members
+    /// under the repository lock before preparing any writes.
+    #[serde(default)]
+    base_fields: Option<BTreeMap<String, String>>,
+    #[serde(default)]
+    base_footnotes: Option<BTreeMap<String, String>>,
+    #[serde(default)]
+    base_image_captions: Option<BTreeMap<String, String>>,
+    #[serde(default)]
+    base_attributions: Option<BTreeMap<String, String>>,
+    #[serde(default)]
+    field_flags: BTreeMap<String, BTreeMap<String, bool>>,
+    #[serde(default)]
+    lifecycle_state: Option<String>,
+    #[serde(default)]
+    text_style: Option<String>,
     #[serde(default)]
     footnotes: BTreeMap<String, String>,
     #[serde(default)]
     image_captions: BTreeMap<String, String>,
+    #[serde(default)]
+    attributions: BTreeMap<String, String>,
     #[serde(default)]
     timings: BTreeMap<String, EditorFieldTimingInput>,
     /// Language codes whose stored image (and any uploaded image file) should be removed.
@@ -578,6 +605,8 @@ pub(crate) struct UpdateEditorRowFieldsBatchResponse {
     word_counts: BTreeMap<String, usize>,
     commit_sha: Option<String>,
     chapter_base_commit_sha: Option<String>,
+    rows: Vec<EditorRow>,
+    conflicts: Vec<SaveEditorRowWithConcurrencyResponse>,
 }
 
 #[derive(Serialize)]
@@ -631,6 +660,9 @@ pub(crate) struct ApplyEditorAiReviewResultsBatchResponse {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct UpdateEditorRowTextStyleResponse {
+    word_counts: BTreeMap<String, usize>,
+    fields: BTreeMap<String, String>,
+    attributions: BTreeMap<String, String>,
     row_id: String,
     text_style: String,
     last_update: Option<EditorRowVersionMetadata>,
@@ -725,6 +757,8 @@ pub(crate) struct EditorFieldHistoryEntry {
     plain_text: String,
     footnote: String,
     image_caption: String,
+    #[serde(default)]
+    attribution: String,
     image: Option<EditorFieldImage>,
     text_style: String,
     reviewed: bool,
@@ -746,11 +780,15 @@ pub(crate) struct RestoreEditorFieldHistoryInput {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RestoreEditorFieldHistoryResponse {
+    fields: BTreeMap<String, String>,
+    attributions: BTreeMap<String, String>,
     row_id: String,
     language_code: String,
     plain_text: String,
     footnote: String,
     image_caption: String,
+    #[serde(default)]
+    attribution: String,
     image: Option<EditorFieldImage>,
     text_style: String,
     reviewed: bool,
@@ -823,6 +861,8 @@ struct EditorRow {
     fields: BTreeMap<String, String>,
     footnotes: BTreeMap<String, String>,
     image_captions: BTreeMap<String, String>,
+    #[serde(default)]
+    attributions: BTreeMap<String, String>,
     images: BTreeMap<String, EditorFieldImage>,
     field_states: BTreeMap<String, EditorFieldState>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
@@ -932,6 +972,8 @@ pub(crate) struct SaveEditorRowWithConcurrencyResponse {
     base_fields: BTreeMap<String, String>,
     base_footnotes: BTreeMap<String, String>,
     base_image_captions: BTreeMap<String, String>,
+    #[serde(default)]
+    base_attributions: BTreeMap<String, String>,
     conflict_remote_version: Option<EditorRowVersionMetadata>,
     chapter_base_commit_sha: Option<String>,
 }
@@ -1121,6 +1163,8 @@ struct StoredFieldValue {
     footnote: String,
     #[serde(default)]
     image_caption: String,
+    #[serde(default)]
+    attribution: String,
     #[serde(default)]
     image: Option<StoredFieldImage>,
     #[serde(default)]
@@ -1479,6 +1523,40 @@ mod tests {
         ChapterLanguage, StoredChapterFile, StoredChapterSettings, StoredRowFile,
         DEFAULT_EDITOR_TEXT_STYLE,
     };
+
+    #[test]
+    fn conflict_image_save_input_requires_string_image_properties() {
+        let mut payload = json!({
+            "installationId": 7,
+            "repoName": "project",
+            "chapterId": "chapter-1",
+            "rowId": "row-1",
+            "fields": { "en": "Resolved text" },
+            "images": { "en": null },
+            "baseImages": {
+                "en": { "kind": "url", "url": "https://example.com/image.png", "path": null }
+            }
+        });
+        let error = serde_json::from_value::<super::UpdateEditorRowFieldsInput>(payload.clone())
+            .err()
+            .expect("UI image metadata must be serialized before invoking the command");
+        assert!(error
+            .to_string()
+            .contains("invalid type: null, expected a string"));
+
+        for image in [
+            json!({ "kind": "url", "url": "https://example.com/image.png", "path": "" }),
+            json!({ "kind": "upload", "url": "", "path": "images/photo.png" }),
+            serde_json::Value::Null,
+        ] {
+            payload["baseImages"]["en"] = image;
+            let input =
+                serde_json::from_value::<super::UpdateEditorRowFieldsInput>(payload.clone())
+                    .expect("serialized image bases and image removals must be accepted");
+            assert!(input.images["en"].is_none());
+            assert_eq!(input.fields["en"], "Resolved text");
+        }
+    }
 
     #[test]
     fn apply_editor_plain_text_updates_changes_requested_field_and_clears_preview_cache() {

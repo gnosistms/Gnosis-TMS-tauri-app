@@ -1,3 +1,10 @@
+import { initializeProjectBook, selectProjectBookLanguage, loadSelectedBookPreview } from "./project-book-flow.js";
+import { bookItemIncluded, bookExportItems } from "./project-book-model.js";
+import { saveBookSettings } from "./project-book-settings.js";
+import {
+  exportDefaultKey, loadProjectExportBlocks, projectExportChapters,
+  projectExportScopeInput,
+} from "./project-export-context.js";
 import { formatErrorForDisplay } from "./error-display.js";
 import { invoke, isMacPlatform, listen } from "./runtime.js";
 import { findChapterContext, selectedProjectsTeam } from "./project-context.js";
@@ -10,6 +17,7 @@ import {
 } from "./editor-preview.js";
 import { createEditorExportModalState, state } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
+import { reportPdfFontCoverageGap } from "./telemetry.js";
 import {
   projectRepoScope,
   waitForRepoWriteQueueIdle,
@@ -84,8 +92,13 @@ export { PDF_PAPER_SIZES } from "./editor-export-options.js";
 
 // Source formats of the chapter the export modal is showing. The open editor's
 // chapter payload wins; otherwise the projects-page chapter summary supplies it.
-function exportChapterSourceFormats() {
-  const chapterId = currentExportModal()?.chapterId;
+function exportChapterSourceFormats(modal = currentExportModal()) {
+  if (modal?.projectId) {
+    const project = state.projects.find((entry) => entry.id === modal.projectId);
+    const chapters = modal.chapterIds.map((id) => project?.chapters?.find((chapter) => chapter.id === id));
+    return chapters.length && chapters.every((chapter) => chapter?.sourceFormats?.includes("srt")) ? ["srt"] : [];
+  }
+  const chapterId = modal?.chapterId;
   if (!chapterId) {
     return [];
   }
@@ -99,13 +112,14 @@ function exportChapterSourceFormats() {
   return Array.isArray(chapter?.sourceFormats) ? chapter.sourceFormats : [];
 }
 
-export function editorExportCategories() {
+export function editorExportCategories(modal = currentExportModal()) {
   const mac = isMacPlatform();
-  const sourceFormats = exportChapterSourceFormats();
+  const sourceFormats = exportChapterSourceFormats(modal);
   return BASE_EDITOR_EXPORT_CATEGORIES.map((category) => ({
     ...category,
     options: category.options
       .filter((option) => option.platform !== "mac" || mac)
+      .filter((option) => !modal?.projectId || option.id !== "link:team")
       // Provenance-gated options (SRT) are hidden entirely for chapters that
       // were not imported from that format.
       .filter(
@@ -116,8 +130,8 @@ export function editorExportCategories() {
   }));
 }
 
-export function findEditorExportOption(optionId) {
-  for (const category of editorExportCategories()) {
+export function findEditorExportOption(optionId, modal = currentExportModal()) {
+  for (const category of editorExportCategories(modal)) {
     const option = category.options.find((entry) => entry.id === optionId);
     if (option) {
       return option;
@@ -131,7 +145,8 @@ function currentExportModal() {
 }
 
 function exportModalIsBusy(modal) {
-  return modal?.status === "exporting" || modal?.status === "cancelling";
+  return modal?.status === "exporting" || modal?.status === "cancelling"
+    || modal?.status === "reviewing-fonts" || Boolean(modal?.pdfForgettingFontId);
 }
 
 function updateEditorExportModal(patch) {
@@ -142,14 +157,14 @@ function updateEditorExportModal(patch) {
       ...patch,
     },
   };
+  saveBookSettings(currentExportModal());
 }
 
-// True when the modal's chapter is the one open in the editor — copy and
-// WordPress exports serialize from the editor's in-memory rows, so they are
-// only offered then.
+// Chapter clipboard/WordPress exports use the open editor. Project exports
+// instead load every chapter through the native storage boundary.
 export function exportChapterIsOpenInEditor() {
   const chapterId = currentExportModal()?.chapterId;
-  return Boolean(chapterId) && state.editorChapter?.chapterId === chapterId;
+  return !currentExportModal()?.projectId && Boolean(chapterId) && state.editorChapter?.chapterId === chapterId;
 }
 
 // Export language outside the editor follows the project-export default:
@@ -176,7 +191,8 @@ function currentExportLanguageCode() {
 }
 
 function pdfFontInspectionKey(chapterId, languageCode) {
-  return `${String(chapterId ?? "")}:${String(languageCode ?? "")}`;
+  const modal = currentExportModal();
+  return `${modal?.projectId ? JSON.stringify(projectExportScopeInput(modal)) : String(chapterId ?? "")}:${String(languageCode ?? "")}:${modal?.omitCustomHtml === true}:${modal?.footnoteLinksAsPlainText === true}`;
 }
 
 function pdfFontInspectionInput() {
@@ -195,10 +211,15 @@ function pdfFontInspectionInput() {
       projectId: context.project.id ?? null,
       projectFullName: context.project.fullName ?? "",
       chapterId: context.chapter.id,
+      ...projectExportScopeInput(modal),
       languageCode,
+      omitCustomHtml: modal.omitCustomHtml === true,
+      footnoteLinksAsPlainText: modal.footnoteLinksAsPlainText === true,
     },
   };
 }
+
+let pdfFontInspectionRequestId = 0;
 
 export async function refreshPdfFontInspection(render, operations = {}) {
   const modal = currentExportModal();
@@ -210,6 +231,12 @@ export async function refreshPdfFontInspection(render, operations = {}) {
   if (!request || typeof invokeCommand !== "function") {
     return null;
   }
+  const requestId = ++pdfFontInspectionRequestId;
+  const isCurrent = () => {
+    const current = currentExportModal();
+    return current?.isOpen && current.selectedOptionId === "file:pdf"
+      && current.pdfFontInspectionKey === request.key && current.pdfFontInspectionRequestId === requestId;
+  };
   updateEditorExportModal({
     pdfFontStatus: "loading",
     pdfFontInspectionKey: request.key,
@@ -217,22 +244,25 @@ export async function refreshPdfFontInspection(render, operations = {}) {
     pdfFontMissingBytes: 0,
     pdfFontFamilies: [],
     pdfFontMessage: "",
+    pdfSavedFallbackFonts: [],
+    pdfFontInspectionRequestId: requestId,
     error: "",
   });
   render();
   try {
+    const context = findChapterContext(modal.chapterId);
+    await (operations.waitForRepoQueue ?? waitForRepoWriteQueueIdle)(
+      projectRepoScope({ team: selectedProjectsTeam(), project: context?.project }),
+    );
+    if (!isCurrent()) { return null; }
     const inspection = await invokeCommand("inspect_gtms_chapter_pdf_fonts", {
       input: request.input,
     });
+    if (!isCurrent()) { return inspection; }
     if (!inspection || typeof inspection !== "object") {
       updateEditorExportModal({ pdfFontStatus: "idle" });
       render();
       return null;
-    }
-    const current = currentExportModal();
-    if (!current?.isOpen || current.selectedOptionId !== "file:pdf"
-      || current.pdfFontInspectionKey !== request.key) {
-      return inspection;
     }
     updateEditorExportModal({
       pdfFontStatus: inspection.supported === false ? "unsupported" : "ready",
@@ -240,12 +270,13 @@ export async function refreshPdfFontInspection(render, operations = {}) {
       pdfFontMissingBytes: Number(inspection.missingBytes) || 0,
       pdfFontFamilies: Array.isArray(inspection.fontFamilies) ? inspection.fontFamilies : [],
       pdfFontMessage: String(inspection.message ?? ""),
+      pdfSavedFallbackFonts: Array.isArray(inspection.savedFallbackFonts) ? inspection.savedFallbackFonts : [],
       error: "",
     });
     render();
     return inspection;
   } catch (error) {
-    if (currentExportModal()?.pdfFontInspectionKey === request.key) {
+    if (isCurrent()) {
       updateEditorExportModal({
         pdfFontStatus: "error",
         error: formatErrorForDisplay(error),
@@ -256,13 +287,42 @@ export async function refreshPdfFontInspection(render, operations = {}) {
   }
 }
 
-function openExportOptionsForChapter(render, chapterId, languageCode) {
+export function togglePdfSavedFonts(render) {
+  const modal = currentExportModal();
+  if (!modal?.isOpen || exportModalIsBusy(modal) || !modal.pdfSavedFallbackFonts?.length) { return; }
+  updateEditorExportModal({ pdfSavedFontsExpanded: !modal.pdfSavedFontsExpanded });
+  render();
+}
+
+export async function forgetPdfFontApproval(render, fontId, operations = {}) {
+  const modal = currentExportModal();
+  if (!modal?.isOpen || exportModalIsBusy(modal)
+    || !modal.pdfSavedFallbackFonts?.some((font) => font.id === fontId)) { return; }
+  const key = modal.pdfFontInspectionKey;
+  updateEditorExportModal({ pdfForgettingFontId: fontId, error: "" });
+  render();
+  const isCurrent = () => currentExportModal()?.isOpen
+    && currentExportModal()?.pdfFontInspectionKey === key && currentExportModal()?.pdfForgettingFontId === fontId;
+  try {
+    await (operations.invoke ?? invoke)("forget_gtms_pdf_font_approval", { fontId });
+    if (!isCurrent()) { return; }
+    updateEditorExportModal({ pdfForgettingFontId: "" });
+    await refreshPdfFontInspection(render, operations);
+  } catch (error) {
+    if (!isCurrent()) { return; }
+    updateEditorExportModal({ pdfForgettingFontId: "", error: formatErrorForDisplay(error) });
+    render();
+  }
+}
+
+function openExportOptionsForChapter(render, chapterId, languageCode, projectScope = {}) {
   const previous = currentExportModal() ?? createEditorExportModalState();
   // The last successful export for this chapter wins over the in-session
   // selection; both fall back to the catalog default.
-  const stored = loadStoredEditorExportDefault(chapterId);
-  const storedOption = stored ? findEditorExportOption(stored.optionId) : null;
-  const previousOption = findEditorExportOption(previous.selectedOptionId);
+  const stored = loadStoredEditorExportDefault(exportDefaultKey({ chapterId, ...projectScope }));
+  const scope = { chapterId, ...projectScope };
+  const storedOption = stored ? findEditorExportOption(stored.optionId, scope) : null;
+  const previousOption = findEditorExportOption(previous.selectedOptionId, scope);
   const storedPdfPaperSize = loadStoredEditorExportPaperSize();
   const pdfPaperSize = isSupportedPdfPaperSize(storedPdfPaperSize)
     ? storedPdfPaperSize
@@ -284,18 +344,19 @@ function openExportOptionsForChapter(render, chapterId, languageCode) {
     selectedOptionId,
     chapterId,
     languageCode,
+    ...projectScope,
     isOpen: true,
   });
-  if (selectedOptionId === "link:wordpress" && exportChapterIsOpenInEditor()) {
+  if (currentExportModal()?.selectedOptionId === "link:wordpress" && (projectScope.projectId || exportChapterIsOpenInEditor())) {
     const destination = lastStoredWordPressDestination(stored?.wordpress);
     if (storedOption?.available && destination) seedWordPressOverwriteDefault(destination);
     ensureWordPressPaneReady(render);
   }
-  if (selectedOptionId === "link:team") {
+  if (currentExportModal()?.selectedOptionId === "link:team") {
     ensureTeamCopyPaneReady(render);
   }
   render();
-  if (selectedOptionId === "file:pdf") {
+  if (currentExportModal()?.selectedOptionId === "file:pdf" && currentExportModal()?.page !== 1) {
     void refreshPdfFontInspection(render);
   }
 }
@@ -320,6 +381,26 @@ export function openChapterExportOptions(render, chapterId) {
   openExportOptionsForChapter(render, chapterId, defaultExportLanguageCode(context.chapter));
 }
 
+export function openProjectExportOptions(render, projectId) {
+  const project = state.projects.find((entry) => entry.id === projectId);
+  const chapters = projectExportChapters(project);
+  if (!project || !chapters.length) {
+    showNoticeBadge("There are no files to export in this project.", render, 2200);
+    return;
+  }
+  const { savedOptions, ...composition } = initializeProjectBook(project, chapters, defaultExportLanguageCode(chapters[0]));
+  const scope = {
+    projectId, projectTitle: project.title || project.name, ...composition,
+    chapterIds: composition.book.items.filter((item) => item.kind === "chapter" && bookItemIncluded(item)).map((item) => item.chapterId),
+    ...savedOptions,
+    wordpress: { ...createEditorExportModalState().wordpress, ...savedOptions.wordpress },
+  };
+  if (scope.selectedOptionId === "link:team") scope.selectedOptionId = "file:pdf";
+  openExportOptionsForChapter(render, chapters[0].id, composition.languageCode, scope);
+  void loadSelectedBookPreview(render);
+
+}
+
 export function selectEditorExportLanguage(render, languageCode) {
   const modal = currentExportModal();
   if (!modal?.isOpen || exportModalIsBusy(modal)) {
@@ -327,8 +408,9 @@ export function selectEditorExportLanguage(render, languageCode) {
   }
 
   const normalized = String(languageCode ?? "").trim();
+  if (modal.book) { selectProjectBookLanguage(render, normalized); return; }
   const chapter = findChapterContext(modal.chapterId)?.chapter;
-  const languages = Array.isArray(chapter?.languages) ? chapter.languages : [];
+  const languages = modal.projectId ? modal.languages : (Array.isArray(chapter?.languages) ? chapter.languages : []);
   updateEditorExportModal({
     languageCode: languages.some((language) => language?.code === normalized) ? normalized : "",
     error: "",
@@ -360,7 +442,7 @@ export function closeEditorExportOptions(render, operations = {}) {
     return;
   }
 
-  if (modal.status === "exporting") {
+  if (modal.status === "exporting" || modal.status === "reviewing-fonts") {
     if (!modal.pdfJobId) {
       return;
     }
@@ -430,7 +512,7 @@ export function selectEditorExportOption(render, optionId) {
   }
 
   updateEditorExportModal({ selectedOptionId: optionId, error: "" });
-  if (optionId === "link:wordpress" && exportChapterIsOpenInEditor()) {
+  if (optionId === "link:wordpress" && (modal.projectId || exportChapterIsOpenInEditor())) {
     ensureWordPressPaneReady(render);
   }
   if (optionId === "link:team") {
@@ -450,6 +532,7 @@ export function toggleEditorExportFootnoteLinks(render, checked) {
 
   updateEditorExportModal({ footnoteLinksAsPlainText: checked === true, error: "" });
   render();
+  if (modal.selectedOptionId === "file:pdf") { void refreshPdfFontInspection(render); }
 }
 
 export function toggleEditorExportOmitCustomHtml(render, checked) {
@@ -460,6 +543,7 @@ export function toggleEditorExportOmitCustomHtml(render, checked) {
 
   updateEditorExportModal({ omitCustomHtml: checked === true, error: "" });
   render();
+  if (modal.selectedOptionId === "file:pdf") { void refreshPdfFontInspection(render); }
 }
 
 function sanitizeExportFileName(value) {
@@ -545,6 +629,7 @@ function failEditorExport(render, error) {
     pdfStartPending: false,
     pdfStage: "",
     pdfProgressIndeterminate: false,
+    pdfFontReview: null,
   });
   render();
 }
@@ -593,7 +678,7 @@ async function submitEditorFileExport(render, option, operations) {
   }
 
   const fileBase = sanitizeExportFileName(
-    (exportChapterIsOpenInEditor() && state.editorChapter?.fileTitle) || context.chapter.name,
+    currentExportModal()?.projectTitle || (exportChapterIsOpenInEditor() && state.editorChapter?.fileTitle) || context.chapter.name,
   );
   const defaultFileName = `${fileBase}-${languageCode}.${option.format}`;
   let outputPath = null;
@@ -618,7 +703,7 @@ async function submitEditorFileExport(render, option, operations) {
     error: "",
     pdfJobId,
     pdfStartPending: option.format === "pdf",
-    pdfStage: option.format === "pdf" ? "Preparing the chapter…" : "",
+    pdfStage: option.format === "pdf" ? (currentExportModal()?.projectId ? "Preparing the project…" : "Preparing the chapter…") : "",
     pdfDownloadedBytes: 0,
     pdfTotalBytes: 0,
     pdfProgressCurrent: 0,
@@ -626,6 +711,7 @@ async function submitEditorFileExport(render, option, operations) {
     pdfProgressUnit: "",
     pdfProgressIndeterminate: option.format === "pdf",
     pdfOutputFileName: defaultFileName,
+    pdfFontReview: null,
   });
   render();
 
@@ -646,6 +732,7 @@ async function submitEditorFileExport(render, option, operations) {
       projectId: context.project.id ?? null,
       projectFullName: context.project.fullName ?? "",
       chapterId: context.chapter.id,
+      ...projectExportScopeInput(currentExportModal()),
       languageCode,
       format: option.format,
       outputPath,
@@ -673,7 +760,7 @@ async function submitEditorFileExport(render, option, operations) {
       },
     });
     updateEditorExportModal({ isOpen: false, status: "idle", error: "" });
-    saveStoredEditorExportDefault(context.chapter.id, { optionId: option.id });
+    saveStoredEditorExportDefault(exportDefaultKey(), { optionId: option.id });
     // Full render to remove the modal; showNoticeBadge only repaints the
     // badge surface.
     render();
@@ -695,8 +782,21 @@ export function handleChapterPdfExportProgress(payload, render) {
   if (!modal?.isOpen || !modal.pdfJobId || payload?.jobId !== modal.pdfJobId) {
     return;
   }
+  if (payload.status === "font-review") {
+    if (modal.status === "cancelling") {
+      return;
+    }
+    updateEditorExportModal({
+      status: "reviewing-fonts",
+      pdfFontReview: payload.fontReview,
+      pdfStage: "",
+      pdfProgressIndeterminate: false,
+    });
+    render();
+    return;
+  }
   if (payload.status === "complete") {
-    const chapterId = modal.chapterId;
+    const chapterId = exportDefaultKey(modal);
     const fileName = modal.pdfOutputFileName || "PDF";
     updateEditorExportModal({
       isOpen: false,
@@ -705,6 +805,7 @@ export function handleChapterPdfExportProgress(payload, render) {
       pdfJobId: "",
       pdfStartPending: false,
       pdfStage: "",
+      pdfFontReview: null,
     });
     saveStoredEditorExportDefault(chapterId, { optionId: "file:pdf" });
     render();
@@ -723,11 +824,13 @@ export function handleChapterPdfExportProgress(payload, render) {
       pdfJobId: "",
       pdfStartPending: false,
       pdfStage: "",
+      pdfFontReview: null,
     });
     render();
     return;
   }
   updateEditorExportModal({
+    pdfFontReview: null,
     pdfStage: String(payload.message ?? "Exporting PDF…"),
     pdfDownloadedBytes: Number(payload.downloadedBytes) || 0,
     pdfTotalBytes: Number(payload.totalBytes) || 0,
@@ -746,15 +849,29 @@ export async function registerChapterPdfExportListeners(render) {
   await listen("chapter-pdf-export-progress", (event) => {
     handleChapterPdfExportProgress(event.payload, render);
   });
+  await listen("chapter-pdf-font-coverage-gap", (event) => {
+    reportPdfFontCoverageGap(event.payload);
+  });
 }
 
 async function submitEditorCopyExport(render, option, operations) {
   const writeClipboard = operations.writeClipboard ?? writeClipboardFormats;
   const copyVellum = operations.copyVellumTextEditorContent ?? copyVellumTextEditorContentToClipboard;
   const prepareVellumImages = operations.prepareVellumImageResources ?? prepareVellumImageResources;
-  const languageCode = selectedEditorPreviewLanguageCode(state.editorChapter);
+  const modal = currentExportModal();
+  const languageCode = currentExportLanguageCode();
   const context = findChapterContext(currentExportModal()?.chapterId);
-  const blocks = buildEditorPreviewDocument(state.editorChapter?.rows, languageCode);
+  updateEditorExportModal({ status: "exporting", error: "" });
+  render();
+  let blocks;
+  try {
+    blocks = modal.projectId
+      ? await loadProjectExportBlocks(modal, operations)
+      : buildEditorPreviewDocument(state.editorChapter?.rows, languageCode);
+  } catch (error) {
+    failEditorExport(render, error);
+    return;
+  }
   const showFootnoteLinkUrls =
     option.printLinkFallback === true
     && currentExportModal()?.footnoteLinksAsPlainText === true;
@@ -792,8 +909,14 @@ async function submitEditorCopyExport(render, option, operations) {
       if (!decodedPropertyListXml) {
         throw new Error("Nothing to copy.");
       }
+      const groupedBlocks = new Map();
+      if (modal.book) for (const block of vellumBlocks) {
+        if (!groupedBlocks.has(block.bookItemId)) groupedBlocks.set(block.bookItemId, []);
+        groupedBlocks.get(block.bookItemId).push(block);
+      }
       const ogElementPrivateDecodedPropertyListXml = buildVellumOgElementPrivateDecodedXml(vellumBlocks, {
-        title: state.editorChapter?.fileTitle || context?.chapter?.name || "",
+        title: modal.projectTitle || state.editorChapter?.fileTitle || context?.chapter?.name || "",
+        ...(modal.book ? { elements: bookExportItems(modal).map((item) => ({ ...item, blocks: groupedBlocks.get(item.id) || [] })) } : {}),
         showFootnoteLinkUrls,
       });
       await copyVellum({
@@ -806,7 +929,7 @@ async function submitEditorCopyExport(render, option, operations) {
       await writeClipboard(formats);
     }
     updateEditorExportModal({ isOpen: false, status: "idle", error: "" });
-    saveStoredEditorExportDefault(state.editorChapter?.chapterId, { optionId: option.id });
+    saveStoredEditorExportDefault(exportDefaultKey(), { optionId: option.id });
     render();
     const copiedLabel = option.format === "html"
       ? "Copied HTML."
@@ -821,12 +944,42 @@ async function submitEditorCopyExport(render, option, operations) {
 
 export async function submitEditorExport(render, operations = {}, options = {}) {
   const modal = currentExportModal();
+  if (modal?.isOpen && modal.status === "reviewing-fonts" && modal.pdfFontReview?.reviewId) {
+    const jobId = modal.pdfJobId;
+    const reviewId = modal.pdfFontReview.reviewId;
+    updateEditorExportModal({ status: "exporting", error: "" });
+    render();
+    try {
+      const approved = await (operations.invoke ?? invoke)("approve_gtms_chapter_pdf_fonts", { jobId, reviewId });
+      if (!approved && currentExportModal()?.pdfJobId === jobId
+        && currentExportModal()?.status === "exporting") {
+        failEditorExport(render, "This PDF font review has expired. Please export again.");
+      }
+    } catch (error) {
+      if (currentExportModal()?.pdfJobId === jobId && currentExportModal()?.status === "exporting") {
+        // Keep the review and job available for retry or cancellation when the
+        // approval command itself fails. Do not start a second export.
+        updateEditorExportModal({ status: "reviewing-fonts", error: formatErrorForDisplay(error) });
+        render();
+      }
+    }
+    return;
+  }
   if (!modal?.isOpen || exportModalIsBusy(modal)) {
     return;
   }
 
   const option = findEditorExportOption(modal.selectedOptionId);
+  if (modal.book && !modal.book.items.some(bookItemIncluded)) {
+    failEditorExport(render, "Include at least one item in the export.");
+    return;
+  }
   if (!option?.available) {
+    return;
+  }
+
+  if (modal.projectId && option.format !== "team" && !currentExportLanguageCode()) {
+    failEditorExport(render, "These files have no export language in common.");
     return;
   }
 
@@ -834,7 +987,7 @@ export async function submitEditorExport(render, operations = {}, options = {}) 
   // requires an open editor, then refreshes it from durable storage first.
   const needsOpenEditor = option.kind === "copy"
     || (option.kind === "link" && option.format === "wordpress");
-  if (needsOpenEditor && !exportChapterIsOpenInEditor()) {
+  if (needsOpenEditor && !modal.projectId && !exportChapterIsOpenInEditor()) {
     failEditorExport(render, "Open the file in the editor to use this export option.");
     return;
   }

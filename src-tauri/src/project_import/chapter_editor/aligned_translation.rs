@@ -6,6 +6,7 @@ use std::{
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
+use crate::project_import::alignment_cancellation;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager};
@@ -24,9 +25,11 @@ use super::{row_structure::create_inserted_row_file, *};
 #[cfg(test)]
 mod efficiency_tests;
 mod splits;
+mod subtitles;
 #[cfg(test)]
 use splits::build_split_prompt;
 use splits::split_targets;
+pub(crate) use subtitles::{add_subtitle_translation_sync, AddSubtitleTranslationInput};
 
 const EVENT_NAME: &str = "aligned-translation-progress";
 const SECTION_SIZE: usize = 50;
@@ -77,6 +80,8 @@ pub(crate) struct AlignedTranslationApplyInput {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AlignmentProgressEvent {
     job_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    request_id: Option<String>,
     stage_id: String,
     stage_label: String,
     status: String,
@@ -320,6 +325,9 @@ pub(crate) fn preflight_aligned_translation_to_gtms_chapter_sync(
         &input.repo_name,
         &input.chapter_id,
     )?;
+    if chapter_has_srt_source(&context.chapter_file) {
+        return Err("Choose a valid SRT file to add a subtitle translation.".into());
+    }
     let source_language_code = input.source_language_code.trim().to_string();
     let target_base_language_code = input.target_language_code.trim().to_string();
     if source_language_code.is_empty() || target_base_language_code.is_empty() {
@@ -578,6 +586,7 @@ pub(crate) fn apply_aligned_translation_to_gtms_chapter_sync(
         final_checks(&job)?;
         log_alignment_apply_checkpoint(app, &job.job_id, "apply-command:source-verified", "");
 
+        alignment_cancellation::begin_apply()?;
         emit_apply_progress(app, &job.job_id, 0, "Preparing aligned translation");
 
         apply_job_to_chapter(app, &mut context, &job)
@@ -1675,26 +1684,49 @@ fn apply_job_to_chapter(
     context: &mut AlignmentContext,
     job: &AlignmentJob,
 ) -> Result<AlignedTranslationApplyResponse, String> {
-    let apply_started = Instant::now();
-    log_alignment_apply_checkpoint(
+    let row_texts = build_row_translation_plan(job)?;
+    let insertion_groups = group_unmatched_targets(job, row_texts.unmatched_targets.clone());
+    apply_translation_plan(
         app,
-        &job.job_id,
-        "apply-job:start",
-        &format!(
-            "source_units={} target_units={} alignments={} split_targets={}",
-            job.source_units.len(),
-            job.target_units.len(),
-            job.alignments.len(),
-            job.split_targets.len()
-        ),
-    );
+        context,
+        TranslationApplyPlan {
+            job_id: job.job_id.clone(),
+            target_language_code: job.target_language_code.clone(),
+            target_base_language_code: job.target_base_language_code.clone(),
+            model_id: Some(job.model_id.clone()),
+            row_texts,
+            insertion_groups,
+            inserted_timings: BTreeMap::new(),
+            matched_timings: BTreeMap::new(),
+        },
+    )
+}
+
+struct TranslationApplyPlan {
+    job_id: String,
+    target_language_code: String,
+    target_base_language_code: String,
+    model_id: Option<String>,
+    row_texts: RowTranslationPlan,
+    insertion_groups: Vec<InsertionGroup>,
+    inserted_timings: BTreeMap<usize, StoredSrtTiming>,
+    matched_timings: BTreeMap<String, StoredSrtTiming>,
+}
+
+fn apply_translation_plan(
+    app: &AppHandle,
+    context: &mut AlignmentContext,
+    mut plan: TranslationApplyPlan,
+) -> Result<AlignedTranslationApplyResponse, String> {
+    let apply_started = Instant::now();
+    log_alignment_apply_checkpoint(app, &plan.job_id, "apply-job:start", "");
     let mut languages = sanitize_chapter_languages(&context.chapter_file.languages);
     let target_exists = languages
         .iter()
-        .any(|language| language.code == job.target_language_code);
+        .any(|language| language.code == plan.target_language_code);
     log_alignment_apply_checkpoint(
         app,
-        &job.job_id,
+        &plan.job_id,
         "apply-job:languages-start",
         &format!(
             "target_exists={} language_count={}",
@@ -1703,21 +1735,21 @@ fn apply_job_to_chapter(
         ),
     );
     if !target_exists {
-        let target_base_language_code = if job.target_base_language_code.trim().is_empty() {
-            job.target_language_code.as_str()
+        let target_base_language_code = if plan.target_base_language_code.trim().is_empty() {
+            plan.target_language_code.as_str()
         } else {
-            job.target_base_language_code.as_str()
+            plan.target_base_language_code.as_str()
         };
         let duplicate_group_exists = languages.iter().any(|language| {
             chapter_language_base_code(language).eq_ignore_ascii_case(target_base_language_code)
         });
         let base_name = duplicate_language_base_name(&languages, target_base_language_code);
         languages.push(ChapterLanguage {
-            code: job.target_language_code.clone(),
+            code: plan.target_language_code.clone(),
             name: base_name,
             role: "target".to_string(),
             base_code: if duplicate_group_exists
-                || job.target_language_code != target_base_language_code
+                || plan.target_language_code != target_base_language_code
             {
                 Some(target_base_language_code.to_string())
             } else {
@@ -1728,33 +1760,33 @@ fn apply_job_to_chapter(
         context.chapter_file.languages = languages.clone();
     }
 
-    emit_apply_progress(app, &job.job_id, 1, "Loading chapter rows");
+    emit_apply_progress(app, &plan.job_id, 1, "Loading chapter rows");
     log_alignment_apply_checkpoint(
         app,
-        &job.job_id,
+        &plan.job_id,
         "apply-job:rows-load-start",
         &format!("stored_rows={}", context.rows.len()),
     );
     let mut row_values = load_row_values(&context.chapter_path, &context.rows)?;
     log_alignment_apply_checkpoint(
         app,
-        &job.job_id,
+        &plan.job_id,
         "apply-job:rows-loaded",
         &format!("row_values={}", row_values.len()),
     );
     if !target_exists {
         for row_value in row_values.values_mut() {
-            ensure_language_field(row_value, &job.target_language_code)?;
+            ensure_language_field(row_value, &plan.target_language_code)?;
         }
     }
 
-    emit_apply_progress(app, &job.job_id, 2, "Preparing row updates");
-    let row_texts = build_row_translation_plan(job)?;
+    emit_apply_progress(app, &plan.job_id, 2, "Preparing row updates");
+    let row_texts = std::mem::take(&mut plan.row_texts);
     let matched_row_count = row_texts.matched_rows.len();
     let unmatched_target_count = row_texts.unmatched_targets.len();
     log_alignment_apply_checkpoint(
         app,
-        &job.job_id,
+        &plan.job_id,
         "apply-job:plan-built",
         &format!(
             "matched_rows={} unmatched_targets={}",
@@ -1768,16 +1800,21 @@ fn apply_job_to_chapter(
         let Some(row_value) = row_values.get_mut(&row_id) else {
             continue;
         };
-        let existing = row_plain_text_from_value(row_value, &job.target_language_code)?;
+        let existing = row_plain_text_from_value(row_value, &plan.target_language_code)?;
         if !existing.trim().is_empty() {
             skipped_non_empty += 1;
             continue;
         }
-        set_row_plain_text(row_value, &job.target_language_code, &text)?;
+        set_row_plain_text(row_value, &plan.target_language_code, &text)?;
+        if let Some(timing) = plan.matched_timings.get(&row_id) {
+            row_value["fields"][&plan.target_language_code]["timing"] =
+                serde_json::to_value(timing)
+                    .map_err(|_| "Could not copy the original subtitle timing.".to_string())?;
+        }
         updated_row_count += 1;
     }
 
-    let insertion_groups = group_unmatched_targets(job, row_texts.unmatched_targets);
+    let insertion_groups = std::mem::take(&mut plan.insertion_groups);
     let insertion_plan = build_bulk_insertion_plan(&context.rows, &insertion_groups)?;
     let reordered_row_count = insertion_plan.existing_order_keys.len();
     for (row_id, order_key) in insertion_plan.existing_order_keys {
@@ -1792,11 +1829,11 @@ fn apply_job_to_chapter(
             &target.order_key,
             &context.chapter_file,
             &languages,
-            None,
+            plan.inserted_timings.get(&target.target.id).copied(),
         );
         set_row_plain_text(
             &mut row_value,
-            &job.target_language_code,
+            &plan.target_language_code,
             &target.target.text,
         )?;
         row_values.insert(row_id.clone(), row_value);
@@ -1804,7 +1841,7 @@ fn apply_job_to_chapter(
     }
     log_alignment_apply_checkpoint(
         app,
-        &job.job_id,
+        &plan.job_id,
         "apply-job:rows-mutated",
         &format!(
             "updated={} skipped_non_empty={} inserted={} reordered={}",
@@ -1817,10 +1854,10 @@ fn apply_job_to_chapter(
 
     let rows_path = context.chapter_path.join("rows");
     let mut prepared_writes = Vec::new();
-    emit_apply_progress(app, &job.job_id, 3, "Writing row files");
+    emit_apply_progress(app, &plan.job_id, 3, "Writing row files");
     log_alignment_apply_checkpoint(
         app,
-        &job.job_id,
+        &plan.job_id,
         "apply-job:files-write-start",
         &format!("row_values={}", row_values.len()),
     );
@@ -1859,7 +1896,7 @@ fn apply_job_to_chapter(
     let changed = !prepared_writes.is_empty();
     log_alignment_apply_checkpoint(
         app,
-        &job.job_id,
+        &plan.job_id,
         "apply-job:files-prepared",
         &format!("changed_paths={}", prepared_writes.len()),
     );
@@ -1868,48 +1905,60 @@ fn apply_job_to_chapter(
         // write_row_files_and_commit preflights the write/session gates before the first
         // write and rolls every file back (restore or remove) if a later step fails, so a
         // failed commit cannot strand this multi-file apply as a dirty working tree.
-        emit_apply_progress(app, &job.job_id, 5, "Saving aligned translation");
+        emit_apply_progress(app, &plan.job_id, 5, "Saving aligned translation");
         log_alignment_apply_checkpoint(
             app,
-            &job.job_id,
+            &plan.job_id,
             "apply-job:write-commit-start",
             &format!("changed_paths={}", prepared_writes.len()),
         );
         super::shared::write_row_files_and_commit_locked(
             app,
             &context.repo_path,
-            &format!("Add aligned {} translation", job.target_language_code),
+            &format!(
+                "Add {}{} translation",
+                if plan.model_id.is_some() {
+                    "aligned "
+                } else {
+                    ""
+                },
+                plan.target_language_code
+            ),
             CommitMetadata {
-                operation: Some("add-aligned-translation"),
+                operation: Some(if plan.model_id.is_some() {
+                    "add-aligned-translation"
+                } else {
+                    "add-subtitle-translation"
+                }),
                 migration: None,
                 status_note: None,
-                ai_model: Some(job.model_id.as_str()),
+                ai_model: plan.model_id.as_deref(),
             },
             &prepared_writes,
         )?;
         log_alignment_apply_checkpoint(
             app,
-            &job.job_id,
+            &plan.job_id,
             "apply-job:write-commit-complete",
             &format!("changed_paths={}", prepared_writes.len()),
         );
     } else {
-        emit_apply_progress(app, &job.job_id, 5, "No local changes to save");
-        log_alignment_apply_checkpoint(app, &job.job_id, "apply-job:no-changes", "");
+        emit_apply_progress(app, &plan.job_id, 5, "No local changes to save");
+        log_alignment_apply_checkpoint(app, &plan.job_id, "apply-job:no-changes", "");
     }
 
-    emit_apply_progress(app, &job.job_id, 6, "Refreshing chapter data");
-    log_alignment_apply_checkpoint(app, &job.job_id, "apply-job:rows-reload-start", "");
+    emit_apply_progress(app, &plan.job_id, 6, "Refreshing chapter data");
+    log_alignment_apply_checkpoint(app, &plan.job_id, "apply-job:rows-reload-start", "");
     let refreshed_rows = load_editor_rows(&context.chapter_path.join("rows"))?;
     let word_counts = build_word_counts_from_stored_rows(&refreshed_rows, &languages);
     log_alignment_apply_checkpoint(
         app,
-        &job.job_id,
+        &plan.job_id,
         "apply-job:rows-reload-complete",
         &format!("refreshed_rows={}", refreshed_rows.len()),
     );
     let commit_sha = if changed {
-        log_alignment_apply_checkpoint(app, &job.job_id, "apply-job:head-read-start", "");
+        log_alignment_apply_checkpoint(app, &plan.job_id, "apply-job:head-read-start", "");
         Some(git_output(
             &context.repo_path,
             &["rev-parse", "--short", "HEAD"],
@@ -1919,7 +1968,7 @@ fn apply_job_to_chapter(
     };
     log_alignment_apply_checkpoint(
         app,
-        &job.job_id,
+        &plan.job_id,
         "apply-job:complete",
         &format!(
             "elapsed_ms={} changed={} commit_sha={}",
@@ -1929,11 +1978,11 @@ fn apply_job_to_chapter(
         ),
     );
     Ok(AlignedTranslationApplyResponse {
-        job_id: job.job_id.clone(),
+        job_id: plan.job_id.clone(),
         updated_row_count,
         skipped_non_empty_row_count: skipped_non_empty,
         inserted_row_count: inserted_rows.len(),
-        target_language_code: job.target_language_code.clone(),
+        target_language_code: plan.target_language_code.clone(),
         word_counts,
         commit_sha,
         chapter_base_commit_sha: current_repo_head_sha(&context.repo_path),
@@ -2453,6 +2502,7 @@ fn run_cached_json_prompt<T: for<'de> Deserialize<'de>>(
     prompt: &str,
     validate: impl Fn(&T) -> Result<(), String>,
 ) -> Result<T, String> {
+    alignment_cancellation::check()?;
     let path = job_path(app, job.installation_id, &job.job_id)?;
     let cache_dir = path.with_extension("requests");
     let key = hash_json(&json!({
@@ -2481,6 +2531,7 @@ fn run_cached_json_prompt<T: for<'de> Deserialize<'de>>(
         if result.is_ok() { "ok" } else { "error" },
         usage.as_ref(),
     );
+    alignment_cancellation::check()?;
     result
 }
 
@@ -2599,6 +2650,7 @@ fn run_json_prompt(
     schema: Value,
     prompt: &str,
 ) -> Result<(Value, Option<Value>), AlignmentPromptError> {
+    alignment_cancellation::check()?;
     let (response, usage) = splits::with_request_slot(|| {
         providers::run_prompt_with_usage(
             &AiPromptRequest {
@@ -2614,6 +2666,7 @@ fn run_json_prompt(
             api_key,
         )
     })?;
+    alignment_cancellation::check()?;
     let value = parse_alignment_json(&response.text, schema_name)?;
     Ok((value, usage))
 }
@@ -2922,6 +2975,7 @@ fn progress_event(
         _ => None,
     };
     AlignmentProgressEvent {
+        request_id: alignment_cancellation::current_id(),
         job_id: job_id.to_string(),
         stage_id: stage_id.to_string(),
         stage_label: stage_label.to_string(),
@@ -3918,6 +3972,7 @@ mod tests {
                         StoredFieldValue {
                             plain_text: (*plain_text).to_string(),
                             footnote: String::new(),
+                            attribution: String::new(),
                             image_caption: String::new(),
                             image: None,
                             editor_flags: StoredFieldEditorFlags::default(),

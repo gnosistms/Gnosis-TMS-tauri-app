@@ -1,0 +1,83 @@
+import { escapeHtml, secondaryButton, tooltipAttributes, renderChevronIcon } from "../lib/ui.js";
+import { renderExportSelect } from "./export-fields.js";
+import { BOOK_SECTION_TYPES, bookContentsItems, bookItemIncluded, bookItemTitle, bookSectionLabel } from "../app/project-book-model.js";
+import { bookImageSrc } from "../app/project-book-flow.js";
+import { renderEditorPreviewDocumentHtml } from "../app/editor-preview.js";
+import { convertLocalFileSrc } from "../app/runtime.js";
+import flourish from "../../src-tauri/src/project_import/chapter_editor/chapter_flourish.svg?raw";
+
+export function bookNavButton(direction, disabled = false) {
+  const previous = direction === "previous";
+  return `<button class="button ${previous ? "button--secondary" : "button--primary"} book-nav ${previous ? "book-nav--previous" : ""}" type="button" data-action="book-${direction}" ${disabled ? "disabled" : ""} ${previous ? "" : "data-modal-default"}>
+    ${previous ? renderChevronIcon("left") : ""}
+    ${previous ? "Previous" : "Next"}
+    ${previous ? "" : renderChevronIcon("right")}
+  </button>`;
+}
+
+function itemRow(item, modal) {
+  const included = bookItemIncluded(item);
+  const language = modal.languages.find((entry) => entry.code === modal.languageCode);
+  const help = included ? "Exclude this item from the export." : item.available === false
+    ? `This chapter does not contain a translation in ${language?.name || modal.languageCode}.`
+    : "Include this item in the export.";
+  return `<li class="term-variant-row book-item ${modal.book.selectedItemId === item.id ? "is-selected" : ""}" data-book-item="${escapeHtml(item.id)}" data-book-included="${included}">
+    <div class="term-variant-row__shell">
+      ${included ? `<button type="button" class="term-variant-row__drag-handle" data-book-drag-handle aria-label="Reorder ${escapeHtml(bookItemTitle(item))}" ${tooltipAttributes("Drag to change the export order.")}><span class="term-variant-row__drag-dots" aria-hidden="true">${"<span></span>".repeat(6)}</span></button>` : '<span class="term-variant-row__drag-spacer"></span>'}
+      <button type="button" class="book-item__select" data-action="book-select:${escapeHtml(item.id)}" aria-pressed="${modal.book.selectedItemId === item.id}">
+        <span data-book-item-label="${escapeHtml(item.id)}">${escapeHtml(bookItemTitle(item))}</span>
+        ${item.kind !== "chapter" && bookItemTitle(item) !== bookSectionLabel(item.kind) ? `<small>${escapeHtml(bookSectionLabel(item.kind))}</small>` : ""}
+      </button>
+      <span ${tooltipAttributes(help, { align: "end" })}><button type="button" class="text-action book-item__toggle" data-action="book-${included ? "exclude" : "include"}:${escapeHtml(item.id)}" ${!included && item.available === false ? "disabled aria-disabled=\"true\"" : ""}>${included ? "Exclude" : "Include"}</button></span>
+    </div>
+  </li>`;
+}
+
+function field(name, value, placeholder, className = "") {
+  return `<input class="book-page__input ${className}" type="text" data-book-field="${name}" aria-label="${placeholder}" placeholder="${placeholder}" value="${escapeHtml(value || "")}" />`;
+}
+function imageEditor(item, logo = false) {
+  const src = bookImageSrc(item.image);
+  return `<div class="book-image ${logo ? "book-image--logo" : ""}" data-book-image-dropzone>
+    ${src ? `<img src="${escapeHtml(src)}" alt="${logo ? "Publisher logo" : "Full page image"}" />
+      <button type="button" class="translation-language-panel__image-remove" data-action="book-image-remove" aria-label="Remove image" ${tooltipAttributes("Remove image")}><span class="translation-language-panel__image-remove-icon"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 2 10 10"/><path d="M10 2 2 10"/></svg></span></button>`
+      : `<button type="button" class="book-image__target" data-action="book-image-pick">+ ${logo ? "Publisher Logo" : "Add image"}<small>Drop an image or click to choose</small></button>`}
+  </div>`;
+}
+function copyrightHtml(value) {
+  return String(value || "").split(/(<\/?i>|<hr>)/g).map((part) => ["<i>", "</i>", "<hr>"].includes(part) ? part : escapeHtml(part).replaceAll("\n", "<br>")).join("");
+}
+function selectedPage(modal) {
+  const { book } = modal;
+  const item = book.items.find((entry) => entry.id === book.selectedItemId);
+  if (!item) return '<p class="modal__supporting">Select an item to preview it.</p>';
+  if (item.kind === "chapter") {
+    if (book.previewStatus === "error") return `<p class="modal__error">${escapeHtml(book.previewError)}</p>`;
+    if (book.previewChapterId !== item.chapterId || book.previewStatus === "loading") return '<p class="modal__supporting" role="status">Loading chapter preview…</p>';
+    if (item.available === false) return '<p class="modal__supporting">This chapter is not available in the selected language.</p>';
+    const html = renderEditorPreviewDocumentHtml(book.previewBlocks, { resolveImageSrc: (image) => image.kind === "url" ? image.url : convertLocalFileSrc(image.filePath || "") }).html;
+    return `<article class="book-page book-page--chapter translate-preview" aria-label="Chapter preview">${html.replace(/ data-(?:preview-block|row-id|tooltip)="[^"]*"/g, "")}</article>`;
+  }
+  let body = "";
+  if (item.kind === "title") body = `<div class="book-page__title-group">${field("title", item.title, "Title", "book-page__title")}${field("subtitle", item.subtitle, "Subtitle", "book-page__subtitle")}</div><div class="book-page__contributors">${field("author", item.author, "Author", "book-page__author")}${field("translator", item.translator, "Translator", "book-page__translator")}</div>${imageEditor(item, true)}`;
+
+  if (item.kind === "image") body = `${imageEditor(item)}${field("caption", item.caption, "Enter image caption.", "book-page__caption")}`;
+  if (item.kind === "contents") body = `${field("title", item.title, "Table of Contents", "book-page__contents-title")}<ol class="book-contents">${bookContentsItems(book.items).map((entry) => `<li><span>${escapeHtml(bookItemTitle(entry))}</span><span class="book-contents__leader"></span></li>`).join("")}</ol><p class="book-contents__hint">Page numbers are calculated from the final layout at export.</p>`;
+  if (["copyright", "dedication"].includes(item.kind)) body = `<div class="book-copyright__toolbar" role="toolbar" aria-label="${item.kind === "copyright" ? "Copyright" : "Dedication"} formatting"><button type="button" class="text-action" data-action="book-copyright:italic" ${tooltipAttributes("Italicise selected text")}><i>I</i></button><button type="button" class="text-action" data-action="book-copyright:symbol" ${tooltipAttributes("Insert copyright symbol")}>©</button><button type="button" class="text-action book-copyright__flourish" data-action="book-copyright:flourish" ${tooltipAttributes("Insert separator")}>${flourish}</button></div><div class="book-copyright__editor" contenteditable="true" role="textbox" aria-multiline="true" aria-label="${item.kind === "copyright" ? "Copyright text" : "Dedication text"}" data-book-copyright-editor data-book-field="text" data-placeholder="${item.kind === "copyright" ? "Enter copyright text." : "Enter dedication here."}">${copyrightHtml(item.text)}</div>`;
+  return `<article class="book-page book-page--${item.kind}" aria-label="${escapeHtml(bookSectionLabel(item.kind))}" style="--book-flourish: url('data:image/svg+xml,${encodeURIComponent(flourish)}')">${body}</article>`;
+}
+
+export function renderProjectBookComposer(modal) {
+  const included = modal.book.items.filter(bookItemIncluded);
+  const excluded = modal.book.items.filter((item) => !bookItemIncluded(item)).sort((a, b) => bookItemTitle(a).localeCompare(bookItemTitle(b), undefined, { numeric: true, sensitivity: "base" }));
+  return `<div class="modal-backdrop"><section class="card modal-card modal-card--editor-export modal-card--book" role="dialog" aria-modal="true" aria-labelledby="editor-export-modal-title" data-modal-dialog="editor-export" tabindex="-1">
+    <div class="card__body modal-card__body modal-card__body--editor-export">
+      <header class="editor-export-modal__header"><div><h2 class="modal__title" id="editor-export-modal-title">Export project</h2><p class="book-step">1 of 2 · Arrange your book</p></div>${bookNavButton("next", !included.length)}</header>
+      <div class="book-composer__toolbar">${renderExportSelect({ id: "editor-export-language", label: "Export language", selectAttributes: { "data-editor-export-language-select": true }, options: modal.languages.map((language) => ({ value: language.code, label: `${language.name || language.code} (${language.code})` })), value: modal.languageCode })}
+        <div class="book-add"><button type="button" class="button button--secondary" data-action="book-add-menu" aria-expanded="${modal.book.addMenuOpen}" ${tooltipAttributes("Add sections such as table of contents, title page, dedication, copyright page, etc.", { align: "end" })}>+ Add section</button>${modal.book.addMenuOpen ? `<div class="book-add__menu">${BOOK_SECTION_TYPES.map((type) => `<button type="button" data-action="book-add:${type.kind}">${type.label}</button>`).join("")}</div>` : ""}</div>
+      </div>
+      <div class="book-composer"><nav class="book-composer__list" aria-label="Book items"><h3>Included <span>${included.length}</span></h3><ul>${included.map((item) => itemRow(item, modal)).join("")}</ul>${!included.length ? '<p class="modal__supporting">Include an item to continue.</p>' : ""}${excluded.length ? `<h3 class="book-excluded-heading">Excluded <span>${excluded.length}</span></h3><ul>${excluded.map((item) => itemRow(item, modal)).join("")}</ul>` : ""}</nav><div class="book-composer__preview">${selectedPage(modal)}</div></div>
+      ${modal.error ? `<p class="modal__error book-composer__error" role="alert">${escapeHtml(modal.error)}</p>` : ""}
+      <footer class="book-composer__footer">${secondaryButton("Cancel", "close-editor-export-options", { modalCancel: true })}</footer>
+    </div></section></div>`;
+}

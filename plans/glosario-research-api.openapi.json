@@ -1,0 +1,1445 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Glosario definition research API — proposal",
+    "version": "research-1-draft",
+    "description": "Design contract, not an implemented or deployed API. Additive to the existing API. No generated answer text. See glosario-definition-research-api-design.md for matching, provenance, cursor, and coverage invariants."
+  },
+  "servers": [
+    {
+      "url": "https://glosario.gnosis-tms.com"
+    }
+  ],
+  "paths": {
+    "/api/research": {
+      "get": {
+        "operationId": "researchDefinitions",
+        "summary": "Resolve a term and return a compact first definition page.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/q"
+          },
+          {
+            "$ref": "#/components/parameters/term_id"
+          },
+          {
+            "$ref": "#/components/parameters/match"
+          },
+          {
+            "$ref": "#/components/parameters/forms"
+          },
+          {
+            "$ref": "#/components/parameters/kind"
+          },
+          {
+            "$ref": "#/components/parameters/normalization"
+          },
+          {
+            "$ref": "#/components/parameters/limit"
+          },
+          {
+            "$ref": "#/components/parameters/max_bytes"
+          },
+          {
+            "$ref": "#/components/parameters/cursor"
+          },
+          {
+            "$ref": "#/components/parameters/include"
+          },
+          {
+            "$ref": "#/components/parameters/purpose"
+          },
+          {
+            "$ref": "#/components/parameters/order"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful evidence page; empty unresolved searches are valid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DefinitionsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_query, query_term_mismatch, invalid_cursor, cursor_query_mismatch, or invalid parameter.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "unknown_term_id. Unresolved free text instead returns a literal search.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "snapshot_changed. Restart against the supplied URL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchError"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "snapshot_unavailable. The cursor snapshot cannot be served.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "capacity_exhausted or evidence_index_unavailable; retry when indicated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchError"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait when retryable.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/research/definitions": {
+      "get": {
+        "operationId": "listResearchDefinitions",
+        "summary": "Enumerate anchored definition candidates across eligible authors.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/q"
+          },
+          {
+            "$ref": "#/components/parameters/term_id"
+          },
+          {
+            "$ref": "#/components/parameters/match"
+          },
+          {
+            "$ref": "#/components/parameters/forms"
+          },
+          {
+            "$ref": "#/components/parameters/kind"
+          },
+          {
+            "$ref": "#/components/parameters/normalization"
+          },
+          {
+            "$ref": "#/components/parameters/limit"
+          },
+          {
+            "$ref": "#/components/parameters/max_bytes"
+          },
+          {
+            "$ref": "#/components/parameters/cursor"
+          },
+          {
+            "$ref": "#/components/parameters/include"
+          },
+          {
+            "$ref": "#/components/parameters/order"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful evidence page; empty unresolved searches are valid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DefinitionsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_query, query_term_mismatch, invalid_cursor, cursor_query_mismatch, or invalid parameter.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "unknown_term_id. Unresolved free text instead returns a literal search.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "snapshot_changed. Restart against the supplied URL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchError"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "snapshot_unavailable. The cursor snapshot cannot be served.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "capacity_exhausted or evidence_index_unavailable; retry when indicated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchError"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait when retryable.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/research/matches": {
+      "get": {
+        "operationId": "listResearchMatches",
+        "summary": "Enumerate all matching paragraph copies without the ranked-search ceiling.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/q"
+          },
+          {
+            "$ref": "#/components/parameters/term_id"
+          },
+          {
+            "$ref": "#/components/parameters/match"
+          },
+          {
+            "$ref": "#/components/parameters/forms"
+          },
+          {
+            "$ref": "#/components/parameters/kind"
+          },
+          {
+            "$ref": "#/components/parameters/normalization"
+          },
+          {
+            "$ref": "#/components/parameters/limit"
+          },
+          {
+            "$ref": "#/components/parameters/max_bytes"
+          },
+          {
+            "$ref": "#/components/parameters/cursor"
+          },
+          {
+            "$ref": "#/components/parameters/include"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful evidence page; empty unresolved searches are valid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MatchesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_query, query_term_mismatch, invalid_cursor, cursor_query_mismatch, or invalid parameter.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "unknown_term_id. Unresolved free text instead returns a literal search.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "snapshot_changed. Restart against the supplied URL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchError"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "snapshot_unavailable. The cursor snapshot cannot be served.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "capacity_exhausted or evidence_index_unavailable; retry when indicated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchError"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait when retryable.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "q": {
+        "name": "q",
+        "in": "query",
+        "description": "Human query; required with no term_id, forms, or cursor.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "term_id": {
+        "name": "term_id",
+        "in": "query",
+        "description": "Authoritative known term ID. A conflicting resolved q is an error.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "match": {
+        "name": "match",
+        "in": "query",
+        "description": "Default term when resolved, otherwise literal. Cursor fixes the effective value.",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "term",
+            "literal"
+          ]
+        }
+      },
+      "forms": {
+        "name": "forms",
+        "in": "query",
+        "description": "Explicit comma-separated forms for literal mode only. Cannot accompany q in literal mode.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "kind": {
+        "name": "kind",
+        "in": "query",
+        "description": "Corpus scope on new endpoints.",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "all",
+            "samael",
+            "book",
+            "lecture",
+            "source"
+          ],
+          "default": "all"
+        }
+      },
+      "normalization": {
+        "name": "normalization",
+        "in": "query",
+        "description": "NFC-preserved quotations; comparison can ignore case and optionally diacritics.",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "casefold",
+            "folded"
+          ],
+          "default": "folded"
+        }
+      },
+      "purpose": {
+        "name": "purpose",
+        "in": "query",
+        "description": "Wrapper intent; both use all authors unless kind overrides.",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "define",
+            "compare_definitions"
+          ],
+          "default": "define"
+        }
+      },
+      "order": {
+        "name": "order",
+        "in": "query",
+        "description": "Definition default source; wrapper default comparison. Stable continuation preserves every candidate.",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "source",
+            "comparison"
+          ]
+        }
+      },
+      "limit": {
+        "name": "limit",
+        "in": "query",
+        "description": "Maximum records per page.",
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 20
+        }
+      },
+      "max_bytes": {
+        "name": "max_bytes",
+        "in": "query",
+        "description": "Maximum uncompressed UTF-8 JSON body bytes. No mid-quotation cutting.",
+        "schema": {
+          "type": "integer",
+          "minimum": 16000,
+          "maximum": 128000,
+          "default": 48000
+        }
+      },
+      "cursor": {
+        "name": "cursor",
+        "in": "query",
+        "description": "Opaque protected cursor. Follow its complete next URL. Conflicting explicit query parameters are rejected.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "include": {
+        "name": "include",
+        "in": "query",
+        "description": "Optional expansions; compact evidence is the default.",
+        "schema": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "context",
+              "bibliography",
+              "audit",
+              "originals"
+            ]
+          }
+        },
+        "style": "form",
+        "explode": false
+      }
+    },
+    "schemas": {
+      "SourceSpan": {
+        "type": "object",
+        "properties": {
+          "doc_id": {
+            "type": "string"
+          },
+          "line_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "start": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "end": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "paragraph_text_hash": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "doc_id",
+          "line_id",
+          "start",
+          "end",
+          "paragraph_text_hash"
+        ],
+        "description": "Half-open Unicode code-point offsets into the unmodified paragraph. Verify its hash before slicing."
+      },
+      "ScopedForm": {
+        "type": "object",
+        "properties": {
+          "form": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          },
+          "scope_type": {
+            "type": "string",
+            "enum": [
+              "author",
+              "document",
+              "literal"
+            ]
+          },
+          "scope_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mapping_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "form",
+          "language",
+          "scope_type",
+          "scope_id",
+          "mapping_id"
+        ],
+        "description": "Approved spelling equivalence or an explicitly requested literal. Conceptual and fuzzy matches are excluded."
+      },
+      "Resolution": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "resolved",
+              "unresolved",
+              "ambiguous"
+            ]
+          },
+          "input": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "term_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "canonical_label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "alternatives": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "term_id": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "term_id",
+                "label"
+              ]
+            }
+          }
+        },
+        "required": [
+          "status",
+          "input",
+          "term_id",
+          "canonical_label",
+          "alternatives"
+        ]
+      },
+      "ResearchQuery": {
+        "type": "object",
+        "properties": {
+          "match": {
+            "type": "string",
+            "enum": [
+              "term",
+              "literal"
+            ]
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "all",
+              "samael",
+              "book",
+              "lecture",
+              "source"
+            ]
+          },
+          "normalization": {
+            "type": "string",
+            "enum": [
+              "casefold",
+              "folded"
+            ]
+          },
+          "accepted_forms": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScopedForm"
+            }
+          }
+        },
+        "required": [
+          "match",
+          "kind",
+          "normalization",
+          "accepted_forms"
+        ],
+        "description": "Effective retrieval specification. Scoped forms never apply outside their declared authors or documents."
+      },
+      "Coverage": {
+        "type": "object",
+        "properties": {
+          "population": {
+            "type": "object",
+            "properties": {
+              "paragraph_copies": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0
+              },
+              "distinct_paragraph_texts": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0
+              },
+              "documents": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0
+              },
+              "exact_within_query": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "paragraph_copies",
+              "distinct_paragraph_texts",
+              "documents",
+              "exact_within_query"
+            ]
+          },
+          "definition_detection": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "current",
+                  "partial",
+                  "unavailable"
+                ]
+              },
+              "method_version": {
+                "type": "string"
+              },
+              "paragraph_copies_examined": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "candidates": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0
+              },
+              "semantic_exhaustiveness": {
+                "type": "string",
+                "enum": [
+                  "not_guaranteed"
+                ]
+              }
+            },
+            "required": [
+              "status",
+              "method_version",
+              "paragraph_copies_examined",
+              "candidates",
+              "semantic_exhaustiveness"
+            ]
+          },
+          "publication": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "complete_for_eligible_material",
+                  "partial",
+                  "unavailable"
+                ]
+              },
+              "excluded_documents": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0
+              },
+              "excluded_match_count": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0
+              }
+            },
+            "required": [
+              "status",
+              "excluded_documents",
+              "excluded_match_count"
+            ]
+          }
+        },
+        "required": [
+          "population",
+          "definition_detection",
+          "publication"
+        ],
+        "description": "Counts share query scope and publication eligibility. Null is unknown or restricted, never zero. Detection completeness does not prove semantic exhaustiveness."
+      },
+      "Page": {
+        "type": "object",
+        "properties": {
+          "collection": {
+            "type": "string",
+            "enum": [
+              "definitions",
+              "matches"
+            ]
+          },
+          "order": {
+            "type": "string",
+            "enum": [
+              "source",
+              "comparison"
+            ]
+          },
+          "returned": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "next": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "end_of_collection": {
+            "type": "boolean"
+          },
+          "content_complete": {
+            "type": "boolean"
+          },
+          "byte_limited": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "collection",
+          "order",
+          "returned",
+          "next",
+          "end_of_collection",
+          "content_complete",
+          "byte_limited"
+        ],
+        "description": "next is null exactly at collection end. content_complete is false if any item is a preview or descriptor. Enumeration completion does not establish reading or full-text delivery."
+      },
+      "Quote": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "text_hash": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "language": {
+            "type": "string"
+          },
+          "quote_complete": {
+            "type": "boolean"
+          },
+          "spans": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SourceSpan"
+            }
+          },
+          "joins": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "contiguous",
+                "paragraph_boundary",
+                "omission"
+              ]
+            },
+            "description": "Exactly max(0, spans.length - 1) entries. Reconstruct text with no separator, two newlines, or an explicit spaced omission marker respectively. Never silently concatenate noncontiguous source excerpts."
+          }
+        },
+        "required": [
+          "text",
+          "text_hash",
+          "language",
+          "quote_complete",
+          "spans",
+          "joins"
+        ],
+        "description": "Exact returned text, never paraphrased. Its spans locate returned text, not omitted material. Null text with empty spans is an explicit descriptor; expansion is required. Hash describes returned text."
+      },
+      "Attribution": {
+        "type": "object",
+        "properties": {
+          "document_author": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "attributed_speaker": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "translator": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "editor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "verified",
+              "reported",
+              "uncertain",
+              "unknown"
+            ]
+          }
+        },
+        "required": [
+          "document_author",
+          "attributed_speaker",
+          "translator",
+          "editor",
+          "status"
+        ],
+        "description": "Container authorship is distinct from the speaker of embedded quotations and editorial additions."
+      },
+      "Provenance": {
+        "type": "object",
+        "properties": {
+          "collection": {
+            "type": "string",
+            "enum": [
+              "authorial_definition",
+              "bibliographical_annotation",
+              "dictionary_entry",
+              "corpus_detection"
+            ]
+          },
+          "extraction_method": {
+            "type": "string"
+          },
+          "classification_method": {
+            "type": "string",
+            "enum": [
+              "human",
+              "rule",
+              "model",
+              "imported",
+              "unknown"
+            ]
+          },
+          "review_status": {
+            "type": "string",
+            "enum": [
+              "human_approved",
+              "reviewed_unresolved",
+              "unreviewed",
+              "unknown"
+            ]
+          }
+        },
+        "required": [
+          "collection",
+          "extraction_method",
+          "classification_method",
+          "review_status"
+        ],
+        "description": "Imported or curated evidence is not necessarily human reviewed. Detailed receipts are optional audit expansion."
+      },
+      "Citation": {
+        "type": "object",
+        "properties": {
+          "source_id": {
+            "type": "string"
+          },
+          "doc_id": {
+            "type": "string"
+          },
+          "line_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "chapter": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "paragraph": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "entry_headword": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "printed_page": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "pdf_page": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "page_validation_status": {
+            "type": "string"
+          },
+          "reader_url": {
+            "type": "string",
+            "description": "Relative API URL or absolute source URL; already encoded by the server."
+          }
+        },
+        "required": [
+          "source_id",
+          "doc_id",
+          "line_id",
+          "chapter",
+          "paragraph",
+          "entry_headword",
+          "printed_page",
+          "pdf_page",
+          "page_validation_status",
+          "reader_url"
+        ]
+      },
+      "EvidenceLinks": {
+        "type": "object",
+        "properties": {
+          "context": {
+            "type": "string",
+            "description": "Relative API URL or absolute source URL; already encoded by the server."
+          },
+          "full_evidence": {
+            "type": "string",
+            "description": "Relative API URL or absolute source URL; already encoded by the server."
+          },
+          "original_witness": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "audit": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "context",
+          "full_evidence",
+          "original_witness",
+          "audit"
+        ]
+      },
+      "DefinitionCandidate": {
+        "type": "object",
+        "properties": {
+          "evidence_id": {
+            "type": "string"
+          },
+          "unit": {
+            "type": "string",
+            "enum": [
+              "dictionary_entry",
+              "paragraph",
+              "passage"
+            ]
+          },
+          "classification": {
+            "type": "string",
+            "enum": [
+              "definition",
+              "explanation",
+              "usage",
+              "uncertain"
+            ]
+          },
+          "quote": {
+            "$ref": "#/components/schemas/Quote"
+          },
+          "attribution": {
+            "$ref": "#/components/schemas/Attribution"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/Provenance"
+          },
+          "selection_reason_codes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "citation": {
+            "$ref": "#/components/schemas/Citation"
+          },
+          "links": {
+            "$ref": "#/components/schemas/EvidenceLinks"
+          }
+        },
+        "required": [
+          "evidence_id",
+          "unit",
+          "classification",
+          "quote",
+          "attribution",
+          "provenance",
+          "selection_reason_codes",
+          "citation",
+          "links"
+        ]
+      },
+      "ParagraphMatch": {
+        "type": "object",
+        "properties": {
+          "match_id": {
+            "type": "string"
+          },
+          "doc_id": {
+            "type": "string"
+          },
+          "line_id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "seq": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "source_id": {
+            "type": "string"
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "text_hash": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "text_complete": {
+            "type": "boolean"
+          },
+          "matched_spans": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "start": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "end": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "surface": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "start",
+                "end",
+                "surface"
+              ]
+            }
+          },
+          "text_group_id": {
+            "type": "string"
+          },
+          "copy_count": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "citation": {
+            "$ref": "#/components/schemas/Citation"
+          },
+          "links": {
+            "$ref": "#/components/schemas/EvidenceLinks"
+          }
+        },
+        "required": [
+          "match_id",
+          "doc_id",
+          "line_id",
+          "seq",
+          "source_id",
+          "text",
+          "text_hash",
+          "text_complete",
+          "matched_spans",
+          "text_group_id",
+          "copy_count",
+          "citation",
+          "links"
+        ],
+        "description": "One paragraph copy, in stable document reading order. Match offsets reference complete original text; a preview must never be used to interpret those offsets."
+      },
+      "Source": {
+        "type": "object",
+        "properties": {
+          "source_id": {
+            "type": "string"
+          },
+          "author": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "edition_label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reader_url": {
+            "type": "string",
+            "description": "Relative API URL or absolute source URL; already encoded by the server."
+          }
+        },
+        "required": [
+          "source_id",
+          "author",
+          "title",
+          "edition_label",
+          "reader_url"
+        ],
+        "description": "Compact page-local bibliography. Optional bibliography expansion adds existing edition/provenance data."
+      },
+      "DefinitionsResponse": {
+        "type": "object",
+        "properties": {
+          "api_version": {
+            "type": "string",
+            "enum": [
+              "research-1"
+            ]
+          },
+          "snapshot_id": {
+            "type": "string"
+          },
+          "query_id": {
+            "type": "string"
+          },
+          "resolution": {
+            "$ref": "#/components/schemas/Resolution"
+          },
+          "query": {
+            "$ref": "#/components/schemas/ResearchQuery"
+          },
+          "coverage": {
+            "$ref": "#/components/schemas/Coverage"
+          },
+          "page": {
+            "$ref": "#/components/schemas/Page"
+          },
+          "sources": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Source"
+            }
+          },
+          "links": {
+            "type": "object",
+            "properties": {
+              "definitions": {
+                "type": "string",
+                "description": "Relative API URL or absolute source URL; already encoded by the server."
+              },
+              "all_matches": {
+                "type": "string",
+                "description": "Relative API URL or absolute source URL; already encoded by the server."
+              },
+              "query_manifest": {
+                "type": "string",
+                "description": "Relative API URL or absolute source URL; already encoded by the server."
+              },
+              "documentation": {
+                "type": "string",
+                "description": "Relative API URL or absolute source URL; already encoded by the server."
+              }
+            },
+            "required": [
+              "definitions",
+              "all_matches",
+              "query_manifest",
+              "documentation"
+            ]
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DefinitionCandidate"
+            }
+          }
+        },
+        "required": [
+          "api_version",
+          "snapshot_id",
+          "query_id",
+          "resolution",
+          "query",
+          "coverage",
+          "page",
+          "sources",
+          "links",
+          "items"
+        ],
+        "description": "Definition candidate collection, including the wrapper response. page.collection is definitions."
+      },
+      "MatchesResponse": {
+        "type": "object",
+        "properties": {
+          "api_version": {
+            "type": "string",
+            "enum": [
+              "research-1"
+            ]
+          },
+          "snapshot_id": {
+            "type": "string"
+          },
+          "query_id": {
+            "type": "string"
+          },
+          "resolution": {
+            "$ref": "#/components/schemas/Resolution"
+          },
+          "query": {
+            "$ref": "#/components/schemas/ResearchQuery"
+          },
+          "coverage": {
+            "$ref": "#/components/schemas/Coverage"
+          },
+          "page": {
+            "$ref": "#/components/schemas/Page"
+          },
+          "sources": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Source"
+            }
+          },
+          "links": {
+            "type": "object",
+            "properties": {
+              "definitions": {
+                "type": "string",
+                "description": "Relative API URL or absolute source URL; already encoded by the server."
+              },
+              "all_matches": {
+                "type": "string",
+                "description": "Relative API URL or absolute source URL; already encoded by the server."
+              },
+              "query_manifest": {
+                "type": "string",
+                "description": "Relative API URL or absolute source URL; already encoded by the server."
+              },
+              "documentation": {
+                "type": "string",
+                "description": "Relative API URL or absolute source URL; already encoded by the server."
+              }
+            },
+            "required": [
+              "definitions",
+              "all_matches",
+              "query_manifest",
+              "documentation"
+            ]
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ParagraphMatch"
+            }
+          }
+        },
+        "required": [
+          "api_version",
+          "snapshot_id",
+          "query_id",
+          "resolution",
+          "query",
+          "coverage",
+          "page",
+          "sources",
+          "links",
+          "items"
+        ],
+        "description": "Exhaustive eligible match inventory. page.collection and page.order are matches and source."
+      },
+      "ResearchError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "retryable": {
+                "type": "boolean"
+              },
+              "restart_url": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "retryable",
+              "restart_url"
+            ]
+          }
+        },
+        "required": [
+          "error"
+        ]
+      }
+    }
+  }
+}

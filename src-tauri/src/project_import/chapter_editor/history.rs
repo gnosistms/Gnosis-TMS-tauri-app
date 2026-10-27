@@ -213,6 +213,10 @@ pub(crate) fn restore_gtms_editor_field_from_history_sync(
         Value::String(historical_footnote.clone()),
     );
     field_object.insert(
+        "attribution".to_string(),
+        Value::String(historical_field_value.field_value.attribution.clone()),
+    );
+    field_object.insert(
         "image_caption".to_string(),
         Value::String(historical_image_caption.clone()),
     );
@@ -225,7 +229,8 @@ pub(crate) fn restore_gtms_editor_field_from_history_sync(
         .fields
         .get(&input.language_code)
         .map(|field| {
-            field.plain_text != historical_plain_text
+            field.attribution != historical_field_value.field_value.attribution
+                || field.plain_text != historical_plain_text
                 || normalize_editor_footnote_value(&field.footnote) != historical_footnote
                 || normalize_editor_image_caption_value(&field.image_caption)
                     != historical_image_caption
@@ -370,11 +375,14 @@ pub(crate) fn restore_gtms_editor_field_from_history_sync(
     }
 
     Ok(RestoreEditorFieldHistoryResponse {
+        fields: row_plain_text_map(&updated_row_file),
+        attributions: row_attribution_map(&updated_row_file),
         row_id: input.row_id,
         language_code: input.language_code,
         plain_text: historical_plain_text,
         footnote: historical_footnote,
         image_caption: historical_image_caption,
+        attribution: historical_field_value.field_value.attribution.clone(),
         image: editor_field_image_from_stored(
             &repo_path,
             &historical_field_value.field_value.image,
@@ -478,9 +486,17 @@ pub(crate) fn reverse_gtms_editor_batch_replace_commit_sync(
         });
         updated_rows.push(UpdateEditorRowFieldsBatchRowInput {
             row_id,
+            base_fields: None,
+            base_footnotes: None,
+            base_image_captions: None,
+            base_attributions: None,
+            field_flags: BTreeMap::new(),
+            lifecycle_state: None,
+            text_style: None,
             fields: row_plain_text_fields(&restored_row_file),
             footnotes: row_footnote_map(&restored_row_file),
             image_captions: row_image_caption_map(&restored_row_file),
+            attributions: row_attribution_map(&restored_row_file),
             timings: BTreeMap::new(),
             remove_images: Vec::new(),
         });
@@ -770,6 +786,7 @@ struct HistoricalFieldSignature {
     plain_text: String,
     footnote: String,
     image_caption: String,
+    attribution: String,
     image: Option<StoredFieldImage>,
     text_style: String,
     reviewed: bool,
@@ -788,6 +805,7 @@ impl HistoricalFieldSignature {
             plain_text: version.field_value.plain_text.clone(),
             footnote: normalize_editor_footnote_value(&version.field_value.footnote),
             image_caption: normalize_editor_image_caption_value(&version.field_value.image_caption),
+            attribution: version.field_value.attribution.clone(),
             image: normalize_editor_field_image_value(&version.field_value.image),
             text_style: version.text_style.clone(),
             reviewed: version.field_value.editor_flags.reviewed,
@@ -846,6 +864,7 @@ pub(super) fn build_editor_field_history_entries(
             plain_text,
             footnote,
             image_caption,
+            attribution: field_version.field_value.attribution.clone(),
             image,
             text_style,
             reviewed: field_version.field_value.editor_flags.reviewed,
@@ -1202,6 +1221,7 @@ mod tests {
         StoredFieldValue {
             plain_text: plain_text.to_string(),
             footnote: String::new(),
+            attribution: String::new(),
             image_caption: String::new(),
             image: None,
             editor_flags: StoredFieldEditorFlags {
@@ -1511,6 +1531,7 @@ mod tests {
                     field_value: StoredFieldValue {
                         plain_text: "Hello".to_string(),
                         footnote: "Note".to_string(),
+                        attribution: String::new(),
                         image_caption: String::new(),
                         image: None,
                         editor_flags: StoredFieldEditorFlags::default(),
@@ -1522,6 +1543,7 @@ mod tests {
                     field_value: StoredFieldValue {
                         plain_text: "Hello".to_string(),
                         footnote: String::new(),
+                        attribution: String::new(),
                         image_caption: String::new(),
                         image: None,
                         editor_flags: StoredFieldEditorFlags::default(),

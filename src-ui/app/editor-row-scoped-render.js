@@ -9,9 +9,11 @@
 
 import { editorChapterFiltersAreActive } from "./editor-filters.js";
 import { state } from "./state.js";
+import { srtDisplayRowId } from "./editor-srt-grouping.js";
 
 export function renderEditorRowScoped(render, rowIdOrIds, reason) {
   const rowIds = (Array.isArray(rowIdOrIds) ? rowIdOrIds : [rowIdOrIds])
+    .map((id) => srtDisplayRowId(state.editorChapter, id))
     .filter((rowId, index, ids) => typeof rowId === "string" && rowId && ids.indexOf(rowId) === index);
   if (rowIds.length === 0) {
     return;

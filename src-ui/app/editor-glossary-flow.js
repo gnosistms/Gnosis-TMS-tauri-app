@@ -8,16 +8,19 @@ import {
   renderableEditorGlossaryHighlightHtml,
 } from "./editor-glossary-highlight-cache.js";
 import {
+  buildInlineMarkupSearchHighlightMarkup,
   renderSanitizedInlineMarkupWithEditorHighlightState,
   renderSanitizedInlineMarkupWithGlossaryHighlightHtml,
 } from "./editor-inline-markup.js";
 import { buildStaticInlineFootnoteMarkerRanges } from "./editor-static-footnote-markers.js";
 import { isCustomHtmlRowTextStyle } from "./editor-row-text-style.js";
-import { editorFootnotesPlainText, findEditorRowById } from "./editor-utils.js";
+import { editorLanguageFootnotes, findEditorRowById } from "./editor-utils.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
 import { invoke } from "./runtime.js";
 import { createEditorChapterGlossaryState, state } from "./state.js";
 import { EDITOR_ROW_FILTER_MODE_HAS_GLOSSARY_ERROR } from "./editor-filters.js";
+import { srtLinguisticRow, srtDisplayRowId } from "./editor-srt-grouping.js";
+import { renderSrtStaticText } from "./editor-srt-group-render.js";
 
 const localGlossaryRevisions = new Map();
 
@@ -192,9 +195,12 @@ function setElementInnerHtmlIfChanged(element, html) {
   element.innerHTML = nextHtml;
 }
 
-function readEditorHighlightableText(row, languageCode, contentKind = "field") {
+function readEditorHighlightableText(row, languageCode, contentKind = "field", footnoteMarker = null) {
   if (contentKind === "footnote") {
-    return editorFootnotesPlainText(row?.footnotes?.[languageCode]);
+    return editorLanguageFootnotes(row, languageCode).find((entry) => entry.marker === footnoteMarker)?.text ?? "";
+  }
+  if (contentKind === "image-caption") {
+    return row?.imageCaptions?.[languageCode] ?? "";
   }
 
   return row?.fields?.[languageCode] ?? "";
@@ -205,6 +211,7 @@ function applyEditorTextHighlightLayersToRowCard(
   row,
   searchHighlightMap = new Map(),
   glossaryHighlightMap = new Map(),
+  chapterState = state.editorChapter,
 ) {
   rowCard.querySelectorAll("[data-editor-glossary-field-stack]").forEach((stack) => {
     if (!(stack instanceof HTMLElement)) {
@@ -226,13 +233,28 @@ function applyEditorTextHighlightLayersToRowCard(
 
     const isAiTranslating = stack.dataset.aiTranslating === "true";
     const languageCode = stack.dataset.languageCode ?? "";
-    const contentKind = stack.dataset.contentKind === "footnote" ? "footnote" : "field";
+    const contentKind = stack.dataset.contentKind === "footnote"
+      ? "footnote"
+      : stack.dataset.contentKind === "image-caption" ? "image-caption" : "field";
+    // Auxiliary fields retain their own real-row content inside a group card.
+    const ownedRow = row.srtGroup?.members.find((member) => member.rowId === stack.dataset.rowId) ?? row;
     const glossaryHighlight = glossaryHighlightMap instanceof Map
       ? (contentKind === "field" ? (glossaryHighlightMap.get(languageCode) ?? null) : null)
       : null;
-    const searchHighlight = searchHighlightMap instanceof Map
+    const editingField = stack.querySelector("textarea[data-editor-row-field]");
+    const highlightableText = contentKind !== "field" && typeof editingField?.value === "string"
+      ? editingField.value
+      : readEditorHighlightableText(
+        contentKind === "field" ? row : ownedRow, languageCode, contentKind,
+        Number.parseInt(stack.dataset.footnoteMarker, 10),
+      );
+    // Match each attachment independently: offsets from a concatenation of all
+    // notes cannot be applied to an individual footnote editor or display.
+    const searchHighlight = contentKind === "field"
       ? (searchHighlightMap.get(buildEditorSearchHighlightKey(languageCode, contentKind)) ?? null)
-      : null;
+      : buildInlineMarkupSearchHighlightMarkup(highlightableText, chapterState?.filters?.searchQuery, languageCode, {
+        caseSensitive: chapterState?.filters?.caseSensitive === true,
+      });
     const glossaryHighlightHtml = isAiTranslating ? "" : renderableEditorGlossaryHighlightHtml(glossaryHighlight);
     const searchHighlightHtml =
       isAiTranslating !== true && typeof searchHighlight?.html === "string"
@@ -241,7 +263,6 @@ function applyEditorTextHighlightLayersToRowCard(
     const searchHighlightRanges = isAiTranslating
       ? []
       : (Array.isArray(searchHighlight?.ranges) ? searchHighlight.ranges : []);
-    const highlightableText = readEditorHighlightableText(row, languageCode, contentKind);
     const displayText = stack.querySelector("[data-editor-display-text]");
     const suppressGlossaryWhileEditing =
       contentKind === "field" && !(displayText instanceof HTMLElement);
@@ -273,7 +294,11 @@ function applyEditorTextHighlightLayersToRowCard(
       if (!isAiTranslating) {
         setElementInnerHtmlIfChanged(
           displayText,
-          renderSanitizedInlineMarkupWithEditorHighlightState(highlightableText, {
+          row.srtTexts?.[languageCode] && contentKind === "field"
+            ? renderSrtStaticText({ code: languageCode, text: row.srtTexts[languageCode].text,
+              srtParts: row.srtTexts[languageCode].parts, srtMarkers: row.srtTexts[languageCode].markers,
+              searchHighlightRanges: searchHighlightRanges }, glossaryHighlightHtml)
+            : renderSanitizedInlineMarkupWithEditorHighlightState(highlightableText, {
             glossaryHighlightHtml,
             searchRanges: searchHighlightRanges,
             extraRanges: contentKind === "field"
@@ -297,14 +322,14 @@ function syncEditorGlossaryHighlightRowCard(rowCard, chapterState = state.editor
     return;
   }
 
-  const row = findEditorRowById(rowId, chapterState);
+  const row = srtLinguisticRow(findEditorRowById(rowId, chapterState), chapterState);
   if (!row) {
     return;
   }
 
   const glossaryHighlightMap = buildCachedEditorRowGlossaryHighlights(row, chapterState);
   const searchHighlightMap = buildEditorRowSearchHighlightMap(row, chapterState);
-  applyEditorTextHighlightLayersToRowCard(rowCard, row, searchHighlightMap, glossaryHighlightMap);
+  applyEditorTextHighlightLayersToRowCard(rowCard, row, searchHighlightMap, glossaryHighlightMap, chapterState);
 }
 
 function syncMountedEditorGlossaryHighlightRows(
@@ -342,7 +367,7 @@ function syncMountedEditorGlossaryHighlightRows(
       return;
     }
 
-    const row = findEditorRowById(rowId, chapterState);
+    const row = srtLinguisticRow(findEditorRowById(rowId, chapterState), chapterState);
     if (!row) {
       return;
     }
@@ -351,7 +376,7 @@ function syncMountedEditorGlossaryHighlightRows(
       ? buildCachedEditorRowGlossaryHighlights(row, chapterState)
       : readCachedEditorRowGlossaryHighlights(row, chapterState);
     const searchHighlightMap = buildEditorRowSearchHighlightMap(row, chapterState);
-    applyEditorTextHighlightLayersToRowCard(rowCard, row, searchHighlightMap, glossaryHighlightMap);
+    applyEditorTextHighlightLayersToRowCard(rowCard, row, searchHighlightMap, glossaryHighlightMap, chapterState);
   });
 }
 
@@ -363,6 +388,7 @@ export function syncEditorGlossaryHighlightRowDom(
   if (typeof document === "undefined" || !rowId || !chapterState?.chapterId) {
     return;
   }
+  rowId = srtDisplayRowId(chapterState, rowId);
 
   const rowCard = root.querySelector(
     `[data-editor-row-card][data-row-id="${CSS.escape(rowId)}"]`,

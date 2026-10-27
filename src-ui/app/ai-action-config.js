@@ -5,13 +5,14 @@ import {
 } from "./ai-provider-config.js";
 
 export const AI_TRANSLATE_ACTION_IDS = ["translate1", "translate2"];
-export const AI_ACTION_IDS = [...AI_TRANSLATE_ACTION_IDS, "review", "discuss"];
+export const AI_ACTION_IDS = [...AI_TRANSLATE_ACTION_IDS, "review", "discuss", "research"];
 
 export const AI_ACTION_LABELS = {
   translate1: "Translate 1",
   translate2: "Translate 2",
   review: "Review",
   discuss: "Discuss",
+  research: "Research",
 };
 const UNIFIED_TRANSLATE_ACTION_LABEL = "Translate";
 

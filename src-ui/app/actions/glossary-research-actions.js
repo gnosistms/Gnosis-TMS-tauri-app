@@ -1,0 +1,161 @@
+import {
+  addResearchProposalVariant,
+  addResearchProposalVariantText,
+  addResearchVariant,
+  backToResearchForm,
+  cancelGlossaryResearchRun,
+  closeGlossaryResearch,
+  closeResearchLanguagePicker,
+  closeResearchProjectPicker,
+  continueGlossaryResearchRun,
+  continueResearchFamily,
+  continueResearchSpellings,
+  countGlossaryResearch,
+  openGlossaryResearch,
+  openResearchLanguagePicker,
+  openResearchProjectPicker,
+  pauseGlossaryResearchRun,
+  skipGlossaryResearchStep,
+  raiseResearchLimitAndContinue,
+  removeResearchProposalEntry,
+  removeResearchProposalVariant,
+  removeResearchVariant,
+  researchRelatedWordsOf,
+  toggleResearchSpelling,
+  resumeGlossaryResearchRun,
+  selectResearchPickerLanguage,
+  setResearchReportLanguage,
+  setResearchSourceMode,
+  startGlossaryResearch,
+  toggleAllResearchPickerProjects,
+  toggleResearchAdvanced,
+  toggleResearchLog,
+  toggleResearchSection,
+  toggleResearchCurrent,
+  scrollResearchLogToLatest,
+  toggleResearchPickerProject,
+  toggleResearchFamilyWord,
+} from "../glossary-research-flow.js";
+import {
+  addResearchEntryVariant,
+  closeResearchReport,
+  copyResearchMarkdown,
+  openResearchReport,
+  saveResearchEntry,
+  saveResearchReport,
+  retestResearchConflict,
+  setResearchEntryDecision,
+  showAllResearchExamples,
+  toggleResearchVariantExamples,
+} from "../glossary-research-report-flow.js";
+import {
+  closeEditorGlossaryEntry,
+  openEditorGlossaryEntry,
+  researchEditorGlossaryEntry,
+  saveEditorGlossaryEntry,
+} from "../editor-glossary-entry-flow.js";
+import {
+  editorGlossaryEntrySelectionFor,
+  syncEditorGlossaryEntryButtons,
+} from "../editor-glossary-entry-selection.js";
+import { openExternalUrl } from "../runtime.js";
+import { state } from "../state.js";
+
+export function createGlossaryResearchActions(render) {
+  const exact = {
+    "open-glossary-research": () => openGlossaryResearch(render),
+    "close-glossary-research": () => closeGlossaryResearch(render),
+    "start-glossary-research": () => startGlossaryResearch(render),
+    "back-to-research-form": () => backToResearchForm(render),
+    "add-research-variant": () => addResearchVariant(render),
+    "open-research-language-picker": () => openResearchLanguagePicker(render),
+    "cancel-research-language-picker": () => closeResearchLanguagePicker(render, false),
+    "confirm-research-language-picker": () => closeResearchLanguagePicker(render, true),
+    "open-research-project-picker": () => openResearchProjectPicker(render),
+    "cancel-research-project-picker": () => closeResearchProjectPicker(render, false),
+    "confirm-research-project-picker": () => closeResearchProjectPicker(render, true),
+    "toggle-research-advanced": () => toggleResearchAdvanced(render),
+    "research-scroll-latest": () => scrollResearchLogToLatest(),
+    "toggle-research-log": () => toggleResearchLog(render),
+    "toggle-all-research-picker-projects": () => toggleAllResearchPickerProjects(render),
+    "cancel-glossary-research-run": () => cancelGlossaryResearchRun(render),
+    "pause-glossary-research-run": () => pauseGlossaryResearchRun(render),
+    "skip-glossary-research-step": () => skipGlossaryResearchStep(render),
+    "continue-glossary-research-run": () => continueGlossaryResearchRun(render),
+    "count-glossary-research": () => countGlossaryResearch(render),
+    "open-research-proposal": async () => {
+      if (await countGlossaryResearch(render, { skipCounting: true })) {
+        await openResearchReport(render, state.glossaryResearch.runId);
+      }
+    },
+    "continue-research-family": () => continueResearchFamily(render),
+    "continue-research-spellings": () => continueResearchSpellings(render),
+
+    "raise-research-limit": () => raiseResearchLimitAndContinue(render),
+    "close-research-report": () => closeResearchReport(render),
+    "copy-research-markdown": () => copyResearchMarkdown(render),
+    "save-research-report": () => saveResearchReport(render),
+    "close-editor-glossary-entry": () => closeEditorGlossaryEntry(render),
+    "save-editor-glossary-entry": () => saveEditorGlossaryEntry(render),
+    "research-editor-glossary-entry": () => researchEditorGlossaryEntry(render),
+  };
+  const prefixes = [
+    ["remove-research-variant:", (rest) => removeResearchVariant(render, Number.parseInt(rest, 10))],
+    ["set-research-report-language:", (rest) => setResearchReportLanguage(render, rest)],
+    ["set-research-source-mode:", (rest) => setResearchSourceMode(render, rest)],
+    ["select-research-picker-language:", (rest) => selectResearchPickerLanguage(render, rest)],
+    ["toggle-research-picker-project:", (rest) => toggleResearchPickerProject(render, rest)],
+    ["toggle-research-family:", (rest) => toggleResearchFamilyWord(render, Number.parseInt(rest, 10))],
+    ["toggle-research-spelling:", (rest) => toggleResearchSpelling(render, Number.parseInt(rest, 10))],
+    ["open-research-report:", (rest) => openResearchReport(render, rest)],
+    ["resume-research-run:", (rest) => resumeGlossaryResearchRun(render, rest)],
+    ["research-related-words:", (rest) => researchRelatedWordsOf(render, rest)],
+    ["remove-research-entry:", (rest) => removeResearchProposalEntry(render, Number.parseInt(rest, 10))],
+    ["add-research-variant-text:", (rest) => addResearchProposalVariantText(render, Number.parseInt(rest, 10))],
+    ["add-research-proposal-variant:", (rest) => addResearchProposalVariant(render, Number.parseInt(rest, 10))],
+    ["remove-research-proposal-variant:", (rest) => {
+      const [entryIndex, variantIndex] = rest.split(":").map((value) => Number.parseInt(value, 10));
+      removeResearchProposalVariant(render, entryIndex, variantIndex);
+    }],
+    ["toggle-research-examples:", (rest) => toggleResearchVariantExamples(render, rest)],
+    ["show-all-research-examples:", (rest) => showAllResearchExamples(render, rest)],
+    ["set-research-entry-decision:", (rest) => {
+      const cut = rest.lastIndexOf(":");
+      setResearchEntryDecision(render, rest.slice(0, cut), rest.slice(cut + 1));
+    }],
+    ["add-research-entry-variant:", (rest) => addResearchEntryVariant(render, rest)],
+    ["save-research-entry:", (rest) => saveResearchEntry(render, rest)],
+    ["retest-research-conflict:", (rest) => {
+      const cut = rest.lastIndexOf(":");
+      retestResearchConflict(render, rest.slice(0, cut), Number.parseInt(rest.slice(cut + 1), 10));
+    }],
+    ["toggle-research-section:", (rest) => toggleResearchSection(render, rest)],
+    ["toggle-research-current:", (rest) => toggleResearchCurrent(render, rest)],
+    ["open-research-source:", (rest) => openExternalUrl(rest)],
+  ];
+
+  return async function handleGlossaryResearchAction(action, event) {
+    if (action === "open-editor-glossary-entry") {
+      const button = event?.target?.closest?.("[data-editor-glossary-entry-button]");
+      const selection = button
+        ? editorGlossaryEntrySelectionFor(button.dataset.rowId, button.dataset.languageCode)
+        : null;
+      // The highlight can vanish without a selection event (a redraw replacing
+      // the text box); grey the button out again instead of acting.
+      if (!selection) syncEditorGlossaryEntryButtons();
+      else await openEditorGlossaryEntry(render, selection);
+      return true;
+    }
+    if (exact[action]) {
+      await exact[action](event);
+      return true;
+    }
+    for (const [prefix, handler] of prefixes) {
+      if (action.startsWith(prefix)) {
+        await handler(action.slice(prefix.length), event);
+        return true;
+      }
+    }
+    return false;
+  };
+}

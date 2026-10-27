@@ -1,4 +1,5 @@
 import { invoke } from "./runtime.js";
+import { notifyStudioEditor, researchChangesForDraft } from "./glossary-research-studio-editor-bridge.js";
 import { requireBrokerSession } from "./auth-flow.js";
 import {
   createGlossaryTermEditorState,
@@ -49,6 +50,7 @@ import {
 } from "./glossary-term-write-coordinator.js";
 import { removeGlossaryEditorQuery } from "./glossary-editor-query.js";
 import { refreshEditorGlossaryAfterLocalChange } from "./editor-glossary-flow.js";
+import { remindOfSiblings } from "./glossary-term-siblings.js";
 
 const SOURCE_TERM_DUPLICATE_WARNING =
   "Some source variants are duplicated within this term or elsewhere in the glossary. Remove or change the marked variants before saving.";
@@ -78,6 +80,7 @@ function findRedundantSourceVariantIndices(
     if (!glossaryTerm || glossaryTerm.lifecycleState === "deleted" || glossaryTerm.termId === termId) {
       continue;
     }
+    if (state.glossaryTermEditor?.researchOrigin?.changes?.some((change) => change.termId === glossaryTerm.termId)) continue;
 
     for (const sourceTerm of Array.isArray(glossaryTerm.sourceTerms) ? glossaryTerm.sourceTerms : []) {
       const normalized = normalizeSourceTermForDuplicateDetection(sourceTerm);
@@ -198,6 +201,11 @@ function createGlossaryTermEditorModalState(term = null, overrides = {}) {
     notesToTranslators: term?.notesToTranslators ?? "",
     footnote: term?.footnote ?? "",
     untranslated: term?.untranslated === true,
+    // Related entries (kept apart, linked as a reminder): shown and edited in place.
+    siblingTermIds: [...(term?.siblingTermIds ?? [])],
+    siblingInput: "",
+    siblingError: "",
+    relatedOpen: false,
     attemptedDraft: overrides.attemptedDraft ?? null,
   };
 }
@@ -298,6 +306,7 @@ function restoreFailedGlossaryTermSave(render, intent, message) {
     attemptedDraft: remoteConflict ? draftSnapshot : null,
     termId: draftSnapshot?.termId ?? null,
   });
+  if (draftSnapshot?.researchOrigin) state.glossaryTermEditor.researchOrigin = draftSnapshot.researchOrigin;
   if (message.startsWith(SOURCE_TERM_CONFLICT_PREFIX)) {
     try {
       const conflicts = JSON.parse(message.slice(SOURCE_TERM_CONFLICT_PREFIX.length));
@@ -375,6 +384,7 @@ async function runGlossaryTermSaveIntent(render, intent) {
         notesToTranslators: draftSnapshot.notesToTranslators,
         footnote: draftSnapshot.footnote,
         untranslated: draftSnapshot.untranslated,
+        ...(draftSnapshot.researchOrigin?.changes?.length ? { researchChanges: draftSnapshot.researchOrigin.changes } : {}),
       },
     });
     previousHeadSha = upsertPayload?.previousHeadSha ?? null;
@@ -418,18 +428,31 @@ async function runGlossaryTermSaveIntent(render, intent) {
       if (state.glossaryEditor.status === "ready") markGlossaryBackgroundSyncDirty();
     }
     clearGlossaryEditorStatus(render);
-    showNoticeBadge(intent.value?.isCreate ? "Glossary term added." : "Glossary term saved.", render);
+    if (intent.value?.isCreate || !remindOfSiblings(confirmedTerm, render)) {
+      showNoticeBadge(intent.value?.isCreate ? "Glossary term added." : "Glossary term saved.", render);
+    }
+    if (draftSnapshot.researchOrigin) {
+      showGlossaryEditorStatus(render, "Term saved. Updating research checkpoint…");
+      try {
+        await notifyStudioEditor("saved", draftSnapshot.researchOrigin, confirmedTerm);
+      } catch (error) {
+        showNoticeBadge(`Term saved, but the research record could not be updated: ${error.message}`, render);
+      } finally { clearGlossaryEditorStatus(render); }
+    }
+    return confirmedTerm;
   } catch (error) {
     clearGlossaryEditorStatus(render);
     throw error;
   } finally {
-    removeGlossaryEditorQuery(intent.value?.team, intent.value?.glossary);
+    if (!intent.value?.draftSnapshot?.researchOrigin) removeGlossaryEditorQuery(intent.value?.team, intent.value?.glossary);
     // Sync may merge remote terms; a failed push may restore the old local term.
     void refreshEditorGlossaryAfterLocalChange(render, intent.value?.team, intent.value?.repoInput);
   }
 }
 
-export async function openGlossaryTermEditor(render, termId = null) {
+// options.prefill ({ sourceTerms, targetTerms }) starts a new term with text
+// already entered, e.g. from text highlighted in the chapter editor.
+export async function openGlossaryTermEditor(render, termId = null, options = {}) {
   const team = selectedTeam();
   const glossary = selectedGlossary();
   const editor = state.glossaryEditor;
@@ -458,11 +481,18 @@ export async function openGlossaryTermEditor(render, termId = null) {
     return;
   }
 
-  state.glossaryTermEditor = createGlossaryTermEditorModalState(term);
+  const prefill = !termId && options.prefill
+    ? { sourceTerms: options.prefill.sourceTerms ?? [], targetTerms: options.prefill.targetTerms ?? [] }
+    : null;
+  state.glossaryTermEditor = createGlossaryTermEditorModalState(term ?? prefill);
+  // A prefilled source term may already be in the glossary; mark it at once.
+  if (prefill) refreshGlossaryTermDuplicateFeedback();
   render();
 }
 
 export function cancelGlossaryTermEditor(render) {
+  const researchOrigin = state.glossaryTermEditor?.researchOrigin;
+  const researchDraft = researchOrigin ? structuredClone(state.glossaryTermEditor) : null;
   const key = state.glossaryTermEditor?.failedIntentKey;
   const intent = key ? getGlossaryTermWriteIntent(key) : null;
   if (intent && glossarySaveContextMatches(intent)) {
@@ -476,6 +506,7 @@ export function cancelGlossaryTermEditor(render) {
   }
   if (key) clearFailedGlossaryTermWrite(key);
   resetGlossaryTermEditor();
+  if (researchOrigin) void notifyStudioEditor("cancel", researchOrigin, researchDraft);
   render();
 }
 
@@ -696,7 +727,7 @@ export function resolveGlossaryTermWriteRepo() {
   return glossary;
 }
 
-export async function submitGlossaryTermEditor(render) {
+export async function submitGlossaryTermEditor(render, { awaitCompletion = false } = {}) {
   const team = selectedTeam();
   const repoName = selectedGlossaryRepoName();
   const draft = state.glossaryTermEditor;
@@ -762,6 +793,9 @@ export async function submitGlossaryTermEditor(render) {
     notesToTranslators: draft.notesToTranslators,
     footnote: draft.footnote,
     untranslated: draft.untranslated === true,
+    siblingTermIds: [...(draft.siblingTermIds ?? [])],
+    ...(draft.researchOrigin ? { researchOrigin: { ...draft.researchOrigin,
+      changes: researchChangesForDraft(draft.researchOrigin, sourceTerms) } } : {}),
   };
   const repoInput = {
     installationId: team.installationId,
@@ -784,6 +818,9 @@ export async function submitGlossaryTermEditor(render) {
   resetGlossaryTermEditor();
   render();
 
+  let finish;
+  const completion = awaitCompletion ? new Promise((resolve) => { finish = resolve; }) : null;
+  let confirmedTerm = null;
   requestGlossaryTermWriteIntent({
     key: glossaryTermSaveIntentKey(repoInput.glossaryId, visibleTermId),
     scope: glossaryTermWriteScope(team, repoName),
@@ -802,13 +839,17 @@ export async function submitGlossaryTermEditor(render) {
     },
   }, {
     clearOnSuccess: true,
-    run: (intent) => runGlossaryTermSaveIntent(render, intent),
+    run: async (intent) => {
+      confirmedTerm = await runGlossaryTermSaveIntent(render, intent);
+    },
     onSuccess: () => {
+      finish?.({ status: "saved", term: confirmedTerm });
       render();
     },
     onError: (error, intent) => {
       clearGlossaryEditorStatus(render);
       const errorMessage = error?.message ?? String(error);
+      finish?.({ status: "failed", error: errorMessage });
       if (glossarySaveContextMatches(intent) && state.glossaryTermEditor?.isOpen && state.glossaryTermEditor.notice) {
         render();
         return;
@@ -819,4 +860,5 @@ export async function submitGlossaryTermEditor(render) {
       }
     },
   });
+  return completion;
 }

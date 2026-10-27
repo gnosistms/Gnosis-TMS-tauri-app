@@ -19,7 +19,7 @@ globalThis.window.addEventListener = globalThis.window.addEventListener ?? (() =
 globalThis.window.removeEventListener = globalThis.window.removeEventListener ?? (() => {});
 
 const { createResourcePageState } = await import("./resource-page-controller.js");
-const { resetSessionState, state } = await import("./state.js");
+const { createProjectsSearchState, resetSessionState, state } = await import("./state.js");
 const {
   addLocalHardDeleteTombstone,
   isLocalHardDeletedResource,
@@ -373,7 +373,7 @@ test("project loading prime clears stale visible projects before team render", (
   assert.equal(state.projectsPage.isRefreshing, true);
 });
 
-test("project loading prime preserves selected-team visible projects while refreshing", () => {
+test("returning from the editor preserves selected-team projects and search while refreshing", () => {
   resetSessionState();
   const team = { id: "team-1", installationId: 1 };
   state.teams = [team];
@@ -383,13 +383,35 @@ test("project loading prime preserves selected-team visible projects while refre
     visibleCacheKey: teamCacheKey(team),
   });
   state.projects = [project({ id: "team-1-project", title: "Team 1 Project" })];
+  const search = {
+    ...createProjectsSearchState(),
+    query: " Raw Query ",
+    caseSensitive: true,
+    status: "ready",
+    results: [{ projectId: "team-1-project", chapterId: "chapter-1", rowId: "row-1" }],
+    expandedProjectIds: new Set(["team-1-project"]),
+    expandedChapterIds: new Set(["chapter-1"]),
+    includeWeakerMatches: true,
+  };
+  state.projectsSearch = search;
+  state.screen = "translate";
 
+  // Navigation primes before rendering Projects; its async loader primes again.
+  state.screen = "projects";
   const result = primeProjectsLoadingState(team.id);
+  primeProjectsLoadingState(team.id);
 
   assert.equal(result.preservedVisibleData, true);
+  assert.equal(state.projectsSearch, search);
   assert.equal(state.projects[0].title, "Team 1 Project");
   assert.equal(state.projectDiscovery.status, "ready");
   assert.equal(state.projectsPage.isRefreshing, true);
+
+  // Same-team search also survives repeated refreshes of an empty collection.
+  state.projects = [];
+  primeProjectsLoadingState(team.id, { seedFromCache: false });
+  primeProjectsLoadingState(team.id, { seedFromCache: false });
+  assert.equal(state.projectsSearch, search);
 });
 
 test("project loading prime preserves the active editor chapter context", () => {

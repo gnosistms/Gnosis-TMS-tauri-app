@@ -1,4 +1,5 @@
 import { buildEditorRowSearchHighlights } from "./editor-search-highlighting.js";
+import { srtLinguisticRow, srtGroupingEnabled, srtGroupsForChapter } from "./editor-srt-grouping.js";
 import {
   EDITOR_ROW_FILTER_MODE_SHOW_ALL,
   editorChapterFiltersAreActive,
@@ -118,6 +119,7 @@ function buildEditorRowSections(row, chapterState = state.editorChapter) {
 }
 
 export function buildEditorRowSearchHighlightMap(row, chapterState = state.editorChapter) {
+  row = srtLinguisticRow(row, chapterState);
   const filters = normalizeEditorChapterFilters(chapterState?.filters);
   const searchQuery = typeof filters?.searchQuery === "string" ? filters.searchQuery.trim() : "";
   if (!searchQuery) {
@@ -521,7 +523,10 @@ export async function replaceSelectedEditorRows(render, operations = {}) {
     return;
   }
 
-  const selectedRows = selectedRowIds
+  const selectedMemberIds = srtGroupingEnabled(editorChapter)
+    ? srtGroupsForChapter(editorChapter).filter((members) => selectedRowIds.includes(members[0].rowId)).flatMap((members) => members.map((row) => row.rowId))
+    : selectedRowIds;
+  const selectedRows = selectedMemberIds
     .map((rowId) => findEditorRowById(rowId, editorChapter))
     .filter(Boolean);
   if (state.editorChapter.deferredStructuralChanges === true) {
@@ -535,6 +540,7 @@ export async function replaceSelectedEditorRows(render, operations = {}) {
 
   const replacePlan = buildEditorBatchReplaceUpdates({
     rows: editorChapter.rows,
+    groups: srtGroupingEnabled(editorChapter) ? srtGroupsForChapter(editorChapter) : null,
     selectedRowIds: new Set(selectedRowIds),
     visibleLanguageCodes: buildVisibleEditorLanguageCodeSet(editorChapter),
     searchQuery,
@@ -645,6 +651,7 @@ export async function replaceSelectedEditorRows(render, operations = {}) {
           operation: "editor-replace",
         },
       }, value.permissionContext, render);
+      if (replacePayload?.conflicts?.length) throw new Error("A subtitle changed elsewhere. Refresh or resolve the group before replacing text.");
       return { resetPayload, replacePayload };
     },
     onSuccess: ({ resetPayload, replacePayload } = {}, operation) => {
@@ -660,7 +667,8 @@ export async function replaceSelectedEditorRows(render, operations = {}) {
         );
       }
       operations.markEditorRowsPersisted(
-        value.replaceRows,
+        value.replaceRows.map((row) => ({ ...row,
+          fields: replacePayload?.rows?.find((saved) => saved.rowId === row.rowId)?.fields ?? row.fields })),
         replacePayload?.wordCounts,
         nextChapterBaseCommitSha(replacePayload, state.editorChapter),
       );

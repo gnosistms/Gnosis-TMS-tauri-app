@@ -629,6 +629,26 @@ test("glossary background sync skips non-forced sync while the term editor is op
   assert.equal(syncInvocationCount("sync_gtms_glossary_editor_repo"), 0);
 });
 
+test("glossary background sync is held while a research window is open, even when forced", async () => {
+  installGlossaryEditorFixture();
+  invokeHandler = async (command) => (command === "sync_gtms_glossary_editor_repo"
+    ? { oldHeadSha: "head-1", newHeadSha: "head-1", changedTermIds: [], insertedTermIds: [], deletedTermIds: [] }
+    : null);
+
+  startGlossaryBackgroundSyncSession(() => {});
+  await flushAsyncWork();
+  invokeLog.length = 0;
+  currentTime = 20_000;
+  state.glossaryResearch = { ...state.glossaryResearch, isOpen: true };
+
+  assert.equal(await maybeStartGlossaryBackgroundSync(() => {}, { force: true }), false);
+  assert.equal(syncInvocationCount("sync_gtms_glossary_editor_repo"), 0);
+
+  state.glossaryResearch = { ...state.glossaryResearch, isOpen: false };
+  assert.equal(await maybeStartGlossaryBackgroundSync(() => {}), true);
+  assert.equal(syncInvocationCount("sync_gtms_glossary_editor_repo"), 1);
+});
+
 test("glossary exit sync stays inactive when the session has no local edits", async () => {
   installGlossaryEditorFixture();
   invokeHandler = async (command) => {
@@ -2217,3 +2237,108 @@ for (const outcome of ["save", "rollback"]) {
     }
   });
 }
+
+for (const outcome of ["success", "rollback"]) {
+  test(`research report awaits the confirmed write (${outcome})`, async () => {
+    const { saveResearchEntry } = await import("./glossary-research-report-flow.js");
+    installGlossaryEditorFixture();
+    state.screen = "glossaryResearchReport";
+    const push = deferred();
+    let pushing = false;
+    const term = glossaryTerm({ termId: "persisted-research-term", sourceTerms: ["research source"], targetTerms: ["research target"] });
+    invokeHandler = async (command) => {
+      if (command === "sync_gtms_glossary_editor_repo") return { changedTermIds: [] };
+      if (command === "upsert_gtms_glossary_term") return { term, termCount: 3, previousHeadSha: "old-head" };
+      if (command === "sync_gtms_glossary_repos") {
+        pushing = true;
+        await push.promise;
+        return outcome === "rollback" ? [{ status: "syncError", message: "Push failed" }] : [];
+      }
+      return null;
+    };
+    const draft = { id: "e1", entryId: "e1", decision: "add", sourceTerms: term.sourceTerms, generalNote: "", variants: [{ id: "v1", target: "research target", note: "", include: true }], conflicts: [], saveStatus: "idle" };
+    state.glossaryResearchReport = { glossaryId: "glossary-1", runId: "run-1", run: { meta: {} }, entryDrafts: { e1: draft } };
+    const saving = saveResearchEntry(() => {}, "e1");
+    await flushAsyncWork();
+    assert.equal(pushing, true);
+    assert.equal(draft.saveStatus, "saving");
+    assert.equal(state.glossaryResearchReport.run.meta.savedToGlossary, undefined);
+    push.resolve();
+    await saving;
+    if (outcome === "success") {
+      assert.equal(draft.saveStatus, "saved");
+      assert.equal(draft.existingTermId, term.termId);
+      assert.equal(draft.decision, "update");
+      assert.equal(state.glossaryResearchReport.run.meta.savedToGlossary.entries.length, 1);
+    } else {
+      assert.equal(draft.saveStatus, "idle");
+      assert.match(draft.saveError, /Push failed/);
+      assert.equal(draft.existingTermId, undefined);
+      assert.equal(state.glossaryResearchReport.run.meta.savedToGlossary, undefined);
+    }
+  });
+}
+
+test("a retest finishing after an edit does not restore its consistent result", async () => {
+  const { retestResearchConflict, updateResearchEntryField } = await import("./glossary-research-report-flow.js");
+  installGlossaryEditorFixture();
+  const response = deferred();
+  invokeHandler = async (command) => {
+    if (command === "run_glossary_research_request") {
+      await response.promise;
+      return { status: "ok", text: JSON.stringify({ items: [{ occId: "o1.1", status: "selected", variantId: "v1" }] }), usage: {} };
+    }
+    return null;
+  };
+  const conflict = { variantIds: ["v1", "v2"], occIds: ["o1.1"], retest: null };
+  const draft = { id: "e1", entryId: "e1", kind: "word", sourceTerms: ["mundo"], generalNote: "", variants: [{ id: "v1", target: "world", note: "", include: true }, { id: "v2", target: "planet", note: "", include: true }], conflicts: [conflict] };
+  state.glossaryResearchReport = {
+    entryDrafts: { e1: draft },
+    run: {
+      meta: { term: "mundo", providerId: "claude", modelId: "claude-opus-5-5" },
+      counting: { occurrences: [{ occId: "o1.1", entryId: "e1", itemId: "p1", start: 0, end: 5, surface: "mundo", sentenceStart: 0, sentenceEnd: 6 }] },
+      sample: { items: { p1: { itemId: "p1", text: "mundo.", occurrences: [{ start: 0, end: 5, surface: "mundo" }] } } },
+    },
+  };
+  const testing = retestResearchConflict(() => {}, "e1", 0);
+  await flushAsyncWork();
+  assert.equal(conflict.retest.status, "running");
+  updateResearchEntryField("e1", "note", "Changed while testing", 0);
+  response.resolve();
+  await testing;
+  assert.equal(conflict.retest, null);
+});
+
+test("edits during a confirmed report save remain pending and the next save uses the real term id", async () => {
+  const { saveResearchEntry, updateResearchEntryField } = await import("./glossary-research-report-flow.js");
+  installGlossaryEditorFixture();
+  state.screen = "glossaryResearchReport";
+  const push = deferred();
+  const writes = [];
+  invokeHandler = async (command, payload) => {
+    if (command === "sync_gtms_glossary_editor_repo") return { changedTermIds: [] };
+    if (command === "upsert_gtms_glossary_term") {
+      writes.push(cloneValue(payload.input));
+      return { term: glossaryTerm({ termId: "persisted-term", sourceTerms: payload.input.sourceTerms, targetTerms: payload.input.targetTerms }), previousHeadSha: "old-head" };
+    }
+    if (command === "sync_gtms_glossary_repos") { await push.promise; return []; }
+    return null;
+  };
+  const draft = { id: "e1", entryId: "e1", decision: "add", sourceTerms: ["first source"], generalNote: "", variants: [{ id: "v1", target: "first translation", note: "", include: true }], conflicts: [], saveStatus: "idle" };
+  state.glossaryResearchReport = { glossaryId: "glossary-1", runId: "run-1", run: { meta: {} }, entryDrafts: { e1: draft } };
+  const saving = saveResearchEntry(() => {}, "e1");
+  await flushAsyncWork();
+  updateResearchEntryField("e1", "target", "second translation", 0);
+  updateResearchEntryField("e1", "sourceTerms", "second source");
+  push.resolve();
+  await saving;
+  assert.equal(draft.saveStatus, "idle");
+  assert.equal(draft.existingTermId, "persisted-term");
+  assert.deepEqual(writes[0].targetTerms, ["first translation"]);
+  assert.deepEqual(state.glossaryResearchReport.run.meta.savedToGlossary.entries[0].sourceTerms, ["first source"]);
+  await saveResearchEntry(() => {}, "e1");
+  assert.equal(draft.saveStatus, "saved");
+  assert.equal(writes[1].termId, "persisted-term");
+  assert.deepEqual(writes[1].targetTerms, ["second translation"]);
+  assert.deepEqual(writes[1].sourceTerms, ["second source"]);
+});

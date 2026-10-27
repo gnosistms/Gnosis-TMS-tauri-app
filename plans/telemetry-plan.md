@@ -199,6 +199,11 @@ notice — but never against an explicit opt-out, and never anything beyond the 
   instrumentation (`Sentry.breadcrumbsIntegration({ console: false, dom: false, fetch: false,
   xhr: false, history: false })`) and add only our own via `Sentry.addBreadcrumb`. The
   default integration captures console/network/DOM, which would leak paths, URLs, and content.
+  Sentry passes *every* breadcrumb — manual `addBreadcrumb` calls included — through
+  `beforeBreadcrumb`, so that hook must not drop everything: `addTelemetryBreadcrumb`
+  sends a module-private hint and `keepOnlyAppBreadcrumbs` keeps only breadcrumbs that
+  carry it (hints are never sent). An explicit opt-out also clears recorded breadcrumbs,
+  since they outlive `close()` on Sentry's global scope.
 - **Persist consent + install UUID through the backend, not the webview.** The webview
   cannot touch the filesystem and `localStorage` is not a durable Tauri store. Read/write
   both via `tauri-plugin-store` (`store.rs`) or a dedicated Tauri command, and resolve them

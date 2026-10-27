@@ -14,6 +14,8 @@ import {
   EDITOR_ROW_FILTER_MODE_PLEASE_CHECK,
   EDITOR_ROW_FILTER_MODE_REVIEWED,
   EDITOR_ROW_FILTER_MODE_TARGET_EMPTY,
+  EDITOR_ROW_FILTER_MODE_QUOTE_BLOCK,
+  EDITOR_ROW_FILTER_MODE_HEADING,
   EDITOR_ROW_FILTER_MODE_HAS_TIMING_ERROR,
   buildEditorFilterResult,
   editorChapterFiltersAreActive,
@@ -578,3 +580,45 @@ test("changed-after-my-edit filter shows the snapshot's rows, not deleted ones",
   });
   assert.equal(beforeLoad.matchingRowCount, 0);
 });
+
+for (const { mode, label, styles } of [
+  { mode: EDITOR_ROW_FILTER_MODE_QUOTE_BLOCK, label: "Quote block", styles: ["quote", "q"] },
+  { mode: EDITOR_ROW_FILTER_MODE_HEADING, label: "Heading", styles: ["heading1", "heading2", "h1", "h2"] },
+]) {
+  test(`${label} filter matches row styles and combines with search`, () => {
+    assert.ok(editorRowFilterOptionsForChapter().some((option) => option.value === mode && option.label === label));
+    const excludedStyles = [
+      "paragraph", "indented", "centered", "custom_html", undefined,
+      ...(mode === EDITOR_ROW_FILTER_MODE_HEADING ? ["quote"] : ["heading1", "heading2"]),
+    ];
+    const rows = [
+      ...styles.map((textStyle, index) => ({
+        ...row(`styled-${index}`, { es: index === 0 ? "matching" : "other" }),
+        textStyle,
+      })),
+      { ...row("deleted", { es: "matching" }, "deleted"), textStyle: styles[0] },
+      ...excludedStyles.map((textStyle, index) => ({
+        ...row(`excluded-${index}`, { es: "matching" }),
+        textStyle,
+      })),
+    ];
+    const input = { rows, languages: [language("es")], filters: { rowFilterMode: mode } };
+    const result = buildEditorFilterResult(input);
+    assert.equal(result.filters.rowFilterMode, mode);
+    assert.equal(result.hasActiveFilters, true);
+    assert.equal(result.matchingRowCount, styles.length);
+    assert.deepEqual(result.filteredRows.map((item) => item.id), styles.map((_, index) => `styled-${index}`));
+    const searched = buildEditorFilterResult({
+      ...input,
+      filters: { rowFilterMode: mode, searchQuery: "matching" },
+    });
+    assert.deepEqual(searched.filteredRows.map((item) => item.id), ["styled-0"]);
+    assert.equal(searched.matchingRowCount, 1);
+    const locked = buildEditorFilterResult({
+      ...input,
+      rows: [...rows, row("conflict", { es: "matching" }, "active", { hasConflict: true })],
+    });
+    assert.equal(locked.isConflictLocked, true);
+    assert.deepEqual(locked.filteredRows.map((item) => item.id), ["conflict"]);
+  });
+}

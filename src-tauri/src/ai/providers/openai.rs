@@ -497,7 +497,7 @@ fn post_prompt_once(
 }
 
 /// The terminal event of a Responses stream carries the full response object.
-fn completed_response_from_stream(body: &str) -> Result<Value, String> {
+pub(crate) fn completed_response_from_stream(body: &str) -> Result<Value, String> {
     let mut completed = None;
     for event in sse::parse_events(body) {
         let Ok(mut data) = serde_json::from_str::<Value>(&event.data) else {

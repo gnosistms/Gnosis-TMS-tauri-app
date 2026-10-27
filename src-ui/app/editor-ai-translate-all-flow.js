@@ -37,6 +37,7 @@ import {
 } from "./editor-ai-batch-pool.js";
 import { buildBatchSourceContext } from "./editor-ai-context-window.js";
 import { buildEditorAiTranslationGlossaryHints } from "./editor-glossary-highlighting.js";
+import { srtLinguisticRow } from "./editor-srt-grouping.js";
 import {
   changedLanguageMatchesGlossarySource,
   ensureBatchDerivedGlossaries,
@@ -702,7 +703,7 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
       }
       if (result.status === "cached" || result.status === "derived") {
         entry.hints = buildEditorAiTranslationGlossaryHints(
-          entry.sourceText,
+          srtLinguisticRow(entry.row, chapterState)?.fields?.[entry.item.sourceLanguageCode] ?? entry.sourceText,
           entry.item.sourceLanguageCode,
           entry.item.targetLanguageCode,
           result.matcherModel ?? null,
@@ -771,7 +772,7 @@ export async function confirmEditorAiTranslateAll(render, operations = {}) {
     let batchHints = [];
     if (batch.glossaryKind === "direct") {
       batchHints = buildBatchGlossaryHints(
-        liveEntries.map((entry) => entry.sourceText),
+        liveEntries.map((entry) => srtLinguisticRow(entry.row, chapterState)?.fields?.[sourceLanguageCode] ?? entry.sourceText),
         languageBaseCode(sourceLanguage),
         languageBaseCode(targetLanguage),
         chapterState?.glossary?.matcherModel ?? null,

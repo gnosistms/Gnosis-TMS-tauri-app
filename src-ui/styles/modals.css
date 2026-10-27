@@ -27,6 +27,13 @@
     rgba(255, 251, 246, 0.66);
 }
 
+/* A dialog with no enabled control (progress and wait modals) takes focus itself.
+   Without this, WebView2 on Windows draws its dark default focus ring around the
+   card. Controls inside the dialog keep their own focus styles. */
+[data-modal-dialog]:focus {
+  outline: none;
+}
+
 .modal-card--compact {
   width: min(620px, 100%);
 }
@@ -190,6 +197,36 @@
   width: min(760px, 100%);
 }
 
+.modal-card--pdf-font-review {
+  width: min(1000px, 100%);
+}
+
+.pdf-font-review__excerpts {
+  display: grid;
+  gap: 18px;
+  max-height: 55vh;
+  min-height: 100px;
+  overflow: auto;
+}
+
+.pdf-font-review__excerpt {
+  margin: 0;
+}
+
+.pdf-font-review__excerpt figcaption {
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.pdf-font-review__excerpt img {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: white;
+  border: 1px solid var(--surface-border);
+}
+
 .modal-card .modal-card__body--editor-export {
   gap: 0;
   padding: 0;
@@ -307,6 +344,36 @@
   background: var(--modal-progress-track-bg, rgba(255, 247, 233, 0.48));
 }
 
+.editor-export-modal__saved-fonts,
+.editor-export-modal__saved-font-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.editor-export-modal__saved-fonts > button {
+  justify-self: start;
+}
+
+.editor-export-modal__saved-font-list {
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.editor-export-modal__saved-font-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.editor-export-modal__saved-font-list li > span {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
 .editor-export-modal__pdf-progress-header {
   display: flex;
   justify-content: space-between;
@@ -401,6 +468,27 @@
   color: var(--muted);
   cursor: pointer;
   font-size: 1.2rem;
+}
+
+/* Keep the shared tooltip inside its site row, clear of the list's scroll clip. */
+.editor-export-modal__wordpress-forget[data-tooltip]::before,
+.editor-export-modal__wordpress-forget[data-tooltip]:hover::before,
+.editor-export-modal__wordpress-forget[data-tooltip]:focus-visible::before {
+  top: 50%;
+  bottom: auto;
+  left: auto;
+  right: calc(100% + 10px);
+  transform: translateY(-50%);
+}
+
+.editor-export-modal__wordpress-forget[data-tooltip]::after,
+.editor-export-modal__wordpress-forget[data-tooltip]:hover::after,
+.editor-export-modal__wordpress-forget[data-tooltip]:focus-visible::after {
+  top: 50%;
+  bottom: auto;
+  left: auto;
+  right: calc(100% + 4px);
+  transform: translateY(-50%) rotate(-90deg);
 }
 
 .editor-export-modal__wordpress-actions {
@@ -1244,6 +1332,64 @@
 .glossary-term-modal__details {
   padding-top: 4px;
   background: transparent;
+}
+
+/* related entries: kept apart, linked as a reminder */
+.glossary-term-modal__related {
+  display: grid;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+/* a small, quiet button at the start of the bottom row */
+.glossary-term-modal__related-button {
+  margin-right: auto;
+  padding: 4px 6px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.glossary-term-modal__related-button:hover,
+.glossary-term-modal__related-button.is-open {
+  color: var(--link-hover);
+}
+
+.glossary-term-modal__related-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.glossary-term-modal__related-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-control);
+  background: var(--surface-strong);
+}
+
+.glossary-term-modal__related-targets {
+  color: var(--muted);
+}
+
+.glossary-term-modal__related-add {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.glossary-term-modal__related-add .field__input {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .term-lane__header {
@@ -2165,4 +2311,14 @@
   .term-variant-row__drag-spacer {
     display: none;
   }
+}
+.subtitle-meaning-examples {
+  max-height: 40vh;
+  overflow-y: auto;
+  padding-left: 1.5rem;
+  overflow-wrap: anywhere;
+}
+
+.subtitle-meaning-examples li + li {
+  margin-top: 1rem;
 }

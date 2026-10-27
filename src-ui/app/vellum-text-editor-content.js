@@ -331,8 +331,36 @@ ${dictXml([
   };
 }
 
+// Native Vellum quote attributions are attachments in the final quote paragraph,
+// not ordinary aligned paragraphs. This mirrors a Vellum 4.1.5 DOCX import archive.
+function addAttributionAttributes(builder, text, quoteFormatId, presentation = []) {
+  const cellClassId = builder.addClass([
+    "OGAttributionAttachmentCell", "OGTextAttachmentCell", "OGAttachmentCell",
+    "NSTextAttachmentCell", "NSCell", "NSObject",
+  ]);
+  const cellId = builder.addKeyedObject(cellClassId, [
+    ["NSCellFlags", "<integer>0</integer>"],
+    ["NSCellFlags2", "<integer>0</integer>"],
+  ]);
+  const attachmentId = builder.addKeyedObject(builder.addClass(["NSTextAttachment", "NSObject"]), [
+    ["NSCell", uidXml(cellId)], ["NSFileWrapper", uidXml(0)],
+  ]);
+  const formatClassId = builder.addClass(["OGMutableAttachmentFormat", "OGAttachmentFormat", "NSObject"]);
+  const formatId = builder.addKeyedObject(formatClassId, [
+    ["kind", uidXml(builder.addString("blockquoteAttribution"))],
+    ["state", uidXml(builder.addNsDictionary([
+      ["text", buildFootnoteTextAttributedStringId(builder, footnoteLinkSegments(text, false))],
+    ]))],
+  ]);
+  return builder.addNsDictionary([
+    ["OGParagraphFormat", quoteFormatId], ["OGAttachmentFormat", formatId],
+    ["NSAttachment", attachmentId], ...presentation,
+  ]);
+}
+
 function addAttributeObjects(builder, attachmentAttributes = {}) {
   const footnoteAttributes = attachmentAttributes.footnoteAttributes ?? new Map();
+  const attributionAttributes = attachmentAttributes.attributionAttributes ?? new Map();
   const imageAttributes = attachmentAttributes.imageAttributes ?? new Map();
   const subheadAttributes = attachmentAttributes.subheadAttributes ?? new Map();
   const trueId = builder.addBoolean(true);
@@ -626,6 +654,12 @@ function addAttributeObjects(builder, attachmentAttributes = {}) {
       if (String(attributeKey ?? "").startsWith("link:")) {
         return linkAttributeId(attributeKey.slice("link:".length));
       }
+      if (attributionAttributes.has(attributeKey)) {
+        if (!baseAttributes.has(attributeKey)) {
+          baseAttributes.set(attributeKey, addAttributionAttributes(builder, attributionAttributes.get(attributeKey), quoteFormatId));
+        }
+        return baseAttributes.get(attributeKey);
+      }
       if (String(attributeKey ?? "").startsWith("footnote:")) {
         return footnoteAttributeId(attributeKey);
       }
@@ -642,6 +676,7 @@ function addAttributeObjects(builder, attachmentAttributes = {}) {
 
 function addWholeChapterAttributeObjects(builder, attachmentAttributes = {}) {
   const footnoteAttributes = attachmentAttributes.footnoteAttributes ?? new Map();
+  const attributionAttributes = attachmentAttributes.attributionAttributes ?? new Map();
   const imageAttributes = attachmentAttributes.imageAttributes ?? new Map();
   const subheadAttributes = attachmentAttributes.subheadAttributes ?? new Map();
   const trueId = builder.addBoolean(true);
@@ -846,6 +881,12 @@ function addWholeChapterAttributeObjects(builder, attachmentAttributes = {}) {
     attributeIdForKey(attributeKey) {
       if (String(attributeKey ?? "").startsWith("link:")) {
         return linkAttributeId(attributeKey.slice("link:".length));
+      }
+      if (attributionAttributes.has(attributeKey)) {
+        if (!baseAttributes.has(attributeKey)) {
+          baseAttributes.set(attributeKey, addAttributionAttributes(builder, attributionAttributes.get(attributeKey), quoteFormatId));
+        }
+        return baseAttributes.get(attributeKey);
       }
       if (String(attributeKey ?? "").startsWith("footnote:")) {
         return footnoteAttributeId(attributeKey);
@@ -1466,6 +1507,13 @@ function appendBlockRuns(block, target, options = {}) {
   const footnoteContext = createFootnoteContext(block, target, options.showFootnoteLinkUrls === true);
   appendInlineNodeRuns(parsed.nodes, target, fallbackKey, {}, footnoteContext);
   appendRemainingFootnoteRuns(target, footnoteContext);
+  if (normalizeEditorRowTextStyle(block?.textStyle) === EDITOR_ROW_TEXT_STYLE_QUOTE && normalizeText(block.attribution)) {
+    const key = `attribution:${target.attributionAttributes.size + 1}`;
+    target.attributionAttributes.set(key, block.attribution);
+    appendTextRun(target, VELLUM_PARAGRAPH_SEPARATOR, "quote");
+    appendTextRun(target, VELLUM_ATTACHMENT_CHARACTER, key);
+    appendTextRun(target, VELLUM_PARAGRAPH_SEPARATOR, "default");
+  }
 }
 
 function buildVellumTextRuns(blocks, options = {}) {
@@ -1473,6 +1521,7 @@ function buildVellumTextRuns(blocks, options = {}) {
     text: "",
     runs: [],
     footnoteAttributes: new Map(),
+    attributionAttributes: new Map(),
     imageAttributes: new Map(),
     subheadAttributes: new Map(),
   };
@@ -1546,6 +1595,7 @@ export function buildVellumTextEditorContentDecodedXml(blocks, options = {}) {
     text,
     runs,
     footnoteAttributes,
+    attributionAttributes,
     imageAttributes,
     subheadAttributes,
   } = buildVellumTextRuns(blocks, {
@@ -1558,6 +1608,7 @@ export function buildVellumTextEditorContentDecodedXml(blocks, options = {}) {
   const builder = createArchiveBuilder();
   const attributes = addAttributeObjects(builder, {
     footnoteAttributes,
+    attributionAttributes,
     imageAttributes,
     subheadAttributes,
   });
@@ -1574,62 +1625,100 @@ export function buildVellumTextEditorContentDecodedXml(blocks, options = {}) {
   return builder.toXml();
 }
 
-export function buildVellumOgElementPrivateDecodedXml(blocks, options = {}) {
-  const allBlocks = Array.isArray(blocks) ? blocks : [];
-  const titleEntry = leadingChapterTitleBlock(allBlocks);
-  const bodyBlocks = titleEntry ? allBlocks.slice(1) : allBlocks;
-  const title = titleEntry?.title || normalizeText(options.title) || "Untitled Chapter";
-  const body = buildVellumTextRuns(bodyBlocks, {
-    showFootnoteLinkUrls: options.showFootnoteLinkUrls === true,
-  });
-  appendTrailingPlainTextSection(body);
-  const {
-    text,
-    runs,
-    footnoteAttributes,
-    imageAttributes,
-    subheadAttributes,
-  } = body;
-
-  const builder = createArchiveBuilder();
-  const attributes = addWholeChapterAttributeObjects(builder, {
-    footnoteAttributes,
-    imageAttributes,
-    subheadAttributes,
-  });
-  const { attributeIds, resolvedRuns } = buildResolvedAttributeArchive(builder, runs, attributes);
-  const textObjectId = addAttributedStringArchiveObject(builder, text, attributeIds, resolvedRuns, {
-    mutableArray: false,
-    mutableData: true,
-    mutableString: false,
-    stringAsData: false,
-  });
-  const elementClassId = builder.addClass([
-    "OGTypedTextElement",
-    "OGTextElementBase",
-    "OGElement",
-    "OGElementContainer",
-    "NSObject",
-  ]);
-  const elementId = builder.addKeyedObject(elementClassId, [
+// This is a distinct native element, not an OGTypedTextElement typeName.
+// Its contents and page references are generated by Vellum after pasting.
+function addVellumContentsElement(builder, element) {
+  const classId = builder.addClass(["OGTableOfContents", "OGElement", "OGElementContainer", "NSObject"]);
+  return builder.addKeyedObject(classId, [
     ["children", uidXml(0)],
-    ["displayTitleInHeading", "<true/>"],
+    ["parent", uidXml(builder.addString("$null"))],
     ["explicitOwningBook", uidXml(0)],
+    ["uniqueID", uidXml(builder.addString(createVellumElementUniqueId(element.id || element.title)))],
+    ["title", uidXml(builder.addString(normalizeText(element.title) || "Contents"))],
+    ["isExpanded", "<true/>"],
     ["includeInEBook", "<true/>"],
     ["includeInPrint", "<true/>"],
-    ["isExpanded", "<true/>"],
-    ["mtime", uidXml(builder.addDate(options.now))],
-    ["numbered", "<true/>"],
-    ["parent", uidXml(builder.addString("$null"))],
-    ["text", uidXml(textObjectId)],
-    ["title", uidXml(builder.addString(title))],
-    ["typeName", uidXml(builder.addString("chapter"))],
-    ["uniqueID", uidXml(builder.addString(createVellumElementUniqueId(title)))],
     ["wasCreatedByImport", "<false/>"],
+    ["displayTitleInHeading", "<true/>"],
+    ["beginOnBehavior", uidXml(builder.addString("beginOnRecto"))],
+    ["listChildrenOfVolumes", "<true/>"],
+    ["listChildrenOfParts", "<true/>"],
+    ["listPartSubtitles", "<false/>"],
+    ["listVolumeSubtitles", "<false/>"],
+    ["listChapterSubtitles", "<false/>"],
+    ["subheadLevelsToList", "<integer>0</integer>"],
   ]);
+}
+
+export function buildVellumOgElementPrivateDecodedXml(blocks, options = {}) {
+  const builder = createArchiveBuilder();
+  const elementIds = [];
+  const elements = Array.isArray(options.elements) && options.elements.length ? options.elements : [{ blocks, title: options.title, kind: "chapter" }];
+  for (const element of elements) {
+    if (element.kind === "contents") {
+      elementIds.push(addVellumContentsElement(builder, element));
+      continue;
+    }
+    const allBlocks = Array.isArray(element.blocks) ? element.blocks : [];
+    // Native title pages use the receiving book's metadata, not pasted text.
+    // Keep this book's title and contributors together in a formatted text page.
+    const titleEntry = element.kind === "title" ? null : leadingChapterTitleBlock(allBlocks);
+    const bodyBlocks = titleEntry ? allBlocks.slice(1) : allBlocks;
+    const title = titleEntry?.title || normalizeText(element.title) || "Untitled Chapter";
+    const body = buildVellumTextRuns(bodyBlocks, {
+      showFootnoteLinkUrls: options.showFootnoteLinkUrls === true,
+    });
+    appendTrailingPlainTextSection(body);
+    const {
+      text,
+      runs,
+      footnoteAttributes,
+      attributionAttributes,
+      imageAttributes,
+      subheadAttributes,
+    } = body;
+
+    const attributes = addWholeChapterAttributeObjects(builder, {
+      footnoteAttributes,
+      attributionAttributes,
+      imageAttributes,
+      subheadAttributes,
+    });
+    const { attributeIds, resolvedRuns } = buildResolvedAttributeArchive(builder, runs, attributes);
+    const textObjectId = addAttributedStringArchiveObject(builder, text, attributeIds, resolvedRuns, {
+      mutableArray: false,
+      mutableData: true,
+      mutableString: false,
+      stringAsData: false,
+    });
+    const elementClassId = builder.addClass([
+      "OGTypedTextElement",
+      "OGTextElementBase",
+      "OGElement",
+      "OGElementContainer",
+      "NSObject",
+    ]);
+    const elementId = builder.addKeyedObject(elementClassId, [
+      ["children", uidXml(0)],
+      ["displayTitleInHeading", element.kind === "chapter" ? "<true/>" : "<false/>"],
+      ["explicitOwningBook", uidXml(0)],
+      ["includeInEBook", "<true/>"],
+      ["includeInPrint", "<true/>"],
+      ["isExpanded", "<true/>"],
+      ["mtime", uidXml(builder.addDate(options.now))],
+      ["numbered", element.kind === "chapter" ? "<true/>" : "<false/>"],
+      ["parent", uidXml(builder.addString("$null"))],
+      ["text", uidXml(textObjectId)],
+      ["title", uidXml(builder.addString(title))],
+      ["typeName", uidXml(builder.addString(({ title: "none", copyright: "copyright", dedication: "dedication" })[element.kind] || "chapter"))],
+      ["uniqueID", uidXml(builder.addString(createVellumElementUniqueId(`${element.id || ""}:${title}`)))],
+      ["wasCreatedByImport", "<false/>"],
+    ]);
+    elementIds.push(elementId);
+  }
   const arrayClassId = builder.addClass(["NSArray", "NSObject"]);
   const elementsArrayId = builder.addKeyedObject(arrayClassId, [
-    ["NS.objects", arrayXml([uidXml(elementId)])],
+    ["NS.objects", arrayXml(elementIds.map(uidXml))],
   ]);
   const dictionaryClassId = builder.addClass(["NSDictionary", "NSObject"]);
   const keysObjectId = builder.addString("elements");

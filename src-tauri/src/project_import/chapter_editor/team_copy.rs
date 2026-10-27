@@ -14,7 +14,7 @@ use crate::project_repo_sync::{sync_project_repo, ProjectRepoSyncDescriptor};
 use crate::repo_sync_shared::load_git_transport_token;
 use crate::short_path_names::allocate_short_folder_name;
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TeamChapterCopyInput {
     job_id: String,
@@ -31,14 +31,14 @@ pub(crate) struct TeamChapterCopyInput {
     default_glossary: Option<TeamCopyDefaultGlossaryInput>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TeamCopyDefaultGlossaryInput {
     glossary_id: String,
     repo_name: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TeamChapterCopySource {
     installation_id: i64,
@@ -46,10 +46,12 @@ struct TeamChapterCopySource {
     repo_name: String,
     chapter_id: String,
     #[serde(default)]
+    chapter_ids: Vec<String>,
+    #[serde(default)]
     project_title: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TeamChapterCopyTarget {
     installation_id: i64,
@@ -120,7 +122,7 @@ pub(crate) fn start_team_chapter_copy(
         // catch_unwind so a panic in the copy still produces a terminal event —
         // otherwise the UI would wait on "exporting" forever.
         let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
-            run_team_chapter_copy(&app, &input, &session_token)
+            run_team_export_copy(&app, &input, &session_token)
         }))
         .unwrap_or_else(|_| {
             Err("The chapter copy failed unexpectedly. Please try again.".to_string())
@@ -155,6 +157,60 @@ pub(crate) fn start_team_chapter_copy(
     Ok(())
 }
 
+fn run_team_export_copy(
+    app: &AppHandle,
+    input: &TeamChapterCopyInput,
+    session_token: &str,
+) -> Result<TeamChapterCopyOutcome, String> {
+    if input.source.chapter_ids.is_empty() {
+        return run_team_chapter_copy(app, input, session_token);
+    }
+    let mut seen = BTreeSet::new();
+    if input
+        .source
+        .chapter_ids
+        .iter()
+        .any(|id| id.trim().is_empty() || !seen.insert(id))
+    {
+        return Err("The export contains an invalid or duplicate file.".to_string());
+    }
+    let mut last = None;
+    for (index, chapter_id) in input.source.chapter_ids.iter().enumerate() {
+        emit_stage(
+            app,
+            &input.job_id,
+            &format!(
+                "Copying file {} of {}...",
+                index + 1,
+                input.source.chapter_ids.len()
+            ),
+        );
+        let mut chapter_input = input.clone();
+        chapter_input.source.chapter_id = chapter_id.clone();
+        chapter_input.title.clear();
+        match run_team_chapter_copy(app, &chapter_input, session_token) {
+            Ok(outcome) => last = Some(outcome),
+            Err(error) => {
+                return Err(format!(
+                    "Copied {index} of {} files before the copy stopped: {error}",
+                    input.source.chapter_ids.len()
+                ))
+            }
+        }
+    }
+    let mut outcome = last.ok_or_else(|| "There are no files to copy.".to_string())?;
+    outcome.chapter_title = format!(
+        "{} files from {}",
+        input.source.chapter_ids.len(),
+        input
+            .source
+            .project_title
+            .as_deref()
+            .unwrap_or("the project")
+    );
+    Ok(outcome)
+}
+
 fn run_team_chapter_copy(
     app: &AppHandle,
     input: &TeamChapterCopyInput,
@@ -181,6 +237,11 @@ fn run_team_chapter_copy(
         find_chapter_path_by_id(app, &source_repo_path.join("chapters"), &source.chapter_id)?;
     let mut chapter_file: StoredChapterFile =
         read_json_file(&source_chapter_path.join("chapter.json"), "chapter.json")?;
+    if chapter_file.lifecycle.state == "deleted" {
+        return Err(
+            "A source file has been deleted. Reopen Export to update the file list.".to_string(),
+        );
+    }
     let rows = load_editor_rows(&source_chapter_path.join("rows"))?;
 
     emit_stage(app, &input.job_id, "Preparing the destination project...");
@@ -675,6 +736,7 @@ mod tests {
             StoredFieldValue {
                 plain_text: text.to_string(),
                 footnote: "a note".to_string(),
+                attribution: String::new(),
                 image_caption: String::new(),
                 image: None,
                 editor_flags: StoredFieldEditorFlags::default(),

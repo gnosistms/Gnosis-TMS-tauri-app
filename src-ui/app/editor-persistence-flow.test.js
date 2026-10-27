@@ -60,3 +60,24 @@ test("save-time smart quotes cover every column of a row without persisted track
   assert.equal(normalized.fields.en, "It\u2019s here");
   assert.equal(normalized.fields.es, "It\u2019s aqui");
 });
+
+test("explicit editor blur normalizes unchanged prose only in the visited language", () => {
+  const fields = { es: 'Dice: "yo vi".', vi: 'Nói rằng: "Tôi đã nhìn thấy...".[1]' };
+  const footnotes = { vi: [{ marker: 1, text: 'Một "ghi chú".' }] };
+  const imageCaptions = { es: 'Una "imagen"', vi: 'Một "hình ảnh"' };
+  const row = {
+    fields, persistedFields: structuredClone(fields),
+    footnotes, persistedFootnotes: structuredClone(footnotes),
+    imageCaptions, persistedImageCaptions: structuredClone(imageCaptions),
+  };
+
+  assert.equal(normalizeEditorRowForPersist(row), row);
+  const normalized = normalizeEditorRowForPersist(row, { quoteLanguageCode: "vi" });
+  assert.equal(normalized.fields.vi, 'Nói rằng: “Tôi đã nhìn thấy...”.[1]');
+  assert.equal(normalized.footnotes.vi[0].text, 'Một “ghi chú”.');
+  assert.equal(normalized.imageCaptions.vi, 'Một “hình ảnh”');
+  assert.equal(normalized.fields.es, fields.es);
+  assert.equal(normalized.imageCaptions.es, imageCaptions.es);
+  assert.equal(row.fields.vi, fields.vi);
+  assert.equal(normalizeEditorRowForPersist(normalized, { quoteLanguageCode: "vi" }), normalized);
+});

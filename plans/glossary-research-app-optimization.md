@@ -1,0 +1,28 @@
+# Integrate the tested research improvements
+
+Target: the existing `claude/glossary-research` feature in `/Users/hans/Desktop/AI-Projects/GnosisTMS-research`. The current GnosisTMS checkout does not contain the research feature and has unrelated working changes. Preserve both those changes and existing untracked research plans. No release, remote publication, paid provider calls or glossary-content writes are needed for this integration.
+
+1. Trace the research engine, model schemas, corpus/source-book adapters, review and report contracts. Capture the starting tracked-file state. Keep the existing budget, cancellation, persistence and per-entry save paths. The original research plan explicitly exempts QA lists because this feature proposes translations, not shared resource-management capabilities.
+2. Add a bounded source-aware proposal route for new runs. Read all passages for sparse terms; use a bounded, diversified source-only sample for larger populations. Use source-book pairs and original passages for borrowed technical meanings. Keep ordinary dictionary meanings separate from specialized noun/adjective uses, preserve named concepts and infer operational meanings from contrasts. Avoid separate family, parts, candidate-frequency and repeated discovery work on this route. Existing runs must resume through their original route without mixing checkpoints.
+3. Port the conservative deterministic named-unit route: unique one-edit spelling, shared distinctive number/unit equivalence, matching original-edition name and author. Preserve observed forms; never invent original language/coinage, silently correct source texts, or hardcode the tested terms. Ambiguous cases fall back to normal proposal work.
+4. Carry research meaning and selection boundaries into saved translator notes. Keep the review/edit/save flow and meaningful optional counting. Add the generic source-category and idiomatic-expression guard to glossary application. Do not ship a hardcoded planetary default or equate counting preferences with improvement over no glossary. Avoid routine repeated consistency/summary calls on the compact route, while keeping diagnostic data and old-run behavior intact.
+5. Cover route selection, zero/sparse hits, spelling proof rejection, source-language originals, meaning-note persistence, user review edits, old-run resumption, budgets/cancellation and report rendering with fake models/real saved source fixtures. Run focused tests, the existing research suite, build and relevant app checks. Inspect the final diff and report exactly where the integration lives and what was verified.
+
+Evidence: the subscription-only study in `scripts/glossary-research-lab/` and its frozen run reports. Results are exploratory; the broad thirty-term confirmation is unfinished. The sparse named-unit shortcut preserves identical tested outputs. Meaning cards improved vanidad; worlds' default-sense experiment remained mixed and requires conditional application. The app integration must preserve these limitations rather than presenting them as universal guarantees.
+
+## Implementation and verification — 2026-10-13
+
+Completed in the existing research app checkout. New runs explicitly persist `researchProcedure: compact`; resumed runs without that setting retain the original full engine. Advanced exposes both routes. Compact research uses deterministic corpus-confirmed forms, bounded source acquisition, one proposal request for small terms, and a single source-only coverage request when the available evidence is large or truncated. A conservative verified named-unit case skips model and dictionary requests entirely. No studied term or desired translation is hardcoded.
+
+Source meaning conditions survive review edits, freezing and the existing glossary save path. Dictionary-supported ordinary uses stay included even when contextual counts choose them zero times. Source-book evidence and researched grammatical meanings appear in the report. Review offers “Open report without counting”; its report shows “Not counted”, omits preference totals and translated-example claims, and keeps the normal save controls. Optional compact counting uses one judge without routine frequency, repeated consistency or summary calls. Counts are labelled contextual preferences and do not claim improvement over no glossary.
+
+Verification:
+
+- All 2,548 application unit tests pass, including 209 glossary research tests.
+- All 23 workflow tests pass. Four development-launcher tests initially could not bind their temporary local servers in the sandbox; the same unchanged suite passes with local-server access.
+- ESLint passes on all 14 changed/new JS files without warnings; `git diff --check` passes.
+- Vite production frontend build succeeds. Its existing chunk-size warning remains.
+- A read-only smoke test uses the actual corpus adapter and engine against the local source databases. Hooltampanas resolves to Hooltanpanas with G. I. Gurdjieff as source author in ES–VI and ES–EN, using both available passages and zero model/dictionary calls. Skipped counts correctly record two unmeasured occurrences.
+- Unused-export audit still reports existing findings; no new compact-module unused exports were reported.
+
+Preserved the main checkout's unrelated changes, the research checkout's two pre-existing untracked plans, and the frozen research harness/snapshots. No paid provider requests, glossary-content writes, native installer replacement, commit, merge, push or release publication occurred. This checks app integration and the deterministic source shortcut; it does not replace the unfinished thirty-term confirmation or claim that contextual counting proves translation-quality benefit.

@@ -48,3 +48,19 @@ test("resolveEditorVirtualRangeState handles an empty virtual range", () => {
     },
   );
 });
+
+test("virtual spacers exclude controls above the list without counting their height twice", () => {
+  for (const margin of [16, 106, 182]) {
+    assert.deepEqual(resolveEditorVirtualRangeState([
+      { index: 3, start: margin + 300, end: margin + 380 },
+      { index: 4, start: margin + 404, end: margin + 520 },
+    ], 1000, margin), {
+      startIndex: 3, endIndex: 5, topSpacerHeight: 300,
+      bottomSpacerHeight: 480, rangeKey: "3:5",
+    });
+    assert.equal(resolveEditorVirtualRangeState([
+      { index: 0, start: margin, end: margin + 80 },
+    ], 1000, margin).topSpacerHeight, 0);
+    assert.equal(resolveEditorVirtualRangeState([], 1000, margin).bottomSpacerHeight, 1000);
+  }
+});

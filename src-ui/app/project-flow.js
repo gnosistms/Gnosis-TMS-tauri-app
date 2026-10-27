@@ -388,17 +388,18 @@ export function primeProjectsLoadingState(teamId = state.selectedTeamId, options
     state.selectedTeamId = teamId;
   }
   const team = options.team ?? state.teams.find((item) => item?.id === teamId);
+  const canPreserveTeamContext =
+    projectsPageOwnsTeam(team) || canPreserveActiveEditorProjectContext(team);
   const canPreserveVisibleData =
-    (
-      projectsPageOwnsTeam(team)
-      || canPreserveActiveEditorProjectContext(team)
-    )
+    canPreserveTeamContext
     && (state.projects.length > 0 || state.deletedProjects.length > 0);
 
   if (!canPreserveVisibleData) {
     state.projects = [];
     state.deletedProjects = [];
-    clearResourcePageDataOwner(state.projectsPage);
+    if (!canPreserveTeamContext) {
+      clearResourcePageDataOwner(state.projectsPage);
+    }
   }
   if (!glossariesPageOwnsTeam(team)) {
     state.glossaries = [];
@@ -417,7 +418,9 @@ export function primeProjectsLoadingState(teamId = state.selectedTeamId, options
     recoveryMessage: "",
   };
   setResourcePageRefreshing(state.projectsPage, true);
-  resetProjectSearchState();
+  if (!canPreserveTeamContext) {
+    resetProjectSearchState();
+  }
   resetProjectCreation();
   resetProjectRename();
   resetProjectTransfer();
@@ -465,6 +468,7 @@ export function finishProjectsLoadingForTeam(teamId = state.selectedTeamId, rend
 }
 
 export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
+  const generation = authSessionGeneration;
   const selectedTeam = state.teams.find((team) => team.id === teamId);
   const previousProjectSnapshot = projectsPageOwnsTeam(selectedTeam)
     ? {
@@ -522,9 +526,27 @@ export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
     };
 
     ensureProjectsQueryObserver(render, selectedTeam, queryOptionsContext);
-    const querySnapshot = await queryClient.fetchQuery(
-      createProjectsQueryOptions(selectedTeam, queryOptionsContext),
-    );
+    const queryOptions = createProjectsQueryOptions(selectedTeam, queryOptionsContext);
+    let querySnapshot;
+    for (;;) {
+      try {
+        querySnapshot = await queryClient.fetchQuery(queryOptions);
+        break;
+      } catch (error) {
+        // Returning to Projects can join a query already abandoned during
+        // navigation. Once it settles, start a fresh load for this page instead
+        // of treating its stale-result rejection as a completed refresh.
+        if (
+          String(error?.message ?? error) === "Stale project refresh ignored."
+          && generation === authSessionGeneration
+          && state.screen === "projects"
+          && state.selectedTeamId === teamId
+        ) {
+          continue;
+        }
+        throw error;
+      }
+    }
     queryClient.setQueryData(projectKeys.byTeam(selectedTeam.id), querySnapshot);
     persistProjectsForTeam(selectedTeam);
     return [...state.projects, ...state.deletedProjects];

@@ -75,7 +75,7 @@ test("footnote popover request rejects source terms, unfootnoted terms, and open
   assert.equal(glossaryFootnoteInsertionRequestForMark(openEditorTarget), null);
 });
 
-test("source terms retain the ordinary glossary popover without footnote treatment", () => {
+test("source terms show glossary footnotes without enabling footnote insertion", () => {
   const sourceMark = new FakeHtmlElement({
     payload: {
       kind: "source",
@@ -83,8 +83,8 @@ test("source terms retain the ordinary glossary popover without footnote treatme
       variants: ["Kabbalah scholars"],
       footnotes: ["Target footnote"],
     },
-    displayField: null,
-    displayText: null,
+    displayField: displayField(),
+    displayText: new FakeHtmlElement(),
   });
 
   assert.deepEqual(glossaryPopoverContextForMark(sourceMark), {
@@ -96,10 +96,12 @@ test("source terms retain the ordinary glossary popover without footnote treatme
       noTranslation: null,
       targetVariantNote: "",
       translatorNotes: [],
-      footnotes: [],
+      footnotes: ["Target footnote"],
       originTerms: [],
     },
   });
+  assert.equal(glossaryFootnotePopoverPayloadForMark(sourceMark), null);
+  assert.equal(glossaryFootnoteInsertionRequestForMark(sourceMark), null);
 });
 
 test("unfootnoted target terms retain the ordinary glossary popover in a closed editor", () => {

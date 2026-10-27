@@ -683,6 +683,7 @@ pub(super) fn editor_row_from_stored_row_file(
     let fields = row_plain_text_map(&row);
     let footnotes = row_footnote_map(&row);
     let image_captions = row_image_caption_map(&row);
+    let attributions = row_attribution_map(&row);
     let images = row_image_map(repo_path, &row);
     let text_style = row_text_style(&row);
     let timings = row_timing_map(&row);
@@ -711,6 +712,7 @@ pub(super) fn editor_row_from_stored_row_file(
         fields,
         footnotes,
         image_captions,
+        attributions,
         images,
         timings,
         srt_timing,
@@ -787,6 +789,13 @@ pub(super) fn row_image_caption_map(row: &StoredRowFile) -> BTreeMap<String, Str
                 normalize_editor_image_caption_value(&value.image_caption),
             )
         })
+        .collect()
+}
+
+pub(super) fn row_attribution_map(row: &StoredRowFile) -> BTreeMap<String, String> {
+    row.fields
+        .iter()
+        .map(|(code, value)| (code.clone(), value.attribution.clone()))
         .collect()
 }
 

@@ -18,6 +18,7 @@ import {
 } from "./app/editor-virtualization.js";
 import { loadUserTeams, setGithubAppInstallation } from "./app/team-setup-flow.js";
 import { syncLanguagePickerAlphabetIndexes } from "./app/language-picker-alphabet-index.js";
+import { renderResearchModals, researchModalHostContains, researchModalOpen } from "./app/research-modal-host.js";
 import { initializeConnectivity } from "./app/offline-connectivity.js";
 import { registerLoadingSpinnerContinuity } from "./app/loading-spinner-continuity.js";
 import {
@@ -130,6 +131,9 @@ import { renderEditorImagePreviewOverlay } from "./screens/editor-image-preview-
 import { renderEditorInsertLinkModal } from "./screens/editor-insert-link-modal.js";
 import { renderGlossariesScreen } from "./screens/glossaries.js";
 import { renderGlossaryEditorScreen } from "./screens/glossary-editor.js";
+import { renderGlossaryResearchReportScreen } from "./screens/glossary-research-report.js";
+import { renderGlossaryResearchStudio } from "./screens/glossary-research-studio.js";
+import { captureStudioDisclosures, restoreStudioDisclosures } from "./app/glossary-research-studio-disclosures.js";
 import { renderNavigationLoadingModal } from "./screens/navigation-loading-modal.js";
 import { buildProjectsScreenListState, renderProjectsScreen } from "./screens/projects.js";
 import { renderProjectsListItemsRange } from "./screens/project-list-flat-render.js";
@@ -141,6 +145,7 @@ import {
   deferProjectsRenderWhileSelectEngaged,
   installProjectsRenderHold,
 } from "./app/projects-render-hold.js";
+import { deferRenderWhileComposing } from "./app/ime-composition-hold.js";
 import { reconcileProjectsScrollOnRender } from "./app/projects-scroll-store.js";
 import { buildProjectsRenderKey } from "./app/projects-render-key.js";
 import { renderQaListEditorScreen } from "./screens/qa-list-editor.js";
@@ -191,6 +196,8 @@ const screenRenderers = {
   qa: () => renderQaScreen(state),
   qaListEditor: () => renderQaListEditorScreen(state),
   glossaryEditor: () => renderGlossaryEditorScreen(state),
+  glossaryResearchReport: () => renderGlossaryResearchReportScreen(state),
+  glossaryResearchStudio: () => renderGlossaryResearchStudio(state),
   translate: () => renderTranslateScreen(state),
 };
 
@@ -204,6 +211,8 @@ const titles = {
   qa: "QA Lists - Gnosis TMS",
   qaListEditor: "QA List Editor - Gnosis TMS",
   glossaryEditor: "Glossary Editor - Gnosis TMS",
+  glossaryResearchReport: "Research Report - Gnosis TMS",
+  glossaryResearchStudio: "Glossary Research Studio - Gnosis TMS",
   translate: "Translate - Gnosis TMS",
 };
 
@@ -400,6 +409,12 @@ function skipUnchangedProjectsRender(options) {
 }
 
 function render(options = {}) {
+  // While an input method is composing a word in a field, renders defer so
+  // the field isn't replaced mid-word (scrambled Telex/IME text); the hold
+  // flushes when the composition ends. See ime-composition-hold.js.
+  if (deferRenderWhileComposing(options)) {
+    return undefined;
+  }
   if (skipUnchangedProjectsRender(options)) {
     return undefined;
   }
@@ -827,7 +842,8 @@ function renderWithOptionsImpl(options = {}) {
   // Must run before the screen renderer: the projects initial window is
   // computed from the session anchor this reconciliation seeds or clears.
   reconcileProjectsScrollOnRender(previousScreen, state);
-  const focusSnapshot = captureFocusedInputState();
+  // Focus inside a research window stays where it is: that window is not rebuilt.
+  const focusSnapshot = researchModalHostContains(document.activeElement) ? null : captureFocusedInputState();
   const {
     anchor: translateAnchor,
     hadPendingAnchor,
@@ -845,6 +861,7 @@ function renderWithOptionsImpl(options = {}) {
       : null;
   const modalSnapshot = captureModalRenderState(app);
   lastProjectsRenderKey = state.screen === "projects" ? currentProjectsRenderKey() : null;
+  const studioDisclosures = captureStudioDisclosures(app);
   app.innerHTML =
     renderScreen()
     + renderAppUpdateModal(state)
@@ -852,6 +869,7 @@ function renderWithOptionsImpl(options = {}) {
     + renderTeamResourceMigrationModal(state)
     + renderTelemetryDisclosureModal(state)
     + renderConnectionFailureModal(state);
+  restoreStudioDisclosures(app, studioDisclosures);
   renderAppUpdateSurface(app, state.appUpdate);
   if (app.firstElementChild instanceof HTMLElement) {
     app.firstElementChild.inert = ["preparing", "restarting"].includes(state.appUpdate.status);
@@ -889,7 +907,10 @@ function renderWithOptionsImpl(options = {}) {
   const restoredFocus = shouldRestoreFocusedInputStateForScope(focusSnapshot, "full")
     ? restoreFocusedInputState(focusSnapshot)
     : false;
-  reconcileModalRenderState(app, modalSnapshot);
+  // An open research window owns the dialog focus; see research-modal-host.js.
+  if (!researchModalOpen()) {
+    reconcileModalRenderState(app, modalSnapshot);
+  }
   if (focusSnapshot?.kind === "editor-row-field" && !restoredFocus && focusSnapshot.rowId) {
     scheduleDirtyEditorRowScan(render, focusSnapshot.rowId);
   }
@@ -901,6 +922,7 @@ function renderWithOptionsImpl(options = {}) {
   restoreAssistantTranscriptScrollTop(assistantTranscriptScrollTop, app);
   scrollActivePreviewSearchMatchIntoView(app);
   syncLanguagePickerAlphabetIndexes(app);
+  renderResearchModals(state);
   restoreTargetLanguageManagerPickerScrollTop(targetLanguageManagerPickerScrollTop);
   refreshTranslateSessionAnchorAfterRender();
   document.title = titles[state.screen] ?? "Gnosis TMS";

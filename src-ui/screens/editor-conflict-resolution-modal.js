@@ -3,6 +3,7 @@ import { formatErrorForDisplay } from "../app/error-display.js";
 import {
   editorConflictResolutionShowsFootnotes,
   editorConflictResolutionShowsImageCaptions,
+  editorConflictResolutionShowsAttributions,
   editorConflictResolutionShowsImages,
 } from "../app/editor-conflict-resolution-model.js";
 
@@ -56,6 +57,7 @@ export function renderEditorConflictResolutionModal(state) {
   const isSubmitting = modal.status === "loading";
   const showFootnotes = editorConflictResolutionShowsFootnotes(modal);
   const showImageCaptions = editorConflictResolutionShowsImageCaptions(modal);
+  const showAttributions = editorConflictResolutionShowsAttributions(modal);
   const showImages = editorConflictResolutionShowsImages(modal);
   const initiallyFocusFootnote =
     showFootnotes && String(modal.localText ?? "") === String(modal.remoteText ?? "");
@@ -82,9 +84,10 @@ export function renderEditorConflictResolutionModal(state) {
     modalDefault: true,
   });
 
-  const renderVersionStack = (text, footnote, imageCaption, imageUrl) => {
+  const renderVersionStack = (text, footnote, imageCaption, imageUrl, attribution) => {
     const blocks = [
       renderVersionText(text),
+      showAttributions ? renderVersionText(attribution, "editor-conflict-modal__version-text--footnote") : "",
       showFootnotes
         ? renderVersionText(footnote, "editor-conflict-modal__version-text--footnote")
         : "",
@@ -107,14 +110,14 @@ export function renderEditorConflictResolutionModal(state) {
           <div class="editor-conflict-modal__versions">
             <section class="editor-conflict-modal__column">
               <p class="editor-conflict-modal__version-label">Your version</p>
-              ${renderVersionStack(modal.localText, modal.localFootnote, modal.localImageCaption, modal.localImageUrl)}
+              ${renderVersionStack(modal.localText, modal.localFootnote, modal.localImageCaption, modal.localImageUrl, modal.localAttribution)}
               <div class="editor-conflict-modal__version-actions">
                 ${localCopyButton}
               </div>
             </section>
             <section class="editor-conflict-modal__column">
               <p class="editor-conflict-modal__version-label">${escapeHtml(remoteVersionLabel(modal.remoteVersion))}</p>
-              ${renderVersionStack(modal.remoteText, modal.remoteFootnote, modal.remoteImageCaption, modal.remoteImageUrl)}
+              ${renderVersionStack(modal.remoteText, modal.remoteFootnote, modal.remoteImageCaption, modal.remoteImageUrl, modal.remoteAttribution)}
               <div class="editor-conflict-modal__version-actions">
                 ${remoteCopyButton}
               </div>
@@ -159,6 +162,22 @@ export function renderEditorConflictResolutionModal(state) {
                     placeholder="Enter image caption"
                     ${isSubmitting ? "disabled" : ""}
                   >${escapeHtml(modal.finalImageCaption)}</textarea>
+                </label>
+              `
+              : ""
+          }
+          ${
+            showAttributions
+              ? `
+                <label class="field editor-conflict-modal__final-field editor-conflict-modal__final-field--footnote">
+                  <span class="field__label">Resolved attribution</span>
+                  <textarea
+                    class="field__textarea editor-conflict-modal__final-input editor-conflict-modal__final-input--footnote"
+                    data-editor-conflict-final-attribution-input
+                    rows="1"
+                    placeholder="Enter attribution"
+                    ${isSubmitting ? "disabled" : ""}
+                  >${escapeHtml(modal.finalAttribution)}</textarea>
                 </label>
               `
               : ""

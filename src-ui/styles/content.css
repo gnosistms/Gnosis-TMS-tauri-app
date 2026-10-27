@@ -565,6 +565,9 @@
 }
 
 .project-vlist__card {
+  /* Keep notice margins inside the painted segment, including its measured
+     height, so they cannot open a gap before the next file row. */
+  display: flow-root;
   /* --panel-surface is a vertical gradient; painting it per segment restarts
      the fade on every row and bands. Use the flat composite of its two layers
      at the gradient midpoint instead. (Fully opaque precomputed composites

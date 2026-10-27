@@ -174,3 +174,22 @@ test("mergeDirtyEditorRowWithRemote keeps overlapping uploaded image changes uns
 
   assert.equal(result.status, "unsupported");
 });
+
+test("attributions merge separately from the quote body and conflicting sources require resolution", () => {
+  const original = { fields: { en: "Body" }, attributions: { en: "Author" } };
+  const merged = mergeEditorRowVersions({
+    baseFields: original.fields, localFields: { en: "Edited body" },
+    baseAttributions: original.attributions, localAttributions: original.attributions,
+    remoteRow: { ...original, attributions: { en: "Remote author" } },
+  });
+  assert.equal(merged.status, "merged");
+  assert.equal(merged.mergedAttributions.en, "Remote author");
+  assert.equal(merged.mergedFields.en, "Edited body");
+  const conflict = mergeEditorRowVersions({
+    baseFields: original.fields, localFields: original.fields,
+    baseAttributions: original.attributions, localAttributions: { en: "Local author" },
+    remoteRow: { ...original, attributions: { en: "Remote author" } },
+  });
+  assert.equal(conflict.status, "conflict");
+  assert.deepEqual(conflict.conflicts, [{ languageCode: "en", contentKind: "attribution" }]);
+});

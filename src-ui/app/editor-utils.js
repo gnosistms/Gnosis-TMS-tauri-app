@@ -22,6 +22,8 @@ export function normalizeEditorContentKind(value) {
     return "footnote";
   }
 
+  if (value === "attribution") return "attribution";
+
   if (value === "image-caption") {
     return "image-caption";
   }
@@ -167,6 +169,8 @@ export function buildEditorFieldSelector(rowId, languageCode, contentKind = "fie
   const kindSelector =
     kind === "footnote"
       ? '[data-content-kind="footnote"]'
+      : kind === "attribution"
+        ? '[data-content-kind="attribution"]'
       : kind === "image-caption"
         ? '[data-content-kind="image-caption"]'
         : ":not([data-content-kind])";

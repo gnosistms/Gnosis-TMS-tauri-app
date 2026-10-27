@@ -27,6 +27,10 @@ export function buildEditorConflictResolutionModalState(row, languageCode) {
   const remoteImageCaption = normalizeEditorConflictResolutionValue(
     row?.conflictState?.remoteRow?.imageCaptions?.[languageCode],
   );
+  const localAttribution = normalizeEditorConflictResolutionValue(row?.attributions?.[languageCode]);
+  const remoteAttribution = normalizeEditorConflictResolutionValue(
+    row?.conflictState?.remoteRow?.attributions?.[languageCode],
+  );
   const localImageUrl = editorFieldImageUrl(row?.images?.[languageCode]);
   const remoteImageUrl = editorFieldImageUrl(row?.conflictState?.remoteRow?.images?.[languageCode]);
 
@@ -42,8 +46,11 @@ export function buildEditorConflictResolutionModalState(row, languageCode) {
     remoteFootnote,
     finalFootnote: remoteFootnote,
     localImageCaption,
+    localAttribution,
     remoteImageCaption,
+    remoteAttribution,
     finalImageCaption: remoteImageCaption,
+    finalAttribution: remoteAttribution,
     localImageUrl,
     remoteImageUrl,
     finalImageUrl: remoteImageUrl,
@@ -55,6 +62,7 @@ export function buildEditorConflictResolutionSaveState(row, languageCode, modal)
   const remoteFields = cloneRowFields(row?.conflictState?.remoteRow?.fields);
   const remoteFootnotes = serializeFootnoteMap(row?.conflictState?.remoteRow?.footnotes);
   const remoteImageCaptions = cloneRowFields(row?.conflictState?.remoteRow?.imageCaptions);
+  const remoteAttributions = cloneRowFields(row?.conflictState?.remoteRow?.attributions);
   const remoteImage = row?.conflictState?.remoteRow?.images?.[languageCode] ?? null;
   const resolvedImage = urlImageFromString(modal?.finalImageUrl);
   const nextLocalFields = {
@@ -69,15 +77,21 @@ export function buildEditorConflictResolutionSaveState(row, languageCode, modal)
     ...cloneRowFields(row?.imageCaptions),
     [languageCode]: normalizeEditorConflictResolutionValue(modal?.finalImageCaption),
   };
+  const nextLocalAttributions = {
+    ...cloneRowFields(row?.attributions),
+    [languageCode]: normalizeEditorConflictResolutionValue(modal?.finalAttribution),
+  };
   const resolvesImageConflict = editorConflictResolutionShowsImages(modal);
 
   return {
     remoteFields,
     remoteFootnotes,
     remoteImageCaptions,
+    remoteAttributions,
     nextLocalFields,
     nextLocalFootnotes,
     nextLocalImageCaptions,
+    nextLocalAttributions,
     fieldsToPersist: {
       ...remoteFields,
       [languageCode]: nextLocalFields[languageCode] ?? "",
@@ -90,10 +104,21 @@ export function buildEditorConflictResolutionSaveState(row, languageCode, modal)
       ...remoteImageCaptions,
       [languageCode]: nextLocalImageCaptions[languageCode] ?? "",
     },
+    attributionsToPersist: {
+      ...remoteAttributions,
+      [languageCode]: nextLocalAttributions[languageCode] ?? "",
+    },
     // Images are only threaded through the save when an image conflict is being
     // resolved, so unrelated rows never carry image writes into the merge command.
     imagesToPersist: resolvesImageConflict ? { [languageCode]: resolvedImage } : null,
-    baseImages: resolvesImageConflict ? { [languageCode]: remoteImage } : null,
+    baseImages: resolvesImageConflict ? {
+      [languageCode]: remoteImage ? {
+        kind: remoteImage.kind,
+        // UI images use null for unused properties; the command requires strings.
+        url: remoteImage.url ?? "",
+        path: remoteImage.path ?? "",
+      } : null,
+    } : null,
   };
 }
 
@@ -108,6 +133,9 @@ export function buildEditorConflictResolutionVersionSelection(modal, side) {
     ),
     finalImageCaption: normalizeEditorConflictResolutionValue(
       isLocal ? modal?.localImageCaption : modal?.remoteImageCaption,
+    ),
+    finalAttribution: normalizeEditorConflictResolutionValue(
+      isLocal ? modal?.localAttribution : modal?.remoteAttribution,
     ),
     finalImageUrl: normalizeEditorConflictResolutionValue(
       isLocal ? modal?.localImageUrl : modal?.remoteImageUrl,
@@ -135,6 +163,19 @@ export function editorConflictResolutionShowsImageCaptions(modal) {
   return (
     imageCaptions.some((imageCaption) => imageCaption.trim().length > 0)
     || new Set(imageCaptions).size > 1
+  );
+}
+
+export function editorConflictResolutionShowsAttributions(modal) {
+  const attributions = [
+    modal?.localAttribution,
+    modal?.remoteAttribution,
+    modal?.finalAttribution,
+  ].map((value) => normalizeEditorConflictResolutionValue(value));
+
+  return (
+    attributions.some((attribution) => attribution.trim().length > 0)
+    || new Set(attributions).size > 1
   );
 }
 

@@ -11,6 +11,7 @@ import {
 import { editorFootnotesForAiReview } from "./editor-footnotes.js";
 import { editorFootnotesPlainText } from "./editor-utils.js";
 import { languageBaseCode } from "./editor-language-utils.js";
+import { srtLinguisticRow } from "./editor-srt-grouping.js";
 
 export function normalizeEditorAiReviewMode(value) {
   return String(value ?? "").trim() === "meaning" ? "meaning" : "grammar";
@@ -235,7 +236,7 @@ export function buildEditorAiReviewBatchRequest({
 
   const glossaryHints = meaning
     ? buildBatchGlossaryHints(
-      rowInputs.map((row) => row.sourceText),
+      rowList.map((row) => readEditorReviewRowFieldText(srtLinguisticRow(row, chapterState), sourceLanguageCode)),
       languageBaseCode(sourceLanguage),
       languageBaseCode(targetLanguage),
       chapterState?.glossary?.matcherModel ?? null,
