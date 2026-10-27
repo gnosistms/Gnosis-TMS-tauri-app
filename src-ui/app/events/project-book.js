@@ -1,6 +1,9 @@
+import { setBookRedundancyChoice } from "../project-book-redundancy-flow.js";
 import { importBookImage, moveProjectBookItem, updateBookField } from "../project-book-flow.js";
+import { escapeHtml } from "../../lib/ui.js";
 import { state } from "../state.js";
 import { renderSelectedBookPage } from "../../screens/project-book-composer.js";
+import { dismissBookChapterMenu, dismissBookChapterMenuOutside, handleBookChapterMenuClick, handleBookChapterMenuKeydown } from "../project-book-chapter-menu.js";
 let drag = null;
 function cancel() {
   drag?.preview?.remove();
@@ -8,22 +11,47 @@ function cancel() {
   drag = null;
 }
 export function registerProjectBookEvents(render) {
+  document.addEventListener("change", (event) => {
+    const input = event.target.closest?.("[data-book-redundancy-choice]");
+    if (input) setBookRedundancyChoice(input.dataset.bookRedundancyChoice, input.checked);
+  });
+  document.addEventListener("click", (event) => handleBookChapterMenuClick(event, render));
+  document.addEventListener("keydown", handleBookChapterMenuKeydown);
+  document.addEventListener("scroll", (event) => dismissBookChapterMenuOutside(event.target), true);
+  window.addEventListener("resize", () => dismissBookChapterMenu());
+  window.addEventListener("blur", () => dismissBookChapterMenu());
   document.addEventListener("input", (event) => {
     const field = event.target.closest?.("[data-book-field]");
-    if (field) updateBookField(field, () => {
-      const preview = document.querySelector(".book-composer__preview");
+    if (field) updateBookField(field, field.dataset.bookChapterTitle ? () => {
+      const preview = document.querySelector(".book-composer__page-scroll");
       if (preview) preview.innerHTML = renderSelectedBookPage(state.editorChapter.exportModal);
-    });
+    } : render);
   });
   document.addEventListener("mousedown", (event) => { if (event.target.closest?.('[data-action^="book-copyright:"]')) event.preventDefault(); });
   document.addEventListener("paste", (event) => {
     const editor = event.target.closest?.("[data-book-copyright-editor]");
     if (!editor) return;
     event.preventDefault();
-    document.execCommand("insertText", false, event.clipboardData.getData("text/plain"));
+    const paragraphs = event.clipboardData.getData("text/plain").split(/\r\n?|\n/)
+      .map((line) => `<p>${escapeHtml(line).replaceAll("\u2028", "<br>") || "<br>"}</p>`).join("");
+    document.execCommand("insertHTML", false, paragraphs);
     updateBookField(editor);
   });
   document.addEventListener("pointerdown", (event) => {
+    dismissBookChapterMenuOutside(event.target);
+    const settings = event.target.closest?.("[data-book-settings-button]");
+    if (settings && event.button === 0) { settings.focus({ preventScroll: true }); return; }
+    const chapterRow = event.target.closest?.("[data-book-chapter-select]");
+    const control = event.target.closest?.("input, textarea, button");
+    // WebKit does not focus clicked buttons. Move focus before a section's
+    // full render so it cannot restore the previously edited chapter title.
+    const previewButton = event.target.closest?.("[data-book-preview-select], [data-book-section-select]")
+      || (!control && chapterRow?.querySelector("[data-book-preview-select]"));
+    if (previewButton && event.button === 0) {
+      if (!control) event.preventDefault();
+      previewButton.focus({ preventScroll: true });
+      return;
+    }
     const handle = event.target.closest?.("[data-book-drag-handle]");
     if (!handle || event.button !== 0) return;
     const row = handle.closest("[data-book-item]");

@@ -557,6 +557,18 @@ test("a composed book archives separate ordered Vellum elements and their front-
 });
 
 
+test("Vellum chapter numbering honors the book preference without excluding the chapter", () => {
+  const xml = buildVellumOgElementPrivateDecodedXml([], { elements: [
+    { id: "one", title: "First", kind: "chapter", blocks: [] },
+    { id: "interlude", title: "Interlude", kind: "chapter", numbered: false, blocks: [] },
+    { id: "two", title: "Last", kind: "chapter", numbered: true, blocks: [] },
+  ] });
+  assert.deepEqual([...xml.matchAll(/<key>numbered<\/key><(true|false)\/>/g)].map((match) => match[1]), ["true", "false", "true"]);
+  assert.equal((xml.match(/<key>includeInPrint<\/key><true\/>/g) || []).length, 3);
+  assert.equal((xml.match(/<key>includeInEBook<\/key><true\/>/g) || []).length, 3);
+  assert.match(xml, /<string>Interlude<\/string>/);
+});
+
 test("book contents use Vellum's native generator and title pages retain their heading in the body", () => {
   const xml = buildVellumOgElementPrivateDecodedXml([], { elements: [
     { id: "title", title: "Exported Book", kind: "title", blocks: [

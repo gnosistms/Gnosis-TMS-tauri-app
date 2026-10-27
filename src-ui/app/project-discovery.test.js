@@ -778,7 +778,7 @@ test("project loading clears stale missing-local-repo repair after repo sync clo
   assert.equal(state.projects[0].chapters.length, 1);
 });
 
-test("repo sync publications render once after applying project state", async () => {
+test("repo sync publications apply progress state and request one settled render", async () => {
   setupProjectDiscoveryFlowTest();
   installProjectDiscoveryInvokeMock({
     remoteProjectsPromise: Promise.resolve([{
@@ -808,14 +808,14 @@ test("repo sync publications render once after applying project state", async ()
     if (!["repoSyncProgress", "repoSyncSnapshot"].includes(type)) currentPublication = null;
   };
   await loadProjectSnapshotForTeam((renderOptions) => {
-    if (!renderOptions?.scope && currentPublication) {
+    if (renderOptions?.scope === "projects-background" && !renderOptions.projectUpdatePending && currentPublication) {
       currentPublication.renders += 1;
       assert.equal(state.projectRepoSyncByProjectId["project-1"].status, "upToDate");
     }
   }, "team-1", options);
 
   assert.deepEqual(publications, [
-    { type: "repoSyncProgress", renders: 1 },
+    { type: "repoSyncProgress", renders: 0 },
     { type: "repoSyncSnapshot", renders: 1 },
   ]);
 });

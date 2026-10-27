@@ -715,17 +715,15 @@ export function subscribeRepoWriteQueue(listener) {
   return () => queueListeners.delete(listener);
 }
 
-export function waitForRepoWriteQueueIdle(scope = null) {
-  if (!repoWriteQueueHasActiveWrites(scope)) {
-    return Promise.resolve(getRepoWriteQueueSnapshot(scope));
-  }
-
+export function waitForRepoWriteQueueIdle(scope = null, { operationTypes = null } = {}) {
+  const snapshot = () => getRepoWriteQueueSnapshot(scope);
+  const hasPending = () => operationTypes
+    ? snapshot().operations.some((operation) => operationTypes.includes(operation.operationType))
+    : repoWriteQueueHasActiveWrites(scope);
+  if (!hasPending()) return Promise.resolve(snapshot());
   return new Promise((resolve) => {
     const unsubscribe = subscribeRepoWriteQueue(() => {
-      if (!repoWriteQueueHasActiveWrites(scope)) {
-        unsubscribe();
-        resolve(getRepoWriteQueueSnapshot(scope));
-      }
+      if (!hasPending()) { unsubscribe(); resolve(snapshot()); }
     });
   });
 }

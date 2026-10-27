@@ -80,7 +80,7 @@ pub(crate) struct ExportChapterFileResponse {
     skipped_rows_without_timing: Option<usize>,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ExportChapterFileInput {
     #[serde(default)]
@@ -268,8 +268,14 @@ pub(crate) fn export_gtms_chapter_file_sync(
             render_rtf_document(&print_document, input.footnote_links_as_plain_text),
         )
         .map_err(|error| format!("Could not write '{}': {error}", output_path.display())),
-        "md" => fs::write(&output_path, render_md_document(&print_document))
-            .map_err(|error| format!("Could not write '{}': {error}", output_path.display())),
+        "md" => fs::write(
+            &output_path,
+            render_md_document(&prepare_markdown_book_images(
+                &print_document,
+                &output_path,
+            )?),
+        )
+        .map_err(|error| format!("Could not write '{}': {error}", output_path.display())),
         _ => Err("Unsupported export format.".to_string()),
     };
     write_result?;
@@ -304,7 +310,12 @@ pub(super) fn load_export_chapters(
         if !sanitize_chapter_languages(&chapter.languages).iter().any(|language| language.code == input.language_code) {
             return Err(format!("The selected export language is not available in '{}'.", chapter.title));
         }
-        Ok((chapter, load_editor_rows(&path.join("rows"))?))
+        let mut rows = load_editor_rows(&path.join("rows"))?;
+        if let Some(item) = input.book_items.iter().find(|item| item.kind == "chapter" && item.chapter_id == *id) {
+            super::book_redundancy::validate_revision(&rows, &input.language_code, &item.review_revision, repo_path)?;
+            super::book_redundancy::filter_rows(&mut rows, &input.language_code, &item.exclusions)?;
+        }
+        Ok((chapter, rows))
     }).collect()
 }
 
@@ -393,14 +404,12 @@ pub(super) fn build_scoped_export_document(
             item.title = document.title.clone();
             chapter_documents.insert(item.id.clone(), document);
         }
-        let contents = items
-            .iter()
-            .filter(|item| !matches!(item.kind.as_str(), "title" | "copyright" | "contents"))
-            .map(|item| item.title.clone())
-            .collect::<Vec<_>>();
         let mut seen = BTreeSet::new();
         let mut parts = Vec::new();
         for item in &items {
+            let Some(part_item) = super::book_export::filtered_item(item)? else {
+                continue;
+            };
             if item.id.is_empty() || !seen.insert(item.id.clone()) {
                 return Err("The book contains a duplicate or invalid item.".into());
             }
@@ -409,20 +418,18 @@ pub(super) fn build_scoped_export_document(
                     .remove(&item.id)
                     .ok_or_else(|| "A chapter selected for the book is missing.".to_string())?
             } else {
-                section_document(app, item, document_language, &contents)?
+                section_document(app, &part_item, document_language, &[])?
             };
             parts.push(BookPart {
-                item: item.clone(),
+                item: part_item,
                 document,
             });
         }
-        let mut flattened = combine_export_documents(
+        return Ok(compose_book_document(
             &input.project_title,
             document_language,
-            parts.iter().map(|part| part.document.clone()).collect(),
-        );
-        flattened.book_parts = parts;
-        return Ok(flattened);
+            parts,
+        ));
     }
     if input.chapter_ids.is_empty() {
         return documents
@@ -435,6 +442,124 @@ pub(super) fn build_scoped_export_document(
         &input.language_code,
         documents,
     ))
+}
+
+struct BookContentsEntry {
+    title: String,
+    part_index: usize,
+    block_index: Option<usize>,
+}
+
+fn book_chapter_numbers(parts: &[BookPart]) -> Vec<Option<usize>> {
+    let mut number = 0;
+    parts
+        .iter()
+        .map(|part| {
+            if part.item.kind == "chapter" && part.item.numbered != Some(false) {
+                number += 1;
+                Some(number)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn book_contents_entries(parts: &[BookPart], include_h1: bool) -> Vec<BookContentsEntry> {
+    let numbers = book_chapter_numbers(parts);
+    let mut entries = Vec::new();
+    for (index, part) in parts
+        .iter()
+        .enumerate()
+        .filter(|(_, part)| part.item.kind == "chapter")
+    {
+        entries.push(BookContentsEntry {
+            title: numbers[index]
+                .map(|number| format!("{number}. {}", part.document.title))
+                .unwrap_or_else(|| part.document.title.clone()),
+            part_index: index,
+            block_index: None,
+        });
+        if include_h1 {
+            for (block_index, block) in part.document.blocks.iter().enumerate().skip(1) {
+                if let ExportBlock::Text { text_style, text } = block {
+                    if export_text_style(Some(text_style)) == "heading1" {
+                        entries.push(BookContentsEntry {
+                            title: inline_visible_text(text),
+                            part_index: index,
+                            block_index: Some(block_index),
+                        });
+                    }
+                }
+            }
+        }
+    }
+    entries
+}
+
+// PDF and Vellum keep numbering as structural metadata. Flat document formats
+// need the same generated number in their chapter-heading text instead.
+fn numbered_book_documents(parts: &[BookPart]) -> Vec<ExportDocument> {
+    let mut documents = Vec::with_capacity(parts.len());
+    for (part, number) in parts.iter().zip(book_chapter_numbers(parts)) {
+        let mut document = part.document.clone();
+        if let Some(number) = number {
+            document.title = format!("{number}. {}", document.title);
+            let leading_heading = matches!(document.blocks.first(), Some(ExportBlock::Text { text_style, .. }) if export_text_style(Some(text_style)) == "heading1");
+            if leading_heading {
+                if let Some(ExportBlock::Text { text, .. }) = document.blocks.first_mut() {
+                    *text = format!("{number}. {text}");
+                }
+            } else {
+                for block in &mut document.blocks {
+                    if let ExportBlock::Footnote {
+                        anchor_block: Some(index),
+                        ..
+                    } = block
+                    {
+                        *index += 1;
+                    }
+                }
+                document.blocks.insert(
+                    0,
+                    ExportBlock::Text {
+                        text_style: "heading1".into(),
+                        text: document.title.clone(),
+                    },
+                );
+            }
+        }
+        documents.push(document);
+    }
+    documents
+}
+
+fn compose_book_document(title: &str, language: &str, mut parts: Vec<BookPart>) -> ExportDocument {
+    for index in 0..parts.len() {
+        if parts[index].item.kind != "contents" {
+            continue;
+        }
+        let entries = book_contents_entries(&parts, parts[index].item.include_h1_headings);
+        let mut blocks = vec![ExportBlock::Text {
+            text_style: "heading1".into(),
+            text: parts[index].item.title.clone(),
+        }];
+        blocks.extend(entries.into_iter().map(|entry| {
+            ExportBlock::Text {
+                text_style: if entry.block_index.is_some() {
+                    "indented"
+                } else {
+                    "paragraph"
+                }
+                .into(),
+                text: entry.title,
+            }
+        }));
+        parts[index].document.blocks = blocks;
+    }
+    let mut flattened = combine_export_documents(title, language, numbered_book_documents(&parts));
+    flattened.book_parts = parts;
+    flattened
 }
 
 pub(super) fn apply_book_chapter_title(
@@ -1515,6 +1640,53 @@ fn export_image_link(image: &ExportImage) -> String {
     }
 }
 
+fn prepare_markdown_book_images(
+    document: &ExportDocument,
+    output_path: &Path,
+) -> Result<ExportDocument, String> {
+    let mut document = document.clone();
+    let file_name = output_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("Choose a valid file name for the Markdown export.")?;
+    let folder = format!("{file_name}.assets");
+    let parent = output_path.parent().unwrap_or_else(|| Path::new("."));
+    for block in &mut document.blocks {
+        let ExportBlock::Image { image, .. } = block else {
+            continue;
+        };
+        let ExportImage::Upload {
+            raw_url: None,
+            repo_relative_path: id,
+            absolute_path,
+        } = image
+        else {
+            continue;
+        };
+        // Book assets have content-addressed filenames; chapter uploads retain
+        // their existing repository/remote link behavior.
+        let Some((hash, extension)) = id.split_once('.') else {
+            continue;
+        };
+        if hash.len() != 64
+            || !hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+            || !matches!(extension, "png" | "jpg" | "webp" | "svg")
+        {
+            continue;
+        }
+        let directory = parent.join(&folder);
+        fs::create_dir_all(&directory)
+            .map_err(|_| "Could not create the Markdown image folder.")?;
+        fs::copy(&*absolute_path, directory.join(&*id))
+            .map_err(|_| "Could not copy a book image for the Markdown export.")?;
+        let link_folder = url::form_urlencoded::byte_serialize(folder.as_bytes())
+            .collect::<String>()
+            .replace('+', "%20");
+        *image = ExportImage::Url(format!("{link_folder}/{id}"));
+    }
+    Ok(document)
+}
+
 fn render_md_document(document: &ExportDocument) -> String {
     let mut fragments: Vec<String> = Vec::new();
     let mut footnote_definitions: Vec<String> = Vec::new();
@@ -1765,6 +1937,8 @@ fn render_docx_document(
     let mut body = String::new();
     let mut rel_index = 1usize;
     let mut media_index = 1usize;
+    let mut bookmark_index = document.book_parts.len();
+    let numbered_sections = numbered_book_documents(&document.book_parts);
 
     let sections: Vec<(Option<&BookPart>, &ExportDocument)> = if document.book_parts.is_empty() {
         vec![(None, document)]
@@ -1772,7 +1946,8 @@ fn render_docx_document(
         document
             .book_parts
             .iter()
-            .map(|part| (Some(part), &part.document))
+            .zip(&numbered_sections)
+            .map(|(part, numbered)| (Some(part), numbered))
             .collect()
     };
     for (section_index, (part, section)) in sections.iter().enumerate() {
@@ -1786,14 +1961,33 @@ fn render_docx_document(
                 &section.title,
                 false,
             ));
-            for (index, entry) in document.book_parts.iter().enumerate() {
-                if matches!(entry.item.kind.as_str(), "title" | "copyright" | "contents") {
-                    continue;
-                }
-                body.push_str(&format!("<w:p><w:hyperlink w:anchor=\"BookItem{index}\"><w:r>{}</w:r></w:hyperlink><w:r><w:tab/></w:r><w:fldSimple w:instr=\" PAGEREF BookItem{index} \\h \" w:dirty=\"true\"><w:r><w:t> </w:t></w:r></w:fldSimple></w:p>", docx_run_text_xml(&entry.document.title)));
+            for entry in book_contents_entries(
+                &document.book_parts,
+                part.is_some_and(|part| part.item.include_h1_headings),
+            ) {
+                let target = entry
+                    .block_index
+                    .map(|block| format!("BookItem{}Block{block}", entry.part_index))
+                    .unwrap_or_else(|| format!("BookItem{}", entry.part_index));
+                let indent = if entry.block_index.is_some() {
+                    "<w:pPr><w:ind w:left=\"360\"/></w:pPr>"
+                } else {
+                    ""
+                };
+                body.push_str(&format!("<w:p>{indent}<w:hyperlink w:anchor=\"{target}\"><w:r>{}</w:r></w:hyperlink><w:r><w:tab/></w:r><w:fldSimple w:instr=\" PAGEREF {target} \\h \" w:dirty=\"true\"><w:r><w:t> </w:t></w:r></w:fldSimple></w:p>", docx_run_text_xml(&entry.title)));
             }
         } else {
-            for block in &section.blocks {
+            for (block_index, block) in section.blocks.iter().enumerate() {
+                let bookmark = if part_kind == "chapter"
+                    && block_index > 0
+                    && matches!(block, ExportBlock::Text { text_style, .. } if export_text_style(Some(text_style)) == "heading1")
+                {
+                    let bookmark = format!("<w:bookmarkStart w:id=\"{bookmark_index}\" w:name=\"BookItem{section_index}Block{block_index}\"/><w:bookmarkEnd w:id=\"{bookmark_index}\"/>");
+                    bookmark_index += 1;
+                    bookmark
+                } else {
+                    String::new()
+                };
                 match block {
                     ExportBlock::Text { text_style, text } => {
                         if part_kind == "title" {
@@ -1804,7 +1998,10 @@ fn render_docx_document(
                             };
                             body.push_str(&format!("<w:p><w:pPr><w:jc w:val=\"center\"/><w:spacing w:before=\"240\" w:after=\"240\"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii=\"Alegreya\" w:hAnsi=\"Alegreya\"/><w:sz w:val=\"{size}\"/></w:rPr>{}</w:r></w:p>", docx_run_text_xml(&inline_visible_text(text))));
                         } else {
-                            body.push_str(&docx_text_paragraph_xml(Some(text_style), text, false));
+                            body.push_str(&docx_paragraph_runs_xml(
+                                Some(text_style),
+                                &format!("{bookmark}{}", docx_runs_xml(text, false)),
+                            ));
                         }
                     }
                     ExportBlock::Attribution { text } => {
@@ -2831,6 +3028,159 @@ mod tests {
     use super::*;
     use std::io::Read;
     use zip::ZipArchive;
+
+    fn review_book(include_h1: bool) -> ExportDocument {
+        let part = |kind: &str, title: &str, numbered: bool| BookPart {
+            item: BookItemInput {
+                id: title.into(),
+                kind: kind.into(),
+                title: title.into(),
+                numbered: Some(numbered),
+                include_h1_headings: include_h1,
+                ..Default::default()
+            },
+            document: ExportDocument {
+                title: title.into(),
+                language_code: "en".into(),
+                book_parts: vec![],
+                blocks: vec![
+                    ExportBlock::Text {
+                        text_style: "heading1".into(),
+                        text: title.into(),
+                    },
+                    ExportBlock::Text {
+                        text_style: "paragraph".into(),
+                        text: "Body [1]".into(),
+                    },
+                    ExportBlock::Footnote {
+                        number: 1,
+                        marker: 1,
+                        anchor_block: Some(1),
+                        text: "Preserved note".into(),
+                    },
+                    ExportBlock::Text {
+                        text_style: "heading1".into(),
+                        text: format!("Inside {title}"),
+                    },
+                ],
+            },
+        };
+        compose_book_document(
+            "Book",
+            "en",
+            vec![
+                part("contents", "Contents", false),
+                part("dedication", "Dedication", false),
+                part("chapter", "First", true),
+                part("chapter", "Interlude", false),
+                part("chapter", "Last", true),
+                part("image", "Image page", false),
+            ],
+        )
+    }
+
+    #[test]
+    fn composed_documents_share_contents_and_chapter_numbering_without_mutating_pdf_parts() {
+        for include_h1 in [false, true] {
+            let book = review_book(include_h1);
+            let entries: Vec<_> = book.book_parts[0]
+                .document
+                .blocks
+                .iter()
+                .filter_map(|block| match block {
+                    ExportBlock::Text { text, .. } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect();
+            let expected = if include_h1 {
+                vec![
+                    "Contents",
+                    "1. First",
+                    "Inside First",
+                    "Interlude",
+                    "Inside Interlude",
+                    "2. Last",
+                    "Inside Last",
+                ]
+            } else {
+                vec!["Contents", "1. First", "Interlude", "2. Last"]
+            };
+            assert_eq!(entries, expected);
+            let html = render_html_document(&book).unwrap();
+            assert!(html.contains("<h1>1. First</h1>"));
+            assert!(html.contains("<h1>Interlude</h1>"));
+            assert!(html.contains("<h1>2. Last</h1>"));
+            assert!(render_txt_document(&book).contains("2. LAST"));
+            assert!(render_md_document(&book).contains("# 2. Last"));
+            assert!(render_rtf_document(&book, false).contains("2. Last"));
+            assert_eq!(book.book_parts[2].document.title, "First");
+            assert!(
+                matches!(&book.book_parts[2].document.blocks[0], ExportBlock::Text { text, .. } if text == "First")
+            );
+
+            let bytes = render_docx_document(&book, false).unwrap();
+            let mut zip = ZipArchive::new(Cursor::new(bytes)).unwrap();
+            let mut xml = String::new();
+            zip.by_name("word/document.xml")
+                .unwrap()
+                .read_to_string(&mut xml)
+                .unwrap();
+            assert_eq!(xml.matches(">1. First</w:t>").count(), 2);
+            assert_eq!(xml.matches(">2. Last</w:t>").count(), 2);
+            assert!(xml.contains(" PAGEREF BookItem2 "));
+            assert!(!xml.contains(" PAGEREF BookItem1 "));
+            assert!(!xml.contains(" PAGEREF BookItem5 "));
+            assert_eq!(xml.contains(" PAGEREF BookItem2Block3 "), include_h1);
+            assert!(xml.contains("w:name=\"BookItem2Block3\""));
+            assert!(xml.contains("Preserved note"));
+        }
+    }
+
+    #[test]
+    fn markdown_bundles_book_images_beside_the_document_and_keeps_remote_links() {
+        let root =
+            std::env::temp_dir().join(format!("gnosis-markdown-book-{}", uuid::Uuid::now_v7()));
+        fs::create_dir_all(root.join("cache")).unwrap();
+        let svg = b"<svg xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M0 0L1 1\"/></svg>";
+        let id = format!("{:x}.svg", Sha256::digest(svg));
+        let source = root.join("cache").join(&id);
+        fs::write(&source, svg).unwrap();
+        let book = document(vec![
+            ExportBlock::Image {
+                image: ExportImage::Upload {
+                    repo_relative_path: id.clone(),
+                    raw_url: None,
+                    absolute_path: source.clone(),
+                },
+                caption: "Logo".into(),
+            },
+            ExportBlock::Image {
+                image: ExportImage::Url("https://example.org/chapter.png".into()),
+                caption: "".into(),
+            },
+        ]);
+        let output = root.join("Book vi #1.md");
+        let prepared = prepare_markdown_book_images(&book, &output).unwrap();
+        let md = render_md_document(&prepared);
+        assert!(md.contains(&format!("![](<Book%20vi%20%231.md.assets/{id}>)")));
+        assert!(md.contains("![](<https://example.org/chapter.png>)"));
+        assert_eq!(
+            fs::read(root.join("Book vi #1.md.assets").join(&id)).unwrap(),
+            svg
+        );
+        assert!(matches!(
+            &book.blocks[0],
+            ExportBlock::Image {
+                image: ExportImage::Upload { raw_url: None, .. },
+                ..
+            }
+        ));
+        // Repeated exports overwrite the same content-addressed resource safely.
+        prepare_markdown_book_images(&book, &output).unwrap();
+        fs::remove_file(source).unwrap();
+        assert!(prepare_markdown_book_images(&book, &output).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn quote_attribution_survives_document_exports() {
@@ -4440,5 +4790,88 @@ mod tests {
 
         assert!(output.contains("HYPERLINK \"http://127.0.0.1/image.png\""));
         assert!(!output.contains("\\pict"));
+    }
+
+    #[test]
+    fn book_redundancy_filters_all_native_formats_before_numbering() {
+        use super::super::book_redundancy::{field_signature, filter_rows, Exclusion};
+        let mut source = row("row", "a", "First[1] second[2]", "paragraph");
+        let field = source.fields.get_mut("en").expect("field");
+        field.footnote = "[1] Redundant explanation\n[2] Surviving explanation".into();
+        field.image = Some(StoredFieldImage {
+            kind: "url".into(),
+            url: Some("https://example.com/omitted.png".into()),
+            path: None,
+        });
+        field.image_caption = "Omitted caption".into();
+        let signature = field_signature(field).expect("signature");
+        let original = source.clone();
+        let mut rows = vec![source];
+        filter_rows(
+            &mut rows,
+            "en",
+            &[
+                Exclusion {
+                    row_id: "row".into(),
+                    kind: "footnote".into(),
+                    marker: 1,
+                    signature: signature.clone(),
+                },
+                Exclusion {
+                    row_id: "row".into(),
+                    kind: "image".into(),
+                    marker: 0,
+                    signature,
+                },
+            ],
+        )
+        .expect("filter");
+        let chapter = StoredChapterFile {
+            chapter_id: "chapter".into(),
+            title: "Chapter".into(),
+            lifecycle: active_lifecycle_state(),
+            source_files: vec![],
+            languages: vec![export_language("en", "target", None)],
+            settings: None,
+            source_word_count: None,
+        };
+        let chapter_document =
+            build_export_document(Path::new("/repo"), &chapter, &rows, "en", None, "")
+                .expect("document");
+        let document = combine_export_documents("Book", "en", vec![chapter_document]);
+        for rendered in [
+            render_html_document(&document).expect("html"),
+            render_txt_document(&document),
+            render_md_document(&document),
+            render_rtf_document(&document, false),
+        ] {
+            assert!(!rendered.contains("Redundant explanation"));
+            assert!(!rendered.contains("Omitted caption"));
+            assert!(rendered.contains("Surviving explanation"));
+        }
+        assert!(render_txt_document(&document).contains("second[1]"));
+        for (bytes, path) in [
+            (
+                render_docx_document(&document, false).expect("docx"),
+                "word/document.xml",
+            ),
+            (
+                render_xlsx_workbook("Book", &chapter.languages, &rows, false).expect("xlsx"),
+                "xl/worksheets/sheet1.xml",
+            ),
+        ] {
+            let mut archive = ZipArchive::new(Cursor::new(bytes)).expect("zip");
+            let mut xml = String::new();
+            archive
+                .by_name(path)
+                .expect("xml")
+                .read_to_string(&mut xml)
+                .expect("read");
+            assert!(!xml.contains("Redundant explanation"));
+            assert!(xml.contains("Surviving explanation"));
+            assert!(!xml.contains("Omitted caption"));
+        }
+        assert_eq!(original.fields["en"].plain_text, "First[1] second[2]");
+        assert!(original.fields["en"].image.is_some());
     }
 }

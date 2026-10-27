@@ -70,7 +70,8 @@ test("submitEditorInsertLink inserts the link into a focused footnote field, not
       Object.assign(this, { disabled: false, readOnly: false, ...props });
     }
 
-    setSelectionRange() {}
+    setSelectionRange(start, end) { this.selectionStart = start; this.selectionEnd = end; }
+    focus() { document.activeElement = this; }
   }
 
   const previous = {

@@ -136,7 +136,7 @@ for (const status of ["upToDate", "syncError"]) {
     document.activeElement = null;
     flushProjectsHeldRender();
     assert.deepEqual(performed, [{
-      scope: "full",
+      scope: "projects-background",
       status,
       syncBadgeVisible: false,
       noticeVisible: status === "syncError",
@@ -402,7 +402,7 @@ test("unchanged repo polls skip publication and rendering but changed details st
       return [{ ...initial, localPath: "/updated/project/path" }];
     }
     if (polls === 4) {
-      assert.equal(fullRenders, rendersAfterPreviousUpdate + 1);
+      assert.equal(fullRenders, rendersAfterPreviousUpdate, "changed progress updates do not redraw the list");
       assert.equal(publications.at(-1).localPath, "/updated/project/path");
       return [{ ...initial, status: "clean" }];
     }
@@ -410,14 +410,14 @@ test("unchanged repo polls skip publication and rendering but changed details st
   };
 
   const result = await reconcileProjectRepoSyncStates((options) => {
-    if (!options?.scope) fullRenders += 1;
+    if (!options?.scope || (options.scope === "projects-background" && !options.projectUpdatePending)) fullRenders += 1;
   }, team(), [project()], {
     onSnapshots: (snapshots) => publications.push(snapshots[0]),
   });
 
   assert.equal(polls, 4);
   assert.deepEqual(publications.map((snapshot) => snapshot.status), ["syncing", "syncing", "clean"]);
-  assert.equal(fullRenders, 4, "three changed snapshots plus final reconciliation");
+  assert.equal(fullRenders, 1, "changed snapshots publish immediately, with one final list redraw");
   assert.equal(result[0].status, "clean");
   assert.equal(state.projectRepoSyncByProjectId["project-1"].status, "clean");
 });

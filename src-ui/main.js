@@ -1,4 +1,7 @@
 import { reconcileEditorRowConnection } from "./app/editor-row-connection.js";
+import { updateBookRedundancyView } from "./screens/project-book-redundancy.js";
+import { renderProjectBookPreview } from "./app/project-book-preview-render.js";
+import { commitProjectsPageHtml, deferProjectsBackgroundRender } from "./app/projects-background-render.js";
 import {
   beginStoredBrokerSessionInspection,
   prepareStoredBrokerSessionRestore,
@@ -781,7 +784,44 @@ function renderWithOptions(options = {}) {
   }
 }
 
+function renderProjectsBackgroundSurfaces() {
+  renderStatusSurfaceOnly();
+  renderAppUpdateSurface(app, state.appUpdate);
+  if (app.firstElementChild instanceof HTMLElement) {
+    app.firstElementChild.inert = ["preparing", "restarting"].includes(state.appUpdate.status);
+  }
+  const snapshot = captureModalRenderState(app);
+  let changed = false;
+  // Discovery can open migration progress or a connection/update prompt. Patch
+  // those overlays independently while leaving the projects list and export alone.
+  for (const [selector, html] of [
+    ['[data-modal-dialog^="app-update:"]', renderAppUpdateModal(state)],
+    ['[data-modal-dialog="navigation-loading"]', renderNavigationLoadingModal(state)],
+    ['[data-modal-dialog="team-resource-migration"]', renderTeamResourceMigrationModal(state)],
+    ['[data-modal-dialog="telemetry-disclosure"]', renderTelemetryDisclosureModal(state)],
+    ['[data-modal-dialog="connection-failure"]', renderConnectionFailureModal(state)],
+  ]) {
+    const current = app.querySelector(selector)?.closest(".modal-backdrop");
+    const template = document.createElement("template");
+    template.innerHTML = html.trim();
+    const next = template.content.firstElementChild;
+    if ((current?.outerHTML ?? "") === (next?.outerHTML ?? "")) continue;
+    if (current) {
+      if (next) current.replaceWith(next);
+      else current.remove();
+    } else if (next) app.append(next);
+    changed = true;
+  }
+  if (changed) reconcileModalRenderState(app, snapshot);
+}
+
 function renderWithOptionsImpl(options = {}) {
+  if (options.scope === "book-redundancy" && updateBookRedundancyView(app, state)) return;
+  if (options.scope === "project-book-preview" && renderProjectBookPreview(app, state)) return;
+  if (deferProjectsBackgroundRender(app, state, options)) {
+    renderProjectsBackgroundSurfaces();
+    return;
+  }
   if (options?.scope === "app-update-progress") {
     renderAppUpdateSurface(app, state.appUpdate);
     return;
@@ -868,13 +908,18 @@ function renderWithOptionsImpl(options = {}) {
   const modalSnapshot = captureModalRenderState(app);
   lastProjectsRenderKey = state.screen === "projects" ? currentProjectsRenderKey() : null;
   const studioDisclosures = captureStudioDisclosures(app);
-  app.innerHTML =
+  const focusedBeforeRender = document.activeElement;
+  const html =
     renderScreen()
     + renderAppUpdateModal(state)
     + renderNavigationLoadingModal(state)
     + renderTeamResourceMigrationModal(state)
     + renderTelemetryDisclosureModal(state)
     + renderConnectionFailureModal(state);
+  if (!commitProjectsPageHtml(app, html, state, options)) {
+    renderStatusSurfaceOnly();
+    return;
+  }
   restoreStudioDisclosures(app, studioDisclosures);
   renderAppUpdateSurface(app, state.appUpdate);
   if (app.firstElementChild instanceof HTMLElement) {
@@ -910,9 +955,10 @@ function renderWithOptionsImpl(options = {}) {
       usedVisibleFallback,
     });
   }
-  const restoredFocus = shouldRestoreFocusedInputStateForScope(focusSnapshot, "full")
-    ? restoreFocusedInputState(focusSnapshot)
-    : false;
+  const restoredFocus = document.activeElement === focusedBeforeRender
+    || (shouldRestoreFocusedInputStateForScope(focusSnapshot, "full")
+      ? restoreFocusedInputState(focusSnapshot)
+      : false);
   // An open research window owns the dialog focus; see research-modal-host.js.
   if (!researchModalOpen()) {
     reconcileModalRenderState(app, modalSnapshot);
@@ -1106,6 +1152,9 @@ window.__gnosisDebug = {
     const summary = applyProjectsPageFixture(state, options);
     render();
     return summary;
+  },
+  renderProjectsBackground() {
+    render({ scope: "projects-background" });
   },
   setProjectsVirtualizationDisabled(disabled = true) {
     const applied = setProjectsVirtualizationDisabled(disabled);

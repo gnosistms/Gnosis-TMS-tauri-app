@@ -13,6 +13,15 @@ test("all tokenless access-gated native commands expose a recoverable entry chec
     assert.ok(names.has(action), `the source audit must discover ${action}`);
   }
   for (const fn of inventory.native) {
+    // Export settings have a fire-and-forget job API: reads remain ungated,
+    // save preflight runs in the worker, and its result returns via an event.
+    if (fn.name === "start_project_export_settings_sync") {
+      assert.match(fn.body, /async_runtime::spawn\s*\(\s*async\s+move/);
+      assert.match(fn.body, /spawn_blocking\s*\(\s*move\s*\|\|\s*\{\s*let preflight = if input.settings.is_some\(\)\s*\{\s*crate::installation_access::require_command_access/);
+      assert.match(fn.body, /synchronize_export_settings_event\(&worker, input, preflight\)/);
+      assert.match(fn.body, /app.emit\(/);
+      continue;
+    }
     // The shared gate must be the first statement in the worker, before writes.
     assert.match(fn.body, /spawn_blocking\s*\(\s*move\s*\|\|\s*\{\s*crate::installation_access::require_command_access\(/, fn.name);
     const prefix = fn.body.slice(0, fn.body.indexOf("spawn_blocking"))

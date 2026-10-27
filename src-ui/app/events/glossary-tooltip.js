@@ -4,6 +4,7 @@ import {
 } from "../glossary-ruby.js";
 import { canManageGlossaries } from "../glossary-shared.js";
 import { renderSanitizedInlineMarkupHtml } from "../editor-inline-markup.js";
+import { isMacPlatform } from "../runtime.js";
 
 // Double-click detection runs on pointerdown: the display-field pointerdown
 // handler calls preventDefault, which suppresses the derived mousedown events, so
@@ -425,7 +426,7 @@ function renderStructuredGlossaryTooltipBody(
     if (showInsertHint) {
       const insertHint = document.createElement("span");
       insertHint.className = "editor-glossary-info-card__hint editor-glossary-info-card__hint--insert";
-      insertHint.textContent = "Ctrl + F to insert footnote";
+      insertHint.textContent = `${isMacPlatform() ? "Command" : "Ctrl"} + F to insert footnote`;
       footer.append(insertHint);
     }
     body.append(footer);

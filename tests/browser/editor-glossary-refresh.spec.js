@@ -94,6 +94,27 @@ async function mountEditor(page, rowCount = 2) {
   if (await disclosureSave.count()) await disclosureSave.click();
 }
 
+for (const { platform, modifier, hint } of [
+  { platform: "mac", modifier: "Meta", hint: "Command + F to insert footnote" },
+  { platform: "windows", modifier: "Control", hint: "Ctrl + F to insert footnote" },
+]) {
+  test(`hovered glossary footnotes use the matching shortcut and hint on ${platform}`, async ({ page }) => {
+    await mountEditor(page);
+    await page.evaluate((platform) => history.replaceState(null, "", `?platform=${platform}`), platform);
+    const mark = page.locator('[data-row-id="fixture-row-0001"] [data-language-code="vi"] [data-editor-glossary-mark]').first();
+    await mark.hover();
+    await expect(page.locator(".editor-glossary-tooltip")).toContainText(hint);
+    await page.keyboard.press(`${modifier}+f`);
+    await expect.poll(() => page.evaluate(async () => {
+      const { state } = await import("/app/state.js");
+      return state.editorChapter.footnoteEditor;
+    })).toEqual({ rowId: "fixture-row-0001", languageCode: "vi", marker: 1 });
+    const footnote = page.locator('textarea[data-editor-row-field][data-content-kind="footnote"][data-row-id="fixture-row-0001"][data-language-code="vi"]');
+    await expect(footnote).toHaveValue("old footnote");
+    await expect(footnote).toBeFocused();
+  });
+}
+
 test("a footnote edit after opening during batch sync preserves newly synced wording", async ({ page }) => {
   await mountEditor(page);
   await page.evaluate(() => { window.holdBatch = true; });

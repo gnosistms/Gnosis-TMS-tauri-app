@@ -1,6 +1,9 @@
+import { cancelBookTitlePreview, requestBookTitlePreview } from "./project-book-title-preview.js";
 import { initializeProjectBook, selectProjectBookLanguage, loadSelectedBookPreview } from "./project-book-flow.js";
 import { bookChapterDefaultTitle, bookItemIncluded, bookExportItems } from "./project-book-model.js";
 import { saveBookSettings } from "./project-book-settings.js";
+import { cancelBookRedundancy } from "./project-book-redundancy-flow.js";
+import { beginBookSettingsSync, leaveBookSettingsPage1 } from "./project-book-settings-sync.js";
 import {
   exportDefaultKey, loadProjectExportBlocks, projectExportChapters,
   projectExportScopeInput,
@@ -222,6 +225,7 @@ function pdfFontInspectionInput() {
 let pdfFontInspectionRequestId = 0;
 
 export async function refreshPdfFontInspection(render, operations = {}) {
+  if (currentExportModal()?.book && currentExportModal()?.page !== 3) return;
   const modal = currentExportModal();
   if (!modal?.isOpen || modal.selectedOptionId !== "file:pdf" || exportModalIsBusy(modal)) {
     return null;
@@ -356,7 +360,7 @@ function openExportOptionsForChapter(render, chapterId, languageCode, projectSco
     ensureTeamCopyPaneReady(render);
   }
   render();
-  if (currentExportModal()?.selectedOptionId === "file:pdf" && currentExportModal()?.page !== 1) {
+  if (currentExportModal()?.selectedOptionId === "file:pdf" && (!currentExportModal()?.book || currentExportModal()?.page === 3)) {
     void refreshPdfFontInspection(render);
   }
 }
@@ -397,6 +401,7 @@ export function openProjectExportOptions(render, projectId) {
   };
   if (scope.selectedOptionId === "link:team") scope.selectedOptionId = "file:pdf";
   openExportOptionsForChapter(render, chapters[0].id, composition.languageCode, scope);
+  beginBookSettingsSync(render);
   void loadSelectedBookPreview(render);
 
 }
@@ -433,10 +438,13 @@ export function selectEditorExportPaperSize(render, paperSize) {
 
   updateEditorExportModal({ pdfPaperSize: normalized, error: "" });
   saveStoredEditorExportPaperSize(normalized);
+  if (modal.book) saveBookSettings(currentExportModal());
   render();
+  requestBookTitlePreview(render);
 }
 
 export function closeEditorExportOptions(render, operations = {}) {
+  cancelBookTitlePreview();
   const modal = currentExportModal();
   if (!modal?.isOpen || modal.status === "cancelling") {
     return;
@@ -474,6 +482,8 @@ export function closeEditorExportOptions(render, operations = {}) {
     return;
   }
 
+  cancelBookRedundancy();
+  leaveBookSettingsPage1(render);
   updateEditorExportModal({ isOpen: false, status: "idle", error: "" });
   render();
 }
@@ -866,7 +876,7 @@ async function submitEditorCopyExport(render, option, operations) {
   let blocks;
   try {
     blocks = modal.projectId
-      ? await loadProjectExportBlocks(modal, operations)
+      ? await loadProjectExportBlocks(modal, operations, { numberChapters: option.format !== "vellum" })
       : buildEditorPreviewDocument(state.editorChapter?.rows, languageCode);
   } catch (error) {
     failEditorExport(render, error);
@@ -916,7 +926,7 @@ async function submitEditorCopyExport(render, option, operations) {
       }
       const ogElementPrivateDecodedPropertyListXml = buildVellumOgElementPrivateDecodedXml(vellumBlocks, {
         title: modal.projectTitle || state.editorChapter?.fileTitle || context?.chapter?.name || "",
-        ...(modal.book ? { elements: bookExportItems(modal).map((item) => {
+        ...(modal.book ? { elements: bookExportItems(modal).filter((item) => item.kind !== "image" || !item.exclusions?.length).map((item) => {
           const blocks = groupedBlocks.get(item.id) || [];
           return { ...item, title: item.kind === "chapter" ? bookChapterDefaultTitle(blocks, item.title) : item.title, blocks };
         }) } : {}),

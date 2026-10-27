@@ -2,6 +2,7 @@ import { isMacPlatform } from "../runtime.js";
 import { state } from "../state.js";
 import { chapterHasSrtSourceFormat } from "../editor-timing.js";
 import { activeGlossaryFootnoteInsertionRequest } from "./glossary-tooltip.js";
+import { registerEditorFieldUndoEvents, handleEditorFieldUndoShortcut } from "../editor-field-undo.js";
 
 const PAGE_SEARCH_INPUT_SELECTOR = [
   "[data-project-search-input]",
@@ -100,9 +101,11 @@ export function shouldInsertHoveredGlossaryFootnote(event, hasActiveRequest) {
     return false;
   }
   const key = typeof event.key === "string" ? event.key.toLowerCase() : "";
+  const hasModifier = isMacPlatform()
+    ? event.metaKey && !event.ctrlKey
+    : event.ctrlKey && !event.metaKey;
   return key === "f"
-    && event.ctrlKey
-    && !event.metaKey
+    && hasModifier
     && !event.altKey
     && !event.shiftKey;
 }
@@ -121,6 +124,7 @@ function focusPageSearchInput(selectContents = false) {
 }
 
 export function registerKeyboardShortcutEvents(dispatchAction) {
+  registerEditorFieldUndoEvents(document);
   document.addEventListener("keydown", (event) => {
     const glossaryTermModalField = event.target instanceof Element
       ? event.target.closest(
@@ -147,6 +151,8 @@ export function registerKeyboardShortcutEvents(dispatchAction) {
     if (document.querySelector("[data-modal-dialog]")) {
       return;
     }
+
+    if (handleEditorFieldUndoShortcut(event)) return;
 
     const inlineStyle = inlineStyleForEditorShortcut(event);
     if (inlineStyle) {

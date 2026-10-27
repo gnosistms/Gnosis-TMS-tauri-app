@@ -5852,6 +5852,64 @@ test.describe("editor regressions", () => {
     await expect(await readEditorFieldValue(page, rowId, languageCode)).toBe(`alpha 0010 target text`);
   });
 
+  for (const contentKind of ["image-caption", "field", "footnote"]) {
+    test(`inserting a ${contentKind} link supports native undo and redo`, async ({ page }) => {
+      const rowId = "fixture-row-0001";
+      const languageCode = "vi";
+      await mountEditorFixture(page, {
+        rowCount: 2,
+        chapterStatus: "ready",
+        imagesByRowId: { [rowId]: { [languageCode]: { kind: "url", url: "https://example.com/caption.png" } } },
+      }, { mockTauri: true });
+      const main = await activateMainEditorField(page, rowId, languageCode);
+      await page.evaluate(() => history.replaceState(null, "", "?platform=mac"));
+      let caption = main;
+      if (contentKind === "image-caption") caption = await activateImageCaptionEditor(page, rowId, languageCode);
+      if (contentKind === "footnote") {
+        await clickLocatorCenter(page, page.locator(`[data-editor-footnote-button][data-row-id="${rowId}"][data-language-code="${languageCode}"]`));
+        caption = page.locator(`[data-editor-row-field][data-row-id="${rowId}"][data-language-code="${languageCode}"][data-content-kind="footnote"]`);
+      }
+      const beforeTyping = await caption.inputValue();
+      await caption.fill("A caption with linked text.");
+      await caption.press("End");
+      await caption.pressSequentially(" More");
+      await setEditorSelectionRange(page, rowId, languageCode, 15, 21, contentKind);
+      await caption.evaluate((field) => { window.__captionBeforeLink = field; });
+      await clickLocatorCenter(page, page.locator(`[data-action="open-editor-insert-link"][data-row-id="${rowId}"][data-language-code="${languageCode}"]`));
+      const modal = page.getByRole("dialog", { name: "Paste the link URL", exact: true });
+      await modal.locator("[data-editor-insert-link-url-input]").fill("https://example.com/link");
+      await modal.getByRole("button", { name: "Ok", exact: true }).click();
+      const plain = "A caption with linked text. More";
+      const linked = 'A caption with <a href="https://example.com/link">linked</a> text. More';
+      await expect(caption).toHaveValue(linked);
+      await expect(caption).toBeFocused();
+      await caption.press("Meta+z");
+      await expect(caption).toHaveValue(plain);
+      await expect.poll(() => page.evaluate((kind) => {
+        const row = window.__gnosisDebug.readEditorState().rows[0];
+        return kind === "field" ? row.fields.vi : kind === "image-caption" ? row.imageCaptions.vi : row.footnotes.vi.find((entry) => entry.marker === 1)?.text;
+      }, contentKind)).toBe(plain);
+      await caption.press("Meta+Shift+z");
+      await expect(caption).toHaveValue(linked);
+      expect(await caption.evaluate((field) => field === window.__captionBeforeLink)).toBe(true);
+      // Updating an existing href is another single undo step, without nesting.
+      const selected = linked.indexOf(">linked") + 1;
+      await setEditorSelectionRange(page, rowId, languageCode, selected, selected + 6, contentKind);
+      await clickLocatorCenter(page, page.locator(`[data-action="open-editor-insert-link"][data-row-id="${rowId}"][data-language-code="${languageCode}"]`));
+      await modal.locator("[data-editor-insert-link-url-input]").fill("https://example.com/updated");
+      await modal.getByRole("button", { name: "Ok", exact: true }).click();
+      await expect(caption).toHaveValue(linked.replace("/link", "/updated"));
+      await caption.press("Meta+z");
+      await expect(caption).toHaveValue(linked);
+      await caption.press("Meta+z");
+      await expect(caption).toHaveValue(plain);
+      for (let step = 0; step < 8 && await caption.inputValue() !== beforeTyping; step += 1) {
+        await caption.press("Meta+z");
+      }
+      await expect(caption).toHaveValue(beforeTyping);
+    });
+  }
+
   test("typing in one row then focusing another row persists without losing the target field", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 40 }, { mockTauri: true });
 

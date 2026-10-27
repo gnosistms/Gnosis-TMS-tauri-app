@@ -43,7 +43,7 @@ pub(super) fn prepare(
         excerpts.push((
             "Chapter title".to_string(),
             format!(
-                "#align(center)[#text(font: ({}), size: 14.5pt, tracking: 0.12em)[#upper({})]]\n",
+                "#align(center)[#text(font: ({}), size: 16pt, tracking: 0.1em)[#upper({})]]\n",
                 heading_font_families(document)
                     .iter()
                     .map(|s| typst_string(s))
@@ -320,7 +320,7 @@ mod tests {
         let options = PdfWorkspacePreparationOptions {
             paper_size: "a4",
             footnote_links_as_plain_text: true,
-            image_cache_scope: &scope,
+            image_cache_session: &scope,
         };
         let prepared = prepare(&workspace, &document, &options, &plan, &plan).unwrap();
         assert_eq!(
@@ -336,22 +336,22 @@ mod tests {
         let source = fs::read_to_string(workspace.join("font-review.typ")).unwrap();
         assert!(!source.contains("UNRELATED_"));
         assert!(!source.contains("example.invalid"));
-        assert!(source.contains("size: 14.5pt"));
+        assert!(source.contains("size: 16pt"));
         assert!(source.contains("== #text(\"A heading"));
-        assert!(source.contains("#text(size: 0.85em, style: \"italic\")"));
+        assert!(source.contains("#text(size: 0.75em, style: \"italic\")"));
         assert!(source.contains("#super[#text(\"17\")]"));
         assert!(source.contains("#text(\"17.\")"));
         assert!(source.contains("margin: (x: 0.85in, y: 12pt)"));
     }
 
-    fn tests_scope() -> PdfImageCacheScope {
-        PdfImageCacheScope {
+    fn tests_scope() -> PdfImageCacheSession {
+        begin_pdf_image_cache(&PdfImageCacheScope {
             installation_id: 1,
             repo_name: "test".into(),
             project_id: None,
             project_full_name: None,
-            chapter_id: "test".into(),
-        }
+            target: PdfImageCacheTarget::Chapter("test".into()),
+        })
     }
 
     #[cfg(target_os = "macos")]
@@ -423,7 +423,7 @@ mod tests {
         let options = PdfWorkspacePreparationOptions {
             paper_size: "a4",
             footnote_links_as_plain_text: false,
-            image_cache_scope: &scope,
+            image_cache_session: &scope,
         };
         prepare_typst_workspace(None, "test", &workspace, &document, &options, &cancelled).unwrap();
         let full = fs::read_to_string(workspace.join("chapter.typ")).unwrap();
@@ -493,14 +493,15 @@ mod tests {
         let mut expected_glyphs = Vec::new();
         for body in [
             mark.clone(),
-            format!("== {mark}"),
+            format!("#text(size: 11.5pt)[{mark}]"),
+            format!("#text(size: 0.75em)[{mark}]"),
             format!("#text(size: 0.85em)[{mark}]"),
         ] {
             // No fallback regex in the reference: compare with a direct render
             // of the approved face at each context's actual text size.
             fs::write(
                 workspace.join("expected.typ"),
-                format!("#set page(width: 100pt, height: auto)\n#set text(size: 11pt)\n{body}"),
+                format!("#set page(width: 100pt, height: auto)\n#set text(size: 11.5pt)\n{body}"),
             )
             .unwrap();
             let result = std::process::Command::new(&binary)
@@ -542,7 +543,8 @@ mod tests {
                     svg.contains(
                         &expected_glyphs[match index {
                             5 => 1,
-                            6 | 7 => 2,
+                            6 => 2,
+                            7 => 3,
                             _ => 0,
                         }]
                     ),
@@ -592,7 +594,7 @@ mod tests {
         let options = PdfWorkspacePreparationOptions {
             paper_size: "a4",
             footnote_links_as_plain_text: true,
-            image_cache_scope: &scope,
+            image_cache_session: &scope,
         };
         let prepared = prepare(&workspace, &document, &options, &plan, &plan).unwrap();
         // A local figure in the final document avoids any network during the test.

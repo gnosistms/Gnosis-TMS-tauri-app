@@ -1,3 +1,5 @@
+import { recordEditorFieldValue } from "./editor-field-undo.js";
+
 export function applyEditorRowFieldInput({
   input,
   updateEditorRowFieldValueForContentKind,
@@ -6,6 +8,7 @@ export function applyEditorRowFieldInput({
   syncEditorVirtualizationRowLayout,
   syncEditorGlossaryHighlightRowDom,
 }) {
+  recordEditorFieldValue(input);
   const rowId = input?.dataset?.rowId ?? "";
   const languageCode = input?.dataset?.languageCode ?? "";
   const contentKind =

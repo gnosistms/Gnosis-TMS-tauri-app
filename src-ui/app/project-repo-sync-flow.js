@@ -1,5 +1,6 @@
 import { invoke } from "./runtime.js";
 import { state } from "./state.js";
+import { projectBackgroundRender } from "./projects-background-render.js";
 import {
   clearScopedSyncBadge,
   showNoticeBadge,
@@ -287,7 +288,7 @@ async function reconcileOneProjectRepoSyncState({
         onSnapshots?.(snapshots, descriptor);
         openRequiredAppUpdatePromptFromProjectSnapshots(snapshots, render);
         showScopedSyncBadge("projects", badgeText, render);
-        render();
+        render({ projectUpdatePending: true });
       };
       publishSnapshots(initialSnapshots);
 
@@ -356,6 +357,7 @@ function openRequiredAppUpdatePromptFromProjectSnapshots(snapshots, render) {
 }
 
 export async function reconcileProjectRepoSyncStates(render, team, projects, options = {}) {
+  render = projectBackgroundRender(render);
   const shouldAbort = typeof options.shouldAbort === "function" ? options.shouldAbort : null;
   const clearStatusOnComplete = options.clearStatusOnComplete !== false;
   const onSnapshots = typeof options.onSnapshots === "function" ? options.onSnapshots : null;

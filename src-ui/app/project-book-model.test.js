@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { addBookSection, bookChapterDefaultTitle, bookChapterPreviewBlocks, bookContentsItems, bookExportItems, bookItemIncluded, bookItemTitle, bookLanguages, includeBookItem, reconcileBookLayout, reorderBookItems } from "./project-book-model.js";
+import { addBookSection, bookChapterDefaultTitle, bookChapterPreviewBlocks, bookChapterNumbers, bookContentsEntries, bookContentsItems, bookExportItems, bookItemIncluded, bookItemTitle, bookLanguages, includeBookItem, reconcileBookLayout, reorderBookItems } from "./project-book-model.js";
 import { loadBookSettings, loadContentsTitle, saveBookSettings, saveContentsTitle } from "./project-book-settings.js";
 import { setActiveStorageLogin, clearActiveStorageLogin } from "./team-storage.js";
 const chapters = () => [
@@ -39,7 +39,7 @@ test("new front matter follows standard order, but contents can be moved to the 
   const toc = items.find((item) => item.kind === "contents");
   items = reorderBookItems(items, toc.id, "10", true);
   assert.equal(items.filter(bookItemIncluded).at(-1).kind, "contents");
-  assert.deepEqual(bookContentsItems(items).map((item) => item.kind), ["dedication", "chapter", "chapter"]);
+  assert.deepEqual(bookContentsItems(items).map((item) => item.kind), ["chapter", "chapter"]);
   const exported = bookExportItems({ book: { items } });
   assert.equal(exported.at(-1).title, "Mục lục");
 });
@@ -64,6 +64,62 @@ test("the latest contents spelling becomes the per-language default across proje
   saveContentsTitle("vi", "MỤC LỤC");
   assert.equal(loadContentsTitle("vi"), "MỤC LỤC");
   assert.equal(loadContentsTitle("en"), "Table of Contents");
+});
+
+test("contents default to numbered chapters and optionally include H1 headings", () => {
+  const items = addBookSection(reconcileBookLayout(chapters(), "en").items, "contents", "Book", "Contents");
+  const contents = items.find((item) => item.kind === "contents");
+  assert.equal(contents.includeH1Headings, false);
+  assert.equal(bookExportItems({ book: { items } }).find((item) => item.kind === "contents").includeH1Headings, false);
+  assert.deepEqual(bookContentsEntries(items, { "2": ["A heading"] }), [
+    { title: "1. Chapter 2", level: 0 }, { title: "2. Chapter 10", level: 0 },
+  ]);
+  assert.deepEqual(bookContentsEntries(items, { "2": ["A heading"] }, true), [
+    { title: "1. Chapter 2", level: 0 }, { title: "A heading", level: 1 }, { title: "2. Chapter 10", level: 0 },
+  ]);
+  contents.includeH1Headings = true;
+  setActiveStorageLogin("contents-heading-test");
+  saveBookSettings({ projectId: "p", languageCode: "en", book: { items } });
+  const restored = reconcileBookLayout(chapters(), "en", loadBookSettings("p").layouts.en);
+  assert.equal(restored.items.find((item) => item.kind === "contents").includeH1Headings, true);
+  assert.equal(bookExportItems({ book: restored }).find((item) => item.kind === "contents").includeH1Headings, true);
+  assert.deepEqual(bookContentsEntries(includeBookItem(items, "2", false)), [{ title: "1. Chapter 10", level: 0 }]);
+});
+
+test("chapter numbers follow included numbered chapters while unnumbered entries remain in contents", () => {
+  const items = [
+    { id: "front", kind: "title", title: "Book" },
+    { id: "a", chapterId: "a", kind: "chapter", title: "First" },
+    { id: "b", chapterId: "b", kind: "chapter", title: "Interlude", numbered: false },
+    { id: "excluded", kind: "chapter", title: "Excluded", excluded: true },
+    { id: "unavailable", kind: "chapter", title: "Unavailable", available: false },
+    { id: "c", chapterId: "c", kind: "chapter", title: "Last", numbered: true },
+  ];
+  assert.deepEqual([...bookChapterNumbers(items)], [["a", 1], ["c", 2]]);
+  assert.deepEqual(bookContentsEntries(items, { b: ["An interlude H1"] }, true), [
+    { title: "1. First", level: 0 }, { title: "Interlude", level: 0 },
+    { title: "An interlude H1", level: 1 }, { title: "2. Last", level: 0 },
+  ]);
+  const reordered = reorderBookItems(items, "c", "a", false);
+  assert.deepEqual([...bookChapterNumbers(reordered)], [["c", 1], ["a", 2]]);
+  assert.deepEqual([...bookChapterNumbers(includeBookItem(reordered, "a", false))], [["c", 1]]);
+  const exported = bookExportItems({ book: { items } }).filter((item) => item.kind === "chapter");
+  assert.deepEqual(exported.map((item) => [item.title, item.numbered]), [["First", true], ["Interlude", false], ["Last", true]]);
+  assert.equal(items[0].title, "Book");
+});
+
+test("numbering defaults on for old layouts and persists independently by language", () => {
+  setActiveStorageLogin("chapter-numbering-test");
+  const english = reconcileBookLayout(chapters(), "en");
+  assert.ok(english.items.every((item) => item.numbered === true));
+  english.items[0].numbered = false;
+  saveBookSettings({ projectId: "p", languageCode: "en", book: english });
+  saveBookSettings({ projectId: "p", languageCode: "vi", book: reconcileBookLayout(chapters(), "vi") });
+  const layouts = loadBookSettings("p").layouts;
+  const restored = reconcileBookLayout(chapters(), "en", layouts.en);
+  assert.equal(restored.items[0].numbered, false);
+  assert.ok(reconcileBookLayout(chapters(), "vi", layouts.vi).items.every((item) => item.numbered));
+  assert.deepEqual([...bookChapterNumbers(restored.items)].map(([, number]) => number), [1]);
 });
 
 test("chapter defaults use only an opening H1 and overrides replace it without changing source blocks", () => {

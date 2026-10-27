@@ -1041,6 +1041,30 @@ fn inspect_project_repo_state(
     }
 }
 
+pub(crate) fn prepare_export_settings_origin(
+    project: &ProjectRepoSyncDescriptor,
+    repo: &Path,
+) -> Result<(), String> {
+    ensure_project_origin_remote(project, repo)
+}
+
+pub(crate) fn sync_export_settings_repo(
+    app: &AppHandle,
+    project: &ProjectRepoSyncDescriptor,
+    repo: &Path,
+    remote_head: &str,
+    token: &str,
+) -> Result<(), String> {
+    let outcome = sync_project_repo(app, project, repo, remote_head, token)?;
+    if outcome.repo_sync_status == PROJECT_REPO_SYNC_STATUS_UP_TO_DATE {
+        Ok(())
+    } else {
+        Err(outcome.message.unwrap_or_else(|| {
+            "Export settings are saved locally; project synchronization has not finished.".into()
+        }))
+    }
+}
+
 pub(crate) fn sync_project_repo(
     app: &AppHandle,
     project: &ProjectRepoSyncDescriptor,
@@ -1369,6 +1393,22 @@ fn build_semantic_conflict_resolution_plan(
 
     let mut plan = Vec::with_capacity(stage_sets.len());
     for (path, stages) in stage_sets {
+        if path == crate::project_import::EXPORT_SETTINGS_PATH {
+            let resolved = crate::project_import::resolve_export_settings_git_conflict(
+                read_git_stage_text(repo_path, stages.base_oid.as_deref())?.as_deref(),
+                read_git_stage_text(repo_path, stages.local_oid.as_deref())?.as_deref(),
+                read_git_stage_text(repo_path, stages.remote_oid.as_deref())?.as_deref(),
+            )?;
+            plan.push(match resolved {
+                Some(text) => SemanticConflictResolutionPlanEntry::WriteFile {
+                    path,
+                    text,
+                    imported_conflict: None,
+                },
+                None => SemanticConflictResolutionPlanEntry::DeleteFile { path },
+            });
+            continue;
+        }
         if is_editor_row_conflict_path(&path) {
             let resolved = resolve_row_git_conflict_from_stage_texts(
                 &path,
@@ -2345,6 +2385,67 @@ mod tests {
 
         run_git(&repo_path, &["merge", "--abort"]);
         let _ = fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn export_settings_rebase_takes_remote_and_preserves_other_language_edits() {
+        for delete_remote in [false, true] {
+            let repo = init_test_repo("export-settings-rebase");
+            let path = crate::project_import::EXPORT_SETTINGS_PATH;
+            fs::create_dir_all(repo.join(".gtms")).unwrap();
+            let settings = |en: &str, vi: &str| {
+                serde_json::json!({
+                    "version": 1, "layouts": {
+                        "en": {"items": [{"id":"title", "kind":"title", "title":en}]},
+                        "vi": {"items": [{"id":"title", "kind":"title", "title":vi}]}
+                    }
+                })
+                .to_string()
+            };
+            fs::write(repo.join(path), settings("Base", "Base")).unwrap();
+            run_git(&repo, &["add", path]);
+            run_git(&repo, &["commit", "-m", "Base settings"]);
+            run_git(&repo, &["switch", "-c", "remote-settings"]);
+            if delete_remote {
+                run_git(&repo, &["rm", path]);
+            } else {
+                fs::write(repo.join(path), settings("Remote", "Base")).unwrap();
+                run_git(&repo, &["add", path]);
+            }
+            run_git(&repo, &["commit", "-m", "Remote settings"]);
+            run_git(&repo, &["switch", "main"]);
+            fs::write(repo.join(path), settings("Local", "Local Vietnamese")).unwrap();
+            run_git(&repo, &["add", path]);
+            run_git(&repo, &["commit", "-m", "Local settings"]);
+            let output = Command::new("git")
+                .current_dir(&repo)
+                .args(["rebase", "remote-settings"])
+                .output()
+                .unwrap();
+            assert!(
+                !output.status.success(),
+                "setup must produce a real conflict"
+            );
+            let plan = build_semantic_conflict_resolution_plan(&repo).unwrap();
+            let mut imported = BTreeMap::new();
+            apply_semantic_conflict_resolution_plan(&repo, plan, &mut imported).unwrap();
+            assert!(imported.is_empty());
+            if delete_remote {
+                assert!(!repo.join(path).exists());
+                run_git(&repo, &["rebase", "--skip"]);
+            } else {
+                continue_project_rebase(&repo).unwrap();
+                let saved: serde_json::Value =
+                    serde_json::from_slice(&fs::read(repo.join(path)).unwrap()).unwrap();
+                assert_eq!(saved["layouts"]["en"]["items"][0]["title"], "Remote");
+                assert_eq!(
+                    saved["layouts"]["vi"]["items"][0]["title"],
+                    "Local Vietnamese"
+                );
+            }
+            assert!(!repo_has_rebase_in_progress_local(&repo));
+            fs::remove_dir_all(repo).unwrap();
+        }
     }
 
     #[test]

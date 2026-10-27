@@ -19,10 +19,83 @@ pub(crate) use self::chapter_editor::{
     fetch_public_image_dimensions, list_imported_editor_conflict_refs,
     normalize_chapter_settings_value, persist_imported_editor_conflict_entries,
     repo_has_imported_editor_conflicts, resolve_chapter_json_git_conflict_from_stage_texts,
-    resolve_project_json_git_conflict_from_stage_texts, resolve_row_git_conflict_from_stage_texts,
-    unescaped_footnote_marker_sequence, ImportedEditorConflictRef,
-    PendingImportedEditorConflictEntry, ResolvedEditorConflictAction,
+    resolve_export_settings_git_conflict, resolve_project_json_git_conflict_from_stage_texts,
+    resolve_row_git_conflict_from_stage_texts, unescaped_footnote_marker_sequence,
+    ImportedEditorConflictRef, PendingImportedEditorConflictEntry, ResolvedEditorConflictAction,
+    EXPORT_SETTINGS_PATH,
 };
+
+#[tauri::command]
+pub(crate) fn start_book_redundancy(
+    app: AppHandle,
+    input: chapter_editor::BookRedundancyInput,
+) -> Result<(), String> {
+    chapter_editor::start_book_redundancy_job(app, input)
+}
+#[tauri::command]
+pub(crate) fn cancel_book_redundancy(request_id: String) -> Result<(), String> {
+    chapter_editor::cancel_book_redundancy_job(&request_id)
+}
+#[tauri::command]
+pub(crate) async fn book_redundancy_cache(
+    app: AppHandle,
+    input: chapter_editor::BookRedundancyCacheInput,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        chapter_editor::book_redundancy_cache_sync(&app, input)
+    })
+    .await
+    .map_err(|_| "Could not load book review choices.".to_string())?
+}
+#[tauri::command]
+pub(crate) async fn load_project_export_settings(
+    app: AppHandle,
+    input: chapter_editor::ProjectExportSettingsInput,
+) -> Result<chapter_editor::ExportSettingsSnapshot, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        chapter_editor::load_project_export_settings_sync(&app, input)
+    })
+    .await
+    .map_err(|_| "Could not load local export settings.".to_string())?
+}
+
+#[tauri::command]
+pub(crate) fn start_project_export_settings_sync(
+    app: AppHandle,
+    input: chapter_editor::ProjectExportSettingsInput,
+) -> Result<(), String> {
+    // The IPC path returns immediately. Access recovery and Git run on the job
+    // worker; even an offline failure leaves the frontend's local draft intact.
+    tauri::async_runtime::spawn(async move {
+        let worker = app.clone();
+        let request_id = input.request_id.clone();
+        let result = tauri::async_runtime::spawn_blocking(move || {
+            let preflight = if input.settings.is_some() {
+                crate::installation_access::require_command_access(
+                    &worker,
+                    input.installation_id,
+                    ensure_installation_allows_chapter_writes,
+                )
+            } else {
+                Ok(())
+            };
+            chapter_editor::synchronize_export_settings_event(&worker, input, preflight)
+        })
+        .await;
+        use tauri::Emitter;
+        match result {
+            Ok(event) => {
+                let _ = app.emit("project-export-settings", event);
+            }
+            Err(_) => {
+                let _ = app.emit("project-export-settings", serde_json::json!({
+                "requestId": request_id, "settings": null, "error": "Could not synchronize export settings."
+            }));
+            }
+        }
+    });
+    Ok(())
+}
 
 use self::{
     chapter_editor::{
@@ -45,6 +118,8 @@ use self::{
         remove_gtms_editor_language_image_sync, restore_gtms_editor_field_from_history_sync,
         reverse_gtms_editor_batch_replace_commit_sync, save_gtms_editor_language_image_url_sync,
         start_gtms_chapter_pdf_export as start_gtms_chapter_pdf_export_task,
+        start_project_book_preview_fonts as start_project_book_preview_fonts_task,
+        start_project_book_title_preview as start_project_book_title_preview_task,
         start_project_transfer, start_team_chapter_copy, start_wordpress_caption_enrichment,
         update_gtms_chapter_glossary_links_sync, update_gtms_chapter_language_selection_sync,
         update_gtms_chapter_languages_sync, update_gtms_chapter_workflow_status_sync,
@@ -55,7 +130,7 @@ use self::{
         AlignedTranslationPreflightInput, AlignedTranslationPreflightResponse,
         ApplyEditorAiReviewResultInput, ApplyEditorAiReviewResultResponse,
         ApplyEditorAiReviewResultsBatchInput, ApplyEditorAiReviewResultsBatchResponse,
-        ClearEditorReviewedMarkersInput, ClearEditorReviewedMarkersResponse,
+        BookPreviewFontsInput, ClearEditorReviewedMarkersInput, ClearEditorReviewedMarkersResponse,
         ClearImportedEditorConflictInput, DuplicateEditorLanguageImageInput,
         ExportChapterFileInput, ExportChapterFileResponse, ImportBookImageInput, ImportedBookImage,
         InitializeProjectRepoInput, InitializeProjectRepoResponse, InsertEditorRowInput,
@@ -70,15 +145,16 @@ use self::{
         RestoreEditorFieldHistoryResponse, ReverseEditorBatchReplaceCommitInput,
         ReverseEditorBatchReplaceCommitResponse, SaveEditorLanguageImageResponse,
         SaveEditorLanguageImageUrlInput, SaveEditorRowWithConcurrencyResponse,
-        TeamChapterCopyInput, UpdateChapterGlossaryLinksInput, UpdateChapterGlossaryLinksResponse,
-        UpdateChapterLanguageSelectionInput, UpdateChapterLanguageSelectionResponse,
-        UpdateChapterLanguagesInput, UpdateChapterLanguagesResponse,
-        UpdateChapterWorkflowStatusInput, UpdateChapterWorkflowStatusResponse,
-        UpdateEditorRowFieldFlagInput, UpdateEditorRowFieldFlagResponse,
-        UpdateEditorRowFieldsBatchInput, UpdateEditorRowFieldsBatchResponse,
-        UpdateEditorRowFieldsInput, UpdateEditorRowLifecycleInput,
-        UpdateEditorRowLifecycleResponse, UpdateEditorRowTextStyleInput,
-        UpdateEditorRowTextStyleResponse, UploadEditorLanguageImageInput,
+        TeamChapterCopyInput, TitlePagePreviewInput, UpdateChapterGlossaryLinksInput,
+        UpdateChapterGlossaryLinksResponse, UpdateChapterLanguageSelectionInput,
+        UpdateChapterLanguageSelectionResponse, UpdateChapterLanguagesInput,
+        UpdateChapterLanguagesResponse, UpdateChapterWorkflowStatusInput,
+        UpdateChapterWorkflowStatusResponse, UpdateEditorRowFieldFlagInput,
+        UpdateEditorRowFieldFlagResponse, UpdateEditorRowFieldsBatchInput,
+        UpdateEditorRowFieldsBatchResponse, UpdateEditorRowFieldsInput,
+        UpdateEditorRowLifecycleInput, UpdateEditorRowLifecycleResponse,
+        UpdateEditorRowTextStyleInput, UpdateEditorRowTextStyleResponse,
+        UploadEditorLanguageImageInput,
     },
     chapter_editor_comments::{
         delete_gtms_editor_row_comment_sync, load_gtms_editor_row_comments_sync,
@@ -290,6 +366,25 @@ pub(crate) async fn start_gtms_chapter_pdf_export(
     input: PdfChapterExportInput,
 ) -> Result<String, String> {
     start_gtms_chapter_pdf_export_task(app, input)
+}
+
+/// Returns immediately; `book-preview-fonts` delivers cached PDF fonts and metrics.
+#[tauri::command]
+pub(crate) fn start_project_book_preview_fonts(
+    app: AppHandle,
+    input: BookPreviewFontsInput,
+) -> Result<(), String> {
+    start_project_book_preview_fonts_task(app, input)
+}
+
+/// Starts immediately; `book-title-preview` reports rendered SVG pages or errors
+/// keyed by the caller's requestId, without blocking the IPC path.
+#[tauri::command]
+pub(crate) fn start_project_book_title_preview(
+    app: AppHandle,
+    input: TitlePagePreviewInput,
+) -> Result<(), String> {
+    start_project_book_title_preview_task(app, input)
 }
 
 #[tauri::command]

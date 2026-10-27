@@ -36,6 +36,14 @@ use super::{
 
 mod aligned_translation;
 mod book_export;
+mod book_redundancy;
+pub(crate) use book_redundancy::{
+    cache as book_redundancy_cache_sync, cancel as cancel_book_redundancy_job,
+    start as start_book_redundancy_job, CacheInput as BookRedundancyCacheInput,
+    DetectionInput as BookRedundancyInput,
+};
+mod book_settings;
+mod book_svg;
 mod changed_after_my_edit;
 mod chapter_export;
 mod chapter_selection;
@@ -58,6 +66,11 @@ pub(crate) use self::aligned_translation::{
 };
 pub(crate) use self::book_export::{
     import_project_book_image_sync, ImportBookImageInput, ImportedBookImage,
+};
+pub(crate) use self::book_settings::{
+    load_project_export_settings_sync, resolve_export_settings_git_conflict,
+    synchronize_export_settings_event, ExportSettingsSnapshot, ProjectExportSettingsInput,
+    EXPORT_SETTINGS_PATH,
 };
 pub(super) use self::changed_after_my_edit::{
     load_gtms_editor_changed_after_my_edit_sync, LoadEditorChangedAfterMyEditInput,
@@ -103,8 +116,9 @@ pub(super) use self::images::{
 };
 pub(crate) use self::pdf_export::{
     approve_gtms_chapter_pdf_fonts, cancel_gtms_chapter_pdf_export, forget_gtms_pdf_font_approval,
-    inspect_gtms_chapter_pdf_fonts, start_gtms_chapter_pdf_export, PdfChapterExportInput,
-    PdfFontInspection, PdfFontInspectionInput,
+    inspect_gtms_chapter_pdf_fonts, start_gtms_chapter_pdf_export,
+    start_project_book_preview_fonts, start_project_book_title_preview, BookPreviewFontsInput,
+    PdfChapterExportInput, PdfFontInspection, PdfFontInspectionInput, TitlePagePreviewInput,
 };
 pub(crate) use self::project_transfer::{
     acknowledge_project_transfer_status, get_project_transfer_status,
@@ -707,6 +721,12 @@ pub(crate) struct UpdateEditorRowLifecycleResponse {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LoadChapterEditorInput {
+    #[serde(default)]
+    export_language_code: String,
+    #[serde(default)]
+    export_review_revision: String,
+    #[serde(default)]
+    export_exclusions: Vec<book_redundancy::Exclusion>,
     installation_id: i64,
     repo_name: String,
     project_id: Option<String>,
@@ -1213,7 +1233,18 @@ pub(super) fn load_gtms_chapter_editor_data_sync(
     let chapter_file: StoredChapterFile =
         read_json_file(&chapter_path.join("chapter.json"), "chapter.json")?;
     let cached_source_word_count = chapter_file.source_word_count;
-    let rows = load_editor_rows(&chapter_path.join("rows"))?;
+    let mut rows = load_editor_rows(&chapter_path.join("rows"))?;
+    book_redundancy::validate_revision(
+        &rows,
+        &input.export_language_code,
+        &input.export_review_revision,
+        &repo_path,
+    )?;
+    book_redundancy::filter_rows(
+        &mut rows,
+        &input.export_language_code,
+        &input.export_exclusions,
+    )?;
     let languages = sanitize_chapter_languages(&chapter_file.languages);
     let word_counts = build_word_counts_from_stored_rows(&rows, &languages);
     let row_update_paths_by_id = rows

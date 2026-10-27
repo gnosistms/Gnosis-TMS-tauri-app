@@ -303,7 +303,7 @@ export async function handleNavigation(navTarget, render) {
         } finally {
           setResourcePageRefreshing(state.projectsPage, false);
           clearScopedSyncBadge("projects", render);
-          render();
+          render({ scope: "projects-background" });
         }
         return null;
       });

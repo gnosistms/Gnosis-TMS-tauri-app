@@ -1,4 +1,5 @@
-import { renderProjectBookComposer, bookNavButton } from "./project-book-composer.js";
+import { renderBookRedundancy } from "./project-book-redundancy.js";
+import { renderProjectBookComposer, renderBookSettingsNotice, bookNavButton } from "./project-book-composer.js";
 import {
   escapeHtml,
   loadingPrimaryButton,
@@ -674,6 +675,8 @@ export function renderEditorExportModal(state) {
 
   if (modal.projectId && modal.book && modal.page === 1) return renderProjectBookComposer(modal);
 
+  if (modal.projectId && modal.book && modal.page === 2) return renderBookRedundancy(modal);
+
   const isExporting = modal.status === "exporting" || modal.status === "cancelling";
   const isCancelling = modal.status === "cancelling";
   const option = findEditorExportOption(modal.selectedOptionId, modal);
@@ -696,7 +699,7 @@ export function renderEditorExportModal(state) {
             </nav>
             <div class="editor-export-modal__detail">
               <p class="editor-export-modal__detail-heading">${escapeHtml(option?.label ?? "")}</p>
-              ${modal.book ? supportingText(`${modal.book.items.filter((item) => !item.excluded && item.available !== false).length} items in your saved book order.`) : modal.projectId ? supportingText(`${modal.chapterIds.length} files in project order.`) : ""}
+              ${!modal.book && modal.projectId ? supportingText(`${modal.chapterIds.length} files in project order.`) : ""}
               ${modal.projectId && !modal.languages.length && option?.format !== "team" ? `<p class="modal__error" role="alert">These files have no language in common. Add the same language to every file before exporting a combined document.</p>` : ""}
               ${detail.bodyMarkup}
               ${errorMarkup}
@@ -712,5 +715,6 @@ export function renderEditorExportModal(state) {
         </div>
       </section>
     </div>
+    ${renderBookSettingsNotice(modal)}
   `;
 }

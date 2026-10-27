@@ -1,5 +1,6 @@
 import { invoke } from "./runtime.js";
 import { requireBrokerSession } from "./auth-flow.js";
+import { projectBackgroundRender } from "./projects-background-render.js";
 import {
   loadStoredChapterPendingMutations,
   saveStoredChapterPendingMutations,
@@ -468,6 +469,7 @@ export function finishProjectsLoadingForTeam(teamId = state.selectedTeamId, rend
 }
 
 export async function loadTeamProjects(render, teamId = state.selectedTeamId) {
+  render = projectBackgroundRender(render);
   const generation = authSessionGeneration;
   const selectedTeam = state.teams.find((team) => team.id === teamId);
   const previousProjectSnapshot = projectsPageOwnsTeam(selectedTeam)
