@@ -1,5 +1,6 @@
 import { extractInlineMarkupVisibleText } from "./editor-inline-markup/serialize.js";
 import { extractVellumLeadingHeadingTitle } from "./vellum-text-editor-content.js";
+import { cancelBookTitlePreview, requestBookTitlePreview } from "./project-book-title-preview.js";
 import { bookEditorText } from "./project-book-text.js";
 import { state } from "./state.js";
 import { invoke, convertLocalFileSrc } from "./runtime.js";
@@ -66,6 +67,7 @@ export async function loadSelectedBookPreview(render, operations = {}) {
   const current = modal();
   const item = current?.book?.items.find((entry) => entry.id === current.book.selectedItemId);
   if (!current?.isOpen || !current.book) return;
+  requestBookTitlePreview(render);
   const repaint = () => render?.({ scope: "project-book-preview" });
   if (item?.kind === "contents" && item.includeH1Headings) return loadContentsHeadings(repaint, current, operations);
   const team = selectedProjectsTeam();
@@ -151,6 +153,7 @@ export function updateBookField(element, render) {
   if (element.hasAttribute("contenteditable")) element.dataset.bookEmpty = String(!value);
   const items = current.book.items.map((entry) => entry.id === item.id ? { ...entry, [field]: value } : entry);
   update({ book: { ...current.book, items, ...(field === "includeH1Headings" ? { previewRequest: "" } : {}) }, pdfFontStatus: "idle", pdfFontInspectionKey: "" }, field === "includeH1Headings" || item.kind === "chapter" ? render : undefined);
+  if (item.kind === "title") requestBookTitlePreview(render);
   if (field === "includeH1Headings" && value) void loadSelectedBookPreview(render);
   if (item.kind === "contents" && field === "title") saveContentsTitle(current.languageCode, value);
   if (field === "title" && item.kind !== "chapter") document.querySelector(`[data-book-item-label="${CSS.escape(item.id)}"]`)?.replaceChildren(document.createTextNode(value || (item.kind === "contents" ? "Table of contents" : "Title page")));
@@ -189,6 +192,7 @@ export async function importBookImage(render, file, operations = {}) {
     }
     if (modal()?.projectId !== current.projectId || modal()?.languageCode !== current.languageCode) return;
     update({ book: { ...modal().book, items: modal().book.items.map((entry) => entry.id === id ? { ...entry, image } : entry) }, error: "", pdfFontStatus: "idle" }, render);
+    requestBookTitlePreview(render);
   } catch (error) {
     if (modal()?.projectId === current.projectId && modal()?.languageCode === current.languageCode) update({ error: formatErrorForDisplay(error) }, render);
   }
@@ -210,6 +214,7 @@ export async function handleProjectBookAction(action, render) {
     if (current.selectedOptionId === "file:pdf") void import("./editor-export-flow.js").then((module) => module.refreshPdfFontInspection(render));
   } }
   else if (action === "book-previous") update({ page: 1 }, render);
+  else if (action === "book-title-preview-retry") cancelBookTitlePreview();
   else if (action === "book-add-menu") update({ book: { ...book, addMenuOpen: !book.addMenuOpen } }, render);
   else if (action.startsWith("book-add:")) {
     const items = addBookSection(book.items, action.slice(9), current.projectTitle, loadContentsTitle(current.languageCode));
@@ -239,5 +244,6 @@ export async function handleProjectBookAction(action, render) {
       updateBookField(editor);
     }
   }
+  requestBookTitlePreview(render);
   return true;
 }

@@ -4,10 +4,18 @@ async function mountProjectExport(page, multilingual = false, chapterTitles = fa
   await page.addInitScript(({ chapterTitles }) => {
     window.__projectExports = [];
     window.__pdfListeners = {};
+    window.__titlePreviewRequests = [];
     window.__TAURI__ = {
       core: { invoke: async (command, args) => {
         if (["export_gtms_chapter_file", "inspect_gtms_chapter_pdf_fonts", "start_gtms_chapter_pdf_export", "cancel_gtms_chapter_pdf_export"].includes(command)) {
           window.__projectExports.push({ command, ...args });
+        }
+        if (command === "start_project_book_title_preview") {
+          window.__titlePreviewRequests.push(args.input);
+          const escaped = args.input.item.title.replaceAll("&", "&amp;").replaceAll("<", "&lt;");
+          const pages = [window.__titlePreviewSvg || `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="420" height="595"><rect width="100%" height="100%" fill="white"/><text x="60" y="120">${escaped}</text></svg>`)}`];
+          if (!window.__holdTitlePreview) setTimeout(() => window.__pdfListeners["book-title-preview"]?.({ payload: { requestId: args.input.requestId, pages, error: "" } }), 0);
+          return null;
         }
         if (command === "list_wordpress_connections") return window.__wordpressSites ?? [];
         if (command === "load_gtms_chapter_editor_data") {
@@ -165,14 +173,7 @@ test("background project refresh draws once and retains an unrelated export dial
   await addSection(modal, "title");
   const title = modal.locator('.book-page--title [data-book-field="title"]');
   await title.fill("My draft title");
-  await title.evaluate((element) => {
-    const range = document.createRange();
-    range.setStart(element.firstChild, 3);
-    range.setEnd(element.firstChild, 8);
-    const selection = getSelection();
-    selection.removeAllRanges();
-    selection.addRange(range);
-  });
+  await title.evaluate((element) => element.setSelectionRange(3, 8));
   await page.evaluate(async () => {
     const { state } = await import("/app/state.js");
     const { createProjectsQuerySnapshot, applyProjectsQuerySnapshotToState } = await import("/app/project-query.js");
@@ -208,7 +209,7 @@ test("background project refresh draws once and retains an unrelated export dial
     draws: window.__refreshDraws,
     page: document.querySelector("#app").firstElementChild === window.__refreshPage,
     title: document.activeElement === window.__refreshTitle,
-    selection: [getSelection().anchorOffset, getSelection().focusOffset],
+    selection: [window.__refreshTitle.selectionStart, window.__refreshTitle.selectionEnd],
   }))).toEqual({ draws: { page: 0, modal: 0 }, page: true, title: true, selection: [3, 8] });
 
   // No net change, even though intermediate snapshots changed this project.
@@ -225,10 +226,10 @@ test("background project refresh draws once and retains an unrelated export dial
     draws: window.__refreshDraws,
     sameDialog: document.querySelector('[data-modal-dialog="editor-export"]') === window.__refreshModal,
     title: document.activeElement === window.__refreshTitle,
-    selection: [getSelection().anchorOffset, getSelection().focusOffset],
+    selection: [window.__refreshTitle.selectionStart, window.__refreshTitle.selectionEnd],
     scrollUnchanged: document.querySelector(".book-composer__page-scroll").scrollTop === window.__refreshScroll,
   }))).toEqual({ draws: { page: 1, modal: 0 }, sameDialog: true, title: true, selection: [3, 8], scrollUnchanged: true });
-  await expect(title).toHaveText("My draft title");
+  await expect(title).toHaveValue("My draft title");
 
   // This project changes: one final dialog redraw, with the draft preserved.
   await page.evaluate(() => {
@@ -238,7 +239,7 @@ test("background project refresh draws once and retains an unrelated export dial
     window.__publishProjectsRefresh(false, "active");
   });
   expect(await page.evaluate(() => window.__refreshDraws)).toEqual({ page: 2, modal: 1 });
-  await expect(title).toHaveText("My draft title");
+  await expect(title).toHaveValue("My draft title");
   await modal.getByRole("button", { name: "Next", exact: true }).click();
   await expect(modal.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
 });
@@ -367,38 +368,62 @@ test("editing adjacent chapter titles keeps focus and long-list scroll through p
   await expect(next).toHaveValue("Edited chapter 26");
 });
 
-test("title pages balance wrapping automatically and keep the smaller subtitle hierarchy", async ({ page }) => {
+test("title form keeps edits and Enter breaks beside a live PDF preview", async ({ page }) => {
   await mountProjectExport(page);
   const modal = page.getByRole("dialog", { name: "Export project", exact: true });
   await addSection(modal, "title");
   const title = modal.getByRole("textbox", { name: "Title", exact: true });
   await title.fill("Hôn Nhân Hoàn Hảo");
   await modal.getByRole("textbox", { name: "Subtitle", exact: true }).fill("Bí mật về tình yêu và tâm linh");
-  await title.blur();
-  const layout = await title.evaluate((element) => {
-    const text = element.firstChild;
-    let offset = 0;
-    const tops = text.textContent.split(" ").map((word) => {
-      const range = document.createRange();
-      range.setStart(text, offset);
-      range.setEnd(text, offset + word.length);
-      offset += word.length + 1;
-      return Math.round(range.getBoundingClientRect().top);
-    });
-    return {
-      tops, alignment: getComputedStyle(element).textAlign,
-      ratio: parseFloat(getComputedStyle(document.querySelector(".book-page__subtitle")).fontSize) / parseFloat(getComputedStyle(element).fontSize),
-    };
-  });
-  expect(layout.tops[0]).toBe(layout.tops[1]);
-  expect(layout.tops[2]).toBe(layout.tops[3]);
-  expect(layout.tops[2]).toBeGreaterThan(layout.tops[0]);
-  expect(layout.alignment).toBe("center");
-  expect(layout.ratio).toBeCloseTo(14 / 30, 2);
-  await page.screenshot({ path: test.info().outputPath("balanced-title-page.png") });
+  await expect(modal.getByRole("img", { name: "Title page PDF preview", exact: true })).toBeVisible();
+  await title.focus();
+  await title.evaluate((element) => { window.__titleEditor = element; element.setSelectionRange(8, 9); });
+  await title.press("Enter");
+  await expect(title).toHaveValue("Hôn Nhân\nHoàn Hảo");
+  await expect(modal).toContainText("1 of 2");
+  await expect.poll(() => page.evaluate(() => window.__titlePreviewRequests.at(-1)?.item.title)).toBe("Hôn Nhân\nHoàn Hảo");
+  await expect(modal.locator("[data-book-title-proof]")).toHaveAttribute("aria-busy", "false");
+  expect(await title.evaluate((element) => ({ same: element === window.__titleEditor, focused: document.activeElement === element, caret: element.selectionStart }))).toEqual({ same: true, focused: true, caret: 9 });
+  const formBox = await modal.getByRole("region", { name: "Title page details", exact: true }).boundingBox();
+  const proofBox = await modal.getByRole("region", { name: "Title page PDF preview", exact: true }).boundingBox();
+  expect(formBox.x + formBox.width).toBeLessThanOrEqual(proofBox.x + 1);
+  await chooseBookOption(modal, "editor-export-paper-size", "A5 (148 × 210 mm)");
+  await expect.poll(() => page.evaluate(() => window.__titlePreviewRequests.at(-1)?.paperSize)).toBe("a5");
+  await page.screenshot({ path: test.info().outputPath("title-form-live-preview.png") });
   await modal.getByRole("button", { name: "Cancel", exact: true }).click();
   await page.locator('[data-action="export-project:fixture-project-001"]').click();
-  await expect(title).toHaveText("Hôn Nhân Hoàn Hảo");
+  await expect(title).toHaveValue("Hôn Nhân\nHoàn Hảo");
+  await expect(modal.locator("[data-editor-export-paper-size-select]")).toHaveValue("a5");
+  await modal.getByRole("button", { name: "Next", exact: true }).click();
+  await modal.getByRole("button", { name: "Save", exact: true }).click();
+  expect(await page.evaluate(() => window.__projectExports.at(-1).input.bookItems.find((item) => item.kind === "title").title)).toBe("Hôn Nhân\nHoàn Hảo");
+});
+
+test("late title previews do not overwrite new edits and failed previews can retry", async ({ page }) => {
+  await mountProjectExport(page);
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  await page.evaluate(() => { window.__holdTitlePreview = true; });
+  await addSection(modal, "title");
+  const title = modal.getByRole("textbox", { name: "Title", exact: true });
+  await title.fill("Old title");
+  await expect.poll(() => page.evaluate(() => window.__titlePreviewRequests.at(-1)?.item.title)).toBe("Old title");
+  await title.fill("New title");
+  await expect.poll(() => page.evaluate(() => window.__titlePreviewRequests.at(-1)?.item.title)).toBe("New title");
+  await page.evaluate(() => {
+    const old = window.__titlePreviewRequests.find((entry) => entry.item.title === "Old title");
+    window.__pdfListeners["book-title-preview"]({ payload: { requestId: old.requestId, error: "Old failure", pages: [] } });
+  });
+  await expect(modal).not.toContainText("Old failure");
+  await expect(title).toBeFocused();
+  await page.evaluate(() => {
+    const latest = window.__titlePreviewRequests.at(-1);
+    window.__pdfListeners["book-title-preview"]({ payload: { requestId: latest.requestId, error: "Font not ready", pages: [] } });
+  });
+  await expect(modal).toContainText("Font not ready");
+  await page.evaluate(() => { window.__holdTitlePreview = false; });
+  await modal.getByRole("button", { name: "Retry preview", exact: true }).click();
+  await expect(modal.getByRole("img", { name: "Title page PDF preview", exact: true })).toBeVisible();
+  await expect(title).toHaveValue("New title");
 });
 
 test("Enter finishes and saves a chapter title without advancing the export modal", async ({ page }) => {
@@ -590,7 +615,7 @@ test("book composer saves independent language layouts, sections, and format set
   await expect(modal.getByRole("textbox", { name: "Author", exact: true })).toHaveValue("An Author");
   await modal.getByRole("button", { name: "Cancel", exact: true }).click();
   await page.locator('[data-action="export-project:fixture-project-001"]').click();
-  await expect(modal.getByRole("textbox", { name: "Title", exact: true })).toHaveText("English Book");
+  await expect(modal.getByRole("textbox", { name: "Title", exact: true })).toHaveValue("English Book");
   await chooseBookOption(modal, "editor-export-language", "Vietnamese (vi)");
   await expect(included.last()).toHaveAttribute("data-book-item", tocId);
   await page.screenshot({ path: test.info().outputPath("book-composer.png") });

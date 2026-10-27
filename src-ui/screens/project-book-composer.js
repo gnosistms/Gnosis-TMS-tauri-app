@@ -5,6 +5,7 @@ import { BOOK_SECTION_TYPES, bookChapterPreviewBlocks, bookContentsItems, bookCo
 import { bookImageSrc } from "../app/project-book-flow.js";
 import { renderEditorPreviewDocumentHtml } from "../app/editor-preview.js";
 import { convertLocalFileSrc } from "../app/runtime.js";
+import { DEFAULT_PDF_PAPER_SIZE, PDF_PAPER_SIZES } from "../app/editor-export-options.js";
 import { renderBookTextHtml } from "../app/project-book-text.js";
 import flourish from "../../src-tauri/src/project_import/chapter_editor/chapter_flourish.svg?raw";
 
@@ -38,8 +39,43 @@ function itemRow(item, modal) {
 function field(name, value, placeholder, className = "") {
   return `<input class="book-page__input ${className}" type="text" data-book-field="${name}" aria-label="${placeholder}" placeholder="${placeholder}" value="${escapeHtml(value || "")}" />`;
 }
-function titleField(value) {
-  return `<div class="book-page__input book-page__title" contenteditable="plaintext-only" role="textbox" aria-label="Title" aria-multiline="true" data-book-field="title" data-book-empty="${!value}" data-placeholder="Title">${escapeHtml(value || "")}</div>`;
+function titleInfoField(name, value, label, multiline = false) {
+  const attributes = `data-book-field="${name}" aria-label="${label}" placeholder="${label}"`;
+  return `<label class="field book-title-editor__field"><span>${label}</span>${multiline
+    ? `<textarea rows="3" ${attributes}>${escapeHtml(value || "")}</textarea>`
+    : `<input type="text" ${attributes} value="${escapeHtml(value || "")}" data-modal-enter-ignores-default />`}</label>`;
+}
+
+export function renderBookTitleProof(modal) {
+  const preview = modal.book.titlePreview;
+  const selected = modal.book.selectedItemId;
+  const pages = preview?.itemId === selected ? preview.pages || [] : [];
+  const error = preview?.itemId === selected ? preview.error : "";
+  const ready = preview?.itemId === selected && preview.status === "ready";
+  return `<div data-book-title-proof aria-busy="${!ready && !error}">
+    <p class="book-title-proof__status ${error ? "modal__error" : ""}" role="status">${escapeHtml(error || (ready ? "PDF preview" : "Updating PDF preview…"))}</p>
+    ${error ? '<button type="button" class="button button--secondary" data-action="book-title-preview-retry">Retry preview</button>' : ""}
+    ${pages.map((src, index) => `<img class="book-title-proof__page" src="${escapeHtml(src)}" alt="Title page PDF preview${pages.length > 1 ? ` · page ${index + 1}` : ""}" />`).join("")}
+    ${pages.length > 1 ? '<p class="modal__supporting">This title page spans multiple pages. Shorten the text if you want it to fit on one page.</p>' : ""}
+  </div>`;
+}
+
+function titlePageEditor(modal, item) {
+  return `<div class="book-title-layout book-page--title">
+    <section class="book-title-editor" aria-label="Title page details">
+      <h3>Title page</h3>
+      ${titleInfoField("title", item.title, "Title", true)}
+      <p class="book-title-editor__hint">Press Enter to insert a line break.</p>
+      ${titleInfoField("subtitle", item.subtitle, "Subtitle")}
+      ${titleInfoField("author", item.author, "Author")}
+      ${titleInfoField("translator", item.translator, "Translator")}
+      <div class="book-title-editor__logo"><span>Publisher logo</span>${imageEditor(item, true)}</div>
+    </section>
+    <section class="book-title-preview" aria-label="Title page PDF preview">
+      <div class="book-title-preview__options">${renderExportSelect({ id: "editor-export-paper-size", label: "Paper size", selectAttributes: { "data-editor-export-paper-size-select": true }, options: PDF_PAPER_SIZES, value: modal.pdfPaperSize || DEFAULT_PDF_PAPER_SIZE })}</div>
+      <div class="book-title-preview__output">${renderBookTitleProof(modal)}</div>
+    </section>
+  </div>`;
 }
 function imageEditor(item, logo = false) {
   const src = bookImageSrc(item.image);
@@ -64,8 +100,8 @@ export function renderSelectedBookPage(modal) {
     const html = renderEditorPreviewDocumentHtml(bodyBlocks, { resolveImageSrc: (image) => image.kind === "url" ? image.url : convertLocalFileSrc(image.filePath || "") }).html;
     return `<article class="book-page book-page--chapter translate-preview" aria-label="Chapter preview"><header class="book-chapter__header"><span class="book-chapter__number">${number}</span><h1>${escapeHtml(title || bookItemTitle(item))}</h1>${flourish}</header>${html.replace(/ data-(?:preview-block|row-id|tooltip)="[^"]*"/g, "")}</article>`;
   }
+  if (item.kind === "title") return titlePageEditor(modal, item);
   let body = "";
-  if (item.kind === "title") body = `<div class="book-page__title-group">${titleField(item.title)}${field("subtitle", item.subtitle, "Subtitle", "book-page__subtitle")}</div><div class="book-page__title-ornament">${flourish}</div><div class="book-page__contributors">${field("author", item.author, "Author", "book-page__author")}${field("translator", item.translator, "Translator", "book-page__translator")}</div>${imageEditor(item, true)}`;
 
   if (item.kind === "image") body = `${imageEditor(item)}${field("caption", item.caption, "Enter image caption.", "book-page__caption")}`;
   if (item.kind === "contents") body = `${field("title", item.title, "Table of Contents", "book-page__contents-title")}<ol class="book-contents">${bookContentsEntries(book.items, book.contentsHeadings, item.includeH1Headings).map((entry) => `<li class="${entry.level ? "book-contents__subheading" : ""}"><span>${escapeHtml(entry.title)}</span><span class="book-contents__leader"></span></li>`).join("")}</ol><p class="book-contents__hint">Page numbers are calculated from the final layout at export.</p>`;

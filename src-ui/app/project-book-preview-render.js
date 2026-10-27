@@ -1,5 +1,5 @@
 import { bookItemTitle } from "./project-book-model.js";
-import { renderSelectedBookPage } from "../screens/project-book-composer.js";
+import { renderBookTitleProof, renderSelectedBookPage } from "../screens/project-book-composer.js";
 
 // Preview reads and chapter selection must leave the scrolling chapter list and
 // its focused input connected. Restoring focus after a modal rebuild is too late:
@@ -28,6 +28,14 @@ export function renderProjectBookPreview(root, state) {
     template.innerHTML = renderSelectedBookPage(modal);
     if (scroll.innerHTML !== template.innerHTML) scroll.replaceChildren(template.content);
     root.querySelector(".book-copyright__toolbar, .book-contents__options")?.remove();
+  } else if (selected?.kind === "title") {
+    const current = scroll.querySelector("[data-book-title-proof]");
+    if (current) {
+      const template = root.ownerDocument.createElement("template");
+      template.innerHTML = renderBookTitleProof(modal);
+      const next = template.content.firstElementChild;
+      if (current.outerHTML !== next.outerHTML) current.replaceWith(next);
+    }
   } else if (selected?.kind === "contents") {
     // Background default-title discovery updates the contents without replacing
     // the title field the user may currently be editing above it.

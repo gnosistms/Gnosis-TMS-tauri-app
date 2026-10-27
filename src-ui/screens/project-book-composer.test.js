@@ -50,3 +50,18 @@ test("contents expose an off-page H1 checkbox and render optional subentries", (
   assert.match(html, /data-book-field="includeH1Headings" checked/);
   assert.match(html, /book-contents__subheading"><span>Inside the chapter/);
 });
+
+test("title pages put every editing field beside the typeset proof", () => {
+  const current = modal();
+  current.book.items = [{ id: "title", kind: "title", title: "First\nSecond", subtitle: "Subtitle", author: "Author", translator: "Translator" }];
+  current.book.selectedItemId = "title";
+  current.book.titlePreview = { itemId: "title", status: "ready", pages: ["data:image/svg+xml;base64,PHN2Zy8+"] };
+  const html = renderProjectBookComposer(current);
+  assert.match(html, /<textarea[^>]*data-book-field="title"[^>]*>First\nSecond<\/textarea>/);
+  for (const field of ["subtitle", "author", "translator"]) assert.match(html, new RegExp(`data-book-field="${field}"`));
+  assert.match(html, /Publisher logo/);
+  assert.match(html, /data-editor-export-paper-size-select/);
+  assert.match(html, /data-book-title-proof aria-busy="false"/);
+  assert.match(html, /src="data:image\/svg\+xml;base64,PHN2Zy8\+"/);
+  assert.doesNotMatch(html, /contenteditable|Edit Title Info/);
+});

@@ -1,5 +1,8 @@
 # General title-page typography
 
+Automatic balancing is superseded by `title-page-typst-preview.md`: natural
+wrapping, user-entered breaks, and a live preview from the actual PDF typesetter.
+
 Apply to every book/title page, with no book-specific strings or manual title
 breaks. Disable inherited body justification/expanded word spacing in title-page
 content. Use automatic balanced title wrapping, tighter title leading, and 14pt

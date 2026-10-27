@@ -20,6 +20,9 @@ use uuid::Uuid;
 mod font_fallback;
 mod font_preferences;
 mod font_review;
+mod title_preview;
+
+pub(crate) use title_preview::{start_project_book_title_preview, TitlePagePreviewInput};
 
 use super::chapter_export::{
     apply_print_custom_html_policy, build_scoped_export_document,
@@ -1612,46 +1615,22 @@ const BOOK_LAYOUT_RULES: &str = r#"
 }
 "#;
 
-// Balance any title's rendered content, including inline styles and scripts with
-// no spaces. Keep the full-width line count, then find the narrowest centered
-// column that preserves it. Single-line and deliberately broken titles retain
-// their natural layout; no title-specific strings or inserted breaks are used.
-const BOOK_TITLE_BALANCE_RULE: &str = r#"
-#let gnosis-balanced-title(words, body) = layout(region => {
+// Fit unusually long unbreakable words, but let ordinary titles wrap naturally
+// across the full text column. Explicit author line breaks are preserved.
+const BOOK_TITLE_FIT_RULE: &str = r#"
+#let gnosis-title-fit(words, body) = layout(region => {
   let widest = 0pt
   for word in words {
     let word = upper(word)
     for sample in (word, strong(word), emph(word), strong(emph(word))) {
       let natural-word = measure(sample)
-      // Do not shrink scripts that can wrap naturally without word spaces.
       if measure(sample, width: 1pt).height <= natural-word.height + 0.1pt {
         widest = calc.max(widest, natural-word.width)
       }
     }
   }
   set text(size: if widest > region.width { (region.width / widest) * 1em } else { 1em })
-  let natural = measure(body)
-  let full = measure(block(width: region.width, body))
-  if full.height <= natural.height + 0.1pt {
-    if natural.width > region.width {
-      let factor = (region.width / natural.width) * 100%
-      scale(x: factor, y: factor, reflow: true, body)
-    } else {
-      body
-    }
-  } else {
-    let low = 0pt
-    let high = region.width
-    for _ in range(14) {
-      let middle = (low + high) / 2
-      if measure(block(width: middle, body)).height <= full.height + 0.1pt {
-        high = middle
-      } else {
-        low = middle
-      }
-    }
-    align(center, block(width: calc.min(region.width, high + 0.2pt), body))
-  }
+  body
 })
 "#;
 
@@ -1661,7 +1640,7 @@ fn render_typst_book(
     options: &PdfWorkspacePreparationOptions<'_>,
     cancelled: &AtomicBool,
 ) -> Result<String, String> {
-    let mut source = format!("{BOOK_LAYOUT_RULES}{BOOK_TITLE_BALANCE_RULE}");
+    let mut source = format!("{BOOK_LAYOUT_RULES}{BOOK_TITLE_FIT_RULE}");
     let mut body_started = false;
     let mut chapter_number = 0usize;
     let title_page = document
@@ -1749,7 +1728,7 @@ fn render_typst_book(
                 .split_whitespace()
                 .map(|word| format!("{},", typst_string(word)))
                 .collect::<String>();
-            source.push_str(&format!("#align(center)[\n#set par(justify: false, first-line-indent: 0pt, linebreaks: \"optimized\")\n#set text(spacing: 100%, hyphenate: false)\n#v(0.2fr)\n#block(width: 100%)[\n#set text(font: ({heading_fonts}), size: 30pt, weight: \"medium\")\n#set par(leading: 0.6em, spacing: 0pt, linebreaks: \"simple\")\n#gnosis-balanced-title(({title_words}))[#upper[{}]]\n]\n", render_inline_typst(&item.title, false)));
+            source.push_str(&format!("#align(center)[\n#set par(justify: false, first-line-indent: 0pt, linebreaks: \"simple\")\n#set text(spacing: 100%, hyphenate: false)\n#v(0.2fr)\n#block(width: 100%)[\n#set text(font: ({heading_fonts}), size: 30pt, weight: \"medium\")\n#set par(leading: 0.6em, spacing: 0pt, linebreaks: \"simple\")\n#gnosis-title-fit(({title_words}))[#upper[{}]]\n]\n", render_inline_typst(&item.title, false)));
             if !item.subtitle.trim().is_empty() {
                 source.push_str(&format!(
                     "#v(1em)\n#text(font: ({heading_fonts}), size: 14pt)[#upper[{}]]\n",
@@ -3662,7 +3641,7 @@ mod tests {
     }
 
     #[test]
-    fn title_pages_balance_different_titles_with_normal_spacing() {
+    fn title_pages_wrap_naturally_and_preserve_explicit_breaks() {
         use super::super::book_export::{BookItemInput, BookPart};
         let workspace = pdf_workspace().unwrap();
         let _cleanup = WorkspaceCleanup(workspace.clone());
@@ -3672,7 +3651,7 @@ mod tests {
             "The Art of Change",
             "Über außergewöhnliche Wege und neue Möglichkeiten",
             "A longer title about changing the way we see the world",
-            "First line\nSecond line",
+            "Hôn Nhân\nHoàn Hảo",
             "First soft\u{2028}Second soft",
             "The <i>Art</i> of Change",
             "Supercalifragilisticexpialidocious",
@@ -3719,11 +3698,10 @@ mod tests {
         )
         .unwrap();
         let source = fs::read_to_string(workspace.join("chapter.typ")).unwrap();
-        assert_eq!(
-            source.matches("#gnosis-balanced-title(").count(),
-            titles.len()
-        );
+        assert_eq!(source.matches("#gnosis-title-fit(").count(), titles.len());
         assert!(source.contains("size: 14pt"));
+        assert!(!source.contains("gnosis-balanced-title"));
+        assert!(source.contains("Hôn Nhân\\nHoàn Hảo"));
         let (Some(binary), Some(fonts)) = (
             std::env::var_os("GNOSIS_TYPST_BIN"),
             std::env::var_os("GNOSIS_TYPST_SMOKE_FONT_DIR"),
@@ -3731,9 +3709,9 @@ mod tests {
             return;
         };
         let pdf = workspace.join("titles.pdf");
-        let output = std::process::Command::new(binary)
+        let output = std::process::Command::new(&binary)
             .args(["compile", "--ignore-system-fonts", "--font-path"])
-            .arg(fonts)
+            .arg(&fonts)
             .arg("--root")
             .arg(&workspace)
             .arg("--package-path")
@@ -3747,8 +3725,40 @@ mod tests {
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
+        // Compile the identical source to SVG, just as the live preview does.
+        let svg = workspace.join("title-{p}.svg");
+        let output = std::process::Command::new(&binary)
+            .args(["compile", "--ignore-system-fonts", "--font-path"])
+            .arg(&fonts)
+            .arg("--root")
+            .arg(&workspace)
+            .arg("--package-path")
+            .arg(workspace.join("packages"))
+            .arg(workspace.join("chapter.typ"))
+            .arg(&svg)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(fs::read_to_string(workspace.join("title-1.svg"))
+            .unwrap()
+            .contains("<svg"));
         if let Some(destination) = std::env::var_os("GNOSIS_TITLE_SMOKE_OUTPUT") {
-            fs::copy(pdf, destination).unwrap();
+            let destination = PathBuf::from(destination);
+            fs::copy(pdf, &destination).unwrap();
+            fs::copy(
+                workspace.join("title-1.svg"),
+                destination.with_extension("svg"),
+            )
+            .unwrap();
+            fs::copy(
+                workspace.join("title-11.svg"),
+                destination.with_file_name("manual-break.svg"),
+            )
+            .unwrap();
         }
     }
 
