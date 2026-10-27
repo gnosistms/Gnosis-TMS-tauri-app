@@ -106,3 +106,21 @@ test("a latest save failure blocks Next and can be retried without changing choi
   assert.equal(state.editorChapter.exportModal.book.redundancy.error, "");
   assert.equal(calls.at(-1).args.input.choices.saved, true);
 });
+
+test("migrated unchecked choices are saved after fresh detection and reload", async () => {
+  const { calls, operations, result } = setup();
+  await startBookRedundancy(() => {}, operations);
+  const started = calls.find((call) => call.name === "start_book_redundancy");
+  const migratedResult = { ...result, footnotes: [{ occurrences: [{ id: "current", choiceAliases: ["saved"] }] }] };
+  deliver({ payload: { requestId: started.args.input.requestId, complete: true, result: migratedResult } });
+  await flushBookRedundancyChoices();
+  assert.equal(state.editorChapter.exportModal.book.redundancy.choices.current, false);
+  assert.equal(calls.find((call) => call.args?.input?.choices)?.args.input.choices.current, false);
+  // Aliases remain in the native snapshot if the app exits before the migration
+  // write completes; reopening can perform the same migration without paid work.
+  const normalInvoke = operations.invoke;
+  operations.invoke = async (name, args) => name === "book_redundancy_cache" && !args.input.choices
+    ? { result: migratedResult, choices: { saved: false } } : normalInvoke(name, args);
+  await startBookRedundancy(() => {}, operations);await flushBookRedundancyChoices();
+  assert.equal(state.editorChapter.exportModal.book.redundancy.choices.current, false);
+});

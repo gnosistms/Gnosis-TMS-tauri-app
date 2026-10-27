@@ -181,6 +181,7 @@ mod tests {
             text: body.into(),
             context: context.into(),
             image_src: String::new(),
+            choice_aliases: Vec::new(),
             identity: String::new(),
         }
     }

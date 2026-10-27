@@ -28,3 +28,15 @@ export function bookRedundancyExclusions(modal, itemId) {
   });
   return excluded.map(({ rowId, kind, marker, signature }) => ({ rowId, kind, marker, signature }));
 }
+
+// Legacy identities included unrelated image metadata. The native inventory
+// supplies aliases only when the annotation's row, marker, body and context match.
+export function migrateBookRedundancyChoices(result, choices = {}) {
+  let next = choices;
+  for (const group of result?.footnotes || []) for (const occurrence of group.occurrences) {
+    if (Object.hasOwn(next, occurrence.id)) continue;
+    const alias = occurrence.choiceAliases?.find((id) => Object.hasOwn(choices, id));
+    if (alias !== undefined) next = { ...next, [occurrence.id]: choices[alias] };
+  }
+  return next;
+}

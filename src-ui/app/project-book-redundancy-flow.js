@@ -1,3 +1,4 @@
+import { migrateBookRedundancyChoices } from "./project-book-redundancy-model.js";
 import { state } from "./state.js";
 import { invoke, listen } from "./runtime.js";
 import { selectedProjectsTeam } from "./project-context.js";
@@ -45,16 +46,17 @@ export async function startBookRedundancy(render, operations = {}) {
       const request = active;
       if (!request || payload?.requestId !== request.id) return;
       if (!matches(request)) { cancelBookRedundancy(); return; }
-      if (payload.complete) publish(request, payload.error ? { status: "error", error: payload.error, result: null } : {
-        status: "ready", result: payload.result, stage: "", error: "",
-      });
+      if (payload.complete) {
+        if (payload.error) publish(request, { status: "error", error: payload.error, result: null });
+        else publishResult(request, payload.result, modal().book.redundancy.choices || {}, { status: "ready", stage: "", error: "" });
+      }
       else publish(request, { stage: payload.stage });
     })).catch((error) => { subscribed = null; throw error; });
     await subscribed;
     await pendingChoiceSave;
     const cached = await request.invoke("book_redundancy_cache", { input: request.scope });
     if (!matches(request)) return;
-    publish(request, { choices: cached.choices || {}, result: cached.result, stage: "Checking for new images and footnotes…" });
+    publishResult(request, cached.result, cached.choices || {}, { stage: "Checking for new images and footnotes…" });
     await (operations.waitForRepoQueue || waitForRepoWriteQueueIdle)(projectRepoScope({ team, project }));
     let selection = {};
     try {
@@ -86,6 +88,11 @@ export function setBookRedundancyChoice(id, included, operations = {}) {
   queueChoiceSave(request, choices, operations.invoke || request.invoke);
 }
 
+function publishResult(request, result, choices, patch) {
+  const migrated = migrateBookRedundancyChoices(result, choices);
+  publish(request, { ...patch, result, choices: migrated });
+  if (migrated !== choices) queueChoiceSave(request, migrated);
+}
 function queueChoiceSave(request, choices, invokeCommand = request.invoke) {
   const version = (request.choiceVersion || 0) + 1;
   request.choiceVersion = version;

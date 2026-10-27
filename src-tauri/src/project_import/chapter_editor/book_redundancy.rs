@@ -38,6 +38,8 @@ struct Occurrence {
     context: String,
     image_src: String,
     identity: String,
+    #[serde(default)]
+    choice_aliases: Vec<String>,
 }
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -524,7 +526,11 @@ fn occurrence(
             marker,
             text,
             context,
-            field.image
+            if kind == "footnote" {
+                None
+            } else {
+                field.image.as_ref()
+            }
         ]))
         .map_err(|e| e.to_string())?,
     );
@@ -539,8 +545,43 @@ fn occurrence(
         text,
         context,
         image_src: String::new(),
+        choice_aliases: Vec::new(),
         identity: String::new(),
     })
+}
+fn annotation_key(note: &Occurrence) -> Result<String, String> {
+    Ok(digest(
+        serde_json::to_vec(&json!([
+            note.item_id,
+            note.row_id,
+            note.marker,
+            note.text,
+            note.context
+        ]))
+        .map_err(|e| e.to_string())?,
+    ))
+}
+fn carry_choice_aliases(notes: &mut [Occurrence], previous: &Detection) -> Result<(), String> {
+    let mut old = BTreeMap::new();
+    for note in previous
+        .footnotes
+        .iter()
+        .flat_map(|group| &group.occurrences)
+    {
+        old.insert(annotation_key(note)?, note);
+    }
+    for note in notes {
+        if let Some(prior) = old.get(&annotation_key(note)?) {
+            note.choice_aliases = prior.choice_aliases.clone();
+            if prior.id != note.id {
+                note.choice_aliases.push(prior.id.clone());
+            }
+            note.choice_aliases.retain(|id| id != &note.id);
+            note.choice_aliases.sort();
+            note.choice_aliases.dedup();
+        }
+    }
+    Ok(())
 }
 fn pair_key(a: &Occurrence, b: &Occurrence) -> String {
     let key = |note: &Occurrence| {
@@ -785,6 +826,7 @@ fn run(app: &AppHandle, input: &DetectionInput, cancel: &AtomicBool) -> Result<D
                         text: String::new(),
                         context: String::new(),
                         image_src: src,
+                        choice_aliases: Vec::new(),
                         identity,
                     }),
                     Err(error) => {
@@ -845,6 +887,7 @@ fn run(app: &AppHandle, input: &DetectionInput, cancel: &AtomicBool) -> Result<D
             }
         }
     }
+    carry_choice_aliases(&mut notes, &cache.snapshot)?;
     let inventory = inventory_digest(&notes, &pictures);
     if let Some(mut snapshot) = reuse_snapshot(&cache, &inventory, &notes, &pictures, &warnings) {
         snapshot.revisions = revisions;
@@ -1139,6 +1182,7 @@ mod tests {
             text: "A definition".into(),
             context: context.into(),
             image_src: String::new(),
+            choice_aliases: Vec::new(),
             identity: String::new(),
         }
     }
@@ -1335,5 +1379,73 @@ mod tests {
                 .expect("choices");
         assert!(!saved["note"]);
         fs::remove_dir_all(folder).expect("cleanup");
+    }
+
+    #[test]
+    fn footnote_choice_identity_survives_unrelated_image_changes() {
+        let row = stored_row();
+        let mut field = row.fields["en"].clone();
+        let item = BookItemInput {
+            id: "chapter".into(),
+            ..Default::default()
+        };
+        let original = occurrence(
+            &item,
+            &row,
+            &field,
+            "footnote",
+            1,
+            "Note".into(),
+            "Anchor".into(),
+        )
+        .expect("note");
+        field.image = None;
+        let without_image = occurrence(
+            &item,
+            &row,
+            &field,
+            "footnote",
+            1,
+            "Note".into(),
+            "Anchor".into(),
+        )
+        .expect("note");
+        assert_eq!(original.id, without_image.id);
+        let mut legacy = original.clone();
+        legacy.id = digest(
+            serde_json::to_vec(&json!([
+                item.id,
+                row.row_id,
+                "footnote",
+                1,
+                "Note",
+                "Anchor",
+                row.fields["en"].image
+            ]))
+            .expect("legacy identity"),
+        );
+        assert_ne!(legacy.id, original.id);
+        let legacy_id = legacy.id.clone();
+        let mut old_json = serde_json::to_value(&legacy).expect("old cache");
+        old_json
+            .as_object_mut()
+            .expect("object")
+            .remove("choiceAliases");
+        let legacy: Occurrence = serde_json::from_value(old_json).expect("old cache is readable");
+        let previous = Detection {
+            footnotes: vec![Group {
+                id: "group".into(),
+                anchor: "Anchor".into(),
+                occurrences: vec![legacy],
+            }],
+            ..Default::default()
+        };
+        let mut current = vec![without_image];
+        carry_choice_aliases(&mut current, &previous).expect("migrate");
+        assert_eq!(current[0].choice_aliases, vec![legacy_id]);
+        current[0].text = "A changed meaning".into();
+        current[0].choice_aliases.clear();
+        carry_choice_aliases(&mut current, &previous).expect("changed annotation");
+        assert!(current[0].choice_aliases.is_empty());
     }
 }

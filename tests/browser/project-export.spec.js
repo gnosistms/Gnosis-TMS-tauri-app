@@ -31,6 +31,7 @@ async function mountProjectExport(page, multilingual = false, chapterTitles = fa
           window.__projectExports.push({ command, ...args });
         }
         if (command === "book_redundancy_cache") {
+          if (args.input.choices && window.__failRedundancySave) throw new Error("Review choices could not be saved");
           if (args.input.choices) window.__redundancyChoices = args.input.choices;
           return { result: window.__redundancyResult, choices: window.__redundancyChoices };
         }
@@ -1383,4 +1384,30 @@ test("redundancy page keeps local decisions through page 3 and reopening, and ex
   expect(input.bookItems[0].reviewRevision).toBe("reviewed-a");
   expect(input.bookItems[0].exclusions).toEqual([{ rowId: "fixture-chapter-0-0-row", kind: "footnote", marker: 1, signature: "sig-n1" }]);
   expect(input.bookItems[1].exclusions.filter((entry) => entry.kind === "image")).toHaveLength(0);
+});
+
+
+test("legacy footnote choices migrate locally and failed saves have an explicit retry", async ({ page }) => {
+  await mountProjectExport(page);
+  await page.evaluate(() => {
+    window.__redundancyChoices = { legacy: false };
+    const note = (id, itemId) => ({ id, itemId, rowId: `${itemId}-row`, kind: "footnote", marker: 1, signature: "signature", chapterName: itemId, text: "Equivalent definition", context: "term" });
+    window.__redundancyResult = { images: [], warnings: [], footnotes: [{ id: "group", anchor: "term", occurrences: [{ ...note("current", "fixture-chapter-0-0"), choiceAliases: ["legacy"] }, note("later", "fixture-chapter-0-1")] }] };
+  });
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  await modal.getByRole("button", { name: "Next", exact: true }).click();
+  const checks = modal.locator("[data-book-redundancy-choice]");
+  await expect(checks).toHaveCount(2);await expect(checks.nth(0)).not.toBeChecked();
+  await expect.poll(() => page.evaluate(() => window.__redundancyChoices.current)).toBe(false);
+  await page.evaluate(() => { window.__failRedundancySave = true; });
+  await checks.nth(1).check();
+  const retry = modal.getByRole("button", { name: "Retry saving choices", exact: true });
+  await expect(retry).toBeVisible();
+  await modal.getByRole("button", { name: "Next", exact: true }).click();
+  await expect(modal.getByRole("heading", { name: "Review redundancy" })).toBeVisible();
+  await page.evaluate(() => { window.__failRedundancySave = false; });
+  await retry.click();await expect(retry).toBeHidden();await expect(checks.nth(1)).toBeChecked();
+  await modal.getByRole("button", { name: "Next", exact: true }).click();
+  await expect(modal.getByRole("button", { name: "Save", exact: true })).toBeVisible();
+  await expect(modal.locator(".modal__error")).toHaveCount(0);
 });

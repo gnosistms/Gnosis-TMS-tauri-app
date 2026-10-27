@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { bookRedundancyExclusions, imageReviewChoices, reviewChoiceIncluded } from "./project-book-redundancy-model.js";
+import { bookRedundancyExclusions, imageReviewChoices, reviewChoiceIncluded, migrateBookRedundancyChoices } from "./project-book-redundancy-model.js";
 const note = (id, itemId, marker = 1) => ({ id, itemId, rowId: `row-${id}`, kind: "footnote", marker, signature: `sig-${id}` });
 const image = (id, itemId) => ({ ...note(id, itemId, 0), kind: "image" });
 const setup = () => ({ book: { redundancy: { result: {
@@ -27,4 +27,13 @@ test("reordering changes only automatic choices and unique notes are untouched",
   assert.equal(bookRedundancyExclusions(modal, "b").some((e) => e.kind === "footnote"), false);
   assert.equal(bookRedundancyExclusions(modal, "a").some((e) => e.kind === "footnote"), true);
   assert.deepEqual(bookRedundancyExclusions(modal, "unique"), []);
+});
+
+test("legacy choices migrate only through verified aliases and preserve explicit false", () => {
+  const result = { footnotes: [{ occurrences: [{ id: "current", choiceAliases: ["old"] }] }] };
+  assert.deepEqual(migrateBookRedundancyChoices(result, { old: false }), { old: false, current: false });
+  const current = { old: false, current: true };
+  assert.equal(migrateBookRedundancyChoices(result, current), current);
+  const unrelated = { other: false };
+  assert.equal(migrateBookRedundancyChoices(result, unrelated), unrelated);
 });
