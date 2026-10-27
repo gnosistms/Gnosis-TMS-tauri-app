@@ -336,6 +336,9 @@ export function registerTranslateEditorDomEvents(app, render) {
       return;
     }
 
+    if (input.dataset.contentKind === "attribution") {
+      input.closest(".translation-language-panel__attribution")?.setAttribute("data-editor-attribution-editing", "");
+    }
     const rowId = input.dataset.rowId ?? "";
     const languageCode = input.dataset.languageCode ?? "";
     void setActiveEditorField(render, rowId, languageCode, { input });
@@ -613,6 +616,12 @@ export function registerTranslateEditorDomEvents(app, render) {
     }
     if (textarea instanceof HTMLTextAreaElement) {
       requestAnimationFrame(() => {
+        // Window deactivation can retain the active element. Keep the editing
+        // state until focus actually moves, rather than relying on :focus-within
+        // being repainted consistently as the native window is reactivated.
+        if (contentKind === "attribution" && document.activeElement !== textarea) {
+          textarea.closest(".translation-language-panel__attribution")?.removeAttribute("data-editor-attribution-editing");
+        }
         syncEditorRowTextareaHeight(textarea);
         syncEditorVirtualizationRowLayout(textarea);
         syncActiveEditorInlineStyleButtons();
