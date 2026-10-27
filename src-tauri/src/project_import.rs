@@ -19,10 +19,61 @@ pub(crate) use self::chapter_editor::{
     fetch_public_image_dimensions, list_imported_editor_conflict_refs,
     normalize_chapter_settings_value, persist_imported_editor_conflict_entries,
     repo_has_imported_editor_conflicts, resolve_chapter_json_git_conflict_from_stage_texts,
-    resolve_project_json_git_conflict_from_stage_texts, resolve_row_git_conflict_from_stage_texts,
-    unescaped_footnote_marker_sequence, ImportedEditorConflictRef,
-    PendingImportedEditorConflictEntry, ResolvedEditorConflictAction,
+    resolve_export_settings_git_conflict, resolve_project_json_git_conflict_from_stage_texts,
+    resolve_row_git_conflict_from_stage_texts, unescaped_footnote_marker_sequence,
+    ImportedEditorConflictRef, PendingImportedEditorConflictEntry, ResolvedEditorConflictAction,
+    EXPORT_SETTINGS_PATH,
 };
+
+#[tauri::command]
+pub(crate) async fn load_project_export_settings(
+    app: AppHandle,
+    input: chapter_editor::ProjectExportSettingsInput,
+) -> Result<chapter_editor::ExportSettingsSnapshot, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        chapter_editor::load_project_export_settings_sync(&app, input)
+    })
+    .await
+    .map_err(|_| "Could not load local export settings.".to_string())?
+}
+
+#[tauri::command]
+pub(crate) fn start_project_export_settings_sync(
+    app: AppHandle,
+    input: chapter_editor::ProjectExportSettingsInput,
+) -> Result<(), String> {
+    // The IPC path returns immediately. Access recovery and Git run on the job
+    // worker; even an offline failure leaves the frontend's local draft intact.
+    tauri::async_runtime::spawn(async move {
+        let worker = app.clone();
+        let request_id = input.request_id.clone();
+        let result = tauri::async_runtime::spawn_blocking(move || {
+            let preflight = if input.settings.is_some() {
+                crate::installation_access::require_command_access(
+                    &worker,
+                    input.installation_id,
+                    ensure_installation_allows_chapter_writes,
+                )
+            } else {
+                Ok(())
+            };
+            chapter_editor::synchronize_export_settings_event(&worker, input, preflight)
+        })
+        .await;
+        use tauri::Emitter;
+        match result {
+            Ok(event) => {
+                let _ = app.emit("project-export-settings", event);
+            }
+            Err(_) => {
+                let _ = app.emit("project-export-settings", serde_json::json!({
+                "requestId": request_id, "settings": null, "error": "Could not synchronize export settings."
+            }));
+            }
+        }
+    });
+    Ok(())
+}
 
 use self::{
     chapter_editor::{

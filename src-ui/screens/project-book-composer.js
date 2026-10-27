@@ -1,5 +1,5 @@
 import { extractVellumLeadingHeadingTitle } from "../app/vellum-text-editor-content.js";
-import { escapeHtml, secondaryButton, tooltipAttributes, renderChevronIcon } from "../lib/ui.js";
+import { escapeHtml, primaryButton, secondaryButton, tooltipAttributes, renderChevronIcon } from "../lib/ui.js";
 import { renderExportSelect } from "./export-fields.js";
 import { BOOK_SECTION_TYPES, bookChapterPreviewBlocks, bookChapterNumbers, bookContentsEntries, bookItemIncluded, bookItemTitle, bookSectionLabel } from "../app/project-book-model.js";
 import { bookPaperStyle } from "../app/project-book-paper.js";
@@ -133,6 +133,15 @@ export function renderBookPreviewFontStatus(modal) {
   return `<div class="book-preview-font-status" data-book-font-status role="status">${fonts?.status === "loading" ? "Preparing preview fonts…" : fonts?.status === "error" ? `${escapeHtml(fonts.error)} <button type="button" class="text-action" data-action="book-fonts-retry">Retry preview fonts</button>` : ""}</div>`;
 }
 
+export function renderBookSettingsNotice(modal) {
+  if (!modal.book?.settingsNotice) return "";
+  return `<div class="modal-backdrop"><section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="book-settings-notice-title" data-modal-dialog="book-settings-remote" tabindex="-1"><div class="card__body modal-card__body">
+    <h2 class="modal__title" id="book-settings-notice-title">Settings saved on GitHub</h2>
+    <p>Export settings for this project have been saved on GitHub. We will now load the saved settings.</p>
+    <div class="modal__actions">${primaryButton("Ok", "book-settings-ok", { modalDefault: true, modalCancel: true, modalInitialFocus: true })}</div>
+  </div></section></div>`;
+}
+
 export function renderProjectBookComposer(modal) {
   const included = modal.book.items.filter(bookItemIncluded);
   return `<div class="modal-backdrop"><section class="card modal-card modal-card--editor-export modal-card--book" role="dialog" aria-modal="true" aria-labelledby="editor-export-modal-title" data-modal-dialog="editor-export" tabindex="-1">
@@ -144,5 +153,5 @@ export function renderProjectBookComposer(modal) {
       </div>
       <div class="book-composer"><div class="book-composer__sidebar"><nav class="book-composer__list" aria-label="Book items" tabindex="-1">${renderProjectBookItems(modal)}</nav><div class="book-add"><button type="button" class="button button--secondary" data-action="book-add-menu" aria-expanded="${modal.book.addMenuOpen}" ${modal.book.addMenuOpen ? "" : tooltipAttributes("Add new sections such as title page, table of contents, etc.", { align: "start" })}>+ Add new</button>${modal.book.addMenuOpen ? `<div class="book-add__menu">${BOOK_SECTION_TYPES.map((type) => `<button type="button" data-action="book-add:${type.kind}">${type.label}</button>`).join("")}</div>` : ""}</div></div><div class="book-composer__preview">${formattingToolbar(modal)}<div class="book-composer__page-scroll">${renderSelectedBookPage(modal)}</div></div></div>
       ${modal.error ? `<p class="modal__error book-composer__error" role="alert">${escapeHtml(modal.error)}</p>` : ""}
-    </div></section></div>`;
+    </div></section></div>${renderBookSettingsNotice(modal)}`;
 }

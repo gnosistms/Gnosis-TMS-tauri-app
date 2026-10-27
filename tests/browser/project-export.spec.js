@@ -1,14 +1,32 @@
 import { expect, test } from "./test.js";
 
-async function mountProjectExport(page, multilingual = false, chapterTitles = false, filesPerProject = 3) {
-  await page.addInitScript(({ chapterTitles }) => {
+async function mountProjectExport(page, multilingual = false, chapterTitles = false, filesPerProject = 3, settings = {}) {
+  await page.addInitScript(({ chapterTitles, settings }) => {
     window.__projectExports = [];
+    window.__bookSettingsRequests = [];
+    window.__remoteBookSettings = settings.remote || null;
+    window.__localBookSettings = settings.local || null;
+    window.__holdSettingsFetch = settings.holdFetch || false;
+    window.__heldSettingsRequests = [];
+
     window.__pdfListeners = {};
     window.__titlePreviewRequests = [];
     window.__TAURI__ = {
       core: { invoke: async (command, args) => {
         if (["export_gtms_chapter_file", "inspect_gtms_chapter_pdf_fonts", "start_gtms_chapter_pdf_export", "cancel_gtms_chapter_pdf_export"].includes(command)) {
           window.__projectExports.push({ command, ...args });
+        }
+        if (command === "load_project_export_settings") return { settings: window.__localBookSettings };
+        if (command === "start_project_export_settings_sync") {
+          window.__bookSettingsRequests.push(args.input);
+          if (!args.input.settings && window.__holdSettingsFetch) {
+            window.__heldSettingsRequests.push(args.input);
+          } else {
+            const payload = { requestId: args.input.requestId, settings: args.input.settings || window.__remoteBookSettings, error: window.__settingsError || "" };
+            if (args.input.settings && !payload.error) window.__localBookSettings = args.input.settings;
+            setTimeout(() => window.__pdfListeners["project-export-settings"]?.({ payload }), 0);
+          }
+          return null;
         }
         if (command === "start_project_book_title_preview") {
           window.__titlePreviewRequests.push(args.input);
@@ -56,12 +74,13 @@ async function mountProjectExport(page, multilingual = false, chapterTitles = fa
         return () => {};
       } },
     };
-  }, { chapterTitles });
+  }, { chapterTitles, settings });
   await page.goto("/?fixture=editor&rows=1");
   await page.waitForFunction(() => typeof window.__gnosisDebug?.mountProjectsFixture === "function");
   await page.evaluate(async ({ multilingual, filesPerProject }) => {
     await window.__gnosisDebug.mountProjectsFixture({
       projectCount: 1, filesPerProject, deletedFilesPerProject: 1,
+      repositoryOwner: "fixture",
       languages: [{ code: "en", name: "English", role: "target" }],
       ...(multilingual ? { languagesByFileIndex: [
         [{ code: "en", name: "English", role: "target" }, { code: "vi", name: "Vietnamese", role: "target" }],
@@ -1016,4 +1035,97 @@ test("book composer saves independent language layouts, sections, and format set
   expect(input.bookItems.find((item) => item.kind === "copyright").text).toContain("<i>");
   expect(input.bookItems.find((item) => item.kind === "image").caption).toBe("An illustration");
   expect(input.chapterIds).toEqual(["fixture-chapter-0-0", "fixture-chapter-0-2"]);
+});
+
+const settingsLayout = (title, code = "en") => ({ options: { pdfPaperSize: "a5" }, items: [
+  { id: "fixture-chapter-0-0", kind: "chapter", chapterId: "fixture-chapter-0-0", title, numbered: false },
+], selectedItemId: "fixture-chapter-0-0", code });
+const settingsDoc = (en, vi) => ({ version: 1, layouts: { ...(en ? { en } : {}), ...(vi ? { vi } : {}) } });
+const settingsDialog = (page) => page.getByRole("dialog", { name: "Settings saved on GitHub", exact: true });
+async function releaseSettingsFetch(page, settings) {
+  await expect.poll(() => page.evaluate(() => window.__heldSettingsRequests.length)).toBeGreaterThan(0);
+  await page.evaluate((settings) => {
+    for (const request of window.__heldSettingsRequests.splice(0)) {
+      window.__pdfListeners["project-export-settings"]({ payload: { requestId: request.requestId, settings, error: "" } });
+    }
+  }, settings);
+}
+
+test("Git export settings load locally first, then require acknowledgement for the selected language", async ({ page }) => {
+  await mountProjectExport(page, false, false, 3, { local: settingsDoc(settingsLayout("Local title")), holdFetch: true });
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  const title = modal.locator('[data-book-chapter-title="fixture-chapter-0-0"]');
+  await expect(title).toHaveValue("Local title");
+  await releaseSettingsFetch(page, settingsDoc(settingsLayout("GitHub title")));
+  const notice = settingsDialog(page);
+  await expect(notice).toBeVisible();
+  await expect(notice).toContainText("Export settings for this project have been saved on GitHub. We will now load the saved settings.");
+  await expect(title).toHaveValue("Local title");
+  await notice.getByRole("button", { name: "Ok", exact: true }).click();
+  await expect(notice).toBeHidden();
+  await expect(title).toHaveValue("GitHub title");
+  await expect(modal.locator('[data-book-numbered-item="fixture-chapter-0-0"]')).not.toBeChecked();
+});
+
+test("other-language Git changes overwrite quietly and language selection uses them", async ({ page }) => {
+  await mountProjectExport(page, true, false, 3, { local: settingsDoc(settingsLayout("English"), settingsLayout("Old Vietnamese", "vi")), holdFetch: true });
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  await expect(modal.locator('[data-book-chapter-title="fixture-chapter-0-0"]')).toHaveValue("English");
+  await releaseSettingsFetch(page, settingsDoc(settingsLayout("English"), settingsLayout("New Vietnamese", "vi")));
+  await expect(settingsDialog(page)).toHaveCount(0);
+  await chooseBookOption(modal, "editor-export-language", "Vietnamese (vi)");
+  await expect(modal.locator('[data-book-chapter-title="fixture-chapter-0-0"]')).toHaveValue("New Vietnamese");
+});
+
+test("page 1 saves to Git on Next and Cancel, reloads on Back, and leaves format local", async ({ page }) => {
+  await mountProjectExport(page, false, false, 3, { holdFetch: true });
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  await releaseSettingsFetch(page, null);
+  await modal.locator('[data-book-chapter-title="fixture-chapter-0-0"]').fill("Saved title");
+  await modal.getByRole("button", { name: "Next", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.__bookSettingsRequests.filter((r) => r.settings).length)).toBe(1);
+  await modal.locator('[data-action="select-editor-export-option:file:pdf"]').click();
+  await modal.getByRole("button", { name: "Previous", exact: true }).click();
+  await expect(modal.locator('[data-book-chapter-title="fixture-chapter-0-0"]')).toHaveValue("Saved title");
+  await releaseSettingsFetch(page, settingsDoc(settingsLayout("Updated on GitHub")));
+  await settingsDialog(page).getByRole("button", { name: "Ok", exact: true }).click();
+  await modal.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(modal).toBeHidden();
+  await expect.poll(() => page.evaluate(() => window.__bookSettingsRequests.filter((r) => r.settings).length)).toBe(2);
+  const saves = await page.evaluate(() => window.__bookSettingsRequests.filter((r) => r.settings));
+  expect(saves[0].settings.layouts.en.items[0].title).toBe("Saved title");
+  expect(saves[1].settings.layouts.en.items[0].title).toBe("Updated on GitHub");
+  expect(saves[1].settings.layouts.en.options).toEqual({ pdfPaperSize: "a5" });
+  expect(JSON.stringify(saves)).not.toContain("selectedOptionId");
+  await page.locator('[data-action="export-project:fixture-project-001"]').click();
+  await modal.getByRole("button", { name: "Next", exact: true }).click();
+  await expect(modal.locator('[data-action="select-editor-export-option:file:pdf"]')).toHaveAttribute("aria-pressed", "true");
+});
+
+test("a delayed settings fetch cannot change a closed modal or a newer entry", async ({ page }) => {
+  await mountProjectExport(page, false, false, 3, { holdFetch: true });
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  await expect.poll(() => page.evaluate(() => window.__heldSettingsRequests.length)).toBe(1);
+  await page.evaluate(() => { window.__oldSettingsRequest = window.__heldSettingsRequests.shift(); });
+  await modal.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.locator('[data-action="export-project:fixture-project-001"]').click();
+  await modal.locator('[data-book-chapter-title="fixture-chapter-0-0"]').fill("New draft");
+  await page.evaluate((settings) => window.__pdfListeners["project-export-settings"]({ payload: {
+    requestId: window.__oldSettingsRequest.requestId, settings, error: "",
+  } }), settingsDoc(settingsLayout("Stale fetch")));
+  await expect(settingsDialog(page)).toHaveCount(0);
+  await expect(modal.locator('[data-book-chapter-title="fixture-chapter-0-0"]')).toHaveValue("New draft");
+});
+
+test("offline Git save keeps local setup and Cancel remains immediate", async ({ page }) => {
+  await mountProjectExport(page, false, false, 3, { holdFetch: true });
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  await releaseSettingsFetch(page, null);
+  await modal.locator('[data-book-chapter-title="fixture-chapter-0-0"]').fill("Offline draft");
+  await page.evaluate(() => { window.__settingsError = "Offline"; });
+  await modal.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(modal).toBeHidden();
+  await expect.poll(() => page.evaluate(() => window.__bookSettingsRequests.filter((r) => r.settings).length)).toBe(1);
+  await page.locator('[data-action="export-project:fixture-project-001"]').click();
+  await expect(modal.locator('[data-book-chapter-title="fixture-chapter-0-0"]')).toHaveValue("Offline draft");
 });

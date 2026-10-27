@@ -1,4 +1,4 @@
-import { renderProjectBookComposer, bookNavButton } from "./project-book-composer.js";
+import { renderProjectBookComposer, renderBookSettingsNotice, bookNavButton } from "./project-book-composer.js";
 import {
   escapeHtml,
   loadingPrimaryButton,
@@ -712,5 +712,6 @@ export function renderEditorExportModal(state) {
         </div>
       </section>
     </div>
+    ${renderBookSettingsNotice(modal)}
   `;
 }

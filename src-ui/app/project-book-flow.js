@@ -1,4 +1,6 @@
 import { requestBookPreviewFonts } from "./project-book-preview-fonts.js";
+import { beginBookSettingsSync, leaveBookSettingsPage1, acceptRemoteBookSettings } from "./project-book-settings-sync.js";
+import { portableBookOptions } from "./project-book-settings-document.js";
 import { extractInlineMarkupVisibleText } from "./editor-inline-markup/serialize.js";
 import { extractVellumLeadingHeadingTitle } from "./vellum-text-editor-content.js";
 import { cancelBookTitlePreview, requestBookTitlePreview } from "./project-book-title-preview.js";
@@ -51,8 +53,8 @@ export function initializeProjectBook(projectRecord, chapters, defaultLanguageCo
   const saved = loadBookSettings(projectRecord.id);
   const languages = bookLanguages(chapters);
   const languageCode = languages.some((entry) => entry.code === saved.languageCode) ? saved.languageCode : defaultLanguageCode || languages[0]?.code || "";
-  const book = { ...reconcileBookLayout(chapters, languageCode, saved.layouts?.[languageCode]), ...previewState() };
-  return { languageCode, languages, book, page: 1, savedOptions: saved.options ?? {} };
+  const book = { ...reconcileBookLayout(chapters, languageCode, saved.layouts?.[languageCode]), ...previewState(), settingsLocalSeeded: Boolean(saved.layouts?.[languageCode]) };
+  return { languageCode, languages, book, page: 1, savedOptions: { ...saved.options, ...portableBookOptions(saved.layouts?.[languageCode]?.options) } };
 }
 
 export function selectProjectBookLanguage(render, code) {
@@ -60,9 +62,21 @@ export function selectProjectBookLanguage(render, code) {
   if (!current?.book || current.status !== "idle" || !current.languages.some((language) => language.code === code)) return;
   saveBookSettings(current);
   const saved = loadBookSettings(current.projectId);
-  const book = { ...reconcileBookLayout(project()?.chapters ?? [], code, saved.layouts?.[code]), ...previewState() };
-  update({ languageCode: code, book, pdfFontStatus: "idle", pdfFontInspectionKey: "", error: "" }, render);
+  const book = { ...reconcileBookLayout(project()?.chapters ?? [], code, saved.layouts?.[code]), ...previewState(), settingsEntryId: current.book.settingsEntryId, settingsLocalSeeded: true };
+  const options = portableBookOptions(saved.layouts?.[code]?.options);
+  update({ ...options, languageCode: code, book, pdfFontStatus: "idle", pdfFontInspectionKey: "", error: "" }, render);
   void loadSelectedBookPreview(render);
+}
+
+export function applyProjectBookSettings(saved, render, page = modal()?.page) {
+  const current = modal();
+  if (!current?.book || !current.isOpen) return;
+  const code = current.languageCode;
+  const options = portableBookOptions(saved.layouts?.[code]?.options || saved.options);
+  const book = { ...reconcileBookLayout(project()?.chapters || [], code, saved.layouts?.[code]), ...previewState(), settingsEntryId: current.book.settingsEntryId, settingsLocalSeeded: true };
+  update({ ...options, page, languageCode: code, book, pdfFontStatus: "idle", pdfFontInspectionKey: "", error: "" }, render);
+  if (page === 1) void loadSelectedBookPreview(render);
+  else if (modal().selectedOptionId === "file:pdf") void import("./editor-export-flow.js").then((module) => module.refreshPdfFontInspection(render));
 }
 
 export async function loadSelectedBookPreview(render, operations = {}) {
@@ -198,6 +212,7 @@ export async function importBookImage(render, file, operations = {}) {
         fileName: "book-image.png", dataBase64: canvas.toDataURL("image/png").split(",")[1],
       } });
       image.vellumFilePath = prepared.filePath;
+      image.vellumAssetId = prepared.assetId;
       delete image.dataUrl;
     }
     if (modal()?.projectId !== current.projectId || modal()?.languageCode !== current.languageCode) return;
@@ -219,11 +234,16 @@ export async function handleProjectBookAction(action, render) {
   const current = modal();
   if (!current?.book || current.status !== "idle") return true;
   const book = current.book;
+  if (action === "book-settings-ok") { acceptRemoteBookSettings(render); return true; }
   if (action === "book-next") { if (book.items.some(bookItemIncluded)) {
+    leaveBookSettingsPage1(render);
     update({ page: 2 }, render);
     if (current.selectedOptionId === "file:pdf") void import("./editor-export-flow.js").then((module) => module.refreshPdfFontInspection(render));
   } }
-  else if (action === "book-previous") update({ page: 1 }, render);
+  else if (action === "book-previous") {
+    applyProjectBookSettings(loadBookSettings(current.projectId), render, 1);
+    beginBookSettingsSync(render);
+  }
   else if (action === "book-fonts-retry") requestBookPreviewFonts(render, { force: true });
   else if (action === "book-title-preview-retry") cancelBookTitlePreview();
   else if (action === "book-add-menu") update({ book: { ...book, addMenuOpen: !book.addMenuOpen } }, render);

@@ -2,6 +2,7 @@ import { cancelBookTitlePreview, requestBookTitlePreview } from "./project-book-
 import { initializeProjectBook, selectProjectBookLanguage, loadSelectedBookPreview } from "./project-book-flow.js";
 import { bookChapterDefaultTitle, bookItemIncluded, bookExportItems } from "./project-book-model.js";
 import { saveBookSettings } from "./project-book-settings.js";
+import { beginBookSettingsSync, leaveBookSettingsPage1 } from "./project-book-settings-sync.js";
 import {
   exportDefaultKey, loadProjectExportBlocks, projectExportChapters,
   projectExportScopeInput,
@@ -398,6 +399,7 @@ export function openProjectExportOptions(render, projectId) {
   };
   if (scope.selectedOptionId === "link:team") scope.selectedOptionId = "file:pdf";
   openExportOptionsForChapter(render, chapters[0].id, composition.languageCode, scope);
+  beginBookSettingsSync(render);
   void loadSelectedBookPreview(render);
 
 }
@@ -478,6 +480,7 @@ export function closeEditorExportOptions(render, operations = {}) {
     return;
   }
 
+  leaveBookSettingsPage1(render);
   updateEditorExportModal({ isOpen: false, status: "idle", error: "" });
   render();
 }

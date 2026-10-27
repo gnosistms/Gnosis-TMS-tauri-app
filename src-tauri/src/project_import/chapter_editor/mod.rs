@@ -36,6 +36,7 @@ use super::{
 
 mod aligned_translation;
 mod book_export;
+mod book_settings;
 mod book_svg;
 mod changed_after_my_edit;
 mod chapter_export;
@@ -59,6 +60,11 @@ pub(crate) use self::aligned_translation::{
 };
 pub(crate) use self::book_export::{
     import_project_book_image_sync, ImportBookImageInput, ImportedBookImage,
+};
+pub(crate) use self::book_settings::{
+    load_project_export_settings_sync, resolve_export_settings_git_conflict,
+    synchronize_export_settings_event, ExportSettingsSnapshot, ProjectExportSettingsInput,
+    EXPORT_SETTINGS_PATH,
 };
 pub(super) use self::changed_after_my_edit::{
     load_gtms_editor_changed_after_my_edit_sync, LoadEditorChangedAfterMyEditInput,

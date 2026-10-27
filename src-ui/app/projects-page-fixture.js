@@ -33,6 +33,7 @@ function buildProjectsPageFixtureProjects(options = {}) {
     id: `fixture-project-${String(projectIndex + 1).padStart(3, "0")}`,
     title: `Fixture Project ${String(projectIndex + 1).padStart(3, "0")}`,
     name: `fixture-project-${projectIndex + 1}`,
+    ...(options.repositoryOwner ? { fullName: `${options.repositoryOwner}/fixture-project-${projectIndex + 1}` } : {}),
     status: "active",
     chapters: [
       ...Array.from({ length: filesPerProject }, (_alsoUnused, fileIndex) =>

@@ -3,6 +3,9 @@ import { getActiveStorageLogin } from "./team-storage.js";
 const key = () => `gnosis-tms-project-book-settings:${String(getActiveStorageLogin() || "local").toLowerCase()}`;
 const contentsKey = () => `gnosis-tms-book-contents-titles:${String(getActiveStorageLogin() || "local").toLowerCase()}`;
 export const loadBookSettings = (projectId) => readPersistentValue(key(), {})?.[projectId] ?? {};
+export function replaceBookSettings(projectId, record) {
+  writePersistentValue(key(), { ...readPersistentValue(key(), {}), [projectId]: record });
+}
 export const loadContentsTitle = (code) => readPersistentValue(contentsKey(), {})?.[code] ?? "Table of Contents";
 export function saveContentsTitle(code, title) {
   writePersistentValue(contentsKey(), { ...readPersistentValue(contentsKey(), {}), [code]: title });
@@ -22,6 +25,7 @@ export function saveBookSettings(modal) {
     version: 1, languageCode: modal.languageCode, options,
     layouts: { ...previous.layouts, [modal.languageCode]: {
       selectedItemId: modal.book.selectedItemId,
+      options: { pdfPaperSize: modal.pdfPaperSize },
       items: modal.book.items.map(({ available: _available, defaultTitle: _defaultTitle, ...item }) => item),
     } },
   };

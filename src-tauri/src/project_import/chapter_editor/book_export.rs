@@ -113,7 +113,7 @@ pub(crate) struct ImportedBookImage {
     #[serde(skip_serializing_if = "Option::is_none")]
     data_url: Option<String>,
 }
-fn asset_root(app: &AppHandle) -> Result<PathBuf, String> {
+pub(super) fn asset_root(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_data_dir()
         .map(|path| path.join("book-export-images"))
@@ -173,7 +173,7 @@ pub(crate) fn import_project_book_image_sync(
     })
 }
 
-fn validate_book_image<'a>(
+pub(super) fn validate_book_image<'a>(
     name: &str,
     bytes: &'a [u8],
 ) -> Result<(&'static str, std::borrow::Cow<'a, [u8]>), String> {
