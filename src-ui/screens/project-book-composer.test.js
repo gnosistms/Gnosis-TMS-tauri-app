@@ -65,3 +65,17 @@ test("title pages put every editing field beside the typeset proof", () => {
   assert.match(html, /src="data:image\/svg\+xml;base64,PHN2Zy8\+"/);
   assert.doesNotMatch(html, /contenteditable|Edit Title Info/);
 });
+
+test("one shared paper selector follows language for every selected section", () => {
+  for (const kind of ["chapter", "copyright", "dedication", "contents", "image", "title"]) {
+    const current = modal();
+    current.pdfPaperSize = "a5";
+    current.book.items = [{ id: "selected", kind, title: "Example", chapterId: "a" }];
+    current.book.selectedItemId = "selected";
+    const html = renderProjectBookComposer(current);
+    assert.equal(html.match(/data-editor-export-paper-size-select/g).length, 1);
+    assert.ok(html.indexOf('id="editor-export-language-trigger"') < html.indexOf('id="editor-export-paper-size-trigger"'));
+    assert.ok(html.indexOf('id="editor-export-paper-size-trigger"') < html.indexOf('data-action="book-add-menu"'));
+    if (kind !== "title") assert.match(html, /class="book-paper"/);
+  }
+});

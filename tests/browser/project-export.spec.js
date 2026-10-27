@@ -529,7 +529,8 @@ test("front matter keeps Return paragraphs distinct from Shift+Return line break
       const style = getComputedStyle(element);
       return { line: parseFloat(style.lineHeight) / parseFloat(style.fontSize), paragraph: parseFloat(getComputedStyle(element.firstElementChild).marginBottom) / parseFloat(style.fontSize) };
     });
-    expect(spacing).toEqual({ line: 1.25, paragraph: .75 });
+    expect(spacing.line).toBeCloseTo(1.25, 3);
+    expect(spacing.paragraph).toBeCloseTo(.75, 3);
     await modal.locator('[data-action="book-select:fixture-chapter-0-0"]').click();
     await modal.locator(`[data-action="book-select:${itemId}"]`).click();
     await expect(editor.locator(":scope > p")).toHaveCount(2);
@@ -553,6 +554,55 @@ test("front matter keeps Return paragraphs distinct from Shift+Return line break
     }, itemId);
     expect(pasted).toBe("Pasted first\nPasted second");
   }
+});
+
+test("shared paper size gives copyright pages print proportions and survives export steps", async ({ page }) => {
+  await mountProjectExport(page);
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  await addSection(modal, "copyright");
+  await modal.getByRole("textbox", { name: "Copyright text", exact: true }).fill("Copyright © Gnosis VN, 2026.");
+  const language = await modal.locator("#editor-export-language-trigger").boundingBox();
+  const paper = await modal.locator("#editor-export-paper-size-trigger").boundingBox();
+  expect(paper.x).toBeGreaterThanOrEqual(language.x + language.width);
+  expect(Math.abs(paper.y - language.y)).toBeLessThan(1);
+  await expect(modal.locator("[data-editor-export-paper-size-select]")).toHaveCount(1);
+  const measure = () => modal.locator(".book-page--copyright").evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    const editor = element.querySelector("[data-book-copyright-editor]");
+    return { width: rect.width, ratio: rect.height / rect.width, left: parseFloat(style.paddingLeft) / rect.width,
+      right: parseFloat(style.paddingRight) / rect.width, font: parseFloat(style.fontSize) / rect.width,
+      bottom: rect.bottom - parseFloat(style.paddingBottom) - editor.getBoundingClientRect().bottom };
+  });
+  for (const [label, width, height] of [
+    ["A5 (148 × 210 mm)", 148, 210], ["A4 (210 × 297 mm)", 210, 297],
+    ["US Letter (8.5 × 11 in)", 215.9, 279.4], ["US Legal (8.5 × 14 in)", 215.9, 355.6],
+    ["US Executive (7.25 × 10.5 in)", 184.15, 266.7], ["US Tabloid (11 × 17 in)", 279.4, 431.8],
+    ["A3 (297 × 420 mm)", 297, 420], ["B5 / ISO (176 × 250 mm)", 176, 250],
+  ]) {
+    await chooseBookOption(modal, "editor-export-paper-size", label);
+    const geometry = await measure();
+    expect(geometry.ratio).toBeCloseTo(height / width, 3);
+    expect(geometry.left).toBeCloseTo((width === 148 ? 19 : 21.59) / width, 3);
+    expect(geometry.right).toBeCloseTo((width === 148 ? 22 : 21.59) / width, 3);
+    expect(geometry.font).toBeCloseTo(9.2 * 25.4 / 72 / width, 4);
+    expect(Math.abs(geometry.bottom)).toBeLessThan(1);
+    await expect(modal.getByRole("textbox", { name: "Copyright text", exact: true })).toHaveText("Copyright © Gnosis VN, 2026.");
+  }
+  await chooseBookOption(modal, "editor-export-paper-size", "A5 (148 × 210 mm)");
+  await page.screenshot({ path: test.info().outputPath("copyright-a5-paper.png") });
+  await page.setViewportSize({ width: 820, height: 1000 });
+  const narrow = await measure();
+  expect(narrow.width).toBeLessThan(148 * 96 / 25.4);
+  expect(narrow.ratio).toBeCloseTo(210 / 148, 3);
+  expect(narrow.font).toBeCloseTo(9.2 * 25.4 / 72 / 148, 4);
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await modal.getByRole("button", { name: "Next", exact: true }).click();
+  await modal.locator('[data-action="select-editor-export-option:file:pdf"]').click();
+  await expect(modal.locator("[data-editor-export-paper-size-select]")).toHaveValue("a5");
+  await modal.getByRole("button", { name: "Previous", exact: true }).click();
+  await expect(modal.locator("[data-editor-export-paper-size-select]")).toHaveValue("a5");
+  await expect(modal.getByRole("textbox", { name: "Copyright text", exact: true })).toHaveText("Copyright © Gnosis VN, 2026.");
 });
 
 test("book composer saves independent language layouts, sections, and format settings immediately", async ({ page }) => {
