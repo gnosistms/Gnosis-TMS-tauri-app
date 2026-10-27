@@ -35,6 +35,7 @@ function compactEvidence(value) {
 export function createStudioTools(study, { persist, progress, isCurrent, activityChanged = () => {}, timing = null }) {
   let cancelled = false;
   const jobs = new Set();
+  const requestSignatures = new Map();
   const activity = createStudioActivity(study, activityChanged, () => !cancelled && isCurrent());
   async function cancelJob(activeJobId) {
     if (jobs.delete(activeJobId)) await invoke("glossary_studio_job", { jobId: activeJobId, cancel: true });
@@ -47,13 +48,14 @@ export function createStudioTools(study, { persist, progress, isCurrent, activit
     }
     if (kind === "web") payload = { ...study.model, ...payload };
     if (kind === "corpus" && payload.path === "/api/search/forms") payload = { ...payload, researchContractVersion: 2 };
-    if (kind === "dictionary") payload = { ...payload, researchContractVersion: 2 };
+    if (kind === "dictionary") payload = { ...payload, researchContractVersion: 3 };
     if (kind === "dle") payload = { ...payload, sourceCacheVersion: 1 };
     if (cancelled || !isCurrent()) throw new Error("Research paused.");
     const canonical = stableSignature({ version: 1, kind, payload });
     const signature = await studioToolSignature(kind, payload, canonical);
     if (cancelled || !isCurrent()) throw new Error("Research paused.");
     study.lastToolSignature = signature;
+    requestSignatures.set(JSON.stringify(parent), signature);
     const retry = study.toolRetries?.[signature] ?? 0;
     const cacheKey = `${signature}:retry:${retry}`;
     const cached = study.cache[cacheKey] ?? study.cache[`${canonical}:retry:${retry}`];
@@ -145,6 +147,7 @@ export function createStudioTools(study, { persist, progress, isCurrent, activit
   }
   function scoped(parent = []) {
     return { ...common,
+      get lastToolSignature() { return requestSignatures.get(JSON.stringify(parent)); },
       run: (kind, payload, purpose = kind) => run(kind, payload, purpose, parent),
       ask: (question, data, shape, purpose, shared = false) => ask(question, data, shape, purpose, shared, parent),
       planActivity: (items) => activity.plan(items, parent),

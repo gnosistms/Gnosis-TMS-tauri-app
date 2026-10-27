@@ -7,6 +7,7 @@ import {
   tooltipAttributes,
 } from "../lib/ui.js";
 import { editorFieldImageMetadataText } from "./editor-images.js";
+import { editorGlossaryEntryButtonEnabled, glossaryEntryTooltip } from "./editor-glossary-entry-selection.js";
 import { editorImagePreviewFrameSizeForSrc } from "./editor-image-preview-size.js";
 import { convertLocalFileSrc } from "./runtime.js";
 import {
@@ -135,13 +136,19 @@ const RESEARCH_MARKER_ICON = `
     <path d="M9.1 11h5.7" />
   </svg>`;
 
+// Greyed out until text is highlighted in this panel. aria-disabled rather than
+// disabled, so the tooltip that explains how to use it still shows.
 function renderResearchMarkerButton(rowId, language) {
   if (language.showResearchButton !== true) {
     return "";
   }
-  return `<button class="translation-marker-button translation-marker-button--research" type="button"
-    data-action="open-research-prep" data-row-id="${escapeHtml(rowId)}" data-language-code="${escapeHtml(language.code)}"
-    aria-label="Research glossary terms" ${tooltipAttributes("Research glossary terms", { align: "end", side: "bottom" })}>${RESEARCH_MARKER_ICON}</button>`;
+  const enabled = editorGlossaryEntryButtonEnabled(rowId, language.code);
+  const tooltip = glossaryEntryTooltip(language.glossaryEntryRole);
+  return `<button class="translation-marker-button translation-marker-button--research${enabled ? "" : " is-disabled"}" type="button"
+    data-action="open-editor-glossary-entry" data-editor-glossary-entry-button
+    data-row-id="${escapeHtml(rowId)}" data-language-code="${escapeHtml(language.code)}"
+    aria-disabled="${enabled ? "false" : "true"}"
+    aria-label="${escapeHtml(tooltip)}" ${tooltipAttributes(tooltip, { align: "end", side: "bottom" })}>${RESEARCH_MARKER_ICON}</button>`;
 }
 
 function renderCommentsMarkerButton(rowId, language) {

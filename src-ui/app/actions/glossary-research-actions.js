@@ -49,14 +49,15 @@ import {
   toggleResearchVariantExamples,
 } from "../glossary-research-report-flow.js";
 import {
-  cancelResearchPrep,
-  closeResearchPrepBlocked,
-  confirmResearchPrepTerm,
-  editResearchPrepTerm,
-  openResearchPrepFromEditor,
-  researchPrepNext,
-  selectResearchPrepLanguage,
-} from "../glossary-research-prep-flow.js";
+  closeEditorGlossaryEntry,
+  openEditorGlossaryEntry,
+  researchEditorGlossaryEntry,
+  saveEditorGlossaryEntry,
+} from "../editor-glossary-entry-flow.js";
+import {
+  editorGlossaryEntrySelectionFor,
+  syncEditorGlossaryEntryButtons,
+} from "../editor-glossary-entry-selection.js";
 import { openExternalUrl } from "../runtime.js";
 import { state } from "../state.js";
 
@@ -94,11 +95,9 @@ export function createGlossaryResearchActions(render) {
     "close-research-report": () => closeResearchReport(render),
     "copy-research-markdown": () => copyResearchMarkdown(render),
     "save-research-report": () => saveResearchReport(render),
-    "close-research-prep-blocked": () => closeResearchPrepBlocked(render),
-    "cancel-research-prep": () => cancelResearchPrep(render),
-    "research-prep-next": () => researchPrepNext(render),
-    "edit-research-prep-term": () => editResearchPrepTerm(render),
-    "confirm-research-prep-term": () => confirmResearchPrepTerm(render),
+    "close-editor-glossary-entry": () => closeEditorGlossaryEntry(render),
+    "save-editor-glossary-entry": () => saveEditorGlossaryEntry(render),
+    "research-editor-glossary-entry": () => researchEditorGlossaryEntry(render),
   };
   const prefixes = [
     ["remove-research-variant:", (rest) => removeResearchVariant(render, Number.parseInt(rest, 10))],
@@ -133,13 +132,18 @@ export function createGlossaryResearchActions(render) {
     ["toggle-research-section:", (rest) => toggleResearchSection(render, rest)],
     ["toggle-research-current:", (rest) => toggleResearchCurrent(render, rest)],
     ["open-research-source:", (rest) => openExternalUrl(rest)],
-    ["select-research-prep-language:", (rest) => selectResearchPrepLanguage(render, rest)],
   ];
 
   return async function handleGlossaryResearchAction(action, event) {
-    if (action === "open-research-prep") {
-      const button = event?.target?.closest?.("[data-row-id]");
-      if (button) await openResearchPrepFromEditor(render, button.dataset.rowId, button.dataset.languageCode);
+    if (action === "open-editor-glossary-entry") {
+      const button = event?.target?.closest?.("[data-editor-glossary-entry-button]");
+      const selection = button
+        ? editorGlossaryEntrySelectionFor(button.dataset.rowId, button.dataset.languageCode)
+        : null;
+      // The highlight can vanish without a selection event (a redraw replacing
+      // the text box); grey the button out again instead of acting.
+      if (!selection) syncEditorGlossaryEntryButtons();
+      else await openEditorGlossaryEntry(render, selection);
       return true;
     }
     if (exact[action]) {

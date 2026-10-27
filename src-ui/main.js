@@ -23,6 +23,12 @@ import { loadUserTeams, setGithubAppInstallation } from "./app/team-setup-flow.j
 import { syncLanguagePickerAlphabetIndexes } from "./app/language-picker-alphabet-index.js";
 import { renderResearchModals, researchModalHostContains, researchModalOpen } from "./app/research-modal-host.js";
 import { initializeConnectivity } from "./app/offline-connectivity.js";
+import {
+  noteStartupStep,
+  rememberLaunchedVersion,
+  startStartupWatch,
+  stopStartupWatch,
+} from "./app/startup-watch.js";
 import { registerLoadingSpinnerContinuity } from "./app/loading-spinner-continuity.js";
 import {
   initializePersistentStorage,
@@ -150,6 +156,7 @@ import {
 } from "./app/projects-render-hold.js";
 import { deferRenderWhileComposing } from "./app/ime-composition-hold.js";
 import { reconcileProjectsScrollOnRender } from "./app/projects-scroll-store.js";
+import { buildProjectsRenderKey } from "./app/projects-render-key.js";
 import { renderQaListEditorScreen } from "./screens/qa-list-editor.js";
 import { renderQaScreen } from "./screens/qa.js";
 import { renderTeamResourceMigrationModal } from "./screens/team-resource-migration-modal.js";
@@ -372,6 +379,44 @@ function patchFixtureEditorRowState(rowId, updates = {}) {
   return rowChanged;
 }
 
+// Key of the last full projects-page render; null after any other screen.
+let lastProjectsRenderKey = null;
+const PROJECTS_SCOPED_RENDER_SCOPES = new Set(["status-surface", "app-update-progress"]);
+
+function currentProjectsRenderKey() {
+  return buildProjectsRenderKey({
+    screenHtml: renderProjectsScreen(state, { fullList: true }),
+    statusSurfaceHtml: renderFloatingStatusSurface(currentStatusSurfaceModel()),
+    extraParts: [
+      renderAppUpdateModal(state),
+      renderNavigationLoadingModal(state),
+      renderTeamResourceMigrationModal(state),
+      renderTelemetryDisclosureModal(state),
+      renderConnectionFailureModal(state),
+      state.appUpdate.status,
+    ],
+  });
+}
+
+// A full projects render that would produce the page already on screen is
+// skipped: replacing the DOM would only interrupt scrolling. The status
+// surface and update badge still refresh, since they are left out of the key.
+function skipUnchangedProjectsRender(options) {
+  if (
+    state.screen !== "projects"
+    || PROJECTS_SCOPED_RENDER_SCOPES.has(options?.scope)
+    || lastProjectsRenderKey === null
+    || app.firstElementChild?.getAttribute("data-screen") !== "projects"
+    || currentProjectsRenderKey() !== lastProjectsRenderKey
+  ) {
+    return false;
+  }
+
+  renderStatusSurfaceOnly();
+  renderAppUpdateSurface(app, state.appUpdate);
+  return true;
+}
+
 function render(options = {}) {
   // While an input method is composing a word in a field, renders defer so
   // the field isn't replaced mid-word (scrambled Telex/IME text); the hold
@@ -379,10 +424,19 @@ function render(options = {}) {
   if (deferRenderWhileComposing(options)) {
     return undefined;
   }
+  if (skipUnchangedProjectsRender(options)) {
+    return undefined;
+  }
   // While a protected projects-page select is engaged, full renders defer so
   // the open dropdown isn't destroyed mid-selection; the hold flushes on
   // commit/disengage. See projects-render-hold.js.
-  if (deferProjectsRenderWhileSelectEngaged(state, () => renderWithOptions(options))) {
+  // A held render may have become a no-op by the time it runs.
+  const performRender = () => {
+    if (!skipUnchangedProjectsRender(options)) {
+      renderWithOptions(options);
+    }
+  };
+  if (deferProjectsRenderWhileSelectEngaged(state, performRender)) {
     return undefined;
   }
   return renderWithOptions(options);
@@ -852,6 +906,7 @@ function renderWithOptionsImpl(options = {}) {
       ? captureAssistantTranscriptScrollTop(app)
       : null;
   const modalSnapshot = captureModalRenderState(app);
+  lastProjectsRenderKey = state.screen === "projects" ? currentProjectsRenderKey() : null;
   const studioDisclosures = captureStudioDisclosures(app);
   const focusedBeforeRender = document.activeElement;
   const html =
@@ -1208,9 +1263,12 @@ window.__gnosisDebug = {
 };
 
 async function bootstrap() {
+  startStartupWatch();
   registerLoadingSpinnerContinuity(app);
   render();
   await initializePersistentStorage();
+  noteStartupStep("storage_ready");
+  rememberLaunchedVersion();
   const needsTelemetryDisclosure = openTelemetryDisclosureIfNeeded(render);
   if (!needsTelemetryDisclosure) {
     // Telemetry needs the persistent store (consent + install id); fire-and-forget so it
@@ -1218,17 +1276,21 @@ async function bootstrap() {
     void initTelemetry();
   }
   hydratePersistentAppState();
+  noteStartupStep("app_state_loaded");
   await initializeWindowPresentation();
+  noteStartupStep("window_ready");
   registerAppEvents(render);
   registerTranslateEditorDomEvents(app, render);
   const devRuntimeFlags = readDevRuntimeFlags();
   if (devRuntimeFlags.editorFixture) {
+    stopStartupWatch();
     applyEditorRegressionFixture(state, devRuntimeFlags.editorFixture);
     render();
     return;
   }
 
   const storedBrokerSession = await prepareStoredBrokerSessionRestore();
+  noteStartupStep("saved_login_loaded");
   const brokerSessionInspection = beginStoredBrokerSessionInspection(storedBrokerSession);
   void registerBrokerAuthListener(render, loadUserTeams);
   void registerGithubAppInstallListener(render, setGithubAppInstallation);

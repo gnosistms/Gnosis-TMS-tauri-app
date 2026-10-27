@@ -2,6 +2,7 @@ import { authSessionGeneration, state } from "./state.js";
 import { classifySyncError } from "./sync-error.js";
 import { readDevRuntimeFlags } from "./dev-runtime-flags.js";
 import { reportCommandFailure } from "./telemetry.js";
+import { trackInvoke } from "./invoke-activity.js";
 import {
   classifyAiProviderOperationalError,
   isAiProviderAuthenticationError,
@@ -13,7 +14,12 @@ const runtimeWindow = typeof window !== "undefined" ? window : {};
 export const app = runtimeDocument?.querySelector("#app") ?? null;
 
 const tauri = runtimeWindow.__TAURI__ ?? {};
-const rawInvoke = tauri.core?.invoke?.bind(tauri.core);
+const tauriInvoke = tauri.core?.invoke?.bind(tauri.core);
+// Every backend call (including session refreshes and retries) goes through here, so
+// a slow-startup report can name the call the app was waiting on.
+const rawInvoke = tauriInvoke
+  ? (command, ...args) => trackInvoke(command, () => tauriInvoke(command, ...args))
+  : undefined;
 
 export const listen = tauri.event?.listen?.bind(tauri.event);
 

@@ -70,6 +70,22 @@ test("DLE lookups bypass legacy failed study caches and then reuse the new resul
   assert.equal(study.cache[legacy].value.status, "unreachable");
 });
 
+test("dictionary edition routing bypasses old failed receipts and caches the corrected result", async () => {
+  const { stableSignature } = await import("./glossary-research-studio-workflow.js");
+  const payload = { term: "ἱεροφάντης", language: "grc" };
+  const legacy = `${stableSignature({ version: 1, kind: "dictionary", payload: { ...payload, researchContractVersion: 2 } })}:retry:0`;
+  const study = { id: "edition-test", step: "4.1", cache: { [legacy]: { value: { status: "unreachable" } } }, scope: { installationId: 7, glossaryId: "g" } };
+  const result = { status: "found", language: "grc", edition: "en", entry: { extract: "Ancient Greek" } };
+  nativeJob = async () => ({ complete: true, value: result });
+  const before = calls.filter((c) => c.command === "start_glossary_studio_tool").length;
+  const tools = createStudioTools(study, { persist: async () => {}, progress: () => {}, isCurrent: () => true });
+  assert.deepEqual(await tools.run("dictionary", payload), result);
+  assert.equal(calls.findLast((c) => c.command === "start_glossary_studio_tool").args.input.payload.researchContractVersion, 3);
+  assert.deepEqual(await tools.run("dictionary", payload), result);
+  assert.equal(calls.filter((c) => c.command === "start_glossary_studio_tool").length, before + 1);
+  assert.equal(study.cache[legacy].value.status, "unreachable", "historical evidence stays intact");
+});
+
 test("outbound evidence removes exact paragraph aliases while preserving unique references and contexts", async () => {
   nativeJob = async () => ({ complete: true, value: {} });
   const reference = { book: "Libro", line: 12 };
@@ -258,4 +274,32 @@ test("web usage is taken from the preserved provider receipt and cache reuse is 
   await tools.run("web", { query: "test" }); await tools.run("web", { query: "test" });
   assert.deepEqual(measurements[0].metrics.usage, usage); assert.equal(measurements[0].source, "executed");
   assert.equal(measurements[1].source, "study-cache"); assert.equal(measurements[1].metrics.usage, undefined);
+});
+
+test("parallel form validation retries its own tool receipt rather than the last sibling request", async () => {
+  const { runResearchStage } = await import("./glossary-research-studio-stages.js");
+  const { newStudioStudy } = await import("./glossary-research-studio-workflow.js");
+  const study = newStudioStudy({ installationId: 7, glossaryId: "g", term: "marche", corpus: "samael",
+    sourceLanguage: { code: "fr", name: "French" }, targetLanguage: { code: "en", name: "English" } }, "parallel-validation");
+  study.step = "2a"; study.model = {};
+  const jobs = new Map(); const before = calls.length; const previousStart = startJob;
+  startJob = async ({ input }) => { const id = `job-${++jobNumber}`; jobs.set(id, input); return id; };
+  nativeJob = async ({ jobId }) => {
+    const input = jobs.get(jobId); const payload = input.payload;
+    const value = input.kind === "ai" ? { forms: ["marche", "marches"], originLanguage: null }
+      : payload.path === "/api/search/forms" ? { candidates: [] }
+        : { population_distinct: payload.params.forms === "marche" ? null : 1, items: [{ text: payload.params.forms }] };
+    return { complete: true, value };
+  };
+  try {
+    const tools = createStudioTools(study, { persist: async () => {}, progress() {}, isCurrent: () => true });
+    await assert.rejects(runResearchStage(study, tools, []), (error) => {
+      assert.match(error.message, /exact corpus check for marche was incomplete/);
+      const failed = calls.slice(before).find((call) => call.command === "start_glossary_studio_tool"
+        && call.args.input.payload.path === "/api/sample" && call.args.input.payload.params.forms === "marche");
+      assert.equal(error.studioToolSignature, failed.args.input.signature);
+      assert.equal(study.lastToolSignature, failed.args.input.signature);
+      return true;
+    });
+  } finally { startJob = previousStart; }
 });

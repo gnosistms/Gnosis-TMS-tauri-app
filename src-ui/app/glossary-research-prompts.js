@@ -83,23 +83,22 @@ export function writingRule(ctx) {
   return `WRITING. Every text you write is in ${report}, except quotations, ${ctx.targetName ?? "target-language"} renderings and the fields these instructions say are in another language. Write it in plain, everyday ${report} for a translator, not for a linguist. Name grammar the way an ordinary ${report} schoolbook does${example}. Never use a learned ${report} word because it resembles the ${ctx.sourceName ?? "source-language"} word for the idea; use the everyday ${report} word.${ctx.authorName ? ` Call the author by his full name, ${ctx.authorName}.` : ""} Do not refer to your inputs ("the supplied readings", "the passages provided"); name what they are (the sample passages, the dictionary entry). Call a translation a "translation", not a "variant", "rendering" or "candidate group". Refer to a dictionary meaning by its words, never by its number ("sense 2").`;
 }
 
-// --- editor flow: find the source-language term ------------------------------
+// --- editor flow: the source text behind highlighted words -------------------
 
-export const PIVOT_SCHEMA = object({
+export const SELECTION_SOURCE_SCHEMA = object({
   found: { type: "boolean" },
   confidence: oneOf("high", "low"),
-  sourceTerm: NSTR,
-  definitions: arrayOf(STR),
+  sourceText: NSTR,
 });
 
-export function pivotInstructions() {
-  return `You align words between the languages of one translated passage. Given a passage in several languages and a word or phrase in one of them, identify the word or phrase in the SOURCE-language text that it translates, copied exactly as it appears there. Give its lemma form (dictionary form) when the text shows an inflected form, unless the inflection itself is what differs in meaning. Set confidence to "high" only when the correspondence is clear from the texts; otherwise "low" and found=false. If found, also write 2–5 short definitions of the source-language term's meanings, in the language of the research word, ordered by relevance to this passage.`;
+export function selectionSourceInstructions({ sourceLanguage }) {
+  return `You align words between the languages of one translated passage. You get the passage in its source language (${sourceLanguage}) and in one or more translations, and the words a person highlighted in one of the translations. Find the words in the ${sourceLanguage} text that the highlighted words translate. Copy them exactly as they appear in the ${sourceLanguage} text: the same spelling, accents, word endings and capital letters, with no word added or left out. Match the whole highlighted meaning: if one highlighted word translates several ${sourceLanguage} words, give all of them; if the highlight covers only part of a translated phrase, give only the ${sourceLanguage} words for that part. Set found to true and confidence to "high" only when the correspondence is clear from the texts. If the translator added the highlighted words, or no ${sourceLanguage} words clearly correspond, set found to false and sourceText to null.`;
 }
 
-export function pivotContent({ researchTerm, researchLanguage, sourceLanguage, rowTexts }) {
-  const lines = [`Research word (${researchLanguage}): ${researchTerm}`, `Source language: ${sourceLanguage}`, ""];
-  for (const { language, text } of rowTexts) {
-    lines.push(`[${language}]\n${text}\n`);
+export function selectionSourceContent({ selectedText, selectionLanguage, sourceLanguage, rowTexts }) {
+  const lines = [`Highlighted in ${selectionLanguage}: ${selectedText}`, `Source language: ${sourceLanguage}`, ""];
+  for (const { language, text, isSource } of rowTexts) {
+    lines.push(`[${language}${isSource ? " (source)" : ""}]\n${text}\n`);
   }
   return lines.join("\n");
 }
