@@ -47,6 +47,7 @@ mod book_svg;
 mod changed_after_my_edit;
 mod chapter_export;
 mod chapter_selection;
+mod epub_export;
 mod git_conflicts;
 mod history;
 mod images;

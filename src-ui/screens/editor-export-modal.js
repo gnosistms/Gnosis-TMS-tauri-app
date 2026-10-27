@@ -530,7 +530,7 @@ const OMIT_CUSTOM_HTML_TOOLTIP =
   + "export to electronic formats only. Check this to omit those sections from the "
   + "output. (recommended)";
 
-// Formats that cannot render raw HTML (DOCX, RTF, TXT, Markdown, XLSX, plain text,
+// Formats that cannot render raw HTML (EPUB, DOCX, RTF, TXT, Markdown, XLSX, plain text,
 // Vellum) offer to omit custom-HTML rows, which are usually meant for the web.
 function omitCustomHtmlSection(option, modal) {
   if (option.omitCustomHtmlOption !== true) {
@@ -584,12 +584,13 @@ function exportDetail(option, isExporting, modal, appState) {
     const pdfReady = option.format !== "pdf" || modal.pdfFontStatus === "ready" || isExporting;
     const pdfChecking = option.format === "pdf" && !isExporting
       && ["idle", "loading"].includes(modal.pdfFontStatus);
-    const article = ["html", "xlsx", "rtf", "srt"].includes(option.format) ? "an" : "a";
+    const article = ["html", "xlsx", "rtf", "srt", "epub"].includes(option.format) ? "an" : "a";
     return {
       bodyMarkup: `
         ${supportingText(option.format === "md"
           ? `Save ${modal.book ? "your arranged book" : modal.projectId ? "all chapters in sequence" : "this chapter"} as a Markdown (.md) file.`
           : `Save ${modal.book ? "your arranged book" : modal.projectId ? "all chapters in sequence" : "this chapter"} as ${article} ${option.label} file.`)}
+        ${option.format === "epub" ? supportingText("Images are included for offline reading. Custom HTML is converted to plain text unless omitted.") : ""}
         ${pdfDisclosure}
         ${fileExportLanguageSection(option, modal, appState)}
         ${option.format === "pdf" ? pdfPaperSizeSection(modal, isExporting) : ""}
