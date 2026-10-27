@@ -524,7 +524,7 @@ function updateGlossaryTooltipPlacement(mark) {
   tooltip.style.top = `${top}px`;
 }
 
-function scheduleActiveGlossaryTooltipPlacementUpdate() {
+export function scheduleActiveGlossaryTooltipPlacementUpdate() {
   if (glossaryTooltipPlacementFrameId || !(activeGlossaryTooltipMark instanceof HTMLElement)) {
     return;
   }

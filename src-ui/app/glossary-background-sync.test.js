@@ -335,6 +335,69 @@ function deferred() {
 
 test.afterEach(() => queryClient.clear());
 
+for (const outcome of ["success", "failure"]) {
+  test(`snapshot-backed editor refreshes when standalone sync finishes (${outcome})`, async () => {
+    const { loadEditorGlossaryState, refreshEditorGlossaryAfterSync } = await import("./editor-glossary-flow.js");
+    installGlossaryEditorFixture();
+    const team = state.teams[0];
+    const chapter = { id: "chapter-1", linkedGlossary: { glossaryId: "glossary-1", repoName: "glossary-1" } };
+    state.projects = [{ id: "project-1", chapters: [chapter] }];
+    state.selectedChapterId = chapter.id;
+    state.screen = "translate";
+    const original = cloneValue(state.glossaryEditor);
+    original.terms[0].footnote = "old snapshot footnote";
+    const current = cloneValue(original);
+    current.terms[0].footnote = outcome === "success" ? "remote footnote" : "restored local footnote";
+    const sync = deferred();
+    invokeHandler = async (command, payload) => {
+      if (command !== "load_gtms_glossary_editor_data") return null;
+      if (payload.input.readMode === "latest") { await sync.promise; return { ...current, syncInProgress: false }; }
+      return { ...original, syncInProgress: true };
+    };
+    state.editorChapter = { ...state.editorChapter, status: "ready", chapterId: chapter.id,
+      glossary: await loadEditorGlossaryState(team, chapter) };
+    const rows = state.editorChapter.rows;
+    refreshEditorGlossaryAfterSync(() => {}, team, state.editorChapter.glossary);
+    await flushAsyncWork();
+    assert.equal(state.editorChapter.glossary.terms[0].footnote, "old snapshot footnote");
+    assert.equal(invokeLog.at(-1).payload.input.readMode, "latest");
+    sync.resolve();
+    await flushAsyncWork();
+    assert.equal(state.editorChapter.glossary.terms[0].footnote, current.terms[0].footnote);
+    assert.equal(state.editorChapter.rows, rows);
+    assert.equal(state.editorChapter.glossary.syncInProgress, false);
+  });
+}
+
+for (const destination of ["team", "chapter", "link", "screen"]) {
+  test(`post-sync glossary read ignores a changed ${destination}`, async () => {
+    const { loadEditorGlossaryState, refreshEditorGlossaryAfterSync } = await import("./editor-glossary-flow.js");
+    installGlossaryEditorFixture();
+    const team = state.teams[0];
+    const chapter = { id: "chapter-1", linkedGlossary: { glossaryId: "glossary-1", repoName: "glossary-1" } };
+    state.projects = [{ id: "project-1", chapters: [chapter] }];
+    state.selectedChapterId = chapter.id;
+    state.screen = "translate";
+    const original = cloneValue(state.glossaryEditor);
+    const sync = deferred();
+    invokeHandler = async (command, payload) => command === "load_gtms_glossary_editor_data"
+      ? payload.input.readMode === "latest" ? sync.promise : { ...original, syncInProgress: true }
+      : null;
+    state.editorChapter = { ...state.editorChapter, status: "ready", chapterId: chapter.id,
+      glossary: await loadEditorGlossaryState(team, chapter) };
+    refreshEditorGlossaryAfterSync(() => {}, team, state.editorChapter.glossary);
+    await flushAsyncWork();
+    if (destination === "team") state.selectedTeamId = "another";
+    if (destination === "chapter") state.editorChapter.chapterId = "another";
+    if (destination === "link") chapter.linkedGlossary = { glossaryId: "another", repoName: "another" };
+    if (destination === "screen") state.screen = "projects";
+    const visible = state.editorChapter.glossary;
+    sync.resolve({ ...original, terms: [glossaryTerm({ footnote: "obsolete" })], syncInProgress: false });
+    await flushAsyncWork();
+    assert.equal(state.editorChapter.glossary, visible);
+  });
+}
+
 test.beforeEach(async () => {
   invokeLog.length = 0;
   scheduledIntervals.clear();
@@ -499,6 +562,46 @@ for (const entry of ["open", "navigation"]) {
     });
   }
 }
+
+test("opening a glossary during batch sync preserves remote wording in a later footnote edit", async () => {
+  installGlossaryEditorFixture();
+  const original = cloneValue(state.glossaryEditor);
+  const remote = { ...original, terms: original.terms.map(term => term.termId === "term-1"
+    ? { ...term, targetTerms: ["remote wording"] } : term) };
+  const batch = deferred();
+  let upserted;
+  invokeHandler = async (command, args) => {
+    if (command === "load_gtms_glossary_editor_data") {
+      // The native tests verify this read-mode contract under a held sync lock.
+      if (args.input.readMode === "localSnapshot") return cloneValue(original);
+      await batch.promise;
+      return cloneValue(remote);
+    }
+    // The earlier batch already moved HEAD, so later syncs have no changes to flag.
+    if (command === "sync_gtms_glossary_editor_repo") return { changedTermIds: [] };
+    if (command === "upsert_gtms_glossary_term") {
+      upserted = args.input;
+      return { term: { ...remote.terms[0], ...args.input }, termCount: 2 };
+    }
+    if (command === "sync_gtms_glossary_repos") return [];
+    return null;
+  };
+  state.glossaryEditor = createGlossaryEditorState();
+  state.screen = "translate";
+  const opening = openGlossaryEditor(() => {}, "glossary-1");
+  await flushAsyncWork();
+  assert.equal(state.glossaryEditor.status, "loading");
+  assert.equal(state.glossaryEditor.terms.length, 0);
+  batch.resolve();
+  await opening;
+  await flushAsyncWork();
+  await openGlossaryTermEditor(() => {}, "term-1");
+  state.glossaryTermEditor.footnote = "only my footnote changed";
+  await submitGlossaryTermEditor(() => {});
+  await waitForGlossaryTermWrites();
+  assert.deepEqual(upserted.targetTerms, ["remote wording"]);
+  assert.equal(upserted.footnote, "only my footnote changed");
+});
 
 test("priming a different glossary clears the previous glossary terms", () => {
   installGlossaryEditorFixture();
@@ -2004,7 +2107,10 @@ for (const outcome of ["success", "rollback"]) {
       const push = deferred();
       let pushing = false;
       invokeHandler = async (command, payload) => {
-        if (command === "load_gtms_glossary_editor_data") return cloneValue(disk);
+        if (command === "load_gtms_glossary_editor_data") {
+          assert.equal(payload.input.readMode, "localSnapshot");
+          return cloneValue(disk);
+        }
         if (command === "sync_gtms_glossary_editor_repo") return { changedTermIds: [] };
         if (command === "upsert_gtms_glossary_term") {
           await save.promise;

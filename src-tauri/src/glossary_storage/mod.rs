@@ -31,8 +31,9 @@ mod tmx;
 
 use crate::repo_resource_storage::{
     ensure_gitattributes, git_output, prepare_repo, purge_repo, read_json_file,
-    resolve_git_repo_path, resolve_initialized_repo_path, rollback_term_upsert, write_json_pretty,
-    write_resource_lifecycle, write_resource_title, write_text_file, RepoResourceStorageDomain,
+    read_repo_resource_editor_data, resolve_git_repo_path, resolve_initialized_repo_path,
+    rollback_term_upsert, write_json_pretty, write_resource_lifecycle, write_resource_title,
+    write_text_file, EditorDataRead, EditorDataReadMode, RepoResourceStorageDomain,
 };
 use terms::{
     conflicting_source_terms, has_duplicate_term_values, sanitize_target_term_pairs,
@@ -158,6 +159,8 @@ pub(crate) struct LoadGlossaryEditorDataInput {
     installation_id: i64,
     repo_name: String,
     glossary_id: Option<String>,
+    #[serde(default)]
+    read_mode: EditorDataReadMode,
 }
 
 #[derive(Deserialize)]
@@ -271,7 +274,7 @@ pub(crate) struct DeleteGlossaryTermInput {
     term_id: String,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GlossaryLanguageInfo {
     code: String,
@@ -299,7 +302,7 @@ pub(crate) struct GlossaryImportPreview {
     term_count: usize,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GlossaryTermEditorRecord {
     term_id: String,
@@ -331,7 +334,7 @@ pub(crate) struct LinkGlossaryTermsResponse {
     changed: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LoadGlossaryEditorDataResponse {
     glossary_id: String,
@@ -382,7 +385,7 @@ pub(crate) async fn list_local_gtms_glossaries(
 pub(crate) async fn load_gtms_glossary_editor_data(
     app: AppHandle,
     input: LoadGlossaryEditorDataInput,
-) -> Result<LoadGlossaryEditorDataResponse, String> {
+) -> Result<EditorDataRead<LoadGlossaryEditorDataResponse>, String> {
     tauri::async_runtime::spawn_blocking(move || load_gtms_glossary_editor_data_sync(&app, input))
         .await
         .map_err(|error| format!("The glossary load worker failed: {error}"))?
@@ -635,17 +638,24 @@ fn list_local_gtms_glossaries_sync(
 fn load_gtms_glossary_editor_data_sync(
     app: &AppHandle,
     input: LoadGlossaryEditorDataInput,
-) -> Result<LoadGlossaryEditorDataResponse, String> {
+) -> Result<EditorDataRead<LoadGlossaryEditorDataResponse>, String> {
     let repo_path = glossary_repo_path(
         app,
         input.installation_id,
         input.glossary_id.as_deref(),
         Some(&input.repo_name),
     )?;
-    let repo_lock = repo_sync_lock(&repo_path);
-    let _repo_lock_guard = acquire_repo_sync_lock(&repo_lock);
-    studio::recover(&repo_path)?;
-    let glossary_file = read_glossary_file(&repo_path)?;
+    read_repo_resource_editor_data(&repo_path, input.read_mode, || {
+        read_glossary_editor_data(&repo_path)
+    })
+}
+
+/// Caller must hold the repository lock (also used to capture pre-sync data).
+pub(crate) fn read_glossary_editor_data(
+    repo_path: &Path,
+) -> Result<LoadGlossaryEditorDataResponse, String> {
+    studio::recover(repo_path)?;
+    let glossary_file = read_glossary_file(repo_path)?;
     let terms = load_glossary_terms(&repo_path.join("terms"))?;
 
     let active_terms = terms
@@ -1569,6 +1579,20 @@ mod tests {
     use super::*;
 
     const GNOSIS_ES_VI_TMX: &str = include_str!("../../tests/fixtures/gnosis-es-vi.tmx");
+
+    #[test]
+    fn editable_glossary_load_defaults_to_latest_data() {
+        let input: LoadGlossaryEditorDataInput = serde_json::from_value(json!({
+            "installationId": 1, "repoName": "glossary", "glossaryId": "glossary-1"
+        }))
+        .unwrap();
+        assert!(matches!(input.read_mode, EditorDataReadMode::Latest));
+        let input: LoadGlossaryEditorDataInput = serde_json::from_value(json!({
+            "installationId": 1, "repoName": "glossary", "readMode": "localSnapshot"
+        }))
+        .unwrap();
+        assert!(matches!(input.read_mode, EditorDataReadMode::LocalSnapshot));
+    }
 
     #[test]
     fn canonicalizes_glossary_language_script_and_region_subtags() {
