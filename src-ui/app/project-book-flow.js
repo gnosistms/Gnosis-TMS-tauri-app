@@ -66,7 +66,8 @@ export async function loadSelectedBookPreview(render, operations = {}) {
   const current = modal();
   const item = current?.book?.items.find((entry) => entry.id === current.book.selectedItemId);
   if (!current?.isOpen || !current.book) return;
-  if (item?.kind === "contents" && item.includeH1Headings) return loadContentsHeadings(render, current, operations);
+  const repaint = () => render?.({ scope: "project-book-preview" });
+  if (item?.kind === "contents" && item.includeH1Headings) return loadContentsHeadings(repaint, current, operations);
   const team = selectedProjectsTeam();
   const cache = current.book.previewCache;
   const isCurrent = () => modal()?.isOpen && modal()?.book?.previewCache === cache && state.selectedTeamId === team?.id;
@@ -84,7 +85,7 @@ export async function loadSelectedBookPreview(render, operations = {}) {
           update({ book: { ...book,
             items: book.items.map((entry) => entry.id === chapter.id ? { ...entry, defaultTitle: bookChapterDefaultTitle(blocks, entry.name) } : entry),
             ...(book.selectedItemId === chapter.id ? { previewStatus: "ready", previewChapterId: chapter.chapterId, previewBlocks: blocks } : {}),
-          } }, render);
+          } }, repaint);
         }
         return { blocks };
       } catch (error) {
@@ -103,11 +104,11 @@ export async function loadSelectedBookPreview(render, operations = {}) {
     })();
   }
   if (item?.kind !== "chapter") return;
-  update({ book: { ...modal().book, previewStatus: item.available === false ? "ready" : "loading", previewBlocks: [], previewChapterId: item.chapterId } }, render);
+  update({ book: { ...modal().book, previewStatus: item.available === false ? "ready" : "loading", previewBlocks: [], previewChapterId: item.chapterId } }, repaint);
   if (item.available === false) return;
   const result = await load(item);
   if (!isCurrent() || modal().book.selectedItemId !== item.id) return;
-  update({ book: { ...modal().book, previewStatus: result.error ? "error" : "ready", previewError: result.error || "", previewBlocks: result.blocks || [], previewChapterId: item.chapterId } }, render);
+  update({ book: { ...modal().book, previewStatus: result.error ? "error" : "ready", previewError: result.error || "", previewBlocks: result.blocks || [], previewChapterId: item.chapterId } }, repaint);
 }
 
 let previewGeneration = 0;
@@ -216,7 +217,9 @@ export async function handleProjectBookAction(action, render) {
     update({ book: { ...book, items, selectedItemId: added?.id || book.selectedItemId, addMenuOpen: false }, pdfFontStatus: "idle" }, render);
   } else if (action.startsWith("book-select:")) {
     if (book.selectedItemId !== action.slice(12)) {
-      update({ book: { ...book, selectedItemId: action.slice(12) } }, render);
+      const selected = book.items.find((item) => item.id === action.slice(12));
+      update({ book: { ...book, selectedItemId: action.slice(12) } }, selected?.kind === "chapter"
+        ? () => render?.({ scope: "project-book-preview" }) : render);
       void loadSelectedBookPreview(render);
     }
   } else if (action.startsWith("book-exclude:") || action.startsWith("book-include:")) {

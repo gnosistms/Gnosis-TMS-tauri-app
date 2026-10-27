@@ -1,6 +1,6 @@
 import { expect, test } from "./test.js";
 
-async function mountProjectExport(page, multilingual = false, chapterTitles = false) {
+async function mountProjectExport(page, multilingual = false, chapterTitles = false, filesPerProject = 3) {
   await page.addInitScript(({ chapterTitles }) => {
     window.__projectExports = [];
     window.__pdfListeners = {};
@@ -10,14 +10,19 @@ async function mountProjectExport(page, multilingual = false, chapterTitles = fa
           window.__projectExports.push({ command, ...args });
         }
         if (command === "list_wordpress_connections") return window.__wordpressSites ?? [];
-        if (command === "load_gtms_chapter_editor_data") return {
+        if (command === "load_gtms_chapter_editor_data") {
+          if (window.__holdBookPreviewChapter === args.input.chapterId) {
+            await new Promise((resolve) => { window.__releaseBookPreview = resolve; });
+          }
+          return {
           fileTitle: args.input.chapterId, languages: [{ code: "en" }, { code: "vi" }],
           rows: window.__bookHeadingRows?.[args.input.chapterId] ?? (chapterTitles ? [
             { rowId: `${args.input.chapterId}-row`, textStyle: args.input.chapterId.endsWith("-0") ? "heading1" : "paragraph", fields: { en: "English opening heading", vi: "Tiêu đề tiếng Việt" } },
             { rowId: `${args.input.chapterId}-body`, textStyle: "paragraph", fields: { en: "Chapter body", vi: "Nội dung" } },
             { rowId: `${args.input.chapterId}-later`, textStyle: "heading1", fields: { en: "Later heading", vi: "Tiêu đề sau" } },
           ] : [{ rowId: `${args.input.chapterId}-row`, textStyle: "paragraph", fields: { en: `Opening ${args.input.chapterId}`, vi: `Bản dịch ${args.input.chapterId}` } }]),
-        };
+          };
+        }
         if (command === "import_project_book_image") {
           if (args.input.fileName === "bad.png") throw new Error("The selected file is not a valid image.");
           return { assetId: "book-test.png", filePath: `data:image/png;base64,${args.input.dataBase64}`, fileName: args.input.fileName };
@@ -37,9 +42,9 @@ async function mountProjectExport(page, multilingual = false, chapterTitles = fa
   }, { chapterTitles });
   await page.goto("/?fixture=editor&rows=1");
   await page.waitForFunction(() => typeof window.__gnosisDebug?.mountProjectsFixture === "function");
-  await page.evaluate(async (multilingual) => {
+  await page.evaluate(async ({ multilingual, filesPerProject }) => {
     await window.__gnosisDebug.mountProjectsFixture({
-      projectCount: 1, filesPerProject: 3, deletedFilesPerProject: 1,
+      projectCount: 1, filesPerProject, deletedFilesPerProject: 1,
       languages: [{ code: "en", name: "English", role: "target" }],
       ...(multilingual ? { languagesByFileIndex: [
         [{ code: "en", name: "English", role: "target" }, { code: "vi", name: "Vietnamese", role: "target" }],
@@ -47,7 +52,7 @@ async function mountProjectExport(page, multilingual = false, chapterTitles = fa
         [{ code: "vi", name: "Vietnamese", role: "target" }],
       ] } : {}),
     });
-  }, multilingual);
+  }, { multilingual, filesPerProject });
   const initialModal = page.locator(".modal-backdrop");
   if (await initialModal.count()) await initialModal.getByRole("button", { name: "Save", exact: true }).click();
   await page.locator('[data-action="export-project:fixture-project-001"]').click();
@@ -289,6 +294,64 @@ test("book contents include H1 headings only when the saved checkbox is selected
   await expect.poll(() => page.evaluate(() => window.__projectExports.some((call) => call.command === "start_gtms_chapter_pdf_export"))).toBe(true);
   const contents = await page.evaluate(() => window.__projectExports.findLast((call) => call.command === "start_gtms_chapter_pdf_export").input.bookItems.find((item) => item.kind === "contents"));
   expect(contents.includeH1Headings).toBe(true);
+});
+
+test("editing adjacent chapter titles keeps focus and long-list scroll through preview loads", async ({ page }) => {
+  await mountProjectExport(page, false, false, 40);
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  await expect.poll(() => page.evaluate(async () => {
+    const { state } = await import("/app/state.js");
+    return state.editorChapter.exportModal.book.previewCache.size;
+  })).toBe(40);
+  await page.evaluate(async () => {
+    const { state } = await import("/app/state.js");
+    await Promise.all(state.editorChapter.exportModal.book.previewCache.values());
+  });
+  const first = modal.locator('[data-book-chapter-title="fixture-chapter-0-24"]');
+  const next = modal.locator('[data-book-chapter-title="fixture-chapter-0-25"]');
+  await first.scrollIntoViewIfNeeded();
+  await first.click();
+  await first.fill("Edited chapter 25");
+  await expect(next).toBeInViewport();
+  const before = await modal.locator(".book-composer__list").evaluate((list) => {
+    window.__chapterTitleList = list;
+    window.__chapterTitleInput = list.querySelector('[data-book-chapter-title="fixture-chapter-0-25"]');
+    return list.scrollTop;
+  });
+  expect(before).toBeGreaterThan(0);
+  await next.click();
+  await expect(next).toBeFocused();
+  await expect(modal.locator(".book-chapter__number")).toHaveText("26");
+  const readList = () => page.evaluate(() => ({
+    sameList: document.querySelector(".book-composer__list") === window.__chapterTitleList,
+    sameInput: document.querySelector('[data-book-chapter-title="fixture-chapter-0-25"]') === window.__chapterTitleInput,
+    scrollTop: document.querySelector(".book-composer__list").scrollTop,
+  }));
+  expect(await readList()).toEqual({ sameList: true, sameInput: true, scrollTop: before });
+  await next.fill("Edited chapter 26");
+  await next.press("Tab");
+  await page.keyboard.press("Shift+Tab");
+  await expect(next).toBeFocused();
+  expect(await readList()).toEqual({ sameList: true, sameInput: true, scrollTop: before });
+
+  // Also exercise a chapter whose preview must finish asynchronously.
+  await page.evaluate(async () => {
+    const { state } = await import("/app/state.js");
+    state.editorChapter.exportModal.book.previewCache.delete("fixture-chapter-0-26");
+    window.__holdBookPreviewChapter = "fixture-chapter-0-26";
+  });
+  const third = modal.locator('[data-book-chapter-title="fixture-chapter-0-26"]');
+  await expect(third).toBeInViewport();
+  await third.click();
+  await expect(third).toBeFocused();
+  await expect(modal.locator(".book-composer__page-scroll")).toContainText("Loading chapter preview");
+  expect(await readList()).toEqual({ sameList: true, sameInput: true, scrollTop: before });
+  await page.evaluate(() => window.__releaseBookPreview());
+  await expect(modal.locator(".book-chapter__number")).toHaveText("27");
+  await expect(third).toBeFocused();
+  expect(await readList()).toEqual({ sameList: true, sameInput: true, scrollTop: before });
+  await expect(first).toHaveValue("Edited chapter 25");
+  await expect(next).toHaveValue("Edited chapter 26");
 });
 
 test("chapter export titles use opening H1s, edit inline, and persist independently by language", async ({ page }) => {

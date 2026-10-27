@@ -1,4 +1,5 @@
 import { reconcileEditorRowConnection } from "./app/editor-row-connection.js";
+import { renderProjectBookPreview } from "./app/project-book-preview-render.js";
 import { commitProjectsPageHtml, deferProjectsBackgroundRender } from "./app/projects-background-render.js";
 import {
   beginStoredBrokerSessionInspection,
@@ -760,6 +761,7 @@ function renderProjectsBackgroundSurfaces() {
 }
 
 function renderWithOptionsImpl(options = {}) {
+  if (options.scope === "project-book-preview" && renderProjectBookPreview(app, state)) return;
   if (deferProjectsBackgroundRender(app, state, options)) {
     renderProjectsBackgroundSurfaces();
     return;
