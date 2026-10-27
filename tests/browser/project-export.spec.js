@@ -64,6 +64,12 @@ test("project card export saves all active files through the shared dialog", asy
   await expect(modal).toBeVisible();
   await expect(modal).toContainText("Arrange your book");
   await expect(modal.getByRole("button", { name: "Cancel", exact: true })).toBeInViewport();
+  const cancelBox = await modal.getByRole("button", { name: "Cancel", exact: true }).boundingBox();
+  const nextBox = await modal.getByRole("button", { name: "Next", exact: true }).boundingBox();
+  expect(Math.abs(cancelBox.y + cancelBox.height / 2 - nextBox.y - nextBox.height / 2)).toBeLessThan(1);
+  expect(cancelBox.x + cancelBox.width).toBeLessThan(nextBox.x);
+  await expect(modal.locator("footer")).toHaveCount(0);
+  await page.screenshot({ path: test.info().outputPath("book-composer-top-actions.png") });
   await expect(modal.locator('[data-book-included="true"]')).toHaveCount(3);
   await expect(modal.locator("[data-editor-export-language-select]")).toHaveValue("en");
   await modal.getByRole("button", { name: "Next", exact: true }).click();
