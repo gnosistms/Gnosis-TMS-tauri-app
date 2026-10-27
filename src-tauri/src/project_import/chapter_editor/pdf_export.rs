@@ -36,6 +36,9 @@ const TYPST_COMPILE_TIMEOUT: Duration = Duration::from_secs(120);
 const CANCELLED: &str = "__GNOSIS_PDF_EXPORT_CANCELLED__";
 const MAX_TYPST_DIAGNOSTIC_BYTES: usize = 128 * 1024;
 const PDF_IMAGE_PREPARATION_REVISION: &str = "pdf-images-v1";
+const PDF_IMAGE_DOWNLOAD_WORKERS: usize = 12;
+const PDF_IMAGE_PROCESSING_WORKERS: usize = 4;
+const PDF_IMAGE_DOWNLOAD_BUFFER: usize = 4;
 
 #[derive(Clone, Debug, PartialEq)]
 enum PreparedTypstImage {
@@ -1906,57 +1909,43 @@ fn prepare_typst_images(
         .iter()
         .map(|(key, _, _, fingerprint, _)| (key.clone(), fingerprint.clone()))
         .collect::<Vec<_>>();
-    let worker_count = pending_images.len().min(4);
-    let queue = Arc::new(Mutex::new(VecDeque::from(pending_images)));
-    let results = Arc::new(Mutex::new(HashMap::<
-        String,
-        Result<ResolvedPdfImage, String>,
-    >::new()));
-    let completed = Arc::new(std::sync::atomic::AtomicU64::new(cached_count));
-    std::thread::scope(|scope| {
-        for _ in 0..worker_count {
-            let queue = queue.clone();
-            let results = results.clone();
-            let completed = completed.clone();
-            let progress_app = app.cloned();
-            let progress_job_id = job_id.to_string();
-            scope.spawn(move || loop {
-                if cancelled.load(Ordering::Acquire) {
-                    return;
+    let results = Mutex::new(HashMap::<String, Result<ResolvedPdfImage, String>>::new());
+    let completed = std::sync::atomic::AtomicU64::new(cached_count);
+    run_pdf_image_pipeline(
+        pending_images,
+        cancelled,
+        |(key, image, caption, _, source_bytes)| {
+            let resolved = match source_bytes {
+                Some(bytes) => Ok(ResolvedPdfImage::Bytes(bytes)),
+                None => resolve_pdf_image(&image, &caption),
+            };
+            (key, resolved)
+        },
+        |(key, resolved)| {
+            let result = resolved.map(|resolved| match resolved {
+                ResolvedPdfImage::Bytes(bytes) => {
+                    ResolvedPdfImage::Bytes(optimize_pdf_image_bytes(bytes))
                 }
-                let next = queue.lock().ok().and_then(|mut queue| queue.pop_front());
-                let Some((key, image, caption, _, source_bytes)) = next else {
-                    return;
-                };
-                let resolved = match source_bytes {
-                    Some(bytes) => Ok(ResolvedPdfImage::Bytes(bytes)),
-                    None => resolve_pdf_image(&image, &caption),
-                };
-                let result = resolved.map(|resolved| match resolved {
-                    ResolvedPdfImage::Bytes(bytes) => {
-                        ResolvedPdfImage::Bytes(optimize_pdf_image_bytes(bytes))
-                    }
-                    placeholder => placeholder,
-                });
-                if let Ok(mut results) = results.lock() {
-                    results.insert(key, result);
-                } else {
-                    return;
-                }
-                let current = completed.fetch_add(1, Ordering::AcqRel) + 1;
-                if let Some(progress_app) = &progress_app {
-                    emit_progress(
-                        progress_app,
-                        &progress_job_id,
-                        "running",
-                        "preparing-images",
-                        &format!("Preparing images ({current} of {total_images})…"),
-                        PdfProgressValue::determinate(current, total_images, "items"),
-                    );
-                }
+                placeholder => placeholder,
             });
-        }
-    });
+            if let Ok(mut results) = results.lock() {
+                results.insert(key, result);
+            } else {
+                return;
+            }
+            let current = completed.fetch_add(1, Ordering::AcqRel) + 1;
+            if let Some(app) = app {
+                emit_progress(
+                    app,
+                    job_id,
+                    "running",
+                    "preparing-images",
+                    &format!("Preparing images ({current} of {total_images})…"),
+                    PdfProgressValue::determinate(current, total_images, "items"),
+                );
+            }
+        },
+    );
     check_cancelled(cancelled)?;
 
     let mut results = results
@@ -2020,6 +2009,64 @@ fn prepare_typst_images(
         );
     }
     Ok(prepared_images)
+}
+
+/// Downloads can run ahead of the CPU workers, but the bounded handoff keeps
+/// downloaded originals from accumulating for the entire document. Progress is
+/// reported by `process` only after the image is fully prepared.
+fn run_pdf_image_pipeline<T: Send, R: Send>(
+    pending: Vec<T>,
+    cancelled: &AtomicBool,
+    resolve: impl Fn(T) -> R + Sync,
+    process: impl Fn(R) + Sync,
+) {
+    if pending.is_empty() || cancelled.load(Ordering::Acquire) {
+        return;
+    }
+    let download_workers = pending.len().min(PDF_IMAGE_DOWNLOAD_WORKERS);
+    let processing_workers = pending.len().min(PDF_IMAGE_PROCESSING_WORKERS);
+    let queue = Mutex::new(VecDeque::from(pending));
+    std::thread::scope(|scope| {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(PDF_IMAGE_DOWNLOAD_BUFFER);
+        let receiver = Arc::new(Mutex::new(receiver));
+        for _ in 0..processing_workers {
+            let receiver = receiver.clone();
+            let process = &process;
+            scope.spawn(move || {
+                while !cancelled.load(Ordering::Acquire) {
+                    let next = receiver
+                        .lock()
+                        .ok()
+                        .and_then(|receiver| receiver.recv().ok());
+                    let Some(next) = next else { return };
+                    if cancelled.load(Ordering::Acquire) {
+                        return;
+                    }
+                    process(next);
+                }
+            });
+        }
+        // Only workers retain the receiver. On cancellation their exit disconnects
+        // the channel, releasing downloaders blocked on a full queue.
+        drop(receiver);
+        for _ in 0..download_workers {
+            let sender = sender.clone();
+            let queue = &queue;
+            let resolve = &resolve;
+            scope.spawn(move || {
+                while !cancelled.load(Ordering::Acquire) {
+                    let next = queue.lock().ok().and_then(|mut queue| queue.pop_front());
+                    let Some(next) = next else { return };
+                    let resolved = resolve(next);
+                    if cancelled.load(Ordering::Acquire) || sender.send(resolved).is_err() {
+                        return;
+                    }
+                }
+            });
+        }
+        // Receivers finish when all download workers have sent their last image.
+        drop(sender);
+    });
 }
 
 fn pdf_image_fingerprint(image: &ExportImage) -> Result<(String, Option<Vec<u8>>), String> {
@@ -3014,6 +3061,136 @@ mod tests {
             .unwrap()
         );
         assert!(!pdf_jobs().lock().unwrap().contains_key(&job_id));
+    }
+
+    fn exercise_pdf_image_pipeline(cancel_when_full: bool) {
+        use std::sync::{atomic::AtomicUsize, mpsc, Condvar};
+
+        let cancelled = AtomicBool::new(false);
+        let download_gate = (Mutex::new(false), Condvar::new());
+        let process_gate = (Mutex::new(false), Condvar::new());
+        let active_downloads = AtomicUsize::new(0);
+        let peak_downloads = AtomicUsize::new(0);
+        let active_processing = AtomicUsize::new(0);
+        let peak_processing = AtomicUsize::new(0);
+        let processed = Mutex::new(Vec::new());
+        let (events, received) = mpsc::channel();
+        let wait_for_gate = |gate: &(Mutex<bool>, Condvar)| {
+            let mut open = gate.0.lock().unwrap();
+            while !*open {
+                open = gate.1.wait(open).unwrap();
+            }
+        };
+        let open_gate = |gate: &(Mutex<bool>, Condvar)| {
+            *gate.0.lock().unwrap() = true;
+            gate.1.notify_all();
+        };
+        let total = 64;
+        let observation = std::thread::scope(|scope| {
+            let pipeline = scope.spawn(|| {
+                run_pdf_image_pipeline(
+                    (0..total).collect(),
+                    &cancelled,
+                    |item| {
+                        let active = active_downloads.fetch_add(1, Ordering::AcqRel) + 1;
+                        peak_downloads.fetch_max(active, Ordering::AcqRel);
+                        events.send(true).unwrap();
+                        wait_for_gate(&download_gate);
+                        active_downloads.fetch_sub(1, Ordering::AcqRel);
+                        item
+                    },
+                    |item| {
+                        let active = active_processing.fetch_add(1, Ordering::AcqRel) + 1;
+                        peak_processing.fetch_max(active, Ordering::AcqRel);
+                        events.send(false).unwrap();
+                        wait_for_gate(&process_gate);
+                        processed.lock().unwrap().push(item);
+                        active_processing.fetch_sub(1, Ordering::AcqRel);
+                    },
+                );
+            });
+            let observation = (|| -> Result<(), String> {
+                // All twelve downloads must be able to start before any completes.
+                for _ in 0..PDF_IMAGE_DOWNLOAD_WORKERS {
+                    if !received
+                        .recv_timeout(Duration::from_secs(5))
+                        .map_err(|e| e.to_string())?
+                    {
+                        return Err("Processing started before a download finished".into());
+                    }
+                }
+                open_gate(&download_gate);
+                let mut downloads = PDF_IMAGE_DOWNLOAD_WORKERS;
+                let mut processing = 0;
+                // Hold CPU workers busy until both the handoff queue and the
+                // download workers are full. This also exercises blocked senders.
+                let capacity = PDF_IMAGE_DOWNLOAD_WORKERS
+                    + PDF_IMAGE_DOWNLOAD_BUFFER
+                    + PDF_IMAGE_PROCESSING_WORKERS;
+                while downloads < capacity || processing < PDF_IMAGE_PROCESSING_WORKERS {
+                    if received
+                        .recv_timeout(Duration::from_secs(5))
+                        .map_err(|e| e.to_string())?
+                    {
+                        downloads += 1;
+                    } else {
+                        processing += 1;
+                    }
+                }
+                match received.recv_timeout(Duration::from_millis(100)) {
+                    Err(mpsc::RecvTimeoutError::Timeout) => {}
+                    _ => return Err("Downloads exceeded the bounded pipeline capacity".into()),
+                }
+                if cancel_when_full {
+                    cancelled.store(true, Ordering::Release);
+                }
+                Ok(())
+            })();
+            // Release workers even on an observation timeout, so failures do not
+            // leave the scoped threads waiting on the test gates.
+            open_gate(&download_gate);
+            open_gate(&process_gate);
+            pipeline.join().unwrap();
+            observation
+        });
+        observation.unwrap();
+        assert_eq!(
+            peak_downloads.load(Ordering::Acquire),
+            PDF_IMAGE_DOWNLOAD_WORKERS
+        );
+        assert_eq!(
+            peak_processing.load(Ordering::Acquire),
+            PDF_IMAGE_PROCESSING_WORKERS
+        );
+        let mut processed = processed.into_inner().unwrap();
+        if cancel_when_full {
+            assert_eq!(processed.len(), PDF_IMAGE_PROCESSING_WORKERS);
+        } else {
+            processed.sort_unstable();
+            assert_eq!(processed, (0..total).collect::<Vec<_>>());
+        }
+    }
+
+    #[test]
+    fn pdf_image_pipeline_overlaps_twelve_downloads_with_four_processors() {
+        exercise_pdf_image_pipeline(false);
+    }
+
+    #[test]
+    fn pdf_image_pipeline_cancels_with_downloaders_blocked_on_full_queue() {
+        exercise_pdf_image_pipeline(true);
+    }
+
+    #[test]
+    fn pdf_image_pipeline_skips_empty_and_cancelled_work() {
+        for pending in [Vec::<usize>::new(), vec![1, 2, 3]] {
+            run_pdf_image_pipeline(
+                pending,
+                &AtomicBool::new(true),
+                |_| panic!("Cancelled or empty work must not download"),
+                |_: ()| panic!("Cancelled or empty work must not process"),
+            );
+        }
     }
 
     fn test_image_cache_scope(chapter_id: &str) -> PdfImageCacheScope {
