@@ -1077,7 +1077,7 @@ const settingsLayout = (title, code = "en") => ({ options: { pdfPaperSize: "a5" 
   { id: "fixture-chapter-0-0", kind: "chapter", chapterId: "fixture-chapter-0-0", title, numbered: false },
 ], selectedItemId: "fixture-chapter-0-0", code });
 const settingsDoc = (en, vi) => ({ version: 1, layouts: { ...(en ? { en } : {}), ...(vi ? { vi } : {}) } });
-const settingsDialog = (page) => page.getByRole("dialog", { name: "Settings saved on GitHub", exact: true });
+const settingsDialog = (page) => page.getByRole("dialog", { name: "Settings loaded", exact: true });
 async function releaseSettingsFetch(page, settings) {
   await expect.poll(() => page.evaluate(() => window.__heldSettingsRequests.length)).toBeGreaterThan(0);
   await page.evaluate((settings) => {
@@ -1087,7 +1087,7 @@ async function releaseSettingsFetch(page, settings) {
   }, settings);
 }
 
-test("Git export settings load locally first, then require acknowledgement for the selected language", async ({ page }) => {
+test("Git export settings load before the selected-language change notice", async ({ page }) => {
   await mountProjectExport(page, false, false, 3, { local: settingsDoc(settingsLayout("Local title")), holdFetch: true });
   const modal = page.getByRole("dialog", { name: "Export project", exact: true });
   const title = modal.locator('[data-book-chapter-title="fixture-chapter-0-0"]');
@@ -1095,8 +1095,9 @@ test("Git export settings load locally first, then require acknowledgement for t
   await releaseSettingsFetch(page, settingsDoc(settingsLayout("GitHub title")));
   const notice = settingsDialog(page);
   await expect(notice).toBeVisible();
-  await expect(notice).toContainText("Export settings for this project have been saved on GitHub. We will now load the saved settings.");
-  await expect(title).toHaveValue("Local title");
+  await expect(notice).toContainText("Someone has saved an export configuration for this project on GitHub. We have loaded the saved settings for you.");
+  await expect(title).toHaveValue("GitHub title");
+  await page.screenshot({ path: test.info().outputPath("settings-loaded-notice.png") });
   await notice.getByRole("button", { name: "Ok", exact: true }).click();
   await expect(notice).toBeHidden();
   await expect(title).toHaveValue("GitHub title");
@@ -1495,4 +1496,41 @@ test("empty redundancy sections finish independently and failed footnotes retain
   await expect(modal.getByText("No redundant footnotes found.", { exact: true })).toHaveCount(0);
   await expect(modal.getByText("Could not finish checking for redundant footnotes.", { exact: true })).toBeVisible();
   await expect(modal.getByRole("button", { name: "Retry checks", exact: true })).toBeVisible();
+});
+
+
+test("equivalent Git export settings stay quiet across metadata, defaults and reopening", async ({ page }) => {
+  const local = settingsDoc({ options: { pdfPaperSize: "a5" }, items: [
+    { id: "fixture-chapter-0-0", kind: "chapter", chapterId: "fixture-chapter-0-0", title: "", excluded: false, numbered: true, subtitle: "", author: "", translator: "", text: "", caption: "" },
+  ], selectedItemId: "fixture-chapter-0-0" });
+  const remote = settingsDoc({ options: {}, items: [
+    { kind: "chapter", id: "fixture-chapter-0-0" },
+  ] });
+  await mountProjectExport(page, false, false, 3, { local, holdFetch: true });
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  await expect(modal.locator('[data-book-chapter-title="fixture-chapter-0-0"]')).toBeVisible();
+  await releaseSettingsFetch(page, remote);
+  await expect(settingsDialog(page)).toHaveCount(0);
+  await modal.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.__bookSettingsRequests.filter((request) => request.settings).length)).toBe(1);
+  await page.locator('[data-action="export-project:fixture-project-001"]').click();
+  await releaseSettingsFetch(page, remote);
+  await expect(settingsDialog(page)).toHaveCount(0);
+  await expect(modal.locator('[data-book-chapter-title="fixture-chapter-0-0"]')).toBeVisible();
+});
+
+test("accepted Git settings do not show a second notice when unchanged on reopening", async ({ page }) => {
+  const remote = settingsDoc(settingsLayout("GitHub title"));
+  await mountProjectExport(page, false, false, 3, { local: settingsDoc(settingsLayout("Local title")), holdFetch: true });
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  await releaseSettingsFetch(page, remote);
+  await expect(settingsDialog(page)).toBeVisible();
+  await expect(modal.locator('[data-book-chapter-title="fixture-chapter-0-0"]')).toHaveValue("GitHub title");
+  await settingsDialog(page).getByRole("button", { name: "Ok", exact: true }).click();
+  await modal.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.__bookSettingsRequests.filter((request) => request.settings).length)).toBe(1);
+  await page.locator('[data-action="export-project:fixture-project-001"]').click();
+  await releaseSettingsFetch(page, remote);
+  await expect(settingsDialog(page)).toHaveCount(0);
+  await expect(modal.locator('[data-book-chapter-title="fixture-chapter-0-0"]')).toHaveValue("GitHub title");
 });

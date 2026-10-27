@@ -7,8 +7,7 @@ import { enqueueRepoWrite, projectRepoScope, waitForRepoWriteQueueIdle } from ".
 import { showNoticeBadge } from "./status-feedback.js";
 import { formatErrorForDisplay } from "./error-display.js";
 import { loadBookSettings, replaceBookSettings, saveBookSettings } from "./project-book-settings.js";
-import { portableBookSettings, portableBookOptions, bookSettingsEqual, mergeRemoteBookSettings } from "./project-book-settings-document.js";
-import { reconcileBookLayout } from "./project-book-model.js";
+import { portableBookSettings, portableBookOptions, bookSettingsEqual, mergeRemoteBookSettings, comparableBookLayout } from "./project-book-settings-document.js";
 import { applyProjectBookSettings } from "./project-book-flow.js";
 
 const modal = () => state.editorChapter?.exportModal;
@@ -72,11 +71,9 @@ async function job(scope, settings) {
 }
 
 function comparable(scope, document, code) {
-  const layout = document.layouts?.[code];
-  return portableBookSettings({ layouts: { [code]: {
-    items: reconcileBookLayout(scope.project.chapters || [], code, layout || {}).items,
-    options: layout?.options || document.options || scope.defaults,
-  } } }).layouts[code];
+  const local = loadBookSettings(scope.projectId);
+  const defaults = { ...scope.defaults, ...portableBookOptions(local.options), ...portableBookOptions(local.layouts?.[code]?.options) };
+  return comparableBookLayout(document, scope.project.chapters || [], code, defaults);
 }
 
 function receive(scope, settings, { saved } = {}) {
@@ -90,11 +87,12 @@ function receive(scope, settings, { saved } = {}) {
   // A new page-1 entry will fetch again after pending saves settle. An older
   // completion must not silently replace that entry's draft before its notice.
   const newerEntry = saved && modal()?.isOpen && modal().projectId === scope.projectId && !matches(scope);
-  replaceBookSettings(scope.projectId, mergeRemoteBookSettings(local, settings, code, notify || newerEntry || (saved && differs && !remoteChanged)));
+  replaceBookSettings(scope.projectId, mergeRemoteBookSettings(local, settings, code, newerEntry || (saved && differs && !remoteChanged)));
   if (notify) {
-    pendingNotice = { scope, settings };
+    pendingNotice = { scope };
+    scope.base = portableBookSettings(settings);
     setBook({ settingsNotice: true });
-    scope.render?.();
+    applyProjectBookSettings(loadBookSettings(scope.projectId), scope.render);
   } else if (matches(scope, true)) {
     scope.base = portableBookSettings(settings);
   }
@@ -167,9 +165,6 @@ export function acceptRemoteBookSettings(render) {
   const notice = pendingNotice;
   pendingNotice = null;
   if (!notice || !matches(notice.scope)) return;
-  const { scope, settings } = notice;
-  replaceBookSettings(scope.projectId, mergeRemoteBookSettings(loadBookSettings(scope.projectId), settings, modal().languageCode));
-  scope.base = portableBookSettings(settings);
   setBook({ settingsNotice: false });
-  applyProjectBookSettings(loadBookSettings(scope.projectId), render);
+  render?.();
 }

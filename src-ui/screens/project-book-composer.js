@@ -139,8 +139,8 @@ export function renderBookPreviewFontStatus(modal) {
 export function renderBookSettingsNotice(modal) {
   if (!modal.book?.settingsNotice) return "";
   return `<div class="modal-backdrop"><section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="book-settings-notice-title" data-modal-dialog="book-settings-remote" tabindex="-1"><div class="card__body modal-card__body">
-    <h2 class="modal__title" id="book-settings-notice-title">Settings saved on GitHub</h2>
-    <p>Export settings for this project have been saved on GitHub. We will now load the saved settings.</p>
+    <h2 class="modal__title" id="book-settings-notice-title">Settings loaded</h2>
+    <p>Someone has saved an export configuration for this project on GitHub. We have loaded the saved settings for you.</p>
     <div class="modal__actions">${primaryButton("Ok", "book-settings-ok", { modalDefault: true, modalCancel: true, modalInitialFocus: true })}</div>
   </div></section></div>`;
 }

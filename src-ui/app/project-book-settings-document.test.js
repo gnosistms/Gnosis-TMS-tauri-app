@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { portableBookSettings, bookSettingsEqual, mergeRemoteBookSettings } from "./project-book-settings-document.js";
+import { portableBookSettings, bookSettingsEqual, mergeRemoteBookSettings, comparableBookLayout } from "./project-book-settings-document.js";
 
 const layout = (title) => ({ options: { pdfPaperSize: "a5" }, items: [{ id: "title", kind: "title", title, excluded: false }] });
 
@@ -53,4 +53,48 @@ test("legacy SVG preparation becomes a portable image reference", () => {
   }] } } });
   assert.equal(saved.layouts.en.items[0].image.vellumAssetId, png);
   assert.doesNotMatch(JSON.stringify(saved), /cache|filePath/);
+});
+
+
+const chapters = [{ id: "c", name: "Chapter", languages: [{ code: "en" }] }];
+const comparable = (record) => comparableBookLayout(record, chapters, "en", { pdfPaperSize: "a5" });
+test("notice comparison ignores missing defaults, empty fields and image display metadata", () => {
+  const image = { assetId: "original.svg", vellumAssetId: "prepared.png" };
+  const local = { options: { pdfPaperSize: "a5", selectedOptionId: "link:wordpress" }, layouts: { en: {
+    selectedItemId: "c", options: { pdfPaperSize: "a5" }, items: [
+      { id: "title", kind: "title", title: "Book", subtitle: "", author: "", image: { ...image, fileName: "local.svg", filePath: "/local/logo.svg", dataUrl: "data:local" } },
+      { id: "c", chapterId: "c", kind: "chapter", title: "", numbered: true, excluded: false, defaultTitle: "Derived heading" },
+    ],
+  } } };
+  const remote = { layouts: { en: { options: {}, items: [
+    { kind: "title", id: "title", title: "Book", image: { ...image, fileName: "remote.svg", filePath: "/remote/logo.svg" } },
+    { id: "c", kind: "chapter" },
+  ] } } };
+  assert.ok(bookSettingsEqual(comparable(local), comparable(remote)));
+  assert.ok(bookSettingsEqual(comparable({}), comparable({ layouts: { en: { items: [{ id: "c", kind: "chapter", numbered: true }], options: { pdfPaperSize: "a5" } } } })));
+  // Comparison must not remove fields from records that will still be saved.
+  assert.equal(local.layouts.en.items[0].image.fileName, "local.svg");
+});
+
+test("notice comparison retains real content, order, asset and export-option changes", () => {
+  const original = { layouts: { en: { options: { pdfPaperSize: "a5" }, items: [
+    { id: "title", kind: "title", title: "Book", image: { assetId: "original.svg", vellumAssetId: "prepared.png" } },
+    { id: "c", kind: "chapter", numbered: true },
+    { id: "contents", kind: "contents", includeH1Headings: false },
+  ] } } };
+  const changes = [
+    (layout) => { layout.options.pdfPaperSize = "letter"; },
+    (layout) => { layout.items.reverse(); },
+    (layout) => { layout.items[0].title = "Changed book"; },
+    (layout) => { layout.items[0].image.assetId = "different.svg"; },
+    (layout) => { layout.items[0].image.vellumAssetId = "different.png"; },
+    (layout) => { layout.items[1].excluded = true; },
+    (layout) => { layout.items[1].numbered = false; },
+    (layout) => { layout.items[1].title = "New chapter title"; },
+    (layout) => { layout.items[2].includeH1Headings = true; },
+  ];
+  for (const change of changes) {
+    const remote = structuredClone(original);change(remote.layouts.en);
+    assert.equal(bookSettingsEqual(comparable(original), comparable(remote)), false);
+  }
 });

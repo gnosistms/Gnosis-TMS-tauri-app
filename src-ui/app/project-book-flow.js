@@ -74,7 +74,7 @@ export function applyProjectBookSettings(saved, render, page = modal()?.page) {
   if (!current?.book || !current.isOpen) return;
   const code = current.languageCode;
   const options = portableBookOptions(saved.layouts?.[code]?.options || saved.options);
-  const book = { ...reconcileBookLayout(project()?.chapters || [], code, saved.layouts?.[code]), ...previewState(), settingsEntryId: current.book.settingsEntryId, settingsLocalSeeded: true };
+  const book = { ...reconcileBookLayout(project()?.chapters || [], code, saved.layouts?.[code]), ...previewState(), settingsEntryId: current.book.settingsEntryId, settingsNotice: current.book.settingsNotice, settingsLocalSeeded: true };
   const nextPage = page === 1 ? 1 : 2;
   update({ ...options, page: nextPage, languageCode: code, book, pdfFontStatus: "idle", pdfFontInspectionKey: "", error: "" }, render);
   if (nextPage === 1) void loadSelectedBookPreview(render);
