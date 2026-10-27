@@ -7275,6 +7275,10 @@ test("empty quote attribution opens on click, keeps undo, and collapses again on
   const field = page.locator(`[data-content-kind="attribution"][data-row-id="${rowId}"][data-language-code="vi"]`);
   const prompt = field.locator("..").getByText("Click here to enter attribution.", { exact: true });
   await expect(prompt).toBeVisible();
+  await expect(prompt).toHaveCSS("font-style", "italic");
+  const promptSize = parseFloat(await prompt.evaluate((node) => getComputedStyle(node).fontSize));
+  const attributionSize = parseFloat(await field.evaluate((node) => getComputedStyle(node).fontSize));
+  expect(promptSize).toBeCloseTo(attributionSize * .8, 2);
   await expect(field).toBeHidden();
   await prompt.click();
   await expect(field).toBeFocused();
