@@ -268,8 +268,14 @@ pub(crate) fn export_gtms_chapter_file_sync(
             render_rtf_document(&print_document, input.footnote_links_as_plain_text),
         )
         .map_err(|error| format!("Could not write '{}': {error}", output_path.display())),
-        "md" => fs::write(&output_path, render_md_document(&print_document))
-            .map_err(|error| format!("Could not write '{}': {error}", output_path.display())),
+        "md" => fs::write(
+            &output_path,
+            render_md_document(&prepare_markdown_book_images(
+                &print_document,
+                &output_path,
+            )?),
+        )
+        .map_err(|error| format!("Could not write '{}': {error}", output_path.display())),
         _ => Err("Unsupported export format.".to_string()),
     };
     write_result?;
@@ -1513,6 +1519,53 @@ fn export_image_link(image: &ExportImage) -> String {
             .clone()
             .unwrap_or_else(|| repo_relative_path.clone()),
     }
+}
+
+fn prepare_markdown_book_images(
+    document: &ExportDocument,
+    output_path: &Path,
+) -> Result<ExportDocument, String> {
+    let mut document = document.clone();
+    let file_name = output_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("Choose a valid file name for the Markdown export.")?;
+    let folder = format!("{file_name}.assets");
+    let parent = output_path.parent().unwrap_or_else(|| Path::new("."));
+    for block in &mut document.blocks {
+        let ExportBlock::Image { image, .. } = block else {
+            continue;
+        };
+        let ExportImage::Upload {
+            raw_url: None,
+            repo_relative_path: id,
+            absolute_path,
+        } = image
+        else {
+            continue;
+        };
+        // Book assets have content-addressed filenames; chapter uploads retain
+        // their existing repository/remote link behavior.
+        let Some((hash, extension)) = id.split_once('.') else {
+            continue;
+        };
+        if hash.len() != 64
+            || !hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+            || !matches!(extension, "png" | "jpg" | "webp" | "svg")
+        {
+            continue;
+        }
+        let directory = parent.join(&folder);
+        fs::create_dir_all(&directory)
+            .map_err(|_| "Could not create the Markdown image folder.")?;
+        fs::copy(&*absolute_path, directory.join(&*id))
+            .map_err(|_| "Could not copy a book image for the Markdown export.")?;
+        let link_folder = url::form_urlencoded::byte_serialize(folder.as_bytes())
+            .collect::<String>()
+            .replace('+', "%20");
+        *image = ExportImage::Url(format!("{link_folder}/{id}"));
+    }
+    Ok(document)
 }
 
 fn render_md_document(document: &ExportDocument) -> String {
@@ -2831,6 +2884,52 @@ mod tests {
     use super::*;
     use std::io::Read;
     use zip::ZipArchive;
+
+    #[test]
+    fn markdown_bundles_book_images_beside_the_document_and_keeps_remote_links() {
+        let root =
+            std::env::temp_dir().join(format!("gnosis-markdown-book-{}", uuid::Uuid::now_v7()));
+        fs::create_dir_all(root.join("cache")).unwrap();
+        let svg = b"<svg xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M0 0L1 1\"/></svg>";
+        let id = format!("{:x}.svg", Sha256::digest(svg));
+        let source = root.join("cache").join(&id);
+        fs::write(&source, svg).unwrap();
+        let book = document(vec![
+            ExportBlock::Image {
+                image: ExportImage::Upload {
+                    repo_relative_path: id.clone(),
+                    raw_url: None,
+                    absolute_path: source.clone(),
+                },
+                caption: "Logo".into(),
+            },
+            ExportBlock::Image {
+                image: ExportImage::Url("https://example.org/chapter.png".into()),
+                caption: "".into(),
+            },
+        ]);
+        let output = root.join("Book vi #1.md");
+        let prepared = prepare_markdown_book_images(&book, &output).unwrap();
+        let md = render_md_document(&prepared);
+        assert!(md.contains(&format!("![](<Book%20vi%20%231.md.assets/{id}>)")));
+        assert!(md.contains("![](<https://example.org/chapter.png>)"));
+        assert_eq!(
+            fs::read(root.join("Book vi #1.md.assets").join(&id)).unwrap(),
+            svg
+        );
+        assert!(matches!(
+            &book.blocks[0],
+            ExportBlock::Image {
+                image: ExportImage::Upload { raw_url: None, .. },
+                ..
+            }
+        ));
+        // Repeated exports overwrite the same content-addressed resource safely.
+        prepare_markdown_book_images(&book, &output).unwrap();
+        fs::remove_file(source).unwrap();
+        assert!(prepare_markdown_book_images(&book, &output).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn quote_attribution_survives_document_exports() {
