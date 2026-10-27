@@ -1517,8 +1517,11 @@ fn render_typst_chapter(
             }
             ExportBlock::Attribution { text } => {
                 indent_next = false;
+                // Resolve below in body-text units, outside the smaller citation.
+                // Block spacing collapses with larger following gaps and at page
+                // boundaries; 1.5em adds about half a line over normal paragraphs.
                 source.push_str(&format!(
-                    "#align(right)[#text(size: 0.8em, tracking: 0.06em)[#upper[{}]]]\n\n",
+                    "#block(width: 100%, below: 1.5em)[#align(right)[#text(size: 0.8em, tracking: 0.06em)[#upper[{}]]]]\n\n",
                     render_inline_typst(text, false)
                 ));
             }
