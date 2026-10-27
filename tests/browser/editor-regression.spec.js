@@ -7393,6 +7393,48 @@ test("empty quote attribution opens on click, keeps undo, and collapses again on
   await page.screenshot({ path: "/tmp/gnosis-quote-empty-prompt.png" });
 });
 
+test("empty quote attribution keeps one prompt through window deactivation and reactivation", async ({ page }) => {
+  await mountEditorFixture(page, { rowCount: 8, chapterStatus: "ready" }, { mockTauri: true });
+  const rowId = "fixture-row-0001";
+  await activateMainEditorField(page, rowId, "vi");
+  await page.locator(`[data-editor-row-text-style-button][data-row-id="${rowId}"][data-language-code="vi"][data-text-style="quote"]`).click();
+  const field = page.locator(`[data-content-kind="attribution"][data-row-id="${rowId}"][data-language-code="vi"]`);
+  const wrapper = field.locator("..");
+  const prompt = wrapper.getByText("Enter attribution", { exact: true });
+  await prompt.click();
+  await expect(field).toBeFocused();
+  await expect(wrapper).toHaveAttribute("data-editor-attribution-editing", "");
+  await expect(prompt).toBeHidden();
+  // Headless Chromium emulates focus for background pages. Suspend that
+  // emulation so the retained active textarea also experiences native blur.
+  const session = await page.context().newCDPSession(page);
+  const other = await page.context().newPage();
+  try {
+    await session.send("Emulation.setFocusEmulationEnabled", { enabled: false });
+    await other.bringToFront();
+    await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+    await expect(wrapper).toHaveAttribute("data-editor-attribution-editing", "");
+    await expect(prompt).toBeHidden();
+    await expect(field).toBeVisible();
+    await page.bringToFront();
+    await session.send("Emulation.setFocusEmulationEnabled", { enabled: true });
+    await expect(field).toBeFocused();
+    await expect(field).toHaveValue("");
+    await expect(prompt).toBeHidden();
+    await field.pressSequentially("Author");
+    await expect(field).toHaveValue("Author");
+    await field.fill("");
+    await page.locator("[data-editor-search-input]").focus();
+    await expect(wrapper).not.toHaveAttribute("data-editor-attribution-editing");
+    await expect(prompt).toBeVisible();
+    await expect(prompt).toHaveCSS("font-style", "italic");
+    await expect(field).toBeHidden();
+  } finally {
+    await session.send("Emulation.setFocusEmulationEnabled", { enabled: true });
+    await session.detach(); await other.close();
+  }
+});
+
 test("Quote block and Heading filters select styles and update when a style changes", async ({ page }) => {
   await mountEditorFixture(page, { rowCount: 4 }, { mockTauri: true });
   const setStyle = async (rowId, textStyle) => {

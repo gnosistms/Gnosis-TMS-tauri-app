@@ -1749,9 +1749,10 @@
   font-weight: var(--editor-non-latin-serif-weight);
 }
 
-/* The footnote collection is a layout wrapper; only the individual note being
-   edited gets a focus surface. */
-.translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote):focus-within {
+/* The footnote collection is a layout wrapper; only the individual note or
+   attribution being edited gets a focus surface. */
+.translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote):focus-within,
+.translation-language-panel__attribution[data-editor-attribution-editing] > .translation-language-panel__field--attribution {
   border-color: rgba(236, 134, 9, 0.52);
   border-radius: var(--radius-ui);
   box-shadow: 0 0 0 4px rgba(243, 156, 24, 0.12);
@@ -1904,7 +1905,8 @@
 }
 
 .translation-language-panel__field-stack--footnote .translation-language-panel__footnote-input-stack > .translation-language-panel__field--footnote,
-.translation-language-panel__field-stack--footnote .translation-language-panel__footnote-input-stack > .translation-language-panel__field-highlight {
+.translation-language-panel__field-stack--footnote .translation-language-panel__footnote-input-stack > .translation-language-panel__field-highlight,
+.translation-language-panel__attribution[data-editor-attribution-editing] > .translation-language-panel__field--attribution {
   padding: 8px 12px;
 }
 
@@ -2972,13 +2974,13 @@
 }
 /* Keep the empty field focusable by its label and by Tab. Focus reveals the
    native textarea without replacing it, preserving selection and undo history. */
-.translation-language-panel__attribution:has(> textarea:placeholder-shown):not(:focus-within) > .translation-language-panel__attribution-label {
+.translation-language-panel__attribution:has(> textarea:placeholder-shown):not([data-editor-attribution-editing]) > .translation-language-panel__attribution-label {
   display: none;
 }
-.translation-language-panel__attribution:has(> textarea:placeholder-shown):not(:focus-within) > .translation-language-panel__attribution-prompt {
+.translation-language-panel__attribution:has(> textarea:placeholder-shown):not([data-editor-attribution-editing]) > .translation-language-panel__attribution-prompt {
   display: block;
 }
-.translation-language-panel__attribution:has(> textarea:placeholder-shown):not(:focus-within) > textarea {
+.translation-language-panel__attribution:has(> textarea:placeholder-shown):not([data-editor-attribution-editing]) > textarea {
   position: absolute;
   width: 0;
   min-width: 0;
