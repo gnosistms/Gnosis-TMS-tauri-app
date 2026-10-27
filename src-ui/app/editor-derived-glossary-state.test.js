@@ -5,12 +5,14 @@ import {
   applyEditorDerivedGlossaryEntries,
   applyEditorDerivedGlossaryEntry,
   buildEditorDerivedGlossaryContext,
+  buildEditorGlossaryRevisionKey,
   editorDerivedGlossaryIsStale,
   editorDerivedGlossaryMatchesContext,
   hydrateEditorDerivedGlossaryEntryState,
   resolveHighlightableEditorDerivedGlossaryEntry,
   resolveEditorDerivedGlossaryEntry,
   resolveEditorDerivedGlossarySourceText,
+  refreshEditorDerivedGlossaryMetadata,
 } from "./editor-derived-glossary-state.js";
 
 function readyDerivedEntry(overrides = {}) {
@@ -30,6 +32,62 @@ function readyDerivedEntry(overrides = {}) {
     ...overrides,
   };
 }
+
+function metadataRefreshFixture() {
+  const glossary = {
+    glossaryId: "g", repoName: "g", sourceLanguage: { code: "es" }, targetLanguage: { code: "vi" },
+    terms: [{ termId: "term-1", sourceTerms: ["camara"], targetTerms: ["buong"],
+      footnote: "old footnote", notesToTranslators: "old note", targetVariantNotes: ["old variant"] }],
+  };
+  const languages = [{ code: "en" }, { code: "es" }, { code: "vi" }];
+  const entry = hydrateEditorDerivedGlossaryEntryState(readyDerivedEntry({
+    translationSourceText: "chamber", glossarySourceText: "camara", glossarySourceTextOrigin: "row",
+    glossaryRevisionKey: buildEditorGlossaryRevisionKey(glossary), matcherModel: null,
+    entries: [{ sourceTerm: "chamber", glossarySourceTerm: "camara", targetVariants: [{ text: "buong", note: "old variant" }],
+      globalNotes: ["old note"], notes: ["old note"], footnotes: ["old footnote"] }],
+  }), languages, glossary);
+  return { glossary, languages, entries: { "row-1": entry } };
+}
+
+for (const change of [
+  { footnote: "new footnote" }, { footnote: "" },
+  { targetVariantNotes: ["new variant"] }, { targetVariantNotes: [""] },
+  { notesToTranslators: "new note" },
+]) {
+  test(`metadata-only refresh preserves English alignment: ${JSON.stringify(change)}`, () => {
+    const { glossary, languages, entries } = metadataRefreshFixture();
+    const next = { ...glossary, terms: [{ ...glossary.terms[0], ...change }] };
+    const updated = refreshEditorDerivedGlossaryMetadata(entries, glossary, next, languages);
+    const entry = updated["row-1"];
+    assert.equal(entry.entries[0].sourceTerm, "chamber");
+    assert.equal(entry.requestKey, entries["row-1"].requestKey);
+    assert.equal(entry.glossaryRevisionKey, buildEditorGlossaryRevisionKey(next));
+    assert.deepEqual(entry.entries[0].footnotes, next.terms[0].footnote ? [next.terms[0].footnote] : []);
+    assert.deepEqual(entry.entries[0].globalNotes, [next.terms[0].notesToTranslators]);
+    assert.equal(entry.entries[0].targetVariants[0].note ?? "", next.terms[0].targetVariantNotes[0]);
+    assert.notEqual(entry.matcherModel, entries["row-1"].matcherModel);
+    const row = { rowId: "row-1", fields: { en: "chamber", es: "camara", vi: "buong" },
+      persistedFields: { en: "chamber", es: "camara", vi: "buong" } };
+    assert.ok(resolveHighlightableEditorDerivedGlossaryEntry({
+      glossary: next, rows: [row], derivedGlossariesByRowId: updated,
+    }, row.rowId, row));
+    // Persisted entries have no matcher; hydration must keep the new metadata.
+    const hydrated = hydrateEditorDerivedGlossaryEntryState({ ...entry, matcherModel: null }, languages, next);
+    assert.deepEqual(hydrated.entries, entry.entries);
+  });
+}
+
+test("metadata refresh does not bless stale alignments, changed wording, or another glossary", () => {
+  const { glossary, languages, entries } = metadataRefreshFixture();
+  for (const patch of [{ sourceTerms: ["otra"] }, { targetTerms: ["phong"] }, { lifecycleState: "deleted" }]) {
+    const next = { ...glossary, terms: [{ ...glossary.terms[0], ...patch, footnote: "new" }] };
+    assert.equal(refreshEditorDerivedGlossaryMetadata(entries, glossary, next, languages), entries);
+  }
+  const next = { ...glossary, terms: [{ ...glossary.terms[0], footnote: "new" }] };
+  const stale = { "row-1": { ...entries["row-1"], glossaryRevisionKey: "older-revision" } };
+  assert.equal(refreshEditorDerivedGlossaryMetadata(stale, glossary, next, languages), stale);
+  assert.equal(refreshEditorDerivedGlossaryMetadata(entries, glossary, { ...next, glossaryId: "another" }, languages), entries);
+});
 
 test("derived lookup reads only the requested entry and uses an already-known row", () => {
   const row = { rowId: "row-1", fields: { en: "The inner chamber glows.", es: "" } };
@@ -246,7 +304,6 @@ test("applyEditorDerivedGlossaryEntries is a no-op for empty input or a missing 
 });
 
 const {
-  buildEditorGlossaryRevisionKey,
   normalizeEditorDerivedGlossaryEntryState,
   normalizeEditorGlossaryRevisionKey,
 } = await import("./editor-derived-glossary-state.js");
@@ -289,6 +346,18 @@ test("glossary revision keys are short hashes that track glossary content", () =
   assert.notEqual(buildEditorGlossaryRevisionKey(glossaryState), key);
   assert.equal(buildEditorGlossaryRevisionKey(null), "");
 });
+
+for (const change of [{ footnote: "new footnote" }, { targetVariantNotes: ["new variant note"] }]) {
+  test(`glossary ${Object.keys(change)[0]} edits invalidate cached derived hover details`, () => {
+    const original = revisionGlossaryState();
+    const updated = { ...original, terms: original.terms.map((term, index) => index === 0 ? { ...term, ...change } : term) };
+    const originalKey = buildEditorGlossaryRevisionKey(original);
+    const updatedKey = buildEditorGlossaryRevisionKey(updated);
+    assert.notEqual(updatedKey, originalKey);
+    const entry = readyDerivedEntry({ glossaryRevisionKey: originalKey });
+    assert.equal(editorDerivedGlossaryIsStale(entry, { ...entry, glossaryRevisionKey: updatedKey }), true);
+  });
+}
 
 test("legacy JSON revision keys normalize to the hashed key so cached entries stay fresh", () => {
   const glossaryState = revisionGlossaryState();

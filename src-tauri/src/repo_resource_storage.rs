@@ -12,11 +12,14 @@
 //! are supplied through [`RepoResourceStorageDomain`].
 
 use std::{
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex, OnceLock, TryLockError},
+    time::Duration,
 };
 
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::AppHandle;
 
@@ -33,6 +36,112 @@ use crate::{
 };
 
 const GITATTRIBUTES: &str = "* text=auto eol=lf\n";
+
+type EditorSnapshot = Result<Value, String>;
+
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct EditorDataRead<T> {
+    #[serde(flatten)]
+    pub(crate) data: T,
+    pub(crate) sync_in_progress: bool,
+}
+
+/// Editable resource views require current data. Only read-only consumers may
+/// opt into a stable local snapshot while git sync is still running.
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum EditorDataReadMode {
+    #[default]
+    Latest,
+    LocalSnapshot,
+}
+static SYNC_EDITOR_SNAPSHOTS: OnceLock<Mutex<HashMap<PathBuf, Arc<EditorSnapshot>>>> =
+    OnceLock::new();
+
+fn sync_editor_snapshots() -> &'static Mutex<HashMap<PathBuf, Arc<EditorSnapshot>>> {
+    SYNC_EDITOR_SNAPSHOTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// A snapshot lives only while sync owns the repository lock. Capture it before
+/// network work or checkout changes, after preceding local writes have finished.
+pub(crate) struct SyncEditorSnapshotGuard(PathBuf);
+
+pub(crate) fn preserve_editor_snapshot_during_sync(
+    repo_path: &Path,
+    snapshot: EditorSnapshot,
+) -> SyncEditorSnapshotGuard {
+    sync_editor_snapshots()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(repo_path.to_path_buf(), Arc::new(snapshot));
+    SyncEditorSnapshotGuard(repo_path.to_path_buf())
+}
+
+impl Drop for SyncEditorSnapshotGuard {
+    fn drop(&mut self) {
+        sync_editor_snapshots()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&self.0);
+    }
+}
+
+/// Editable views wait for sync and read the latest working tree. Read-only
+/// consumers can request a stable local payload during a slow fetch/push.
+/// Never retain a snapshot after sync: rollback or later saves must use disk.
+pub(crate) fn read_repo_resource_editor_data<T: DeserializeOwned>(
+    repo_path: &Path,
+    mode: EditorDataReadMode,
+    read_local: impl FnOnce() -> Result<T, String>,
+) -> Result<EditorDataRead<T>, String> {
+    let repo_lock = repo_sync_lock(repo_path);
+    if matches!(mode, EditorDataReadMode::Latest) {
+        let _guard = acquire_repo_sync_lock(&repo_lock);
+        return read_local().map(|data| EditorDataRead {
+            data,
+            sync_in_progress: false,
+        });
+    }
+    loop {
+        match repo_lock.try_lock() {
+            Ok(_guard) => {
+                return read_local().map(|data| EditorDataRead {
+                    data,
+                    sync_in_progress: false,
+                })
+            }
+            Err(TryLockError::Poisoned(poisoned)) => {
+                let _guard = poisoned.into_inner();
+                return read_local().map(|data| EditorDataRead {
+                    data,
+                    sync_in_progress: false,
+                });
+            }
+            Err(TryLockError::WouldBlock) => {}
+        }
+        let snapshot = sync_editor_snapshots()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(repo_path)
+            .cloned();
+        if let Some(snapshot) = snapshot {
+            return match snapshot.as_ref() {
+                Ok(payload) => serde_json::from_value(payload.clone())
+                    .map(|data| EditorDataRead {
+                        data,
+                        sync_in_progress: true,
+                    })
+                    .map_err(|error| format!("Could not read the local editor snapshot: {error}")),
+                Err(error) => Err(error.clone()),
+            };
+        }
+        // A local writer owns the lock, or sync is still capturing its snapshot.
+        // Retry rather than entering a blocking mutex wait that could race sync
+        // and end up waiting for the entire network operation.
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
 
 /// Per-domain values the shared storage scaffolding needs to operate on either a glossary or a
 /// QA-list repo. Everything term-model-specific stays in the domain module. Implemented by a
@@ -676,14 +785,88 @@ pub(crate) fn write_text_file(path: &Path, contents: &str) -> Result<(), String>
 mod tests {
     use super::{
         existing_or_desired_git_repo_path_in_root, find_repo_path_in_root,
+        preserve_editor_snapshot_during_sync, read_repo_resource_editor_data,
         resource_file_has_changes, resource_value_matches_head_with_lifecycle,
-        resource_value_matches_head_with_title, write_text_file, RepoResourceStorageDomain,
+        resource_value_matches_head_with_title, write_text_file, EditorDataReadMode,
+        RepoResourceStorageDomain,
     };
     use crate::local_repo_sync_state::{upsert_local_repo_sync_state, LocalRepoSyncStateUpdate};
     use serde_json::json;
     use std::{fs, path::Path, path::PathBuf, process::Command};
     use tauri::AppHandle;
     use uuid::Uuid;
+
+    #[test]
+    fn local_editor_reader_observes_a_snapshot_published_after_it_starts() {
+        use crate::repo_sync_shared::{acquire_repo_sync_lock, repo_sync_lock};
+        use serde_json::Value;
+        use std::{sync::mpsc, thread, time::Duration};
+
+        let path = std::env::temp_dir().join(format!("local-read-{}", Uuid::now_v7()));
+        let lock = repo_sync_lock(&path);
+        let locked = acquire_repo_sync_lock(&lock);
+        let (sender, receiver) = mpsc::channel();
+        let reader_path = path.clone();
+        let reader = thread::spawn(move || {
+            let value = read_repo_resource_editor_data::<Value>(
+                &reader_path,
+                EditorDataReadMode::LocalSnapshot,
+                || Ok(json!("disk")),
+            )
+            .unwrap();
+            sender.send((value.data, value.sync_in_progress)).unwrap();
+        });
+        assert!(receiver.recv_timeout(Duration::from_millis(30)).is_err());
+        let snapshot = preserve_editor_snapshot_during_sync(&path, Ok(json!("locally saved")));
+        let result = receiver.recv_timeout(Duration::from_secs(2));
+        drop(snapshot);
+        drop(locked);
+        reader.join().unwrap();
+        assert_eq!(result.unwrap(), (json!("locally saved"), true));
+    }
+
+    #[test]
+    fn sync_editor_snapshots_are_scoped_and_removed_on_error() {
+        use crate::repo_sync_shared::{acquire_repo_sync_lock, repo_sync_lock};
+        use serde_json::Value;
+
+        let path = std::env::temp_dir().join(format!("local-read-{}", Uuid::now_v7()));
+        let other = path.join("other-installation");
+        let lock = repo_sync_lock(&path);
+        let locked = acquire_repo_sync_lock(&lock);
+        let simulate_failed_sync = || -> Result<(), String> {
+            let _snapshot =
+                preserve_editor_snapshot_during_sync(&path, Err("invalid local data".into()));
+            assert_eq!(
+                read_repo_resource_editor_data::<Value>(
+                    &path,
+                    EditorDataReadMode::LocalSnapshot,
+                    || panic!("locked")
+                ),
+                Err("invalid local data".into())
+            );
+            let other_value: Value =
+                read_repo_resource_editor_data(&other, EditorDataReadMode::LocalSnapshot, || {
+                    Ok(json!("other repo"))
+                })?
+                .data;
+            assert_eq!(other_value, json!("other repo"));
+            Err("push failed".into())
+        };
+        assert!(simulate_failed_sync().is_err());
+        assert!(!super::sync_editor_snapshots()
+            .lock()
+            .unwrap()
+            .contains_key(&path));
+        drop(locked);
+        let restored: Value =
+            read_repo_resource_editor_data(&path, EditorDataReadMode::LocalSnapshot, || {
+                Ok(json!("rollback"))
+            })
+            .unwrap()
+            .data;
+        assert_eq!(restored, json!("rollback"));
+    }
 
     struct TestStorageDomain;
 

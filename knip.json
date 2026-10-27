@@ -13,5 +13,13 @@
   "ignore": [
     "alignment-lab/**"
   ],
-  "ignoreExportsUsedInFile": true
+  "ignoreExportsUsedInFile": true,
+  "paths": {
+    "/app/*": [
+      "./src-ui/app/*"
+    ],
+    "/screens/*": [
+      "./src-ui/screens/*"
+    ]
+  }
 }

@@ -102,6 +102,137 @@ fn domains() -> [Box<dyn RepoResourceDomain>; 2] {
 }
 
 #[test]
+fn local_editor_reads_finish_while_sync_holds_the_repo_lock_for_both_domains() {
+    use crate::repo_resource_storage::{read_repo_resource_editor_data, EditorDataReadMode};
+    use serde_json::{json, Value};
+    use std::{sync::mpsc, thread, time::Duration};
+
+    for domain in domains() {
+        let fixture = Fixture::new("main", false);
+        let identity = match domain.repo_kind() {
+            RepoKind::Glossary => json!({
+                "glossaryId": "fixture", "title": "Local glossary",
+                "languages": { "source": { "code": "en", "name": "English" },
+                    "target": { "code": "es", "name": "Spanish" } },
+                "lifecycle": { "state": "active" }
+            }),
+            _ => json!({ "qaListId": "fixture", "title": "Local QA",
+                "language": { "code": "en", "name": "English" },
+                "lifecycle": { "state": "active" } }),
+        };
+        fs::write(
+            fixture.local.join(domain.identity_filename()),
+            identity.to_string(),
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.local.join("terms")).unwrap();
+        let term_path = fixture.local.join("terms/term.json");
+        let term = match domain.repo_kind() {
+            RepoKind::Glossary => json!({ "term_id": "term", "source_terms": ["mind"],
+                "target_terms": ["new local wording"], "lifecycle": { "state": "active" } }),
+            _ => json!({ "termId": "term", "text": "new local wording",
+                "lifecycle": { "state": "active" } }),
+        };
+        fs::write(&term_path, term.to_string()).unwrap();
+        let repo_lock = repo_sync_lock(&fixture.local);
+        let locked = acquire_repo_sync_lock(&repo_lock);
+        let snapshot = preserve_local_editor_data(domain.as_ref(), &fixture.local).unwrap();
+        // Model the transient working tree during rebase. Reads must come from
+        // the saved local payload, without parsing these files or waiting on git.
+        fs::write(&term_path, "incomplete checkout").unwrap();
+        fn read_payload(kind: RepoKind, path: &Path, mode: EditorDataReadMode) -> Value {
+            match kind {
+                RepoKind::Glossary => serde_json::to_value(
+                    read_repo_resource_editor_data(path, mode, || {
+                        crate::glossary_storage::read_glossary_editor_data(path)
+                    })
+                    .unwrap(),
+                )
+                .unwrap(),
+                _ => serde_json::to_value(
+                    read_repo_resource_editor_data(path, mode, || {
+                        crate::qa_list_storage::read_qa_list_editor_data(path)
+                    })
+                    .unwrap(),
+                )
+                .unwrap(),
+            }
+        }
+        let local = fixture.local.clone();
+        let kind = domain.repo_kind();
+        let (sender, receiver) = mpsc::channel();
+        let reader = thread::spawn(move || {
+            sender
+                .send(read_payload(
+                    kind,
+                    &local,
+                    EditorDataReadMode::LocalSnapshot,
+                ))
+                .unwrap();
+        });
+        let received = receiver.recv_timeout(Duration::from_secs(2));
+
+        let local = fixture.local.clone();
+        let kind = domain.repo_kind();
+        let (editor_sender, editor_receiver) = mpsc::channel();
+        let editor = thread::spawn(move || {
+            editor_sender
+                .send(read_payload(kind, &local, EditorDataReadMode::Latest))
+                .unwrap();
+        });
+        let editor_waited = editor_receiver
+            .recv_timeout(Duration::from_millis(30))
+            .is_err();
+        // Sync brings a newer term into the working tree. Editable loads must
+        // wait for it, otherwise a footnote edit could overwrite this wording.
+        let mut remote_term = term.clone();
+        if domain.repo_kind() == RepoKind::Glossary {
+            remote_term["target_terms"] = json!(["new remote wording"]);
+        } else {
+            remote_term["text"] = json!("new remote wording");
+        }
+        fs::write(&term_path, remote_term.to_string()).unwrap();
+        // Always release locks before asserting, so a regression cannot hang tests.
+        drop(snapshot);
+        drop(locked);
+        let editable_payload = editor_receiver.recv_timeout(Duration::from_secs(2));
+        reader.join().unwrap();
+        editor.join().unwrap();
+        assert!(
+            editor_waited,
+            "editable reads must not consume the pre-sync snapshot"
+        );
+        let editable_payload = editable_payload.expect("editable load after sync");
+        assert_eq!(editable_payload["syncInProgress"], false);
+        let remote_wording = if domain.repo_kind() == RepoKind::Glossary {
+            &editable_payload["terms"][0]["targetTerms"][0]
+        } else {
+            &editable_payload["terms"][0]["text"]
+        };
+        assert_eq!(remote_wording, "new remote wording");
+        let payload = received.expect("local read must finish before sync releases the lock");
+        assert_eq!(payload["syncInProgress"], true);
+        assert_eq!(payload["termCount"], 1);
+        let wording = if domain.repo_kind() == RepoKind::Glossary {
+            &payload["terms"][0]["targetTerms"][0]
+        } else {
+            &payload["terms"][0]["text"]
+        };
+        assert_eq!(wording, "new local wording");
+
+        // Success or failure exits discard the pre-sync snapshot. A later
+        // rollback/save must therefore be visible to the very next read.
+        let current: Value =
+            read_repo_resource_editor_data(&fixture.local, EditorDataReadMode::Latest, || {
+                Ok(json!({ "afterSyncOrRollback": true }))
+            })
+            .unwrap()
+            .data;
+        assert_eq!(current, json!({ "afterSyncOrRollback": true }));
+    }
+}
+
+#[test]
 fn stale_empty_descriptor_reconciles_both_resource_domains() {
     for domain in domains() {
         let fixture = Fixture::new("main", false);

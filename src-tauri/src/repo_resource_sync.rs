@@ -33,6 +33,7 @@ use crate::{
         is_remote_migrated_local_old_layout_changes_error, pending_repo_migrations,
         repo_requires_0810_migration, run_pending_repo_migrations,
     },
+    repo_resource_storage::{preserve_editor_snapshot_during_sync, SyncEditorSnapshotGuard},
     repo_sync_shared::{
         abort_in_progress_git_operations, abort_rebase_after_failed_pull, acquire_repo_sync_lock,
         ensure_repo_local_git_identity, git_error_indicates_missing_remote_ref, git_output,
@@ -246,6 +247,7 @@ pub(crate) fn sync_repos(
             inspected.status.as_str(),
             REPO_SYNC_STATUS_NOT_CLONED | REPO_SYNC_STATUS_OUT_OF_SYNC
         ) {
+            let _editor_snapshot = preserve_local_editor_data(domain, &repo_path);
             if git_transport_token.is_none() {
                 git_transport_token = Some(load_git_transport_token(
                     input.installation_id,
@@ -298,6 +300,7 @@ pub(crate) fn sync_editor_repo(
     )?;
     let repo_lock = repo_sync_lock(&repo_path);
     let _repo_lock_guard = acquire_repo_sync_lock(&repo_lock);
+    let _editor_snapshot = preserve_local_editor_data(domain, &repo_path);
     let old_head_sha = read_current_head_oid(&repo_path);
     if descriptor_is_deleted(&resource) {
         return Ok(EditorRepoSyncResponse {
@@ -338,6 +341,26 @@ pub(crate) fn sync_editor_repo(
         inserted_term_ids,
         deleted_term_ids,
     })
+}
+
+/// Preserve the local copy before fetch/rebase/push, while the repo lock is held.
+/// A failed capture is exposed to readers without preventing sync from repairing
+/// missing/invalid content. The guard clears it on success and every error exit.
+fn preserve_local_editor_data(
+    domain: &dyn RepoResourceDomain,
+    repo_path: &Path,
+) -> Option<SyncEditorSnapshotGuard> {
+    if !repo_path.join(domain.identity_filename()).exists() {
+        return None;
+    }
+    let snapshot = match domain.repo_kind() {
+        RepoKind::Glossary => crate::glossary_storage::read_glossary_editor_data(repo_path)
+            .and_then(|payload| serde_json::to_value(payload).map_err(|error| error.to_string())),
+        RepoKind::QaList => crate::qa_list_storage::read_qa_list_editor_data(repo_path)
+            .and_then(|payload| serde_json::to_value(payload).map_err(|error| error.to_string())),
+        _ => return None,
+    };
+    Some(preserve_editor_snapshot_during_sync(repo_path, snapshot))
 }
 
 fn ensure_editor_repo_clean_if_present(repo_path: &Path) -> Result<(), String> {
