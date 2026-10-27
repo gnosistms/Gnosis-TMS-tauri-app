@@ -377,24 +377,37 @@ pub(super) fn build_scoped_export_document(
             .first()
             .map(|document| document.language_code.as_str())
             .unwrap_or(&input.language_code);
-        let contents = input
-            .book_items
+        // Resolve chapter titles from the durable snapshot, even if the UI's
+        // background preview reads have not finished when Export is clicked.
+        let mut items = input.book_items.clone();
+        let mut chapter_documents = BTreeMap::new();
+        for item in &mut items {
+            if item.kind != "chapter" {
+                continue;
+            }
+            let index = chapters
+                .iter()
+                .position(|(chapter, _)| chapter.chapter_id == item.chapter_id)
+                .ok_or_else(|| "A chapter selected for the book is missing.".to_string())?;
+            let document = apply_book_chapter_title(documents[index].clone(), item);
+            item.title = document.title.clone();
+            chapter_documents.insert(item.id.clone(), document);
+        }
+        let contents = items
             .iter()
             .filter(|item| !matches!(item.kind.as_str(), "title" | "copyright" | "contents"))
             .map(|item| item.title.clone())
             .collect::<Vec<_>>();
         let mut seen = BTreeSet::new();
         let mut parts = Vec::new();
-        for item in &input.book_items {
+        for item in &items {
             if item.id.is_empty() || !seen.insert(item.id.clone()) {
                 return Err("The book contains a duplicate or invalid item.".into());
             }
             let document = if item.kind == "chapter" {
-                let index = chapters
-                    .iter()
-                    .position(|(chapter, _)| chapter.chapter_id == item.chapter_id)
-                    .ok_or_else(|| "A chapter selected for the book is missing.".to_string())?;
-                documents[index].clone()
+                chapter_documents
+                    .remove(&item.id)
+                    .ok_or_else(|| "A chapter selected for the book is missing.".to_string())?
             } else {
                 section_document(app, item, document_language, &contents)?
             };
@@ -422,6 +435,73 @@ pub(super) fn build_scoped_export_document(
         &input.language_code,
         documents,
     ))
+}
+
+pub(super) fn apply_book_chapter_title(
+    mut document: ExportDocument,
+    item: &BookItemInput,
+) -> ExportDocument {
+    let leading_title = match document.blocks.first() {
+        Some(ExportBlock::Text { text_style, text })
+            if export_text_style(Some(text_style)) == "heading1" =>
+        {
+            Some(inline_visible_text(text).trim().to_string())
+        }
+        _ => None,
+    };
+    let override_title = item
+        .title_override
+        .as_deref()
+        .map(str::trim)
+        .filter(|title| !title.is_empty());
+    document.title = override_title
+        .map(str::to_string)
+        .or_else(|| leading_title.clone().filter(|title| !title.is_empty()))
+        .unwrap_or_else(|| {
+            if item.title.is_empty() {
+                document.title.clone()
+            } else {
+                item.title.clone()
+            }
+        });
+    if leading_title.is_some() {
+        if let Some(title) = override_title {
+            // Keep notes anchored to the opening heading when replacing its text.
+            let markers = document
+                .blocks
+                .iter()
+                .filter_map(|block| match block {
+                    ExportBlock::Footnote {
+                        marker,
+                        anchor_block: Some(0),
+                        ..
+                    } => Some(format!("[{marker}]")),
+                    _ => None,
+                })
+                .collect::<String>();
+            if let Some(ExportBlock::Text { text, .. }) = document.blocks.first_mut() {
+                *text = format!("{title}{markers}");
+            }
+        }
+    } else {
+        for block in &mut document.blocks {
+            if let ExportBlock::Footnote {
+                anchor_block: Some(index),
+                ..
+            } = block
+            {
+                *index += 1;
+            }
+        }
+        document.blocks.insert(
+            0,
+            ExportBlock::Text {
+                text_style: "heading1".into(),
+                text: document.title.clone(),
+            },
+        );
+    }
+    document
 }
 
 fn combine_export_documents(
@@ -2995,6 +3075,85 @@ mod tests {
         assert!(srt.contains("2\n00:00:02,500 --> 00:00:04,500\nNext"));
         let xlsx_rows = combined_export_rows(&chapters, false);
         assert_eq!(xlsx_rows[1].format_metadata.srt.unwrap().start_ms, 1000);
+    }
+
+    #[test]
+    fn book_chapter_titles_use_opening_headings_and_export_only_overrides() {
+        let source = ExportDocument {
+            title: "Source filename".into(),
+            language_code: "en".into(),
+            book_parts: Vec::new(),
+            blocks: vec![
+                ExportBlock::Text {
+                    text_style: "heading1".into(),
+                    text: "A <i>leading</i> title".into(),
+                },
+                ExportBlock::Text {
+                    text_style: "paragraph".into(),
+                    text: "The body".into(),
+                },
+            ],
+        };
+        let mut item = BookItemInput {
+            id: "chapter".into(),
+            kind: "chapter".into(),
+            title: "Projects name".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            apply_book_chapter_title(source.clone(), &item).title,
+            "A leading title"
+        );
+        item.title_override = Some("Custom export title".into());
+        let overridden = apply_book_chapter_title(source.clone(), &item);
+        assert_eq!(overridden.title, "Custom export title");
+        assert!(
+            matches!(&overridden.blocks[0], ExportBlock::Text { text, .. } if text == "Custom export title")
+        );
+        assert!(
+            matches!(&source.blocks[0], ExportBlock::Text { text, .. } if text == "A <i>leading</i> title")
+        );
+        let bytes = render_docx_document(&overridden, false).unwrap();
+        let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let mut xml = String::new();
+        zip.by_name("word/document.xml")
+            .unwrap()
+            .read_to_string(&mut xml)
+            .unwrap();
+        assert!(xml.contains("Custom export title"));
+        assert!(!xml.contains("leading"));
+
+        let mut prose_first = source.clone();
+        prose_first.blocks.swap(0, 1);
+        prose_first.blocks.push(ExportBlock::Footnote {
+            number: 1,
+            marker: 1,
+            anchor_block: Some(0),
+            text: "Body note".into(),
+        });
+        item.title_override = None;
+        let fallback = apply_book_chapter_title(prose_first, &item);
+        assert_eq!(fallback.title, "Projects name");
+        assert!(
+            matches!(&fallback.blocks[0], ExportBlock::Text { text, .. } if text == "Projects name")
+        );
+        assert!(matches!(
+            fallback.blocks.last(),
+            Some(ExportBlock::Footnote {
+                anchor_block: Some(1),
+                ..
+            })
+        ));
+        let mut noted = source.clone();
+        noted.blocks.push(ExportBlock::Footnote {
+            number: 1,
+            marker: 2,
+            anchor_block: Some(0),
+            text: "Title note".into(),
+        });
+        item.title_override = Some("Renamed".into());
+        let noted = apply_book_chapter_title(noted, &item);
+        assert!(matches!(&noted.blocks[0], ExportBlock::Text { text, .. } if text == "Renamed[2]"));
     }
 
     #[test]

@@ -18,6 +18,8 @@
 .book-item[data-book-included="false"] { opacity: .7; }
 .book-item__select { flex: 1; min-width: 0; text-align: left; color: inherit; background: none; border: 0; padding: 4px 0; cursor: pointer; font: inherit; font-size: 13px; overflow-wrap: anywhere; }
 .book-item__select small { display: block; color: var(--muted); font-size: 10px; margin-top: 3px; }
+.book-item__title { width: 0; cursor: text; border-bottom: 1px solid transparent; border-radius: 0; }
+.book-item__title:hover, .book-item__title:focus { border-bottom-color: #b3864a88; }
 .book-item__toggle { font-size: 11px; }
 .book-composer__preview { overflow: auto; padding: 24px; background: #ddcfb944; }
 .book-page { box-sizing: border-box; background: #fffaf0; color: #34291e; box-shadow: 0 3px 16px #4e35181a; width: min(100%, 570px); min-height: 650px; margin: 0 auto; padding: 54px 50px; font-family: "Crimson Pro", "Noto Serif", serif; line-height: 1.6; }

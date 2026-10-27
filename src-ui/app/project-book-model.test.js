@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { addBookSection, bookContentsItems, bookExportItems, bookItemIncluded, bookLanguages, includeBookItem, reconcileBookLayout, reorderBookItems } from "./project-book-model.js";
+import { addBookSection, bookChapterDefaultTitle, bookChapterPreviewBlocks, bookContentsItems, bookExportItems, bookItemIncluded, bookItemTitle, bookLanguages, includeBookItem, reconcileBookLayout, reorderBookItems } from "./project-book-model.js";
 import { loadBookSettings, loadContentsTitle, saveBookSettings, saveContentsTitle } from "./project-book-settings.js";
 import { setActiveStorageLogin, clearActiveStorageLogin } from "./team-storage.js";
 const chapters = () => [
@@ -64,4 +64,39 @@ test("the latest contents spelling becomes the per-language default across proje
   saveContentsTitle("vi", "MỤC LỤC");
   assert.equal(loadContentsTitle("vi"), "MỤC LỤC");
   assert.equal(loadContentsTitle("en"), "Table of Contents");
+});
+
+test("chapter defaults use only an opening H1 and overrides replace it without changing source blocks", () => {
+  const heading = { kind: "text", textStyle: "heading1", text: "A <i>translated</i> heading", footnotes: [] };
+  const paragraph = { kind: "text", textStyle: "paragraph", text: "Opening text" };
+  assert.equal(bookChapterDefaultTitle([heading, paragraph], "File"), "A translated heading");
+  assert.equal(bookChapterDefaultTitle([paragraph, heading], "File"), "File");
+  assert.equal(bookChapterDefaultTitle([{ kind: "image" }, heading], "File"), "File");
+  const item = { id: "c", chapterId: "c", kind: "chapter", name: "File", title: "Export heading" };
+  const blocks = bookChapterPreviewBlocks(item, [heading, paragraph], "en");
+  assert.equal(blocks.length, 2);
+  assert.equal(blocks[0].text, "Export heading");
+  assert.equal(heading.text, "A <i>translated</i> heading");
+  assert.equal(bookChapterPreviewBlocks(item, [paragraph, heading], "en")[0].text, "Export heading");
+  const noted = { ...heading, footnotes: [{ marker: 2, text: "A note" }] };
+  assert.equal(bookChapterPreviewBlocks(item, [noted], "en")[0].text, "Export heading[2]");
+});
+
+test("chapter title overrides persist per language; discovered defaults stay transient", () => {
+  setActiveStorageLogin("chapter-title-settings-test");
+  const english = reconcileBookLayout(chapters(), "en");
+  english.items.find((item) => item.id === "2").title = "English title";
+  english.items.find((item) => item.id === "10").defaultTitle = "Discovered H1";
+  saveBookSettings({ projectId: "titles", languageCode: "en", book: english });
+  const vietnamese = reconcileBookLayout(chapters(), "vi");
+  vietnamese.items.find((item) => item.id === "2").title = "Tên tiếng Việt";
+  saveBookSettings({ projectId: "titles", languageCode: "vi", book: vietnamese });
+  const saved = loadBookSettings("titles");
+  assert.equal(bookItemTitle(reconcileBookLayout(chapters(), "en", saved.layouts.en).items.find((item) => item.id === "2")), "English title");
+  assert.equal(bookItemTitle(reconcileBookLayout(chapters(), "vi", saved.layouts.vi).items.find((item) => item.id === "2")), "Tên tiếng Việt");
+  assert.doesNotMatch(JSON.stringify(saved), /Discovered H1/);
+  const exported = bookExportItems({ book: english });
+  assert.equal(exported.find((item) => item.id === "2").titleOverride, "English title");
+  assert.equal(exported.find((item) => item.id === "10").titleOverride, null);
+  assert.equal(exported.find((item) => item.id === "10").title, "Chapter 10");
 });

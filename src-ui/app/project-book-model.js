@@ -1,4 +1,5 @@
 import { compareFilesByName } from "./projects-list-model.js";
+import { extractInlineMarkupVisibleText } from "./editor-inline-markup.js";
 
 export const BOOK_SECTION_TYPES = [
   { kind: "title", label: "Title page" },
@@ -10,7 +11,28 @@ export const BOOK_SECTION_TYPES = [
 const FRONT_ORDER = ["title", "copyright", "dedication", "contents"];
 export const bookItemIncluded = (item) => !item.excluded && item.available !== false;
 export const bookSectionLabel = (kind) => BOOK_SECTION_TYPES.find((entry) => entry.kind === kind)?.label || "Chapter";
-export const bookItemTitle = (item) => item.kind === "chapter" ? item.name : item.title || (item.kind === "image" && item.caption) || bookSectionLabel(item.kind);
+export const bookItemTitle = (item) => item.kind === "chapter" ? item.title?.trim() || item.defaultTitle || item.name : item.title || (item.kind === "image" && item.caption) || bookSectionLabel(item.kind);
+
+export function bookChapterDefaultTitle(blocks, name) {
+  const first = blocks[0];
+  return first?.kind === "text" && first.textStyle === "heading1"
+    ? extractInlineMarkupVisibleText(first.text).trim() || name : name;
+}
+
+// The source rows remain untouched. A book title replaces only the opening H1,
+// or is inserted before the body when the chapter has no opening H1.
+export function bookChapterPreviewBlocks(item, blocks, languageCode) {
+  const override = (Object.hasOwn(item, "titleOverride") ? item.titleOverride : item.title)?.trim();
+  const title = override || bookChapterDefaultTitle(blocks, item.name || item.title);
+  const text = String(title || "");
+  const first = blocks[0];
+  if (first?.kind === "text" && first.textStyle === "heading1") {
+    if (!override) return blocks;
+    const markers = (first.footnotes ?? []).map((note) => `[${note.marker}]`).join("");
+    return [{ ...first, text: text + markers }, ...blocks.slice(1)];
+  }
+  return [{ kind: "text", rowId: `chapter-title:${item.chapterId}`, languageCode, textStyle: "heading1", text, footnotes: [] }, ...blocks];
+}
 
 export function bookLanguages(chapters) {
   return [...new Map(chapters.flatMap((chapter) => chapter.languages ?? []).map((language) => [language.code, language])).values()];
@@ -91,7 +113,10 @@ export function bookContentsItems(items) {
 
 export function bookExportItems(modal) {
   return (modal.book?.items ?? []).filter(bookItemIncluded).map((item) => ({
-    id: item.id, kind: item.kind, chapterId: item.chapterId || "", title: bookItemTitle(item),
+    // Unedited chapter defaults are resolved again from the export snapshot.
+    // Keep the input stable while background previews discover their H1s.
+    id: item.id, kind: item.kind, chapterId: item.chapterId || "", title: item.kind === "chapter" ? item.title?.trim() || item.name : bookItemTitle(item),
+    ...(item.kind === "chapter" ? { titleOverride: item.title?.trim() || null } : {}),
     subtitle: item.subtitle || "", author: item.author || "", translator: item.translator || "",
     text: item.text || "", caption: item.caption || "", imageAssetId: item.image?.assetId || "",
   }));
