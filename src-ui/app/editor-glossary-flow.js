@@ -21,6 +21,9 @@ import { createEditorChapterGlossaryState, state } from "./state.js";
 import { EDITOR_ROW_FILTER_MODE_HAS_GLOSSARY_ERROR } from "./editor-filters.js";
 import { srtLinguisticRow, srtDisplayRowId } from "./editor-srt-grouping.js";
 import { renderSrtStaticText } from "./editor-srt-group-render.js";
+import { scheduleActiveGlossaryTooltipPlacementUpdate } from "./events/glossary-tooltip.js";
+import { refreshEditorDerivedGlossaryMetadata } from "./editor-derived-glossary-state.js";
+import { saveStoredEditorDerivedGlossariesForChapter } from "./editor-derived-glossary-cache.js";
 
 const localGlossaryRevisions = new Map();
 
@@ -80,13 +83,14 @@ function buildEditorGlossaryStateFromPayload(payload, linkedGlossary) {
     sourceLanguage: payload?.sourceLanguage ?? null,
     targetLanguage: payload?.targetLanguage ?? null,
     terms: normalizedTerms,
+    syncInProgress: payload?.syncInProgress === true,
     matcherModel: null,
   };
   glossaryState.matcherModel = buildEditorGlossaryModel(glossaryState);
   return glossaryState;
 }
 
-export async function loadEditorGlossaryState(team, chapter) {
+export async function loadEditorGlossaryState(team, chapter, options = {}) {
   const linkedGlossary = normalizeEditorGlossaryLink(chapter?.linkedGlossary);
   if (!linkedGlossary || !Number.isFinite(team?.installationId)) {
     return createEditorChapterGlossaryState();
@@ -102,6 +106,9 @@ export async function loadEditorGlossaryState(team, chapter) {
           installationId: team.installationId,
           glossaryId: linkedGlossary.glossaryId,
           repoName: linkedGlossary.repoName,
+          // This view only consumes hints/highlights; editable glossary loads
+          // require the default latest mode so stale drafts cannot overwrite sync.
+          readMode: options.readMode ?? "localSnapshot",
         },
       });
       // A rollback or a later save may have overtaken this disk read.
@@ -118,12 +125,15 @@ export async function loadEditorGlossaryState(team, chapter) {
         error: error?.message ?? String(error),
         glossaryId: linkedGlossary.glossaryId,
         repoName: linkedGlossary.repoName,
+        // A snapshot capture can fail while sync is repairing the repository.
+        // Give that first local read one current-data retry after display.
+        syncInProgress: options.readMode !== "latest",
       };
     }
   }
 }
 
-export async function refreshEditorGlossaryAfterLocalChange(render, team, link) {
+export async function refreshEditorGlossaryAfterLocalChange(render, team, link, options = {}) {
   const linkedGlossary = normalizeEditorGlossaryLink(link);
   if (!linkedGlossary || !Number.isFinite(team?.installationId)) return;
   const key = localGlossaryKey(team, linkedGlossary);
@@ -134,20 +144,40 @@ export async function refreshEditorGlossaryAfterLocalChange(render, team, link) 
     && selectedProjectsTeam()?.id === team.id
     && selectedProjectsTeam()?.installationId === team.installationId
     && state.editorChapter?.chapterId === chapterId
-    && state.editorChapter?.status === "ready"
+    && ["ready", "refreshing"].includes(state.editorChapter?.status)
     && editorGlossaryStateMatchesLink(state.editorChapter.glossary, linkedGlossary)
     && editorGlossaryStateMatchesLink(linkedGlossary, findChapterContextById(chapterId)?.chapter?.linkedGlossary);
   if (!matchesContext()) return;
-  const glossary = await loadEditorGlossaryState(team, { linkedGlossary });
+  const glossary = await loadEditorGlossaryState(team, { linkedGlossary }, options);
   if (!matchesContext() || localGlossaryRevisions.get(key) !== revision) return;
-  state.editorChapter = { ...state.editorChapter, glossary };
+  const previous = state.editorChapter;
+  const derivedGlossariesByRowId = refreshEditorDerivedGlossaryMetadata(
+    previous.derivedGlossariesByRowId, previous.glossary, glossary, previous.languages,
+  );
+  state.editorChapter = { ...previous, glossary, derivedGlossariesByRowId };
+  if (derivedGlossariesByRowId !== previous.derivedGlossariesByRowId) {
+    saveStoredEditorDerivedGlossariesForChapter(team, previous.projectId, chapterId, derivedGlossariesByRowId);
+  }
   // Matcher identity invalidates highlight caches; derived entries already check
   // the glossary content revision. Patch mounted highlights without remounting inputs.
-  if (typeof document !== "undefined") syncMountedEditorGlossaryHighlightRows();
+  if (typeof document !== "undefined") {
+    syncMountedEditorGlossaryHighlightRows();
+    scheduleActiveGlossaryTooltipPlacementUpdate();
+  }
   if (state.editorChapter.filters?.rowFilterMode === EDITOR_ROW_FILTER_MODE_HAS_GLOSSARY_ERROR) {
     render?.({ scope: "translate-body" });
   }
   render?.({ scope: "translate-sidebar" });
+  refreshEditorGlossaryAfterSync(render, team, glossary);
+}
+
+// The first read stays immediate. Only a snapshot-backed result needs a second
+// read that waits for the repository lock; the usual context/revision guards
+// reject its result if another save, navigation, or link change overtakes it.
+export function refreshEditorGlossaryAfterSync(render, team, glossary) {
+  if (glossary?.syncInProgress) {
+    void refreshEditorGlossaryAfterLocalChange(render, team, glossary, { readMode: "latest" });
+  }
 }
 
 // A chapter's linked glossary loads asynchronously from local storage when the
@@ -177,6 +207,7 @@ export async function ensureEditorGlossaryReady(chapterState, chapterId) {
     && selectedProjectsTeam()?.installationId === team.installationId
     && editorGlossaryStateMatchesLink(freshGlossaryState, findChapterContextById(chapterId)?.chapter?.linkedGlossary)) {
     state.editorChapter = { ...state.editorChapter, glossary: freshGlossaryState };
+    refreshEditorGlossaryAfterSync(undefined, team, freshGlossaryState);
   }
   return freshGlossaryState;
 }

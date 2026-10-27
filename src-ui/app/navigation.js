@@ -72,6 +72,8 @@ import { invalidateInstallationResourcesForTeam } from "./installation-resources
 import { invalidateTeamMetadataSyncForTeam } from "./team-metadata-flow.js";
 import { waitForEditorOperationQueueIdle } from "./editor-operation-queue.js";
 import { projectRepoScope } from "./repo-write-queue.js";
+import { refreshEditorGlossaryAfterLocalChange } from "./editor-glossary-flow.js";
+import { findChapterContextById } from "./project-context.js";
 
 function selectedNavigationTeam() {
   return state.teams.find((team) => team?.id === state.selectedTeamId) ?? null;
@@ -352,6 +354,14 @@ export async function handleNavigation(navTarget, render) {
       });
     }
     if (navTarget === "translate" && state.selectedChapterId) {
+      // Returning from a glossary save must refresh local hover data even while
+      // the network access check below is pending. Chapter loading and sync
+      // still wait for that check.
+      void refreshEditorGlossaryAfterLocalChange(
+        render,
+        selectedNavigationTeam(),
+        findChapterContextById()?.chapter?.linkedGlossary,
+      );
       void waitForNextPaint().then(async () => {
         await refreshVisibleTeamAccess(render);
         await loadSelectedChapterEditorData(render, { preserveVisibleRows: true });

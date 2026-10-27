@@ -32,8 +32,9 @@ mod tmx;
 
 use crate::repo_resource_storage::{
     ensure_gitattributes, git_output, prepare_repo, purge_repo, read_json_file,
-    resolve_git_repo_path, resolve_initialized_repo_path, rollback_term_upsert, write_json_pretty,
-    write_resource_lifecycle, write_resource_title, write_text_file, RepoResourceStorageDomain,
+    read_repo_resource_editor_data, resolve_git_repo_path, resolve_initialized_repo_path,
+    rollback_term_upsert, write_json_pretty, write_resource_lifecycle, write_resource_title,
+    write_text_file, EditorDataRead, EditorDataReadMode, RepoResourceStorageDomain,
 };
 use tmx::{parse_tmx_qa_list, serialize_tmx_qa_list};
 
@@ -161,6 +162,8 @@ pub(crate) struct LoadQaListEditorDataInput {
     installation_id: i64,
     repo_name: String,
     qa_list_id: Option<String>,
+    #[serde(default)]
+    read_mode: EditorDataReadMode,
 }
 
 #[derive(Deserialize)]
@@ -325,7 +328,7 @@ pub(crate) struct MatchQaListTermsResponse {
     rows: Vec<QaReviewRowMatches>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct QaListLanguageInfo {
     code: String,
@@ -351,7 +354,7 @@ pub(crate) struct QaListImportPreview {
     term_count: usize,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct QaListTermEditorRecord {
     term_id: String,
@@ -362,7 +365,7 @@ pub(crate) struct QaListTermEditorRecord {
     lifecycle_state: String,
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LoadQaListEditorDataResponse {
     qa_list_id: String,
@@ -412,7 +415,7 @@ pub(crate) async fn list_local_gtms_qa_lists(
 pub(crate) async fn load_gtms_qa_list_editor_data(
     app: AppHandle,
     input: LoadQaListEditorDataInput,
-) -> Result<LoadQaListEditorDataResponse, String> {
+) -> Result<EditorDataRead<LoadQaListEditorDataResponse>, String> {
     tauri::async_runtime::spawn_blocking(move || load_gtms_qa_list_editor_data_sync(&app, input))
         .await
         .map_err(|error| format!("The QA list load worker failed: {error}"))?
@@ -659,14 +662,23 @@ fn list_local_gtms_qa_lists_sync(
 fn load_gtms_qa_list_editor_data_sync(
     app: &AppHandle,
     input: LoadQaListEditorDataInput,
-) -> Result<LoadQaListEditorDataResponse, String> {
+) -> Result<EditorDataRead<LoadQaListEditorDataResponse>, String> {
     let repo_path = qa_list_repo_path(
         app,
         input.installation_id,
         input.qa_list_id.as_deref(),
         Some(&input.repo_name),
     )?;
-    let qa_list_file = read_qa_list_file(&repo_path)?;
+    read_repo_resource_editor_data(&repo_path, input.read_mode, || {
+        read_qa_list_editor_data(&repo_path)
+    })
+}
+
+/// Caller must hold the repository lock (also used to capture pre-sync data).
+pub(crate) fn read_qa_list_editor_data(
+    repo_path: &Path,
+) -> Result<LoadQaListEditorDataResponse, String> {
+    let qa_list_file = read_qa_list_file(repo_path)?;
     let terms = load_qa_list_terms(&repo_path.join("terms"))?
         .into_iter()
         .filter(|term| term.lifecycle.state == "active")
@@ -1531,6 +1543,20 @@ mod tests {
     use crate::local_repo_sync_state::{upsert_local_repo_sync_state, LocalRepoSyncStateUpdate};
 
     use super::*;
+
+    #[test]
+    fn editable_qa_load_defaults_to_latest_data() {
+        let input: LoadQaListEditorDataInput = serde_json::from_value(json!({
+            "installationId": 1, "repoName": "qa", "qaListId": "qa-1"
+        }))
+        .unwrap();
+        assert!(matches!(input.read_mode, EditorDataReadMode::Latest));
+        let input: LoadQaListEditorDataInput = serde_json::from_value(json!({
+            "installationId": 1, "repoName": "qa", "readMode": "localSnapshot"
+        }))
+        .unwrap();
+        assert!(matches!(input.read_mode, EditorDataReadMode::LocalSnapshot));
+    }
 
     #[test]
     fn serializes_and_parses_tmx_qa_list() {

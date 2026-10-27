@@ -2,12 +2,13 @@ import { loadActiveEditorRowComments, loadEditorCommentSeenRevisionsForChapter }
 import { applyStoredSelectedTeamAiActionPreferences } from "./ai-settings-flow.js";
 import { loadStoredEditorAssistantChapterData } from "./editor-ai-assistant-cache.js";
 import { loadStoredEditorDerivedGlossariesForChapter, saveStoredEditorDerivedGlossariesForChapter } from "./editor-derived-glossary-cache.js";
-import { hydrateEditorDerivedGlossariesByRowId } from "./editor-derived-glossary-state.js";
+import { hydrateEditorDerivedGlossariesByRowId, refreshEditorDerivedGlossaryMetadata } from "./editor-derived-glossary-state.js";
 import {
   editorGlossaryStateMatchesLink,
   loadEditorGlossaryState,
   normalizeEditorGlossaryLink,
   refreshEditorGlossaryAfterLocalChange,
+  refreshEditorGlossaryAfterSync,
 } from "./editor-glossary-flow.js";
 import {
   EDITOR_ROW_FILTER_MODE_HAS_CONFLICT,
@@ -440,6 +441,12 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
   };
   render?.();
 
+  if (preserveVisibleRows && linkedGlossary) {
+    // Returning from the glossary keeps the existing rows interactive. Refresh
+    // their local hover data independently of chapter history and disk loading.
+    void refreshEditorGlossaryAfterLocalChange(render, team, linkedGlossary);
+  }
+
   try {
     const payload = await invoke("load_gtms_chapter_editor_data", {
       input: {
@@ -466,19 +473,23 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
       Object.entries(storedDerivedGlossariesByRowId)
         .filter(([rowId]) => validRowIds.has(rowId)),
     );
+    const refreshedDerivedGlossariesByRowId = refreshEditorDerivedGlossaryMetadata(
+      filteredStoredDerivedGlossariesByRowId, previousEditorChapter?.glossary, glossaryState, payload?.languages,
+    );
     if (
       Object.keys(filteredStoredDerivedGlossariesByRowId).length
       !== Object.keys(storedDerivedGlossariesByRowId).length
+      || refreshedDerivedGlossariesByRowId !== filteredStoredDerivedGlossariesByRowId
     ) {
       saveStoredEditorDerivedGlossariesForChapter(
         team,
         context.project.id,
         context.chapter.id,
-        filteredStoredDerivedGlossariesByRowId,
+        refreshedDerivedGlossariesByRowId,
       );
     }
     const hydratedDerivedGlossariesByRowId = hydrateEditorDerivedGlossariesByRowId(
-      filteredStoredDerivedGlossariesByRowId,
+      refreshedDerivedGlossariesByRowId,
       payload?.languages,
       glossaryState,
     );
@@ -493,6 +504,7 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
     );
     openLanguageManagerForSingleLanguageFile(payload, preserveVisibleRows, team);
     render?.();
+    refreshEditorGlossaryAfterSync(render, team, glossaryState);
     if (state.editorChapter.sidebarTab === "comments" && state.editorChapter.activeRowId) {
       loadActiveEditorRowComments(render);
     } else if (state.editorChapter.sidebarTab === "assistant") {

@@ -1,4 +1,8 @@
-import { buildEditorDerivedGlossaryModel } from "./editor-glossary-highlighting.js";
+import {
+  buildEditorDerivedGlossaryModel,
+  buildEditorGlossaryModel,
+  findLongestGlossaryMatches,
+} from "./editor-glossary-highlighting.js";
 import {
   GLOSSARY_MATCHER_POLICY,
   GLOSSARY_MATCHER_POLICY_VERSION,
@@ -266,6 +270,9 @@ export function hydrateEditorDerivedGlossariesByRowId(
 }
 
 function sanitizeGlossaryTerm(term) {
+  const footnote = sanitizeString(term?.footnote).trim();
+  const targetVariantNotes = (Array.isArray(term?.targetVariantNotes) ? term.targetVariantNotes : [])
+    .map((note) => sanitizeString(note).trim());
   return {
     sourceTerms: sanitizeStringList(term?.sourceTerms),
     targetTerms: sanitizeStringList(term?.targetTerms),
@@ -273,7 +280,53 @@ function sanitizeGlossaryTerm(term) {
       typeof term?.notesToTranslators === "string" && term.notesToTranslators.trim()
         ? [term.notesToTranslators.trim()]
         : [],
+    // Keep note-free legacy revision keys compatible, while invalidating cached
+    // hover details when any tooltip metadata changes. Variant positions matter.
+    ...(footnote ? { footnotes: [footnote] } : {}),
+    ...(targetVariantNotes.some(Boolean) ? { targetVariantNotes } : {}),
   };
+}
+
+// Notes do not change the source spans that AI aligned. Reuse only entries that
+// were current before the change, and only if the complete term structure agrees.
+export function refreshEditorDerivedGlossaryMetadata(entriesByRowId, previousGlossary, glossary, languages = []) {
+  if (!previousGlossary || !glossary) return entriesByRowId;
+  const previousKey = buildEditorGlossaryRevisionKey(previousGlossary);
+  const nextKey = buildEditorGlossaryRevisionKey(glossary);
+  if (previousKey === nextKey) return entriesByRowId;
+  const alignmentSource = (value) => JSON.stringify({
+    glossaryId: value.glossaryId, repoName: value.repoName,
+    sourceLanguageCode: value.sourceLanguage?.code, targetLanguageCode: value.targetLanguage?.code,
+    terms: (value.terms ?? []).filter((term) => term?.lifecycleState !== "deleted").map((term) => ({
+      termId: term.termId, sourceTerms: term.sourceTerms, targetTerms: term.targetTerms,
+      untranslated: term.untranslated === true,
+    })),
+  });
+  if (alignmentSource(previousGlossary) !== alignmentSource(glossary)) return entriesByRowId;
+  const matcher = (glossary.matcherModel ?? buildEditorGlossaryModel(glossary))?.sourceMatcher;
+  let updated = entriesByRowId;
+  for (const [rowId, value] of Object.entries(entriesByRowId ?? {})) {
+    const entry = normalizeEditorDerivedGlossaryEntryState(value);
+    if (entry.status !== "ready" || entry.glossaryRevisionKey !== previousKey) continue;
+    const entries = entry.entries.map((aligned) => {
+      const candidate = findLongestGlossaryMatches(aligned.glossarySourceTerm, matcher).matches[0]?.candidate;
+      if (!candidate) return null;
+      return {
+        ...aligned,
+        targetVariants: candidate.targetVariantsOrdered,
+        noTranslation: candidate.noTranslation,
+        notes: candidate.translatorNotesOrdered,
+        globalNotes: candidate.translatorNotesOrdered,
+        footnotes: candidate.footnotesOrdered,
+      };
+    });
+    if (entries.some((entry) => entry === null)) continue;
+    if (updated === entriesByRowId) updated = { ...entriesByRowId };
+    updated[rowId] = hydrateEditorDerivedGlossaryEntryState({
+      ...entry, entries, glossaryRevisionKey: nextKey, matcherModel: null,
+    }, languages, glossary);
+  }
+  return updated;
 }
 
 // 53-bit string hash (cyrb53): stable across sessions and platforms, cheap on
