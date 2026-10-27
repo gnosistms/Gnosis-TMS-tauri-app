@@ -230,7 +230,8 @@ export async function handleProjectBookAction(action, render) {
   } else if (action.startsWith("book-exclude:") || action.startsWith("book-include:")) {
     const include = action.startsWith("book-include:");
     const id = action.slice(13);
-    update({ book: { ...book, items: includeBookItem(book.items, id, include) }, pdfFontStatus: "idle", pdfFontInspectionKey: "" }, render);
+    update({ book: { ...book, items: includeBookItem(book.items, id, include) }, pdfFontStatus: "idle", pdfFontInspectionKey: "" });
+    render?.({ scope: "project-book-preview" });
     if (book.items.find((item) => item.id === book.selectedItemId)?.kind === "contents") void loadSelectedBookPreview(render);
   } else if (action === "book-image-pick") await importBookImage(render, await openLocalFilePicker({ accept: BOOK_IMAGE_ACCEPT }));
   else if (action === "book-image-remove") update({ book: { ...book, items: book.items.map((item) => item.id === book.selectedItemId ? { ...item, image: null } : item) }, pdfFontStatus: "idle" }, render);

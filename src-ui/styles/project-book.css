@@ -13,6 +13,7 @@
 .book-composer__list { overflow-y: auto; padding: 18px 14px 24px 20px; border-right: 1px solid var(--surface-border); }
 .book-composer__list h3 { display: flex; justify-content: space-between; padding: 0 6px; margin: 0 0 10px; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
 .book-composer__list ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; }
+.book-composer__list [hidden] { display: none; }
 .book-composer__list .book-excluded-heading { margin-top: 28px; }
 .book-item .term-variant-row__shell { display: flex; gap: 6px; align-items: center; padding: 8px 6px; background: transparent; }
 .book-item.is-selected .term-variant-row__shell { background: #efc68626; border-color: #bc862e66; }

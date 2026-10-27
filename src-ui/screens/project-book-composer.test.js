@@ -16,7 +16,8 @@ test("book composer uses the shared drag handle, genuine chevrons, and standard 
 test("a book with every chapter included hides the excluded section", () => {
   const current = modal();
   current.book.items = current.book.items.slice(0, 1);
-  assert.doesNotMatch(renderProjectBookComposer(current), /book-excluded-heading/);
+  assert.match(renderProjectBookComposer(current), /class="book-excluded-heading" hidden/);
+  assert.match(renderProjectBookComposer(current), /data-book-list="excluded" hidden/);
 });
 test("front matter uses per-language editing controls, and copyright has the limited semi-WYSIWYG toolbar", () => {
   for (const kind of ["title", "copyright", "dedication", "contents", "image"]) {

@@ -368,6 +368,82 @@ test("editing adjacent chapter titles keeps focus and long-list scroll through p
   await expect(next).toHaveValue("Edited chapter 26");
 });
 
+test("Include and Exclude retain the scrolling list and preview in a long book", async ({ page }) => {
+  await mountProjectExport(page, false, false, 40);
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  await addSection(modal, "copyright");
+  const editor = modal.getByRole("textbox", { name: "Copyright text", exact: true });
+  await editor.fill("Copyright text to keep mounted.");
+  // Leave enough excluded rows to exercise Include in the lower list as well.
+  for (let index = 0; index < 10; index++) await modal.locator(`[data-action="book-exclude:fixture-chapter-0-${index}"]`).click();
+  const read = () => page.evaluate(() => ({
+    list: document.querySelector(".book-composer__list") === window.__inclusionList,
+    preview: document.querySelector("[data-book-copyright-editor]") === window.__inclusionEditor,
+    input: document.querySelector('[data-book-chapter-title="fixture-chapter-0-30"]') === window.__inclusionInput,
+    scroll: document.querySelector(".book-composer__list").scrollTop,
+    previewScroll: document.querySelector(".book-composer__page-scroll").scrollTop,
+  }));
+  await modal.locator('[data-action="book-exclude:fixture-chapter-0-24"]').scrollIntoViewIfNeeded();
+  const beforeExclude = await modal.evaluate((element) => {
+    window.__inclusionList = element.querySelector(".book-composer__list");
+    window.__inclusionEditor = element.querySelector("[data-book-copyright-editor]");
+    window.__inclusionInput = element.querySelector('[data-book-chapter-title="fixture-chapter-0-30"]');
+    element.querySelector(".book-composer__page-scroll").scrollTop = 120;
+    return { scroll: window.__inclusionList.scrollTop, previewScroll: element.querySelector(".book-composer__page-scroll").scrollTop };
+  });
+  expect(beforeExclude.scroll).toBeGreaterThan(0);
+  await modal.locator('[data-action="book-exclude:fixture-chapter-0-24"]').click();
+  expect(await read()).toEqual({ list: true, preview: true, input: true, ...beforeExclude });
+  await expect(modal.locator('[data-book-count="included"]')).toHaveText("30");
+  await expect(modal.locator('[data-action="book-exclude:fixture-chapter-0-25"]')).toBeFocused();
+  await modal.locator('[data-action="book-exclude:fixture-chapter-0-25"]').press("Enter");
+  expect(await read()).toEqual({ list: true, preview: true, input: true, ...beforeExclude });
+  await expect(modal.locator('[data-book-count="included"]')).toHaveText("29");
+
+  const include = modal.locator('[data-action="book-include:fixture-chapter-0-5"]');
+  await include.scrollIntoViewIfNeeded();
+  const anchor = modal.locator('[data-book-item="fixture-chapter-0-4"]');
+  const beforeInclude = await anchor.boundingBox();
+  const previewBefore = (await read()).previewScroll;
+  await include.click();
+  const afterInclude = await anchor.boundingBox();
+  // Including inserts above this viewport. Native anchoring keeps the visible
+  // neighboring rows in place instead of jumping to the newly included row.
+  expect(Math.abs(afterInclude.y - beforeInclude.y)).toBeLessThan(1);
+  expect(await read()).toMatchObject({ list: true, preview: true, input: true, previewScroll: previewBefore });
+  await expect(modal.locator('[data-book-count="included"]')).toHaveText("30");
+  await expect(modal.locator('[data-action="book-include:fixture-chapter-0-6"]')).toBeFocused();
+  await expect(editor).toHaveText("Copyright text to keep mounted.");
+});
+
+test("inclusion updates empty groups, Next, and chapter numbers without rebuilding the dialog", async ({ page }) => {
+  await mountProjectExport(page, false, false, 2);
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  await modal.locator('[data-action="book-select:fixture-chapter-0-1"]').click();
+  await expect(modal.locator(".book-chapter__number")).toHaveText("2");
+  await modal.locator('[data-action="book-exclude:fixture-chapter-0-0"]').click();
+  await expect(modal.locator(".book-chapter__number")).toHaveText("1");
+  // Some platforms keep the chapter input focused when its toggle is clicked.
+  // Excluding that row must not restore focus to it in the distant Excluded list.
+  await modal.locator('[data-book-chapter-title="fixture-chapter-0-1"]').focus();
+  await modal.locator('[data-action="book-exclude:fixture-chapter-0-1"]').evaluate((button) => button.click());
+  await expect(modal.locator(".book-composer__list")).toBeFocused();
+  await expect(modal.getByRole("button", { name: "Next", exact: true })).toBeDisabled();
+  await expect(modal.locator("[data-book-empty-hint]")).toBeVisible();
+  await modal.locator('[data-action="book-include:fixture-chapter-0-1"]').click();
+  await expect(modal.getByRole("button", { name: "Next", exact: true })).toBeEnabled();
+  await expect(modal.locator("[data-book-empty-hint]")).toBeHidden();
+  await modal.locator('[data-action="book-include:fixture-chapter-0-0"]').click();
+  await expect(modal.locator(".book-chapter__number")).toHaveText("2");
+  await expect(modal.locator(".book-excluded-heading")).toBeHidden();
+  await addSection(modal, "contents");
+  await expect(modal.locator(".book-contents li")).toHaveCount(2);
+  await modal.locator('[data-action="book-exclude:fixture-chapter-0-0"]').click();
+  await expect(modal.locator(".book-contents li")).toHaveCount(1);
+  await modal.locator('[data-action="book-include:fixture-chapter-0-0"]').click();
+  await expect(modal.locator(".book-contents li")).toHaveCount(2);
+});
+
 test("title form keeps edits and Enter breaks beside a live PDF preview", async ({ page }) => {
   await mountProjectExport(page);
   const modal = page.getByRole("dialog", { name: "Export project", exact: true });

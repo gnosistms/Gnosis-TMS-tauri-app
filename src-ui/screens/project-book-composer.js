@@ -117,9 +117,16 @@ function formattingToolbar(modal) {
   return `<div class="book-copyright__toolbar" role="toolbar" aria-label="${item.kind === "copyright" ? "Copyright" : "Dedication"} formatting"><button type="button" class="text-action" data-action="book-copyright:italic" aria-label="Italicise selected text" ${tooltipAttributes("Italicise selected text")}><svg class="book-copyright__icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4h9M5 20h9M15 4 9 20"/></svg></button><button type="button" class="text-action" data-action="book-copyright:symbol" aria-label="Insert copyright symbol" ${tooltipAttributes("Insert copyright symbol")}><svg class="book-copyright__icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15 9a4.25 4.25 0 1 0 0 6"/></svg></button><button type="button" class="text-action book-copyright__flourish" data-action="book-copyright:flourish" aria-label="Insert separator" ${tooltipAttributes("Insert separator")}>${flourish}</button></div>`;
 }
 
-export function renderProjectBookComposer(modal) {
+export function renderProjectBookItems(modal) {
   const included = modal.book.items.filter(bookItemIncluded);
   const excluded = modal.book.items.filter((item) => !bookItemIncluded(item)).sort((a, b) => bookItemTitle(a).localeCompare(bookItemTitle(b), undefined, { numeric: true, sensitivity: "base" }));
+  return `<h3>Included <span data-book-count="included">${included.length}</span></h3><ul data-book-list="included">${included.map((item) => itemRow(item, modal)).join("")}</ul>
+    <p class="modal__supporting" data-book-empty-hint ${included.length ? "hidden" : ""}>Include an item to continue.</p>
+    <h3 class="book-excluded-heading" ${excluded.length ? "" : "hidden"}>Excluded <span data-book-count="excluded">${excluded.length}</span></h3><ul data-book-list="excluded" ${excluded.length ? "" : "hidden"}>${excluded.map((item) => itemRow(item, modal)).join("")}</ul>`;
+}
+
+export function renderProjectBookComposer(modal) {
+  const included = modal.book.items.filter(bookItemIncluded);
   return `<div class="modal-backdrop"><section class="card modal-card modal-card--editor-export modal-card--book" role="dialog" aria-modal="true" aria-labelledby="editor-export-modal-title" data-modal-dialog="editor-export" tabindex="-1">
     <div class="card__body modal-card__body modal-card__body--editor-export">
       <header class="editor-export-modal__header"><div><h2 class="modal__title" id="editor-export-modal-title">Export project</h2><p class="book-step">1 of 2 · Arrange your book</p></div><div class="book-composer__header-actions">${secondaryButton("Cancel", "close-editor-export-options", { modalCancel: true })}${bookNavButton("next", !included.length)}</div></header>
@@ -127,7 +134,7 @@ export function renderProjectBookComposer(modal) {
         ${renderExportSelect({ id: "editor-export-paper-size", label: "Paper size", selectAttributes: { "data-editor-export-paper-size-select": true }, options: PDF_PAPER_SIZES, value: modal.pdfPaperSize || DEFAULT_PDF_PAPER_SIZE })}
         <div class="book-add"><button type="button" class="button button--secondary" data-action="book-add-menu" aria-expanded="${modal.book.addMenuOpen}" ${tooltipAttributes("Add sections such as table of contents, title page, dedication, copyright page, etc.", { align: "end" })}>+ Add section</button>${modal.book.addMenuOpen ? `<div class="book-add__menu">${BOOK_SECTION_TYPES.map((type) => `<button type="button" data-action="book-add:${type.kind}">${type.label}</button>`).join("")}</div>` : ""}</div>
       </div>
-      <div class="book-composer"><nav class="book-composer__list" aria-label="Book items"><h3>Included <span>${included.length}</span></h3><ul>${included.map((item) => itemRow(item, modal)).join("")}</ul>${!included.length ? '<p class="modal__supporting">Include an item to continue.</p>' : ""}${excluded.length ? `<h3 class="book-excluded-heading">Excluded <span>${excluded.length}</span></h3><ul>${excluded.map((item) => itemRow(item, modal)).join("")}</ul>` : ""}</nav><div class="book-composer__preview">${formattingToolbar(modal)}<div class="book-composer__page-scroll">${renderSelectedBookPage(modal)}</div></div></div>
+      <div class="book-composer"><nav class="book-composer__list" aria-label="Book items" tabindex="-1">${renderProjectBookItems(modal)}</nav><div class="book-composer__preview">${formattingToolbar(modal)}<div class="book-composer__page-scroll">${renderSelectedBookPage(modal)}</div></div></div>
       ${modal.error ? `<p class="modal__error book-composer__error" role="alert">${escapeHtml(modal.error)}</p>` : ""}
     </div></section></div>`;
 }
