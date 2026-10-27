@@ -22,9 +22,9 @@ export function bookNavButton(direction, disabled = false) {
 function itemRow(item, modal) {
   const included = bookItemIncluded(item);
   const language = modal.languages.find((entry) => entry.code === modal.languageCode);
-  const help = included ? "Exclude this item from the export." : item.available === false
-    ? `This chapter does not contain a translation in ${language?.name || modal.languageCode}.`
-    : "Include this item in the export.";
+  const help = included ? "Exclude this from the export." : "Include this in the export.";
+  const unavailable = !included && item.available === false
+    ? `disabled aria-disabled="true" aria-description="${escapeHtml(`This chapter does not contain a translation in ${language?.name || modal.languageCode}.`)}"` : "";
   return `<li class="term-variant-row book-item ${modal.book.selectedItemId === item.id ? "is-selected" : ""}" data-book-item="${escapeHtml(item.id)}" data-book-included="${included}">
     <div class="term-variant-row__shell" ${item.kind === "chapter" ? `data-book-chapter-select data-action="book-select:${escapeHtml(item.id)}"` : ""}>
       ${included ? `<button type="button" class="term-variant-row__drag-handle" data-book-drag-handle data-stop-row-action aria-label="Reorder ${escapeHtml(bookItemTitle(item))}" ${tooltipAttributes("Drag to change the export order.")}><span class="term-variant-row__drag-dots" aria-hidden="true">${"<span></span>".repeat(6)}</span></button>` : '<span class="term-variant-row__drag-spacer"></span>'}
@@ -33,7 +33,7 @@ function itemRow(item, modal) {
         <span data-book-item-label="${escapeHtml(item.id)}">${escapeHtml(bookItemTitle(item))}</span>
         ${item.kind !== "chapter" && bookItemTitle(item) !== bookSectionLabel(item.kind) ? `<small>${escapeHtml(bookSectionLabel(item.kind))}</small>` : ""}
       </button>`}
-      <span ${tooltipAttributes(help, { align: "end" })}><button type="button" class="text-action book-item__toggle" data-action="book-${included ? "exclude" : "include"}:${escapeHtml(item.id)}" ${!included && item.available === false ? "disabled aria-disabled=\"true\"" : ""}>${included ? "Exclude" : "Include"}</button></span>
+      <span ${tooltipAttributes(help, { align: "end" })}><button type="button" class="${included ? "term-variant-row__action-button term-variant-row__action-button--remove" : "term-lane__add-button"} book-item__toggle" aria-label="${help}" data-action="book-${included ? "exclude" : "include"}:${escapeHtml(item.id)}" ${unavailable}><span class="${included ? "term-variant-row__remove-icon" : "term-lane__add-icon"}" aria-hidden="true"></span></button></span>
     </div>
   </li>`;
 }

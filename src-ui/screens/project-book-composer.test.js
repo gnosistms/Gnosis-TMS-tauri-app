@@ -8,7 +8,12 @@ test("book composer uses the shared drag handle, genuine chevrons, and standard 
   assert.match(html, /term-variant-row__drag-dots/);
   assert.match(html, /data-action="book-next"/);
   assert.match(html, /M3 2 7 6 3 10/);
-  assert.match(html, /Exclude this item from the export\./);
+  assert.match(html, /data-tooltip="Exclude this from the export\."/);
+  assert.match(html, /data-tooltip="Include this in the export\."/);
+  assert.match(html, /class="term-variant-row__action-button term-variant-row__action-button--remove book-item__toggle" aria-label="Exclude this from the export\."/);
+  assert.match(html, /class="term-lane__add-button book-item__toggle" aria-label="Include this in the export\."/);
+  assert.match(html, /class="term-variant-row__remove-icon" aria-hidden="true"/);
+  assert.match(html, /class="term-lane__add-icon" aria-hidden="true"/);
   assert.match(html, /This chapter does not contain a translation in English\./);
   assert.match(html, /data-action="book-include:b" disabled/);
   assert.match(html, /Excluded/);
