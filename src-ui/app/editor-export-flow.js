@@ -63,6 +63,7 @@ const BASE_EDITOR_EXPORT_CATEGORIES = [
     options: [
       { id: "file:html", label: "HTML", kind: "file", format: "html", available: true },
       { id: "file:pdf", label: "PDF", kind: "file", format: "pdf", available: true, printLinkFallback: true, omitCustomHtmlOption: true },
+      { id: "file:epub", label: "EPUB", kind: "file", format: "epub", available: true, omitCustomHtmlOption: true },
       { id: "file:xlsx", label: "XLSX", kind: "file", format: "xlsx", available: true, omitCustomHtmlOption: true },
       { id: "file:docx", label: "DOCX", kind: "file", format: "docx", available: true, printLinkFallback: true, omitCustomHtmlOption: true },
       { id: "file:txt", label: "TXT", kind: "file", format: "txt", available: true, omitCustomHtmlOption: true },
@@ -567,6 +568,9 @@ function sanitizeExportFileName(value) {
 }
 
 function exportFileFilter(format) {
+  if (format === "epub") {
+    return { name: "EPUB ebook", extensions: ["epub"] };
+  }
   if (format === "pdf") {
     return { name: "PDF document", extensions: ["pdf"] };
   }

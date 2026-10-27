@@ -914,6 +914,7 @@ test("submitEditorExport exports the Phase 2 file formats with matching filters"
     { optionId: "file:xlsx", format: "xlsx", filter: { name: "XLSX workbook", extensions: ["xlsx"] } },
     { optionId: "file:rtf", format: "rtf", filter: { name: "RTF document", extensions: ["rtf"] } },
     { optionId: "file:md", format: "md", filter: { name: "Markdown document", extensions: ["md"] } },
+    { optionId: "file:epub", format: "epub", filter: { name: "EPUB ebook", extensions: ["epub"] } },
   ];
 
   for (const { optionId, format, filter } of expected) {
@@ -992,6 +993,38 @@ test("project export sends every active chapter in displayed order and uses the 
   assert.deepEqual(calls[0].input.chapterIds, ["chapter-2", "chapter-10"]);
   assert.equal(calls[0].input.projectTitle, "Project");
   assert.equal(calls[0].input.languageCode, "vi");
+});
+
+test("project EPUB export sends the arranged book and ebook save filter", async () => {
+  installProjectExportFixture();
+  setActiveStorageLogin("epub-project-test");
+  const { openProjectExportOptions } = await import("./editor-export-flow.js");
+  openProjectExportOptions(() => {}, "project-1");
+  selectEditorExportOption(() => {}, "file:epub");
+  const modal = state.editorChapter.exportModal;
+  modal.book.items.reverse();
+  modal.omitCustomHtml = true;
+  modal.footnoteLinksAsPlainText = true;
+  const calls = [];
+  await submitEditorExport(() => {}, {
+    saveDialog: async (options) => {
+      assert.equal(options.defaultPath, "Project-vi.epub");
+      assert.deepEqual(options.filters, [{ name: "EPUB ebook", extensions: ["epub"] }]);
+      return "/tmp/book.epub";
+    },
+    waitForRepoQueue: async () => {},
+    invoke: async (command, { input }) => { calls.push({ command, input }); },
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command, "export_gtms_chapter_file");
+  assert.equal(calls[0].input.format, "epub");
+  assert.equal(calls[0].input.projectTitle, "Project");
+  assert.equal(calls[0].input.languageCode, "vi");
+  assert.deepEqual(calls[0].input.chapterIds, ["chapter-2", "chapter-10"]);
+  assert.deepEqual(calls[0].input.bookItems.map((item) => item.chapterId), ["chapter-10", "chapter-2"]);
+  assert.equal(calls[0].input.omitCustomHtml, true);
+  assert.equal(calls[0].input.footnoteLinksAsPlainText, false);
+  assert.equal(state.editorChapter.exportModal.isOpen, false);
 });
 
 test("project clipboard export reads all chapters and preserves content order and footnotes", async () => {

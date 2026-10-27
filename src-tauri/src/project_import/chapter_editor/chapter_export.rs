@@ -189,7 +189,7 @@ pub(crate) fn export_gtms_chapter_file_sync(
     let format = input.format.trim().to_lowercase();
     if !matches!(
         format.as_str(),
-        "docx" | "txt" | "html" | "xlsx" | "rtf" | "md" | "srt"
+        "docx" | "txt" | "html" | "xlsx" | "rtf" | "md" | "srt" | "epub"
     ) {
         return Err("Unsupported export format.".to_string());
     }
@@ -251,6 +251,11 @@ pub(crate) fn export_gtms_chapter_file_sync(
         }
         "html" => fs::write(&output_path, render_html_document(&document)?)
             .map_err(|error| format!("Could not write '{}': {error}", output_path.display())),
+        "epub" => fs::write(
+            &output_path,
+            super::epub_export::render_epub_document(&print_document)?,
+        )
+        .map_err(|error| format!("Could not write '{}': {error}", output_path.display())),
         "txt" => fs::write(&output_path, render_txt_document(&print_document))
             .map_err(|error| format!("Could not write '{}': {error}", output_path.display())),
         "docx" => fs::write(
@@ -499,7 +504,7 @@ fn book_contents_entries(parts: &[BookPart], include_h1: bool) -> Vec<BookConten
 
 // PDF and Vellum keep numbering as structural metadata. Flat document formats
 // need the same generated number in their chapter-heading text instead.
-fn numbered_book_documents(parts: &[BookPart]) -> Vec<ExportDocument> {
+pub(super) fn numbered_book_documents(parts: &[BookPart]) -> Vec<ExportDocument> {
     let mut documents = Vec::with_capacity(parts.len());
     for (part, number) in parts.iter().zip(book_chapter_numbers(parts)) {
         let mut document = part.document.clone();
@@ -1195,7 +1200,7 @@ fn inline_link_tag(remaining: &str) -> Option<InlineLinkTag> {
     })
 }
 
-fn sanitize_inline_html(value: &str) -> String {
+pub(super) fn sanitize_inline_html(value: &str) -> String {
     let mut output = String::new();
     let mut cursor = 0usize;
     let mut open_links = 0usize;

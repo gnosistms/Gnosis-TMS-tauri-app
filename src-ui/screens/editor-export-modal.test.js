@@ -243,6 +243,7 @@ test("editor export modal shows the save pane for the Phase 2 file formats", () 
     { selectedOptionId: "file:xlsx", description: "Save this chapter as an XLSX file." },
     { selectedOptionId: "file:rtf", description: "Save this chapter as an RTF file." },
     { selectedOptionId: "file:md", description: "Save this chapter as a Markdown (.md) file." },
+    { selectedOptionId: "file:epub", description: "Save this chapter as an EPUB file." },
   ]) {
     const html = renderEditorExportModal(exportState({ selectedOptionId }));
 
