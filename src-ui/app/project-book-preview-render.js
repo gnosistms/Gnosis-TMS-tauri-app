@@ -1,5 +1,5 @@
 import { bookPaperStyle } from "./project-book-paper.js";
-import { bookItemIncluded, bookItemTitle } from "./project-book-model.js";
+import { bookChapterNumbers, bookItemIncluded, bookItemTitle } from "./project-book-model.js";
 import { renderBookTitleProof, renderBookPreviewFontStatus, renderProjectBookItems, renderSelectedBookPage } from "../screens/project-book-composer.js";
 
 function reconcileInclusion(list, modal) {
@@ -49,10 +49,25 @@ export function renderProjectBookPreview(root, state) {
   if (!modal?.isOpen || modal.page !== 1 || !modal.book || modal.error || !list || !scroll) return false;
   reconcileInclusion(list, modal);
   const items = new Map(modal.book.items.map((item) => [item.id, item]));
+  const numbers = bookChapterNumbers(modal.book.items);
   for (const row of list.querySelectorAll("[data-book-item]")) {
     const selected = row.dataset.bookItem === modal.book.selectedItemId;
     row.classList.toggle("is-selected", selected);
     row.querySelector("[data-book-preview-select]")?.setAttribute("aria-pressed", String(selected));
+    const item = items.get(row.dataset.bookItem);
+    const control = row.querySelector("[data-book-numbered-control]");
+    if (control && item) {
+      control.hidden = !selected;
+      control.querySelector("input").checked = item.numbered !== false;
+    }
+    const number = numbers.get(row.dataset.bookItem);
+    const label = row.querySelector("[data-book-chapter-number]");
+    if (label) {
+      label.hidden = !number;
+      label.textContent = number ? `${number}.` : "";
+      if (number) label.setAttribute("aria-label", `Chapter ${number}`);
+      else label.removeAttribute("aria-label");
+    }
   }
   for (const input of list.querySelectorAll("[data-book-chapter-title]")) {
     const item = items.get(input.dataset.bookChapterTitle);

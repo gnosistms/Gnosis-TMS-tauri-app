@@ -1,7 +1,7 @@
 import { extractVellumLeadingHeadingTitle } from "../app/vellum-text-editor-content.js";
 import { escapeHtml, secondaryButton, tooltipAttributes, renderChevronIcon } from "../lib/ui.js";
 import { renderExportSelect } from "./export-fields.js";
-import { BOOK_SECTION_TYPES, bookChapterPreviewBlocks, bookContentsItems, bookContentsEntries, bookItemIncluded, bookItemTitle, bookSectionLabel } from "../app/project-book-model.js";
+import { BOOK_SECTION_TYPES, bookChapterPreviewBlocks, bookChapterNumbers, bookContentsEntries, bookItemIncluded, bookItemTitle, bookSectionLabel } from "../app/project-book-model.js";
 import { bookPaperStyle } from "../app/project-book-paper.js";
 import { bookImageSrc } from "../app/project-book-flow.js";
 import { renderBookChapterBody } from "../app/project-book-chapter-preview.js";
@@ -19,8 +19,9 @@ export function bookNavButton(direction, disabled = false) {
   </button>`;
 }
 
-function itemRow(item, modal) {
+function itemRow(item, modal, numbers) {
   const included = bookItemIncluded(item);
+  const number = numbers.get(item.id);
   const language = modal.languages.find((entry) => entry.code === modal.languageCode);
   const help = included ? "Exclude this from the export." : "Include this in the export.";
   const unavailable = !included && item.available === false
@@ -28,12 +29,13 @@ function itemRow(item, modal) {
   return `<li class="term-variant-row book-item ${modal.book.selectedItemId === item.id ? "is-selected" : ""}" data-book-item="${escapeHtml(item.id)}" data-book-included="${included}">
     <div class="term-variant-row__shell" ${item.kind === "chapter" ? `data-book-chapter-select data-action="book-select:${escapeHtml(item.id)}"` : ""}>
       ${included ? `<button type="button" class="term-variant-row__drag-handle" data-book-drag-handle data-stop-row-action aria-label="Reorder ${escapeHtml(bookItemTitle(item))}" ${tooltipAttributes("Drag to change the export order.")}><span class="term-variant-row__drag-dots" aria-hidden="true">${"<span></span>".repeat(6)}</span></button>` : '<span class="term-variant-row__drag-spacer"></span>'}
-      ${item.kind === "chapter" ? `<div class="book-item__chapter-select"><span class="book-item__title-wrap"><span class="book-item__title-size" data-book-title-size aria-hidden="true">${escapeHtml(item.title || item.defaultTitle || item.name)}</span><input type="text" class="book-item__select book-item__title" data-book-chapter-title="${escapeHtml(item.id)}" data-book-field="title" data-modal-enter-blur data-modal-enter-ignores-default aria-label="Chapter title: ${escapeHtml(item.name)}" ${tooltipAttributes("Edit the chapter title for this export language.")} placeholder="${escapeHtml(item.defaultTitle || item.name)}" value="${escapeHtml(item.title ?? bookItemTitle(item))}" />
+      ${item.kind === "chapter" ? `<div class="book-item__chapter-select"><span class="book-item__chapter-number" data-book-chapter-number ${number ? `aria-label="Chapter ${number}"` : "hidden"}>${number ? `${number}.` : ""}</span><span class="book-item__title-wrap"><span class="book-item__title-size" data-book-title-size aria-hidden="true">${escapeHtml(item.title || item.defaultTitle || item.name)}</span><input type="text" class="book-item__select book-item__title" data-book-chapter-title="${escapeHtml(item.id)}" data-book-field="title" data-modal-enter-blur data-modal-enter-ignores-default aria-label="Chapter title: ${escapeHtml(item.name)}" ${tooltipAttributes("Edit the chapter title for this export language.")} placeholder="${escapeHtml(item.defaultTitle || item.name)}" value="${escapeHtml(item.title ?? bookItemTitle(item))}" />
         </span><button type="button" class="book-item__preview-select" data-book-preview-select aria-label="Preview chapter: ${escapeHtml(item.name)}" aria-pressed="${modal.book.selectedItemId === item.id}"></button></div>` : `<button type="button" class="book-item__select" data-action="book-select:${escapeHtml(item.id)}" aria-pressed="${modal.book.selectedItemId === item.id}">
         <span data-book-item-label="${escapeHtml(item.id)}">${escapeHtml(bookItemTitle(item))}</span>
         ${item.kind !== "chapter" && bookItemTitle(item) !== bookSectionLabel(item.kind) ? `<small>${escapeHtml(bookSectionLabel(item.kind))}</small>` : ""}
       </button>`}
       <span ${tooltipAttributes(help, { align: "end" })}><button type="button" class="${included ? "term-variant-row__action-button term-variant-row__action-button--remove" : "term-lane__add-button"} book-item__toggle" aria-label="${help}" data-action="book-${included ? "exclude" : "include"}:${escapeHtml(item.id)}" ${unavailable}><span class="${included ? "term-variant-row__remove-icon" : "term-lane__add-icon"}" aria-hidden="true"></span></button></span>
+    ${item.kind === "chapter" ? `<label class="book-item__numbered" data-book-numbered-control ${modal.book.selectedItemId === item.id ? "" : "hidden"} data-stop-row-action><input type="checkbox" data-book-field="numbered" data-book-numbered-item="${escapeHtml(item.id)}" ${item.numbered !== false ? "checked" : ""}> Numbered</label>` : ""}
     </div>
   </li>`;
 }
@@ -97,9 +99,9 @@ export function renderSelectedBookPage(modal) {
     const blocks = bookChapterPreviewBlocks(item, book.previewBlocks, modal.languageCode);
     const title = extractVellumLeadingHeadingTitle(blocks);
     const bodyBlocks = title ? blocks.slice(1) : blocks;
-    const number = bookContentsItems(book.items).findIndex((entry) => entry.id === item.id) + 1;
+    const number = bookChapterNumbers(book.items).get(item.id);
     const html = renderBookChapterBody(bodyBlocks, modal, (image) => image.kind === "url" ? image.url : convertLocalFileSrc(image.filePath || ""));
-    return paper("chapter", `<article class="book-page book-page--chapter translate-preview" aria-label="Chapter preview" lang="${escapeHtml(modal.languageCode || "en")}"><header class="book-chapter__header"><span class="book-chapter__number">${number}</span><h1>${escapeHtml(title || bookItemTitle(item))}</h1>${flourish}</header>${html}</article>`);
+    return paper("chapter", `<article class="book-page book-page--chapter translate-preview" aria-label="Chapter preview" lang="${escapeHtml(modal.languageCode || "en")}"><header class="book-chapter__header">${number ? `<span class="book-chapter__number">${number}</span>` : ""}<h1>${escapeHtml(title || bookItemTitle(item))}</h1>${flourish}</header>${html}</article>`);
   }
   if (item.kind === "title") return titlePageEditor(modal, item);
   let body = "";
@@ -119,10 +121,11 @@ function formattingToolbar(modal) {
 
 export function renderProjectBookItems(modal) {
   const included = modal.book.items.filter(bookItemIncluded);
+  const numbers = bookChapterNumbers(modal.book.items);
   const excluded = modal.book.items.filter((item) => !bookItemIncluded(item)).sort((a, b) => bookItemTitle(a).localeCompare(bookItemTitle(b), undefined, { numeric: true, sensitivity: "base" }));
-  return `<h3>Included <span data-book-count="included">${included.length}</span></h3><ul data-book-list="included">${included.map((item) => itemRow(item, modal)).join("")}</ul>
+  return `<h3>Included <span data-book-count="included">${included.length}</span></h3><ul data-book-list="included">${included.map((item) => itemRow(item, modal, numbers)).join("")}</ul>
     <p class="modal__supporting" data-book-empty-hint ${included.length ? "hidden" : ""}>Include an item to continue.</p>
-    <h3 class="book-excluded-heading" ${excluded.length ? "" : "hidden"}>Excluded <span data-book-count="excluded">${excluded.length}</span></h3><ul data-book-list="excluded" ${excluded.length ? "" : "hidden"}>${excluded.map((item) => itemRow(item, modal)).join("")}</ul>`;
+    <h3 class="book-excluded-heading" ${excluded.length ? "" : "hidden"}>Excluded <span data-book-count="excluded">${excluded.length}</span></h3><ul data-book-list="excluded" ${excluded.length ? "" : "hidden"}>${excluded.map((item) => itemRow(item, modal, numbers)).join("")}</ul>`;
 }
 
 export function renderBookPreviewFontStatus(modal) {

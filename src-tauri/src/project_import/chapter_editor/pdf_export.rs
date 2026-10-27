@@ -1393,6 +1393,7 @@ fn prepare_typst_workspace(
             options,
             cancelled,
             None,
+            false,
         )?);
     } else {
         source.push_str(&render_typst_book(
@@ -1414,6 +1415,7 @@ fn render_typst_chapter(
     options: &PdfWorkspacePreparationOptions<'_>,
     cancelled: &AtomicBool,
     chapter_number: Option<usize>,
+    book_chapter: bool,
 ) -> Result<String, String> {
     let mut anchored_footnotes: HashMap<usize, Vec<(usize, String)>> = HashMap::new();
     let mut anchored_numbers = HashSet::new();
@@ -1491,7 +1493,7 @@ fn render_typst_chapter(
                     &inline,
                     Some(block_index) == dropcap_index,
                 );
-                if chapter_number.is_some() && style == "heading1" {
+                if book_chapter && style == "heading1" {
                     // Keep the metadata outside heading content (where a label
                     // binds to the heading itself), and move both as one unit.
                     text_block = format!("#block(sticky: true, breakable: false)[#metadata((title: {}, numbering: \"1\", level: 1)) <gnosis-book-entry>\n{text_block}]\n", typst_string(&inline_visible_text(text)));
@@ -1607,7 +1609,7 @@ const BOOK_LAYOUT_RULES: &str = r#"
         block(width: 100%, above: if entry.value.level == 0 { 1em } else { 0.78em }, below: 0.78em)[
           #pad(left: if entry.value.level == 0 { 0em } else { 1.5em })[
             #link(entry.location())[#grid(columns: (1fr, auto), column-gutter: 1em,
-              if entry.value.level == 0 { text(font: gnosis-book-heading-font)[#str(entry.value.chapter). #upper(entry.value.title)] } else { entry.value.title },
+              if entry.value.level == 0 { text(font: gnosis-book-heading-font)[#if entry.value.chapter != none { str(entry.value.chapter) + ". " }#upper(entry.value.title)] } else { entry.value.title },
               numbering(entry.value.numbering, ..counter(page).at(entry.location())),
             )]
           ]
@@ -1692,20 +1694,25 @@ fn render_typst_book(
             body_started = true;
         }
         let numbering = if body_started { "1" } else { "i" };
-        if item.kind == "chapter" {
+        let number = if item.kind == "chapter" && item.numbered != Some(false) {
             chapter_number += 1;
+            Some(chapter_number)
+        } else {
+            None
+        };
+        if item.kind == "chapter" {
             let title = if item.kind == "chapter" {
                 leading_heading_title(&part.document).unwrap_or_else(|| part.document.title.clone())
             } else {
                 item.title.clone()
             };
             source.push_str(&format!(
-                "#metadata((title: {}, numbering: \"{numbering}\", level: 0, chapter: {chapter_number})) <gnosis-book-entry>\n",
-                typst_string(&title)
+                "#metadata((title: {}, numbering: \"{numbering}\", level: 0, chapter: {})) <gnosis-book-entry>\n",
+                typst_string(&title), number.map(|value| value.to_string()).unwrap_or_else(|| "none".into())
             ));
         }
-        let numbered = matches!(item.kind.as_str(), "chapter" | "contents");
-        if numbered {
+        let has_page_numbers = matches!(item.kind.as_str(), "chapter" | "contents");
+        if has_page_numbers {
             source.push_str(&format!(
                 "#metadata(\"{numbering}\") <gnosis-print-start>\n"
             ));
@@ -1717,7 +1724,8 @@ fn render_typst_book(
                 image_paths,
                 options,
                 cancelled,
-                Some(chapter_number),
+                number,
+                true,
             )?);
             source.push_str("#metadata(none) <gnosis-chapter-end>\n");
         } else if item.kind == "contents" {
@@ -1807,7 +1815,7 @@ fn render_typst_book(
                 source.push_str("]\n#v(1fr)\n");
             }
         }
-        if numbered {
+        if has_page_numbers {
             source.push_str("\n#metadata(none) <gnosis-print-end>\n");
         }
     }
@@ -3856,6 +3864,17 @@ mod tests {
             parts[4].document.clone(),
             &parts[4].item,
         );
+        let mut interlude = part(
+            "chapter",
+            "Interlude",
+            vec![
+                text("An unnumbered chapter stays in the book and contents."),
+                text_block("heading1", "Inside Interlude"),
+                text("Its internal headings can still appear in the contents."),
+            ],
+        );
+        interlude.item.numbered = Some(false);
+        parts.insert(4, interlude);
         let illustration = workspace.join("illustration.svg");
         fs::write(&illustration, br##"<svg xmlns="http://www.w3.org/2000/svg" width="300" height="500"><rect width="300" height="500" fill="#b79858"/><circle cx="150" cy="240" r="90" fill="#fff4da"/></svg>"##).unwrap();
         let image = ExportImage::Upload {
@@ -3905,7 +3924,7 @@ mod tests {
         .unwrap();
         let source_path = workspace.join("chapter.typ");
         let mut source = fs::read_to_string(&source_path).unwrap();
-        assert_eq!(source.matches("#gnosis-dropcap[").count(), 2);
+        assert_eq!(source.matches("#gnosis-dropcap[").count(), 3);
         assert_eq!(source.matches("#gnosis-title(\"Chapter").count(), 2);
         assert!(!source.contains("Original source title"));
         assert!(source.contains("#pagebreak(to: \"even\")"));
@@ -3921,13 +3940,18 @@ mod tests {
             source.contains("#set par(leading: 0.68em, spacing: 1.43em, first-line-indent: 0pt)")
         );
         assert!(source.contains("#text(\"© Example\")#parbreak()"));
+        assert!(source.contains("#gnosis-title(\"Chapter One\", number: 1)"));
+        assert!(source.contains("#gnosis-title(\"Interlude\")"));
+        assert!(source.contains("#gnosis-title(\"Chapter Two\", number: 2)"));
+        assert!(source.contains("title: \"Interlude\", numbering: \"1\", level: 0, chapter: none"));
+        assert!(source.contains("title: \"Inside Interlude\", numbering: \"1\", level: 1"));
         let (Some(binary), Some(font_dir)) = (
             std::env::var_os("GNOSIS_TYPST_BIN"),
             std::env::var_os("GNOSIS_TYPST_SMOKE_FONT_DIR"),
         ) else {
             return;
         };
-        source.push_str("\n#context [#metadata(query(<gnosis-book-entry>).map(entry => (title: entry.value.title, physical: entry.location().page(), page: counter(page).at(entry.location()).first(), numbering: entry.value.numbering))) <gnosis-page-audit>]\n");
+        source.push_str("\n#context [#metadata(query(<gnosis-book-entry>).map(entry => (title: entry.value.title, physical: entry.location().page(), page: counter(page).at(entry.location()).first(), numbering: entry.value.numbering, chapter: entry.value.at(\"chapter\", default: none)))) <gnosis-page-audit>]\n");
         fs::write(&source_path, source).unwrap();
         let pdf_path = workspace.join("book.pdf");
         let output = std::process::Command::new(&binary)
@@ -3981,6 +4005,17 @@ mod tests {
             .find(|entry| entry["title"] == "Chapter Two")
             .unwrap();
         assert_eq!(one["page"], 1);
+        assert_eq!(one["chapter"], 1);
+        assert_eq!(two["chapter"], 2);
+        let interlude = pages
+            .iter()
+            .find(|entry| entry["title"] == "Interlude")
+            .unwrap();
+        assert!(interlude["chapter"].is_null());
+        assert_eq!(interlude["numbering"], "1");
+        assert!(pages
+            .iter()
+            .any(|entry| entry["title"] == "Inside Interlude"));
         assert!(two["page"].as_u64().unwrap() > 1);
         assert!(!one["physical"].as_u64().unwrap().is_multiple_of(2));
         assert!(!two["physical"].as_u64().unwrap().is_multiple_of(2));

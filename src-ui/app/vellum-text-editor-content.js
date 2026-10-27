@@ -1706,7 +1706,7 @@ export function buildVellumOgElementPrivateDecodedXml(blocks, options = {}) {
       ["includeInPrint", "<true/>"],
       ["isExpanded", "<true/>"],
       ["mtime", uidXml(builder.addDate(options.now))],
-      ["numbered", element.kind === "chapter" ? "<true/>" : "<false/>"],
+      ["numbered", element.kind === "chapter" && element.numbered !== false ? "<true/>" : "<false/>"],
       ["parent", uidXml(builder.addString("$null"))],
       ["text", uidXml(textObjectId)],
       ["title", uidXml(builder.addString(title))],

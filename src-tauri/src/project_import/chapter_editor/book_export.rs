@@ -10,6 +10,9 @@ pub(super) struct BookItemInput {
     pub(super) kind: String,
     #[serde(default)]
     pub(super) chapter_id: String,
+    /// Missing in older saved layouts/clients: chapter numbering is on by default.
+    #[serde(default)]
+    pub(super) numbered: Option<bool>,
     #[serde(default)]
     pub(super) title: String,
     #[serde(default)]

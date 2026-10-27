@@ -48,11 +48,11 @@ export function reconcileBookLayout(chapters, languageCode, saved = {}) {
     if (item.kind !== "chapter") return BOOK_SECTION_TYPES.some((type) => type.kind === item.kind)
       ? [{ ...item, available: true }] : [];
     const chapter = byId.get(item.chapterId ?? item.id);
-    return chapter ? [{ ...item, name: chapter.name, chapterId: chapter.id, available: chapter.languages?.some((language) => language.code === languageCode) === true }] : [];
+    return chapter ? [{ ...item, numbered: item.numbered !== false, name: chapter.name, chapterId: chapter.id, available: chapter.languages?.some((language) => language.code === languageCode) === true }] : [];
   });
   for (const chapter of active) {
     if (items.some((item) => item.kind === "chapter" && item.chapterId === chapter.id)) continue;
-    const item = { id: chapter.id, chapterId: chapter.id, kind: "chapter", name: chapter.name, excluded: false, available: chapter.languages?.some((language) => language.code === languageCode) === true };
+    const item = { id: chapter.id, chapterId: chapter.id, kind: "chapter", name: chapter.name, numbered: true, excluded: false, available: chapter.languages?.some((language) => language.code === languageCode) === true };
     insertBookChapter(items, item);
   }
   return { items, selectedItemId: items.some((item) => item.id === saved.selectedItemId) ? saved.selectedItemId : items[0]?.id || "" };
@@ -111,9 +111,15 @@ export function bookContentsItems(items) {
   return items.filter((item) => bookItemIncluded(item) && item.kind === "chapter");
 }
 
+export function bookChapterNumbers(items) {
+  return new Map(bookContentsItems(items).filter((item) => item.numbered !== false)
+    .map((item, index) => [item.id, index + 1]));
+}
+
 export function bookContentsEntries(items, headings = {}, includeH1 = false) {
-  return bookContentsItems(items).flatMap((item, index) => [
-    { title: `${index + 1}. ${bookItemTitle(item)}`, level: 0 },
+  const numbers = bookChapterNumbers(items);
+  return bookContentsItems(items).flatMap((item) => [
+    { title: `${numbers.has(item.id) ? `${numbers.get(item.id)}. ` : ""}${bookItemTitle(item)}`, level: 0 },
     ...(includeH1 ? (headings[item.chapterId] || []).map((title) => ({ title, level: 1 })) : []),
   ]);
 }
@@ -123,7 +129,7 @@ export function bookExportItems(modal) {
     // Unedited chapter defaults are resolved again from the export snapshot.
     // Keep the input stable while background previews discover their H1s.
     id: item.id, kind: item.kind, chapterId: item.chapterId || "", title: item.kind === "chapter" ? item.title?.trim() || item.name : bookItemTitle(item),
-    ...(item.kind === "chapter" ? { titleOverride: item.title?.trim() || null } : {}),
+    ...(item.kind === "chapter" ? { titleOverride: item.title?.trim() || null, numbered: item.numbered !== false } : {}),
     subtitle: item.subtitle || "", author: item.author || "", translator: item.translator || "",
     text: item.text || "", caption: item.caption || "", imageAssetId: item.image?.assetId || "",
     ...(item.kind === "contents" ? { includeH1Headings: item.includeH1Headings === true } : {}),

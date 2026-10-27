@@ -11,7 +11,7 @@ function cancel() {
 export function registerProjectBookEvents(render) {
   document.addEventListener("input", (event) => {
     const field = event.target.closest?.("[data-book-field]");
-    if (field) updateBookField(field, field.dataset.bookChapterTitle ? () => {
+    if (field) updateBookField(field, field.dataset.bookField === "numbered" ? () => render?.({ scope: "project-book-preview" }) : field.dataset.bookChapterTitle ? () => {
       const preview = document.querySelector(".book-composer__page-scroll");
       if (preview) preview.innerHTML = renderSelectedBookPage(state.editorChapter.exportModal);
     } : render);
@@ -27,6 +27,7 @@ export function registerProjectBookEvents(render) {
     updateBookField(editor);
   });
   document.addEventListener("pointerdown", (event) => {
+    if (event.target.closest?.("[data-book-numbered-control]")) return;
     const chapterRow = event.target.closest?.("[data-book-chapter-select]");
     const control = event.target.closest?.("input, button");
     const previewButton = event.target.closest?.("[data-book-preview-select]")

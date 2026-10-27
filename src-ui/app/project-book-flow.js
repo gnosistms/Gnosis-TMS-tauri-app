@@ -149,11 +149,12 @@ async function loadContentsHeadings(render, current, operations) {
 
 export function updateBookField(element, render) {
   const current = modal();
-  const item = current?.book?.items.find((entry) => entry.id === (element.dataset.bookChapterTitle || current.book.selectedItemId));
+  const item = current?.book?.items.find((entry) => entry.id === (element.dataset.bookChapterTitle || element.dataset.bookNumberedItem || current.book.selectedItemId));
   const field = element.dataset.bookField;
-  if (!item || !["title", "subtitle", "author", "translator", "text", "caption", "includeH1Headings"].includes(field)) return;
+  if (!item || !["title", "subtitle", "author", "translator", "text", "caption", "includeH1Headings", "numbered"].includes(field)) return;
+  if (field === "numbered" && item.kind !== "chapter") return;
   const edited = element.hasAttribute("contenteditable") ? bookEditorText(element) : element.value;
-  const value = field === "includeH1Headings" ? element.checked : field === "text" ? edited : edited.replaceAll("\u2028", "\n");
+  const value = ["includeH1Headings", "numbered"].includes(field) ? element.checked : field === "text" ? edited : edited.replaceAll("\u2028", "\n");
   if (element.hasAttribute("contenteditable")) element.dataset.bookEmpty = String(!value);
   if (element.dataset.bookChapterTitle) {
     const measure = element.parentElement?.querySelector("[data-book-title-size]");

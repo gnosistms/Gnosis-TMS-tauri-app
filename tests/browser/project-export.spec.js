@@ -420,6 +420,59 @@ test("editing adjacent chapter titles keeps focus and long-list scroll through p
   await expect(next).toHaveValue("Edited chapter 26");
 });
 
+test("chapter numbers are read-only, optional, consecutive, and saved in the export", async ({ page }) => {
+  await mountProjectExport(page);
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  const row = (index) => modal.locator(`[data-book-item="fixture-chapter-0-${index}"]`);
+  const numbers = () => modal.locator('[data-book-list="included"] [data-book-chapter-number]').allTextContents();
+  await expect.poll(numbers).toEqual(["1.", "2.", "3."]);
+  await expect(row(0).getByRole("checkbox", { name: "Numbered", exact: true })).toBeChecked();
+  await expect(modal.getByRole("checkbox", { name: "Numbered", exact: true })).toHaveCount(1);
+  await expect(row(0).locator("[data-book-chapter-title]")).toHaveValue("File 001");
+  await expect(row(0).locator("[data-book-chapter-number]")).toHaveJSProperty("isContentEditable", false);
+  await row(1).getByRole("button", { name: "Preview chapter: File 002", exact: true }).click();
+  const numbered = row(1).getByRole("checkbox", { name: "Numbered", exact: true });
+  await expect(numbered).toBeChecked();
+  await page.evaluate(() => {
+    window.__numberingList = document.querySelector(".book-composer__list");
+    window.__numberingCheckbox = document.querySelector('[data-book-numbered-item="fixture-chapter-0-1"]');
+  });
+  await row(1).getByText("Numbered", { exact: true }).click();
+  await expect(numbered).not.toBeChecked();
+  await expect(numbered).toBeFocused();
+  expect(await page.evaluate(() => document.querySelector(".book-composer__list") === window.__numberingList
+    && document.querySelector('[data-book-numbered-item="fixture-chapter-0-1"]') === window.__numberingCheckbox)).toBe(true);
+  await expect.poll(numbers).toEqual(["1.", "", "2."]);
+  await expect(modal.locator(".book-chapter__number")).toHaveCount(0);
+  await expect(row(1).locator("[data-book-chapter-title]")).toHaveValue("File 002");
+  await row(2).getByRole("button", { name: "Preview chapter: File 003", exact: true }).click();
+  await expect(modal.locator(".book-chapter__number")).toHaveText("2");
+  await row(0).locator('[data-action^="book-exclude:"]').click();
+  await expect(modal.locator(".book-chapter__number")).toHaveText("1");
+  await row(0).locator('[data-action^="book-include:"]').click();
+  await expect(modal.locator(".book-chapter__number")).toHaveText("2");
+  await dragBefore(page, row(2).locator("[data-book-drag-handle]"), row(0));
+  await expect.poll(numbers).toEqual(["1.", "2.", ""]);
+  await addSection(modal, "contents");
+  await expect(modal.getByRole("checkbox", { name: "Numbered", exact: true })).toHaveCount(0);
+  await expect(modal.locator(".book-contents li > span:first-child")).toHaveText(["1. File 003", "2. File 001", "File 002"]);
+  await modal.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.locator('[data-action="export-project:fixture-project-001"]').click();
+  await row(1).getByRole("button", { name: "Preview chapter: File 002", exact: true }).click();
+  await expect(row(1).getByRole("checkbox", { name: "Numbered", exact: true })).not.toBeChecked();
+  await expect(modal.locator(".book-chapter__number")).toHaveCount(0);
+  await page.screenshot({ path: test.info().outputPath("optional-chapter-numbering.png") });
+  await modal.getByRole("button", { name: "Next", exact: true }).click();
+  await modal.locator('[data-action="select-editor-export-option:file:pdf"]').click();
+  await modal.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.__projectExports.some((call) => call.command === "start_gtms_chapter_pdf_export"))).toBe(true);
+  const exported = await page.evaluate(() => window.__projectExports.find((call) => call.command === "start_gtms_chapter_pdf_export").input.bookItems);
+  expect(exported.filter((item) => item.kind === "chapter").map((item) => [item.chapterId, item.numbered])).toEqual([
+    ["fixture-chapter-0-2", true], ["fixture-chapter-0-0", true], ["fixture-chapter-0-1", false],
+  ]);
+  await modal.getByRole("button", { name: "Cancel export", exact: true }).click();
+});
+
 test("Add new stays fixed while the book list and preview scroll at resized window sizes", async ({ page }) => {
   await mountProjectExport(page, false, false, 40);
   const modal = page.getByRole("dialog", { name: "Export project", exact: true });
