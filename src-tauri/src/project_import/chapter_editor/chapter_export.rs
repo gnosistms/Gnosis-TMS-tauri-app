@@ -814,6 +814,8 @@ pub(super) fn build_export_document(
 ) -> Result<ExportDocument, String> {
     let mut blocks = Vec::new();
     let mut footnote_count = 0usize;
+    // A subtitle cue's newline is a subtitle line, not a paragraph break.
+    let split_paragraphs = !chapter_has_srt_source(chapter_file);
 
     for row in rows {
         if row.lifecycle.state == "deleted" {
@@ -838,7 +840,12 @@ pub(super) fn build_export_document(
                     text: text.to_string(),
                 });
             } else {
-                push_text_blocks_with_separators(&mut blocks, style.clone(), text);
+                push_text_blocks_with_separators(
+                    &mut blocks,
+                    style.clone(),
+                    text,
+                    split_paragraphs,
+                );
             }
         }
 
@@ -971,28 +978,38 @@ fn plain_text_contains_unescaped_footnote_marker(text: &str, marker: usize) -> b
     false
 }
 
-fn push_text_blocks_with_separators(blocks: &mut Vec<ExportBlock>, text_style: String, text: &str) {
+/// Each paragraph of a row becomes a text block of its own, so every exporter sets
+/// it exactly as a separate row of the same style. Empty paragraphs are dropped,
+/// as empty rows are.
+fn push_text_blocks_with_separators(
+    blocks: &mut Vec<ExportBlock>,
+    text_style: String,
+    text: &str,
+    split_paragraphs: bool,
+) {
+    let push_segment = |blocks: &mut Vec<ExportBlock>, segment: &str| {
+        let paragraphs = if split_paragraphs {
+            inline_paragraphs(segment)
+        } else {
+            vec![segment.to_string()]
+        };
+        for paragraph in paragraphs {
+            if !paragraph.trim().is_empty() {
+                blocks.push(ExportBlock::Text {
+                    text_style: text_style.clone(),
+                    text: paragraph.trim().to_string(),
+                });
+            }
+        }
+    };
     let mut cursor = 0usize;
     while let Some(offset) = text[cursor..].find("<hr>") {
         let start = cursor + offset;
-        let segment = &text[cursor..start];
-        if !segment.trim().is_empty() {
-            blocks.push(ExportBlock::Text {
-                text_style: text_style.clone(),
-                text: segment.trim().to_string(),
-            });
-        }
+        push_segment(blocks, &text[cursor..start]);
         blocks.push(ExportBlock::Separator);
         cursor = start + "<hr>".len();
     }
-
-    let tail = &text[cursor..];
-    if !tail.trim().is_empty() {
-        blocks.push(ExportBlock::Text {
-            text_style,
-            text: tail.trim().to_string(),
-        });
-    }
+    push_segment(blocks, &text[cursor..]);
 }
 
 // Strip tags from custom HTML for print formats that can't render raw markup.
@@ -1438,12 +1455,12 @@ fn render_html_document(document: &ExportDocument) -> Result<String, String> {
                 let _ = writeln!(body, "<hr>");
             }
             ExportBlock::Footnote { number, text, .. } => {
-                let paragraphs = footnote_paragraphs(text);
+                let paragraphs = inline_paragraphs(text);
                 if paragraphs.len() > 1 {
                     let _ = write!(body, "<div class=\"footnote\" style=\"display:grid;grid-template-columns:auto 1fr;gap:.5em;font-style:italic\"><span>[{number}]</span><div>");
                     for (index, paragraph) in paragraphs.iter().enumerate() {
                         let indent = if index == 0 { "0" } else { "1.5em" };
-                        let content = sanitize_inline_html(paragraph);
+                        let content = sanitize_inline_html(paragraph).replace('\n', "<br>");
                         let content = if inline_visible_text(paragraph).is_empty() {
                             "<br>"
                         } else {
@@ -1461,7 +1478,7 @@ fn render_html_document(document: &ExportDocument) -> Result<String, String> {
                     body,
                     "<p class=\"footnote\"><em>[{}] {}</em></p>",
                     number,
-                    sanitize_inline_html(text)
+                    sanitize_inline_html(&paragraphs[0]).replace('\n', "<br>")
                 );
             }
             ExportBlock::Image { image, caption } => {
@@ -1761,9 +1778,10 @@ fn render_md_document(document: &ExportDocument) -> String {
                 }
             }
             ExportBlock::Footnote { number, text, .. } => {
-                let inline = footnote_paragraphs(text)
+                // A line break is a hard break continuing the indented note.
+                let inline = inline_paragraphs(text)
                     .iter()
-                    .map(|paragraph| md_single_line(&md_inline_text(paragraph)))
+                    .map(|paragraph| md_inline_text(paragraph).replace('\n', "\\\n    "))
                     .collect::<Vec<_>>()
                     .join("\n\n    ");
                 if inline.trim().is_empty() {
@@ -1874,24 +1892,38 @@ fn escape_md_text(value: &str) -> String {
     output
 }
 
-/// Footnote returns are paragraphs. Close/reopen supported inline tags so a
-/// formatting run spanning a return remains valid in each exported paragraph.
-pub(super) fn footnote_paragraphs(value: &str) -> Vec<String> {
+/// Row and footnote returns are paragraphs, except the return a `<br>` owns:
+/// Shift+Return stores a line break as `<br>\n`, and tags, spaces and tabs may
+/// sit between the two. Each paragraph keeps its line breaks as a plain `\n` (the
+/// `<br>` removed, a lone `<br>` becoming `\n`) — the in-paragraph break every
+/// exporter renders. Supported inline tags close and reopen so a formatting run
+/// spanning a return stays valid in each paragraph. Empty paragraphs are kept.
+pub(super) fn inline_paragraphs(value: &str) -> Vec<String> {
     let normalized = value.replace("\r\n", "\n").replace('\r', "\n");
     let mut paragraphs = Vec::new();
     let mut paragraph = String::new();
     let mut tags: Vec<(String, String)> = Vec::new();
+    let mut line_break_pending = false;
     let mut cursor = 0;
     while cursor < normalized.len() {
         let remaining = &normalized[cursor..];
+        if let Some(rest) = remaining.strip_prefix("<br>") {
+            paragraph.push('\n');
+            line_break_pending = true;
+            cursor = normalized.len() - rest.len();
+            continue;
+        }
         if remaining.starts_with('\n') {
-            for (_, closing) in tags.iter().rev() {
-                paragraph.push_str(closing);
+            if !line_break_pending {
+                for (_, closing) in tags.iter().rev() {
+                    paragraph.push_str(closing);
+                }
+                paragraphs.push(std::mem::take(&mut paragraph));
+                for (opening, _) in &tags {
+                    paragraph.push_str(opening);
+                }
             }
-            paragraphs.push(std::mem::take(&mut paragraph));
-            for (opening, _) in &tags {
-                paragraph.push_str(opening);
-            }
+            line_break_pending = false;
             cursor += 1;
             continue;
         }
@@ -1914,6 +1946,12 @@ pub(super) fn footnote_paragraphs(value: &str) -> Vec<String> {
             paragraph.push_str(&tag);
             cursor += length;
         } else if let Some(ch) = remaining.chars().next() {
+            // Spaces and tabs before a line break's newline are dropped with it.
+            if line_break_pending && (ch == ' ' || ch == '\t') {
+                cursor += 1;
+                continue;
+            }
+            line_break_pending = false;
             paragraph.push(ch);
             cursor += ch.len_utf8();
         } else {
@@ -2109,7 +2147,7 @@ fn render_docx_document(
                     }
                     ExportBlock::Footnote { number, text, .. } => {
                         let text = print_footnote_text(text, footnote_links_as_plain_text);
-                        let paragraphs = footnote_paragraphs(&text);
+                        let paragraphs = inline_paragraphs(&text);
                         if paragraphs.len() > 1 {
                             for (index, paragraph) in paragraphs.iter().enumerate() {
                                 let indent = if index == 0 {
@@ -2132,7 +2170,7 @@ fn render_docx_document(
                         }
                         body.push_str(&docx_text_paragraph_xml(
                             None,
-                            &format!("[{number}] {text}"),
+                            &format!("[{number}] {}", paragraphs[0]),
                             true,
                         ));
                     }
@@ -2808,7 +2846,7 @@ fn render_rtf_document(document: &ExportDocument, footnote_links_as_plain_text: 
             }
             ExportBlock::Footnote { number, text, .. } => {
                 let text = print_footnote_text(text, footnote_links_as_plain_text);
-                let paragraphs = footnote_paragraphs(&text);
+                let paragraphs = inline_paragraphs(&text);
                 if paragraphs.len() > 1 {
                     for (index, paragraph) in paragraphs.iter().enumerate() {
                         let paragraph = rtf_text_paragraph(None, paragraph, true);
@@ -2827,7 +2865,7 @@ fn render_rtf_document(document: &ExportDocument, footnote_links_as_plain_text: 
                 }
                 body.push_str(&rtf_text_paragraph(
                     None,
-                    &format!("[{number}] {text}"),
+                    &format!("[{number}] {}", paragraphs[0]),
                     true,
                 ));
             }
@@ -3830,7 +3868,7 @@ mod tests {
     fn footnote_paragraphs_preserve_formatting_blank_lines_and_export_structure() {
         let note = "<i>First\nSecond</i>\n\nLast";
         assert_eq!(
-            footnote_paragraphs(note),
+            inline_paragraphs(note),
             vec!["<em>First</em>", "<em>Second</em>", "", "Last"]
         );
         let doc = document(vec![ExportBlock::Footnote {
@@ -4703,6 +4741,128 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn inline_paragraphs_keep_br_line_breaks_inside_a_paragraph() {
+        assert_eq!(
+            inline_paragraphs("One<br>\nline <b>two<br></b> \r\nthree\nNext<br>lone"),
+            vec!["One\nline <strong>two\n</strong>three", "Next\nlone"]
+        );
+        // Only one newline belongs to a <br>; the next one starts a paragraph.
+        assert_eq!(inline_paragraphs("A<br>\n\nB"), vec!["A\n", "B"]);
+    }
+
+    fn paragraph_test_chapter(source_format: &str) -> StoredChapterFile {
+        StoredChapterFile {
+            chapter_id: "chapter-1".to_string(),
+            title: "Chapter".to_string(),
+            lifecycle: active_lifecycle_state(),
+            source_files: if source_format.is_empty() {
+                Vec::new()
+            } else {
+                vec![StoredSourceFile {
+                    path_hint: String::new(),
+                    format: source_format.to_string(),
+                    file_metadata: StoredSourceFileMetadata::default(),
+                }]
+            },
+            languages: vec![export_language("en", "target", None)],
+            settings: None,
+            source_word_count: None,
+        }
+    }
+
+    #[test]
+    fn block_builder_sets_each_row_paragraph_as_its_own_block() {
+        let mut body = row(
+            "row-1",
+            "a",
+            "First <i>one\ntwo</i>\n\nCites[1] a note<br>\nsame paragraph<hr>After",
+            "paragraph",
+        );
+        body.fields.get_mut("en").expect("field exists").footnote = "The note.".to_string();
+        let heading = row("row-2", "b", "Part one\nThe beginning", "heading1");
+        let document = build_export_document(
+            Path::new("/repo"),
+            &paragraph_test_chapter(""),
+            &[body, heading],
+            "en",
+            None,
+            "",
+        )
+        .expect("document should build");
+
+        let text = |style: &str, text: &str| ExportBlock::Text {
+            text_style: style.to_string(),
+            text: text.to_string(),
+        };
+        assert_eq!(
+            document.blocks,
+            vec![
+                text("paragraph", "First <em>one</em>"),
+                text("paragraph", "<em>two</em>"),
+                text("paragraph", "Cites[1] a note\nsame paragraph"),
+                ExportBlock::Separator,
+                text("paragraph", "After"),
+                ExportBlock::Footnote {
+                    number: 1,
+                    marker: 1,
+                    anchor_block: Some(2),
+                    text: "The note.".to_string(),
+                },
+                text("heading1", "Part one"),
+                text("heading1", "The beginning"),
+            ]
+        );
+    }
+
+    #[test]
+    fn block_builder_keeps_subtitle_lines_in_one_block() {
+        let cue = row("row-1", "a", "Line one\nline two", "paragraph");
+        let document = build_export_document(
+            Path::new("/repo"),
+            &paragraph_test_chapter("srt"),
+            &[cue],
+            "en",
+            None,
+            "",
+        )
+        .expect("document should build");
+        assert_eq!(
+            document.blocks,
+            vec![ExportBlock::Text {
+                text_style: "paragraph".to_string(),
+                text: "Line one\nline two".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn footnote_line_breaks_render_inside_their_paragraph_in_every_format() {
+        let doc = document(vec![ExportBlock::Footnote {
+            number: 1,
+            marker: 1,
+            anchor_block: None,
+            text: "Line one<br>\nline two".into(),
+        }]);
+        let html = render_html_document(&doc).unwrap();
+        assert!(html.contains("<em>[1] Line one<br>line two</em>"));
+        assert!(!html.contains("&lt;br&gt;"));
+        let bytes = render_docx_document(&doc, false).unwrap();
+        let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let mut xml = String::new();
+        archive
+            .by_name("word/document.xml")
+            .unwrap()
+            .read_to_string(&mut xml)
+            .unwrap();
+        assert!(xml.contains("<w:br/>"));
+        assert!(!xml.contains("&lt;br&gt;"));
+        let rtf = render_rtf_document(&doc, false);
+        assert!(rtf.contains("Line one\\line line two"));
+        let markdown = render_md_document(&doc);
+        assert!(markdown.contains("[^1]: Line one\\\n    line two"));
     }
 
     fn export_language(code: &str, role: &str, base_code: Option<&str>) -> ChapterLanguage {

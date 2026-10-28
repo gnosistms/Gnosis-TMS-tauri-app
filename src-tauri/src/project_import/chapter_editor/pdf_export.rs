@@ -29,7 +29,7 @@ pub(crate) use title_preview::{start_project_book_title_preview, TitlePagePrevie
 
 use super::chapter_export::{
     apply_print_custom_html_policy, build_scoped_export_document,
-    download_public_image_bytes_detailed, export_text_style, footnote_paragraphs, inline_segments,
+    download_public_image_bytes_detailed, export_text_style, inline_paragraphs, inline_segments,
     inline_visible_text, load_export_chapters, ExportBlock, ExportChapterFileInput, ExportDocument,
     ExportImage, InlineStyleState,
 };
@@ -2823,7 +2823,7 @@ fn render_inline_typst(text: &str, show_link_urls: bool) -> String {
 }
 
 fn render_footnote_typst(text: &str, show_link_urls: bool) -> String {
-    footnote_paragraphs(text)
+    inline_paragraphs(text)
         .iter()
         .map(|paragraph| {
             if inline_visible_text(paragraph).is_empty() {
