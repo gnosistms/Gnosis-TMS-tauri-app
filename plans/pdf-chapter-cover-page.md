@@ -54,6 +54,38 @@ every image cover the title takes 2em above and 2.5em below
 (`gnosis-title(tight: true)`, and the matching header rule in the preview). An
 adaptive version, tightening only for tall images, was compared and not chosen.
 
+## Drop caps sized to the paragraph
+
+A general fix, not specific to covers. A first paragraph shorter than the
+three-line cap ended beside it and left a gap above the next paragraph. Now the
+cap drops as many lines as the paragraph has: three for three or more lines, two
+for two, none for one. `gnosis-dropcap-lines` counts lines at the full text
+width, as `gnosis-quote` measures quotes: beside the cap the lines are narrower,
+so the text can only run on below the cap, never stop short of it. A two-line cap
+scales its per-letter gap with the smaller letter, since the gaps were tuned for
+three lines.
+
+The book preview follows. Its HTML always carries the three-line cap, and
+`project-book-dropcap.js` counts the lines on the mounted page, after both full
+and scoped renders. It sets the cap inline, then compares the paragraph's height
+with one- and two-line probes, as the PDF does. `data-book-dropcap-lines` then
+sizes the cap: none for one line, 2.29em for two (3.9em × .587, the PDF's scale),
+3.9em for three. The scoped render leaves that attribute out when it compares
+the mounted page with fresh HTML, so a measured page is not rebuilt.
+
+Measured with Great Vibes in Chromium, the preview cap sat about half a line
+above the first line's cap height, where the PDF sets it flush. Its size was
+right: 3.9em spans the common capitals (A, O, T) over three lines. The top margin
+now lowers the ink onto the cap height (median error 0.00em with text-box trim,
+−0.02em without). The bottom margin ends the float midway through the range that
+sets exactly the cap's lines beside it. It is measured per layout, because trim
+moves the lines up against the float. Every letter A–Y wraps two or three lines
+as intended, with and without trim.
+
+Not matched yet: the PDF gives each letter its own gap for its swash
+(`gnosis-dropcap-gap`, 1.74em for T). The preview has one gap, so the T's
+crossbar runs into the text beside it, as it did before.
+
 ## Validation
 
 - Rust unit tests for the rule; a Typst layout test that compiles quote and image

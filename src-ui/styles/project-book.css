@@ -50,7 +50,20 @@
 .book-page--chapter .translate-preview__block, .book-page--chapter .translate-preview__image-caption { font-family: inherit; color: inherit; font-size: inherit; font-weight: 400; line-height: var(--book-line-height); word-break: normal; overflow-wrap: break-word; hyphens: auto; }
 .book-page--chapter .translate-preview__block { margin: 0; text-indent: 0; text-align: justify; }
 .book-page--chapter .book-print-indent { text-indent: var(--book-first-indent); }
-.book-page--chapter .book-print-dropcap::first-letter { float: inline-start; font-family: "Great Vibes", var(--book-body-font); font-size: 3.9em; line-height: .84; margin-inline-end: .125em; }
+/* As in the PDF, the cap's ink runs from the first line's cap height to the last
+   line's baseline: 3.9em sizes the common capitals to three lines. The float
+   starts .46em above the cap height and the capitals rise .14em above their
+   box, so the top margin lowers the ink onto the cap height. The bottom margin
+   ends the float midway through the range that wraps exactly the cap's lines,
+   so the next line runs at full width. Both were measured in Chromium, with
+   and without text-box trim, which moves the lines .39em up against the float. */
+.book-page--chapter .book-print-dropcap::first-letter { float: inline-start; font-family: "Great Vibes", var(--book-body-font); font-size: 3.9em; line-height: .84; margin-block: calc(var(--book-paper-font) * .46 + .14em) calc(var(--book-paper-font) * -.36 - .14em); margin-inline-end: .125em; }
+/* The cap falls as many lines as its paragraph has (counted by
+   project-book-dropcap.js). Two lines span two cap heights and one leading, three
+   lines three and two: 1.93em against 3.28em, so the cap scales by .587. Its
+   em margins scale with it, as the PDF scales its gap. */
+.book-page--chapter .book-print-dropcap[data-book-dropcap-lines="2"]::first-letter { font-size: 2.29em; }
+.book-page--chapter .book-print-dropcap[data-book-dropcap-lines="1"]::first-letter { float: none; font: inherit; line-height: inherit; margin: 0; }
 /* As in the PDF, one body line separates a heading from its text. Untrimmed
    line boxes already hold that leading, so no bottom margin is added here. */
 .book-page--chapter .translate-preview__block--heading1, .book-page--chapter .translate-preview__block--heading2 { font-family: var(--book-heading-font); font-weight: var(--book-heading-weight); line-height: var(--book-heading-line-height); margin: 1.3em 0 0; text-transform: uppercase; text-align: start; letter-spacing: normal; }
@@ -90,7 +103,7 @@
   :is(.book-chapter__body, .book-chapter__epigraph) > .translate-preview__block--quote:has(+ cite) { margin-bottom: calc(var(--book-paper-font) * .78); }
   :is(.book-chapter__body, .book-chapter__epigraph) > .translate-preview__attribution { margin-bottom: calc(var(--book-paper-font) * 1.5); }
   .book-chapter__body > :first-child, .book-chapter__epigraph:first-child > :first-child { margin-top: 0; }
-  .book-page--chapter .book-print-dropcap::first-letter { margin-block: .125em -.125em; margin-inline-end: .2em; }
+  .book-page--chapter .book-print-dropcap::first-letter { margin-block-end: calc(var(--book-paper-font) * -.75 - .14em); margin-inline-end: .2em; }
 }
 .book-page a { color: #245c8a; }
 .book-page .translate-preview__footnote-ref { font-size: .6em; line-height: 0; }

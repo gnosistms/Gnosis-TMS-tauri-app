@@ -1,4 +1,5 @@
 import { bookPaperStyle } from "./project-book-paper.js";
+import { BOOK_DROPCAP_LINES_ATTRIBUTE, sizeBookDropcaps } from "./project-book-dropcap.js";
 import { bookChapterNumbers, bookItemIncluded, bookItemTitle } from "./project-book-model.js";
 import { renderBookTitleProof, renderBookPreviewFontStatus, renderProjectBookItems, renderSelectedBookPage } from "../screens/project-book-composer.js";
 
@@ -88,7 +89,10 @@ export function renderProjectBookPreview(root, state) {
   if (selected?.kind === "chapter") {
     const template = root.ownerDocument.createElement("template");
     template.innerHTML = renderSelectedBookPage(modal);
-    if (scroll.innerHTML !== template.innerHTML) scroll.replaceChildren(template.content);
+    // Drop-cap line counts are measured on the mounted page, not rendered.
+    const mounted = scroll.innerHTML.replaceAll(new RegExp(` ${BOOK_DROPCAP_LINES_ATTRIBUTE}="\\d"`, "g"), "");
+    if (mounted !== template.innerHTML) scroll.replaceChildren(template.content);
+    sizeBookDropcaps(scroll);
     root.querySelector(".book-copyright__toolbar, .book-contents__options")?.remove();
   } else if (selected?.kind === "title") {
     const current = scroll.querySelector("[data-book-title-proof]");

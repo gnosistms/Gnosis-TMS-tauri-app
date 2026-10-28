@@ -2645,6 +2645,14 @@ const DROP_CAP_METRICS_RULE: &str = r#"#let gnosis-dropcap-base(letter) = (
   "Y": 0.40em, "Z": 1.23em,
   "Ơ": 0.65em, "Ư": 0.64em,
 ).at(gnosis-dropcap-clearance-base(letter), default: 0pt)
+// How many lines the cap drops: the paragraph's own line count, up to three.
+// Counted at the full width: beside the cap the lines are narrower, so the text
+// can only run on below the cap, never stop short of its foot and leave a gap.
+#let gnosis-dropcap-lines(body, width) = {
+  let height(content) = measure(block(width: width, content)).height
+  let slack = (0.5em).to-absolute()
+  if height(body) <= height([X]) + slack { 1 } else if height(body) <= height([X\ X]) + slack { 2 } else { 3 }
+}
 "#;
 const DROPLET_PACKAGE_FILES: &[(&str, &str)] = &[
     ("typst.toml", include_str!("droplet/typst.toml")),
@@ -2775,10 +2783,13 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
     } else {
         String::new()
     };
-    // Kindred style: the opening letter of a chapter drops across two lines in
-    // Great Vibes. The body families trail the letter's font list so a glyph
-    // Great Vibes lacks falls back to the body serif instead of tofu. The
-    // droplet package resolves from the vendored copy in the workspace.
+    // Kindred style: the opening letter of a chapter drops across up to three
+    // lines in Great Vibes — as many as the paragraph has (see
+    // `gnosis-dropcap-lines`), and none for a one-line paragraph. A smaller cap
+    // scales its gap with it: the per-letter gaps are tuned for three lines. The
+    // body families trail the letter's font list so a glyph Great Vibes lacks
+    // falls back to the body serif instead of tofu. The droplet package resolves
+    // from the vendored copy in the workspace.
     let dropcap_rule = if latin {
         let letter_families = std::iter::once("Great Vibes")
             .chain(families.iter().copied())
@@ -2786,7 +2797,14 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
             .collect::<Vec<_>>()
             .join(", ");
         format!(
-            "#import \"@preview/droplet:{DROPLET_VERSION}\": dropcap\n{DROP_CAP_METRICS_RULE}#let gnosis-dropcap(body) = dropcap(height: 3, gap: gnosis-dropcap-gap, sizing-transform: gnosis-dropcap-base, top-edge: \"cap-height\", bottom-edge: \"descender\", font: ({letter_families}), body)\n"
+            r#"#import "@preview/droplet:{DROPLET_VERSION}": dropcap
+{DROP_CAP_METRICS_RULE}#let gnosis-dropcap(body) = layout(region => {{
+  let lines = gnosis-dropcap-lines(body, region.width)
+  if lines == 1 {{ return body }}
+  let scale = measure([x\ ] * lines).height / measure([x\ ] * 3).height
+  dropcap(height: lines, gap: letter => gnosis-dropcap-gap(letter) * scale, sizing-transform: gnosis-dropcap-base, top-edge: "cap-height", bottom-edge: "descender", font: ({letter_families}), body)
+}})
+"#
         )
     } else {
         String::new()
@@ -4637,7 +4655,7 @@ mod tests {
         // families trail the letter's font list so an uncovered glyph falls back
         // to the body serif instead of tofu.
         assert!(vietnamese_preamble.contains(
-            "#let gnosis-dropcap(body) = dropcap(height: 3, gap: gnosis-dropcap-gap, sizing-transform: gnosis-dropcap-base, top-edge: \"cap-height\", bottom-edge: \"descender\", font: (\"Great Vibes\", \"Crimson Pro\", \"EB Garamond\", \"Cormorant Garamond Gnosis\"), body)"
+            "dropcap(height: lines, gap: letter => gnosis-dropcap-gap(letter) * scale, sizing-transform: gnosis-dropcap-base, top-edge: \"cap-height\", bottom-edge: \"descender\", font: (\"Great Vibes\", \"Crimson Pro\", \"EB Garamond\", \"Cormorant Garamond Gnosis\"), body)"
         ));
         // Vietnamese marks do not participate in sizing: the bare capital fixes
         // the font size and baseline while the complete glyph remains visible.
@@ -4753,6 +4771,79 @@ mod tests {
             paragraph("Đức Cha là trí tuệ."),
         ];
         assert_eq!(dropcap_block_index(&blocks, &[0, 1, 2], false), Some(2));
+    }
+
+    #[test]
+    fn dropcaps_drop_as_many_lines_as_their_paragraph_has_up_to_three() {
+        let workspace = pdf_workspace().unwrap();
+        let _cleanup = WorkspaceCleanup(workspace.clone());
+        let document = ExportDocument {
+            title: "Drop caps".into(),
+            language_code: "en".into(),
+            blocks: vec![text_block("paragraph", "Body.")],
+            book_parts: Vec::new(),
+        };
+        let session = begin_pdf_image_cache(&test_image_cache_scope("dropcap-lines"));
+        let options = PdfWorkspacePreparationOptions {
+            paper_size: "a5",
+            footnote_links_as_plain_text: true,
+            image_cache_session: &session,
+        };
+        prepare_typst_workspace(
+            None,
+            "",
+            &workspace,
+            &document,
+            &options,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let source_path = workspace.join("chapter.typ");
+        let mut source = fs::read_to_string(&source_path).unwrap();
+        assert!(source.contains("let lines = gnosis-dropcap-lines(body, region.width)"));
+        let (Some(binary), Some(font_dir)) = (
+            std::env::var_os("GNOSIS_TYPST_BIN"),
+            std::env::var_os("GNOSIS_TYPST_SMOKE_FONT_DIR"),
+        ) else {
+            return;
+        };
+        // A footnote marker makes its line a little taller without adding one.
+        let cases = [
+            (1, "One short line."),
+            (1, "One short line with a note.#footnote[A note.]"),
+            (2, "Two#linebreak()lines."),
+            (3, "Three#linebreak()short#linebreak()lines."),
+            (3, "#lorem(120)"),
+        ];
+        for (case, (_, body)) in cases.iter().enumerate() {
+            source.push_str(&format!("#layout(region => [#metadata((case: {case}, lines: gnosis-dropcap-lines([{body}], region.width))) <dropcap-audit>])\n#set par(first-line-indent: 0pt)\n#gnosis-dropcap[{body}]\n\n"));
+        }
+        fs::write(&source_path, source).unwrap();
+        let query = std::process::Command::new(&binary)
+            .arg("query")
+            .arg("--root")
+            .arg(&workspace)
+            .arg("--font-path")
+            .arg(&font_dir)
+            .arg("--ignore-system-fonts")
+            .arg("--package-path")
+            .arg(workspace.join("packages"))
+            .arg("--field")
+            .arg("value")
+            .arg(&source_path)
+            .arg("<dropcap-audit>")
+            .output()
+            .unwrap();
+        assert!(
+            query.status.success(),
+            "{}",
+            String::from_utf8_lossy(&query.stderr)
+        );
+        let audit: Vec<serde_json::Value> = serde_json::from_slice(&query.stdout).unwrap();
+        assert_eq!(audit.len(), cases.len());
+        for (case, (lines, body)) in cases.iter().enumerate() {
+            assert_eq!(audit[case]["lines"], *lines, "{body}");
+        }
     }
 
     #[test]
