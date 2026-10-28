@@ -5451,16 +5451,16 @@ test.describe("editor regressions", () => {
 
     await clickLocatorCenter(page, quoteButton);
     await expect.poll(async () => {
-      return (await readEditorFieldMetrics(page, "fixture-row-0001", "vi"))?.fontStyle ?? "";
-    }).toBe("italic");
+      return (await readEditorFieldMetrics(page, "fixture-row-0001", "vi"))?.fontSizePx ?? 0;
+    }).toBeCloseTo(paragraphMetrics.fontSizePx * .9, 2);
     const quoteMetrics = await readEditorFieldMetrics(page, "fixture-row-0001", "vi");
+    expect(quoteMetrics.fontStyle).toBe("normal");
     expect(quoteMetrics.paddingLeftPx).toBeGreaterThan(paragraphMetrics.paddingLeftPx);
-    expect(quoteMetrics.fontSizePx).toBeCloseTo(paragraphMetrics.fontSizePx, 2);
 
     await clickLocatorCenter(page, indentedButton);
     await expect.poll(async () => {
-      return (await readEditorFieldMetrics(page, "fixture-row-0001", "vi"))?.fontStyle ?? "";
-    }).toBe("normal");
+      return (await readEditorFieldMetrics(page, "fixture-row-0001", "vi"))?.fontSizePx ?? 0;
+    }).toBeCloseTo(paragraphMetrics.fontSizePx, 2);
     const indentedMetrics = await readEditorFieldMetrics(page, "fixture-row-0001", "vi");
     expect(indentedMetrics.paddingLeftPx).toBe(quoteMetrics.paddingLeftPx);
 
@@ -7327,7 +7327,7 @@ test("changed-after-my-edit filter shows other people's changes as diffs on the 
   await expect(page.locator(".history-diff__insert")).toHaveCount(0);
 });
 
-test("quote attribution saves separately, previews at 90%, and appends when leaving Quote", async ({ page }) => {
+test("quote attribution saves separately, previews like the PDF, and appends when leaving Quote", async ({ page }) => {
   await mountEditorFixture(page, { rowCount: 8, chapterStatus: "ready" }, { mockTauri: true });
   const rowId = "fixture-row-0001";
   const style = (value) => page.locator(`[data-editor-row-text-style-button][data-row-id="${rowId}"][data-language-code="vi"][data-text-style="${value}"]`);
@@ -7337,7 +7337,8 @@ test("quote attribution saves separately, previews at 90%, and appends when leav
   const normalSize = parseFloat(await body.evaluate((field) => getComputedStyle(field).fontSize));
   await style("quote").click();
   await expect(body).toHaveCSS("text-align", "left");
-  expect(parseFloat(await body.evaluate((field) => getComputedStyle(field).fontSize))).toBeCloseTo(normalSize, 2);
+  await expect(body).toHaveCSS("font-style", "normal");
+  expect(parseFloat(await body.evaluate((field) => getComputedStyle(field).fontSize))).toBeCloseTo(normalSize * .9, 2);
   const attribution = page.locator(`[data-editor-row-field][data-content-kind="attribution"][data-row-id="${rowId}"][data-language-code="vi"]`);
   await expect(attribution).toBeHidden();
   const prompt = attribution.locator("..").getByText("Enter attribution", { exact: true });
@@ -7368,9 +7369,11 @@ test("quote attribution saves separately, previews at 90%, and appends when leav
     quote: parseFloat(getComputedStyle(cite.parentElement).fontSize),
     normal: parseFloat(getComputedStyle(document.querySelector(".translate-preview__block--paragraph")).fontSize),
   }));
-  expect(sizes.quote).toBeCloseTo(sizes.normal, 2);
-  expect(sizes.citation).toBeCloseTo(sizes.normal * .9, 2);
+  expect(sizes.quote).toBeCloseTo(sizes.normal * .9, 2);
+  expect(sizes.citation).toBeCloseTo(sizes.normal * .8, 2);
   await expect(citation.locator("..")).toHaveCSS("text-align", "left");
+  await expect(citation.locator("..")).toHaveCSS("font-style", "normal");
+  await expect(citation).toHaveCSS("text-transform", "uppercase");
   await page.screenshot({ path: "/tmp/gnosis-quote-preview.png" });
   await page.locator('[data-action="set-editor-mode:translate"]').click();
   await activateMainEditorField(page, rowId, "vi");
