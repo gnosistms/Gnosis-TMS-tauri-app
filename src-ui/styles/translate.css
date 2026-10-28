@@ -502,9 +502,10 @@
   line-height: 1.35;
 }
 
+/* Mirrors the PDF block quote: upright, 0.9 of body size, inset on both sides. */
 .translate-preview__block--quote {
-  padding-left: 32px;
-  font-style: italic;
+  padding-inline: 32px;
+  font-size: calc(var(--translation-editor-font-size, 14px) * 0.9);
   text-align: left;
 }
 
@@ -1948,10 +1949,21 @@
   padding-left: 32px;
 }
 
+/* Quotes mirror the PDF block quote: inset on both sides, upright, 0.9 of body
+   size. The textarea matches the display so opening a quote does not reflow it. */
+.translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style="quote"],
+.translation-language-panel__field-stack--static[data-row-text-style="quote"] {
+  --translation-field-padding-right: 32px;
+}
+
+.translation-language-panel__field-static[data-row-text-style="quote"] {
+  padding-right: 32px;
+}
+
 .translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style="quote"] .translation-language-panel__field,
 .translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style="quote"] .translation-language-panel__field-highlight,
 .translation-language-panel__field-static[data-row-text-style="quote"] {
-  font-style: italic;
+  font-size: calc(var(--translation-editor-font-size, 14px) * 0.9);
   text-align: left;
 }
 
@@ -2959,12 +2971,19 @@
   text-align: right;
   min-height: 2.5em;
 }
+/* Like the PDF citation: small uppercase with tracking, flush with the body text
+   column rather than the quote's inset. */
 .translate-preview__attribution {
   display: block;
-  font-size: calc(var(--translation-editor-font-size, 14px) * 0.9);
+  font-size: calc(var(--translation-editor-font-size, 14px) * 0.8);
   text-align: right;
   font-style: normal;
+  text-transform: uppercase;
+  letter-spacing: .06em;
   margin-top: .5em;
+}
+.translate-preview__block--quote > .translate-preview__attribution {
+  margin-right: -32px;
 }
 
 .translation-language-panel__attribution-prompt {

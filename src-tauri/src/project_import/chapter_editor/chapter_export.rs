@@ -1486,7 +1486,7 @@ fn render_html_document(document: &ExportDocument) -> Result<String, String> {
     }
 
     Ok(format!(
-        "<!doctype html>\n<html lang=\"{}\">\n<head>\n<meta charset=\"utf-8\">\n<title>{}</title>\n<style>body{{max-width:760px;margin:40px auto;padding:0 24px;font-family:serif;line-height:1.6;color:#2f2117;}}h1{{font-size:2rem;}}h2{{font-size:1.4rem;}}blockquote{{margin:1em 2em;font-style:italic;}}.quote-attribution{{display:block;font-size:90%;text-align:right;font-style:normal;}}.indented{{padding-left:2em;}}.centered{{text-align:center;}}.footnote{{font-size:.95em;}}figure{{margin:1.5em auto;text-align:center;}}img{{display:block;margin:0 auto;max-width:100%;height:auto;}}figcaption{{margin-top:.6em;text-align:center;}}</style>\n</head>\n<body>\n{}\n</body>\n</html>\n",
+        "<!doctype html>\n<html lang=\"{}\">\n<head>\n<meta charset=\"utf-8\">\n<title>{}</title>\n<style>body{{max-width:760px;margin:40px auto;padding:0 24px;font-family:serif;line-height:1.6;color:#2f2117;}}h1{{font-size:2rem;}}h2{{font-size:1.4rem;}}blockquote{{margin:1em 2em;}}.quote-attribution{{display:block;font-size:90%;text-align:right;font-style:normal;}}.indented{{padding-left:2em;}}.centered{{text-align:center;}}.footnote{{font-size:.95em;}}figure{{margin:1.5em auto;text-align:center;}}img{{display:block;margin:0 auto;max-width:100%;height:auto;}}figcaption{{margin-top:.6em;text-align:center;}}</style>\n</head>\n<body>\n{}\n</body>\n</html>\n",
         escape_html(&document.language_code),
         escape_html(&document.title),
         body
@@ -2846,7 +2846,7 @@ fn rtf_text_paragraph(text_style: Option<&str>, text: &str, forced_italic: bool)
     let properties = match export_text_style(text_style).as_str() {
         "heading1" => "\\sb240\\b\\fs32",
         "heading2" => "\\sb240\\b\\fs26",
-        "quote" => "\\li720\\ri720\\i",
+        "quote" => "\\li720\\ri720",
         "indented" => "\\li720",
         "centered" => "\\qc",
         _ => "",
@@ -3136,7 +3136,7 @@ fn package_rels_xml() -> &'static str {
 }
 
 fn styles_xml() -> &'static str {
-    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="32"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:pPr><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:sz w:val="26"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:pPr><w:ind w:left="720" w:right="720"/></w:pPr><w:rPr><w:i/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="VellumAttribution"><w:name w:val="Vellum Attribution"/><w:pPr><w:jc w:val="right"/></w:pPr><w:rPr><w:sz w:val="20"/></w:rPr></w:style></w:styles>"#
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="32"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:pPr><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:sz w:val="26"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:pPr><w:ind w:left="720" w:right="720"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="VellumAttribution"><w:name w:val="Vellum Attribution"/><w:pPr><w:jc w:val="right"/></w:pPr><w:rPr><w:sz w:val="20"/></w:rPr></w:style></w:styles>"#
 }
 
 #[cfg(test)]
@@ -3311,12 +3311,12 @@ mod tests {
         ]);
         let html = render_html_document(&document).unwrap();
         assert!(html.contains("<cite class=\"quote-attribution\">Author &amp; <strong>Work</strong></cite></blockquote>"));
-        assert!(html.contains("blockquote{margin:1em 2em;font-style:italic;}"));
+        assert!(html.contains("blockquote{margin:1em 2em;}"));
         assert!(html.contains(".quote-attribution{display:block;font-size:90%;text-align:right;"));
         assert!(render_txt_document(&document).contains("Author & Work"));
         assert!(render_md_document(&document).contains("> Author & **Work**"));
         let rtf = render_rtf_document(&document, false);
-        assert!(rtf.contains("\\li720\\ri720\\i Body"));
+        assert!(rtf.contains("\\li720\\ri720 Body"));
         assert!(rtf.contains("\\fs22\\qr"));
         assert!(rtf.contains("Author &"));
         let bytes = render_docx_document(&document, false).unwrap();
@@ -3328,7 +3328,7 @@ mod tests {
             .unwrap();
         assert!(xml.contains("<w:pStyle w:val=\"VellumAttribution\"/>"));
         assert!(styles_xml().contains("w:val=\"Vellum Attribution\""));
-        assert!(styles_xml().contains(r#"<w:name w:val="Quote"/><w:pPr><w:ind w:left="720" w:right="720"/></w:pPr><w:rPr><w:i/>"#));
+        assert!(styles_xml().contains(r#"<w:name w:val="Quote"/><w:pPr><w:ind w:left="720" w:right="720"/></w:pPr></w:style>"#));
     }
 
     #[test]
@@ -4887,7 +4887,7 @@ mod tests {
         assert!(output.contains("\\sb240\\b\\fs26"));
         assert!(output.contains("{\\b Bold}"));
         assert!(output.contains("{\\ul Under}"));
-        assert!(output.contains("\\li720\\ri720\\i Quote"));
+        assert!(output.contains("\\li720\\ri720 Quote"));
         assert!(output.contains("\\u23383?"));
         assert!(output.contains("\\{braces\\}"));
         assert!(output.contains("\\\\slash"));
