@@ -493,7 +493,7 @@ mod tests {
         let mut expected_glyphs = Vec::new();
         for body in [
             mark.clone(),
-            format!("#text(size: 11.5pt)[{mark}]"),
+            format!("#text(size: 12pt)[{mark}]"),
             format!("#text(size: 0.75em)[{mark}]"),
             format!("#text(size: 0.85em)[{mark}]"),
         ] {
