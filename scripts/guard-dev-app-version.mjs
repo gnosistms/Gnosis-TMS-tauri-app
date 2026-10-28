@@ -98,6 +98,27 @@ function commandOutput(command, args, cwd) {
   }).trim();
 }
 
+function refreshReleaseRefs(repositoryRoot) {
+  if (process.env.GNOSIS_FETCH_DEV_RELEASES === "0") return;
+  try {
+    commandOutput("git", ["remote", "get-url", "origin"], repositoryRoot);
+  } catch {
+    return; // Local fixtures and checkouts without an upstream use local tags.
+  }
+  try {
+    execFileSync("git", [
+      "fetch", "--tags", "origin", "+refs/heads/main:refs/remotes/origin/main",
+    ], {
+      cwd: repositoryRoot,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 15000,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+    });
+  } catch {
+    console.warn("Could not refresh release refs; checking the latest locally known release. Repository sync version protection remains active.");
+  }
+}
+
 function declaredVersions(repositoryRoot) {
   return Object.fromEntries(
     VERSION_FILES.map((versionFile) => {
@@ -139,6 +160,8 @@ export function runDevVersionGuard(cwd = process.cwd()) {
     ["rev-parse", "--show-toplevel"],
     cwd,
   );
+  const allowStale = process.env.GNOSIS_ALLOW_STALE_DEV_VERSION === "1";
+  if (!allowStale) refreshReleaseRefs(repositoryRoot);
   let tagArgs = ["tag", "--list", "v*"];
   try {
     commandOutput(
@@ -158,7 +181,7 @@ export function runDevVersionGuard(cwd = process.cwd()) {
     releaseTag: newestStableTag(tags),
   });
 
-  if (result.reason === "stale" && process.env.GNOSIS_SYNC_DEV_VERSION === "1") {
+  if (result.reason === "stale" && !allowStale && process.env.GNOSIS_SYNC_DEV_VERSION !== "0") {
     try {
       const version = syncDevVersionMetadata(repositoryRoot, result.declaredVersion, result.releaseTag);
       console.log(`Updated app version metadata to ${version}; verified release changes are already in your working code.`);
@@ -169,6 +192,7 @@ export function runDevVersionGuard(cwd = process.cwd()) {
     } catch (error) {
       console.error(`Automatic development version repair stopped: ${error.message}`);
       console.error("Your source files were not changed. Review the local release changes before raising the app version.");
+      console.error(`Integrate ${result.releaseTag} into this working checkout while preserving local edits, then restart the development app.`);
       return 1;
     }
   }
@@ -182,7 +206,7 @@ export function runDevVersionGuard(cwd = process.cwd()) {
     return 0;
   }
 
-  if (result.reason === "stale" && process.env.GNOSIS_ALLOW_STALE_DEV_VERSION === "1") {
+  if (result.reason === "stale" && allowStale) {
     console.warn(
       `Working checkout version ${result.declaredVersion}; latest local release ${result.releaseTag}. ` +
       "Starting this checkout because local development versions are allowed.",

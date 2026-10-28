@@ -103,3 +103,37 @@ test("evaluateDevVersion rejects stale and inconsistent metadata", () => {
     "inconsistent",
   );
 });
+
+test("startup discovers new upstream releases and checks cached refs when offline", (t) => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "gnosis-release-fetch-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const upstream = path.join(root, "upstream");
+  const checkout = path.join(root, "checkout");
+  mkdirSync(path.join(upstream, "src-tauri"), { recursive: true });
+  const git = (cwd, ...args) => execFileSync("git", args, { cwd, stdio: "ignore" });
+  const metadata = (version) => {
+    writeFileSync(path.join(upstream, "package.json"), JSON.stringify({ version }));
+    writeFileSync(path.join(upstream, "src-tauri/tauri.conf.json"), JSON.stringify({ version }));
+    writeFileSync(path.join(upstream, "src-tauri/Cargo.toml"), `[package]\nversion = "${version}"\n`);
+    git(upstream, "add", ".");
+    git(upstream, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false", "commit", "-m", version);
+    git(upstream, "tag", `v${version}`);
+  };
+  git(upstream, "init", "-b", "main");
+  metadata("1.0.0");
+  git(root, "clone", upstream, checkout);
+  metadata("1.0.1");
+  const guard = fileURLToPath(new URL("./guard-dev-app-version.mjs", import.meta.url));
+  const run = () => spawnSync(process.execPath, [guard], {
+    cwd: checkout, encoding: "utf8",
+    env: { ...process.env, GNOSIS_FETCH_DEV_RELEASES: "1", GNOSIS_SYNC_DEV_VERSION: "0", GNOSIS_ALLOW_STALE_DEV_VERSION: "0" },
+  });
+  const fetched = run();
+  assert.equal(fetched.status, 1);
+  assert.match(fetched.stderr, /latest local release 1.0.1/);
+  git(checkout, "remote", "set-url", "origin", path.join(root, "unavailable"));
+  const offline = run();
+  assert.equal(offline.status, 1);
+  assert.match(offline.stderr, /Could not refresh release refs/);
+  assert.match(offline.stderr, /latest local release 1.0.1/);
+});
