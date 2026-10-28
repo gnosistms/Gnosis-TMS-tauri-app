@@ -1,7 +1,12 @@
-use std::{collections::BTreeMap, fs, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::{Path, PathBuf},
+};
 
 use serde_json::Value;
 use tauri::AppHandle;
+use uuid::Uuid;
 
 use crate::{
     git_commit::{git_commit_as_signed_in_user_with_metadata, GitCommitMetadata},
@@ -9,7 +14,7 @@ use crate::{
     repo_layout_metadata::{
         new_v2_repo_layout_metadata, parse_repo_layout_metadata_bytes,
         read_repo_layout_metadata_state, write_repo_layout_metadata, RepoKind, RepoLayoutMetadata,
-        RepoLayoutMetadataState, MIGRATION_0810, MIGRATION_0856, MIGRATION_0875,
+        RepoLayoutMetadataState, MIGRATION_0810, MIGRATION_08138, MIGRATION_0856, MIGRATION_0875,
         REPO_METADATA_RELATIVE_PATH,
     },
     repo_sync_shared::{format_git_spawn_error, git_command, git_output},
@@ -65,6 +70,13 @@ const REPO_MIGRATION_REGISTRY: &[RepoMigrationDescriptor] = &[
         applies_to: &[RepoKind::Project],
         pending_description: "the image path repair migration",
         run_content: Some(migrate_project_repo_to_0875),
+    },
+    RepoMigrationDescriptor {
+        id: MIGRATION_08138,
+        kind: RepoMigrationKind::Content,
+        applies_to: &[RepoKind::Project],
+        pending_description: "the uploaded image file repair migration",
+        run_content: Some(migrate_project_repo_to_08138),
     },
 ];
 
@@ -765,7 +777,14 @@ fn migrate_uploaded_image_path(
         return Ok(Some(path_in_new_chapter));
     }
 
-    let source_path = repo_path.join(&normalized);
+    // Chapter folders are renamed before their rows are migrated, so the file
+    // now lives under the new chapter folder, not at the stored path. With no
+    // file to move, keep the reference following its chapter instead of
+    // pointing it at a flat name nothing will occupy.
+    let source_path = repo_path.join(&path_in_new_chapter);
+    if !source_path.is_file() {
+        return Ok(Some(path_in_new_chapter));
+    }
     let extension = Path::new(file_name)
         .extension()
         .and_then(|value| value.to_str())
@@ -786,7 +805,7 @@ fn migrate_uploaded_image_path(
             )
         })?;
     }
-    if source_path.exists() && source_path != target_path {
+    if source_path != target_path {
         fs::rename(&source_path, &target_path).map_err(|error| {
             format!(
                 "Could not move image '{}' to '{}': {error}",
@@ -1065,6 +1084,7 @@ fn migrate_project_repo_to_0856(app: &AppHandle, repo_path: &Path) -> Result<(),
 #[derive(Debug, Default, PartialEq, Eq)]
 struct ImagePathRepairOutcome {
     rewritten_paths: usize,
+    moved_files: usize,
     unresolved_paths: usize,
     skipped_unreadable_rows: usize,
     affected_row_files: Vec<String>,
@@ -1132,11 +1152,12 @@ fn collect_existing_chapter_image_paths(
     Ok(index)
 }
 
-/// Recursively rewrite `{ kind: "upload", path }` references whose file is
-/// missing, when the same `images/`-remainder exists at exactly one other
-/// chapter location. Ambiguous or unlocatable references are left untouched
-/// and counted — the repair must never guess. Recursion keeps this decoupled
-/// from the row schema (image objects sit per language inside `fields`).
+/// Recursively rewrite `{ kind: "upload", path }` references whose file and
+/// chapter folder are missing, when the same `images/`-remainder exists at
+/// exactly one other chapter location. Ambiguous or unlocatable references
+/// are left untouched and counted — the repair must never guess. Recursion
+/// keeps this decoupled from the row schema (image objects sit per language
+/// inside `fields`).
 fn rewrite_stale_upload_paths_in_value(
     value: &mut Value,
     repo_path: &Path,
@@ -1154,11 +1175,19 @@ fn rewrite_stale_upload_paths_in_value(
                     let is_chapter_image =
                         normalized.starts_with("chapters/") && normalized.contains("/images/");
                     if is_chapter_image && !repo_path.join(&normalized).is_file() {
+                        // Only references into a chapter folder that no longer
+                        // exists are relocated. A file missing from an existing
+                        // chapter is never resolved by borrowing another
+                        // chapter's image that happens to share its name.
+                        let chapter_folder_exists = normalized
+                            .split('/')
+                            .nth(1)
+                            .is_some_and(|folder| repo_path.join("chapters").join(folder).is_dir());
                         let remainder = normalized
                             .find("/images/")
                             .map(|position| &normalized[position + "/images/".len()..]);
                         match remainder.and_then(|remainder| index.get(remainder)) {
-                            Some(candidates) if candidates.len() == 1 => {
+                            Some(candidates) if candidates.len() == 1 && !chapter_folder_exists => {
                                 *stored_path = candidates[0].clone();
                                 *changed = true;
                             }
@@ -1184,7 +1213,9 @@ fn rewrite_stale_upload_paths_in_value(
 
 /// Repair row image references that point at chapter folders that no longer
 /// exist (the 0.8.10 layout migration renamed orphaned image folders but only
-/// rewrote paths inside row files it was itself moving). Unparseable row
+/// rewrote paths inside row files it was itself moving). Missing files inside
+/// chapter folders that still exist are counted, not relocated; see
+/// `repair_nested_uploaded_image_files` for that case. Unparseable row
 /// files are skipped and counted, mirroring the 0.8.56 tolerance — failing a
 /// sync over one corrupt file would brick the repo.
 fn repair_stale_uploaded_image_paths(
@@ -1279,13 +1310,310 @@ fn migrate_project_repo_to_0875(app: &AppHandle, repo_path: &Path) -> Result<(),
     }
 
     write_image_path_repair_report(repo_path, &outcome)?;
-    record_image_path_repair_migration(repo_path)?;
+    record_image_path_repair_migration(repo_path, MIGRATION_0875)?;
     git_output(repo_path, &["add", "-A"], None)?;
     commit_migration_if_dirty(
         app,
         repo_path,
         MIGRATION_0875,
         "Repair uploaded image paths (0.8.75 migration)",
+    )
+}
+
+/// What one `fields.<lang>.image` upload reference needed.
+#[derive(Debug, PartialEq, Eq)]
+enum NestedUploadRepair {
+    /// The file exists, or the reference is not a chapter image.
+    Untouched,
+    /// The nested file was moved to the referenced path.
+    Moved,
+    /// The referenced name was already taken, so the nested file was moved
+    /// to this newly allocated path, which the row must now reference.
+    MovedTo(String),
+    Unresolved,
+}
+
+/// Repair uploaded images the 0.8.10 in-place migration left in their old
+/// per-row folders (`images/row-<rowId>-<lang>-<uuid>/<file>`) while it
+/// rewrote the row to a flat `images/<name>` path: it looked for the file
+/// under the pre-rename chapter folder, so every renamed chapter kept its
+/// nested files. Each missing flat reference is matched to the nested folder
+/// of its own row and language, and the file is moved to the referenced path
+/// — the current flat layout — so the row itself stays unchanged. Ambiguous
+/// or unlocatable references are left untouched and counted; the repair
+/// must never guess. Chapters and rows are visited in sorted order so two
+/// clones running it independently produce the same, mergeable result.
+fn repair_nested_uploaded_image_files(
+    repo_path: &Path,
+    chapters_root: &Path,
+) -> Result<ImagePathRepairOutcome, String> {
+    let mut outcome = ImagePathRepairOutcome::default();
+    // Lowercased repo-relative paths this run moved a file into. A second
+    // reference to one of them still points at a missing file of its own.
+    let mut claimed_paths = BTreeSet::<String>::new();
+
+    for chapter_dir in sorted_dir_paths(chapters_root, "chapters folder")? {
+        let rows_dir = chapter_dir.join("rows");
+        if !rows_dir.is_dir() {
+            continue;
+        }
+        for row_path in sorted_dir_paths(&rows_dir, "rows folder")? {
+            if row_path.extension().and_then(|value| value.to_str()) != Some("json") {
+                continue;
+            }
+            let row_file = repo_relative_display_path(repo_path, &row_path);
+            let mut row_value = match read_json_value(&row_path, "row file") {
+                Ok(value) => value,
+                Err(_) => {
+                    outcome.skipped_unreadable_rows += 1;
+                    outcome.affected_row_files.push(row_file);
+                    continue;
+                }
+            };
+            let Some(row_id) = row_path.file_stem().and_then(|value| value.to_str()) else {
+                continue;
+            };
+            let Some(fields) = row_value.get_mut("fields").and_then(Value::as_object_mut) else {
+                continue;
+            };
+
+            let mut changed = false;
+            let unresolved_before = outcome.unresolved_paths;
+            for (language, field) in fields.iter_mut() {
+                let Some(image) = field.get_mut("image").and_then(Value::as_object_mut) else {
+                    continue;
+                };
+                if image.get("kind").and_then(Value::as_str) != Some("upload") {
+                    continue;
+                }
+                let Some(Value::String(stored_path)) = image.get_mut("path") else {
+                    continue;
+                };
+                match repair_nested_upload_reference(
+                    repo_path,
+                    row_id,
+                    language,
+                    stored_path,
+                    &mut claimed_paths,
+                )? {
+                    NestedUploadRepair::Untouched => {}
+                    NestedUploadRepair::Moved => outcome.moved_files += 1,
+                    NestedUploadRepair::MovedTo(next_path) => {
+                        *stored_path = next_path;
+                        changed = true;
+                        outcome.moved_files += 1;
+                        outcome.rewritten_paths += 1;
+                    }
+                    NestedUploadRepair::Unresolved => outcome.unresolved_paths += 1,
+                }
+            }
+            if outcome.unresolved_paths > unresolved_before {
+                outcome.affected_row_files.push(row_file);
+            }
+            if changed {
+                write_json_value(&row_path, &row_value)?;
+            }
+        }
+    }
+    outcome.affected_row_files.sort();
+    outcome.affected_row_files.dedup();
+    Ok(outcome)
+}
+
+fn repair_nested_upload_reference(
+    repo_path: &Path,
+    row_id: &str,
+    language: &str,
+    stored_path: &str,
+    claimed_paths: &mut BTreeSet<String>,
+) -> Result<NestedUploadRepair, String> {
+    // Windows history may hold backslash separators.
+    let normalized = stored_path.trim().replace('\\', "/");
+    if !(normalized.starts_with("chapters/") && normalized.contains("/images/")) {
+        return Ok(NestedUploadRepair::Untouched);
+    }
+    let claimed = claimed_paths.contains(&normalized.to_ascii_lowercase());
+    if !claimed && repo_path.join(&normalized).is_file() {
+        return Ok(NestedUploadRepair::Untouched);
+    }
+    let Some((chapter_folder, referenced_name)) = flat_chapter_image_path_parts(&normalized) else {
+        return Ok(NestedUploadRepair::Unresolved);
+    };
+
+    let images_dir = repo_path
+        .join("chapters")
+        .join(chapter_folder)
+        .join("images");
+    let candidates = nested_row_upload_files(&images_dir, row_id, language)?
+        .into_iter()
+        .filter(|path| {
+            path.file_name()
+                .and_then(|value| value.to_str())
+                .is_some_and(|name| is_flat_name_allocated_from(referenced_name, name))
+        })
+        .collect::<Vec<_>>();
+    let [source_path] = candidates.as_slice() else {
+        return Ok(NestedUploadRepair::Unresolved);
+    };
+
+    let referenced_path = repo_path.join(&normalized);
+    let (next_path, repair) = if claimed || referenced_path.exists() {
+        let source_name = source_path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or(referenced_name);
+        let extension = Path::new(source_name)
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("");
+        let allocated_name =
+            allocate_short_image_filename(source_name, extension, local_file_names(&images_dir)?);
+        let next_path = format!("chapters/{chapter_folder}/images/{allocated_name}");
+        (next_path.clone(), NestedUploadRepair::MovedTo(next_path))
+    } else {
+        (normalized, NestedUploadRepair::Moved)
+    };
+
+    let target_path = repo_path.join(&next_path);
+    fs::rename(source_path, &target_path).map_err(|error| {
+        format!(
+            "Could not move image '{}' to '{next_path}': {error}",
+            repo_relative_display_path(repo_path, source_path)
+        )
+    })?;
+    remove_empty_parents(source_path.parent(), repo_path);
+    claimed_paths.insert(next_path.to_ascii_lowercase());
+    Ok(repair)
+}
+
+/// `chapters/<chapter>/images/<name>` — the flat shape
+/// `relative_uploaded_image_path` produces — as `(chapter, name)`.
+fn flat_chapter_image_path_parts(path: &str) -> Option<(&str, &str)> {
+    let parts = path.split('/').collect::<Vec<_>>();
+    let [chapters, chapter_folder, images, name] = parts.as_slice() else {
+        return None;
+    };
+    let is_plain = |part: &str| !part.is_empty() && part != "." && part != "..";
+    if *chapters != "chapters"
+        || *images != "images"
+        || !is_plain(chapter_folder)
+        || !is_plain(name)
+    {
+        return None;
+    }
+    Some((chapter_folder, name))
+}
+
+/// Files directly inside one row language's old per-row upload folders,
+/// `row-<rowId>-<lang>-<uuid>/`. Requiring a UUID suffix keeps `pt` from
+/// matching a `pt-BR` folder of the same row.
+fn nested_row_upload_files(
+    images_dir: &Path,
+    row_id: &str,
+    language: &str,
+) -> Result<Vec<PathBuf>, String> {
+    if !images_dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    let prefix = format!("row-{row_id}-{language}-");
+    let mut files = Vec::new();
+    for folder in sorted_dir_paths(images_dir, "image folder")? {
+        let is_row_upload_folder = folder.is_dir()
+            && folder
+                .file_name()
+                .and_then(|value| value.to_str())
+                .and_then(|name| name.strip_prefix(&prefix))
+                .is_some_and(|suffix| Uuid::parse_str(suffix).is_ok());
+        if !is_row_upload_folder {
+            continue;
+        }
+        for path in sorted_dir_paths(&folder, "image folder")? {
+            if path.is_file() {
+                files.push(path);
+            }
+        }
+    }
+    Ok(files)
+}
+
+/// Whether `referenced_name` is a flat name the layout migration could have
+/// allocated for the nested file `nested_name`: its short base name or a
+/// `-N` variant of it. Keeps an unrelated leftover from being moved into
+/// place under another image's name.
+fn is_flat_name_allocated_from(referenced_name: &str, nested_name: &str) -> bool {
+    let extension = Path::new(nested_name)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("");
+    let base_name =
+        allocate_short_image_filename(nested_name, extension, std::iter::empty::<&str>())
+            .to_ascii_lowercase();
+    let referenced_name = referenced_name.to_ascii_lowercase();
+    if referenced_name == base_name {
+        return true;
+    }
+    let referenced = Path::new(&referenced_name);
+    let Some(stem) = referenced.file_stem().and_then(|value| value.to_str()) else {
+        return false;
+    };
+    let Some((unsuffixed_stem, suffix)) = stem.rsplit_once('-') else {
+        return false;
+    };
+    if suffix.is_empty() || !suffix.bytes().all(|byte| byte.is_ascii_digit()) {
+        return false;
+    }
+    let unsuffixed_name = match referenced.extension().and_then(|value| value.to_str()) {
+        Some(extension) => format!("{unsuffixed_stem}.{extension}"),
+        None => unsuffixed_stem.to_string(),
+    };
+    unsuffixed_name == base_name
+}
+
+fn sorted_dir_paths(dir: &Path, label: &str) -> Result<Vec<PathBuf>, String> {
+    let mut paths = fs::read_dir(dir)
+        .map_err(|error| format!("Could not list the {label} '{}': {error}", dir.display()))?
+        .map(|entry| {
+            entry
+                .map(|entry| entry.path())
+                .map_err(|error| format!("Could not read a {label} entry: {error}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    paths.sort();
+    Ok(paths)
+}
+
+fn repo_relative_display_path(repo_path: &Path, path: &Path) -> String {
+    path.strip_prefix(repo_path)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+/// Content-only migration: move uploaded images out of per-row folders and
+/// record the marker. Same execution model as 0.8.75 — inline during sync,
+/// mergeable edits, dirty worktree skips the run and the next sync retries.
+/// It inspects every missing chapter-image reference, so its report
+/// supersedes the 0.8.75 one.
+fn migrate_project_repo_to_08138(app: &AppHandle, repo_path: &Path) -> Result<(), String> {
+    let status = git_output(repo_path, &["status", "--porcelain"], None)?;
+    if !status.trim().is_empty() {
+        return Ok(());
+    }
+
+    let chapters_root = repo_path.join("chapters");
+    let mut outcome = ImagePathRepairOutcome::default();
+    if chapters_root.exists() {
+        outcome = repair_nested_uploaded_image_files(repo_path, &chapters_root)?;
+    }
+
+    write_image_path_repair_report(repo_path, &outcome)?;
+    record_image_path_repair_migration(repo_path, MIGRATION_08138)?;
+    git_output(repo_path, &["add", "-A"], None)?;
+    commit_migration_if_dirty(
+        app,
+        repo_path,
+        MIGRATION_08138,
+        "Move uploaded images out of per-row folders (0.8.138 migration)",
     )
 }
 
@@ -1325,7 +1653,10 @@ fn write_image_path_repair_report(
     Ok(())
 }
 
-fn record_image_path_repair_migration(repo_path: &Path) -> Result<(), String> {
+fn record_image_path_repair_migration(
+    repo_path: &Path,
+    migration: &'static str,
+) -> Result<(), String> {
     let mut metadata = match read_repo_layout_metadata_state(repo_path) {
         RepoLayoutMetadataState::Readable(metadata) => metadata,
         RepoLayoutMetadataState::Missing => new_v2_repo_layout_metadata(RepoKind::Project),
@@ -1336,9 +1667,9 @@ fn record_image_path_repair_migration(repo_path: &Path) -> Result<(), String> {
     if !metadata
         .applied_migrations
         .iter()
-        .any(|migration| migration == MIGRATION_0875)
+        .any(|applied| applied == migration)
     {
-        metadata.applied_migrations.push(MIGRATION_0875.to_string());
+        metadata.applied_migrations.push(migration.to_string());
     }
     write_repo_layout_metadata(repo_path, &metadata)?;
     Ok(())
@@ -1440,7 +1771,7 @@ mod tests {
             .expect("write metadata");
         assert_eq!(
             pending_ids(&repo_path, &RepoKind::Project),
-            vec![MIGRATION_0856, MIGRATION_0875]
+            vec![MIGRATION_0856, MIGRATION_0875, MIGRATION_08138]
         );
         assert!(pending_ids(&repo_path, &RepoKind::Glossary).is_empty());
 
@@ -1448,6 +1779,9 @@ mod tests {
         let mut metadata = new_v2_repo_layout_metadata(RepoKind::Project);
         metadata.applied_migrations.push(MIGRATION_0856.to_string());
         metadata.applied_migrations.push(MIGRATION_0875.to_string());
+        metadata
+            .applied_migrations
+            .push(MIGRATION_08138.to_string());
         write_repo_layout_metadata(&repo_path, &metadata).expect("write migrated metadata");
         assert!(pending_ids(&repo_path, &RepoKind::Project).is_empty());
 
@@ -1578,17 +1912,19 @@ mod tests {
         let repo_path = temp_repo("image-path-repair-incomplete-marker");
         let outcome = ImagePathRepairOutcome {
             rewritten_paths: 1,
+            moved_files: 0,
             unresolved_paths: 2,
             skipped_unreadable_rows: 1,
             affected_row_files: vec!["chapters/one/rows/row-1.json".to_string()],
         };
 
         write_image_path_repair_report(&repo_path, &outcome).expect("write repair report");
-        record_image_path_repair_migration(&repo_path).expect("record attempted migration");
+        record_image_path_repair_migration(&repo_path, MIGRATION_0875)
+            .expect("record attempted migration");
 
         assert_eq!(
             pending_ids(&repo_path, &RepoKind::Project),
-            vec![MIGRATION_0856]
+            vec![MIGRATION_0856, MIGRATION_08138]
         );
         let report = read_json_value(
             &repo_path.join(IMAGE_PATH_REPAIR_REPORT_RELATIVE_PATH),
@@ -1610,6 +1946,7 @@ mod tests {
         let repo_path = temp_repo("image-path-repair-complete-marker");
         let mut metadata = new_v2_repo_layout_metadata(RepoKind::Project);
         metadata.applied_migrations.push(MIGRATION_0856.to_string());
+        metadata.applied_migrations.push(MIGRATION_0875.to_string());
         write_repo_layout_metadata(&repo_path, &metadata).expect("write metadata");
 
         fs::create_dir_all(repo_path.join(".gtms")).expect("create report folder");
@@ -1620,7 +1957,8 @@ mod tests {
         .expect("write stale report");
         write_image_path_repair_report(&repo_path, &ImagePathRepairOutcome::default())
             .expect("remove stale report");
-        record_image_path_repair_migration(&repo_path).expect("complete repair records marker");
+        record_image_path_repair_migration(&repo_path, MIGRATION_08138)
+            .expect("complete repair records marker");
 
         assert!(pending_ids(&repo_path, &RepoKind::Project).is_empty());
         assert!(!repo_path
@@ -1628,6 +1966,373 @@ mod tests {
             .exists());
 
         let _ = fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn stale_path_repair_never_borrows_another_chapters_image() {
+        let repo_path = temp_repo("image-path-repair-existing-chapter");
+        let chapters_root = repo_path.join("chapters");
+        // The only `embedded-image.png` in the repo belongs to another chapter.
+        let other_images = chapters_root.join("12-om-masi-padme-yon/images");
+        fs::create_dir_all(&other_images).expect("create other chapter images");
+        fs::write(other_images.join("embedded-image.png"), b"png").expect("write other image");
+        // The referenced chapter still exists; only its file is missing.
+        let rows_dir = chapters_root.join("13-el-sutra-del-coraz/rows");
+        write_row_with_image_path(
+            &rows_dir,
+            "row-1.json",
+            "chapters/13-el-sutra-del-coraz/images/embedded-image.png",
+        );
+
+        let outcome =
+            repair_stale_uploaded_image_paths(&repo_path, &chapters_root).expect("repair succeeds");
+
+        assert_eq!(outcome.rewritten_paths, 0);
+        assert_eq!(outcome.unresolved_paths, 1);
+        assert_eq!(
+            row_image_path(&rows_dir, "row-1.json"),
+            "chapters/13-el-sutra-del-coraz/images/embedded-image.png",
+        );
+
+        let _ = fs::remove_dir_all(repo_path);
+    }
+
+    const ROW_A: &str = "019e674b-ff24-7fb2-9ef3-221d71c56144";
+    const ROW_B: &str = "019e674b-ff26-7663-bf7e-60591290cc6d";
+
+    fn write_row_with_upload(rows_dir: &Path, row_id: &str, language: &str, image_path: &str) {
+        fs::create_dir_all(rows_dir).expect("create rows dir");
+        let mut fields = serde_json::Map::new();
+        fields.insert(
+            language.to_string(),
+            serde_json::json!({
+                "plain_text": "Texto",
+                "image": { "kind": "upload", "path": image_path },
+            }),
+        );
+        let row = serde_json::json!({ "row_id": row_id, "fields": fields });
+        fs::write(
+            rows_dir.join(format!("{row_id}.json")),
+            serde_json::to_string_pretty(&row).expect("serialize row"),
+        )
+        .expect("write row");
+    }
+
+    fn row_upload_path(rows_dir: &Path, row_id: &str, language: &str) -> String {
+        let row = fs::read_to_string(rows_dir.join(format!("{row_id}.json"))).expect("read row");
+        let value: Value = serde_json::from_str(&row).expect("parse row");
+        value["fields"][language]["image"]["path"]
+            .as_str()
+            .expect("image path")
+            .to_string()
+    }
+
+    /// Write an upload in the old per-row layout,
+    /// `images/row-<rowId>-<lang>-<uuid>/<name>`, and return its folder.
+    fn write_nested_upload(
+        chapter_dir: &Path,
+        row_id: &str,
+        language: &str,
+        name: &str,
+        bytes: &[u8],
+    ) -> std::path::PathBuf {
+        let folder = chapter_dir
+            .join("images")
+            .join(format!("row-{row_id}-{language}-{}", Uuid::now_v7()));
+        fs::create_dir_all(&folder).expect("create nested upload folder");
+        fs::write(folder.join(name), bytes).expect("write nested upload");
+        folder
+    }
+
+    fn sorted_file_names(dir: &Path) -> Vec<String> {
+        let mut names = local_file_names(dir).expect("list folder");
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn in_place_layout_migration_flattens_images_of_renamed_chapters() {
+        // Chapter folders are renamed before rows are migrated, so the nested
+        // file must be found under the new folder, not at the stored old path.
+        // Before the fix the rows were rewritten to flat names and the files
+        // stayed nested — the field state the 0.8.138 repair heals.
+        let repo_path = temp_repo("in-place-renamed-chapter-images");
+        let chapter_dir = repo_path.join("chapters/short-folder");
+        let rows_dir = chapter_dir.join("rows");
+        let mut nested_folders = Vec::new();
+        for (row_id, bytes) in [(ROW_A, b"a"), (ROW_B, b"b")] {
+            let folder =
+                write_nested_upload(&chapter_dir, row_id, "es", "embedded-image.png", bytes);
+            let folder_name = folder
+                .file_name()
+                .and_then(|value| value.to_str())
+                .expect("folder name");
+            write_row_with_upload(
+                &rows_dir,
+                row_id,
+                "es",
+                &format!("chapters/long-old-folder-name/images/{folder_name}/embedded-image.png"),
+            );
+            nested_folders.push(folder);
+        }
+
+        migrate_project_chapter(
+            &repo_path,
+            &ProjectChapterMigration {
+                old_folder: "long-old-folder-name".to_string(),
+                new_folder: "short-folder".to_string(),
+                title: None,
+            },
+        )
+        .expect("migrate chapter");
+
+        let mut paths = Vec::new();
+        for (row_id, bytes) in [(ROW_A, b"a"), (ROW_B, b"b")] {
+            let path = row_upload_path(&rows_dir, row_id, "es");
+            assert_eq!(
+                fs::read(repo_path.join(&path)).expect("referenced image exists"),
+                bytes
+            );
+            paths.push(path);
+        }
+        paths.sort();
+        assert_eq!(
+            paths,
+            [
+                "chapters/short-folder/images/embedded-image-2.png",
+                "chapters/short-folder/images/embedded-image.png",
+            ]
+        );
+        assert!(nested_folders.iter().all(|folder| !folder.exists()));
+
+        let _ = fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn moves_nested_uploads_to_the_flat_paths_their_rows_reference() {
+        // The field case: the 0.8.10 in-place migration renamed the chapter,
+        // rewrote its rows to flat names, and left the files nested.
+        let repo_path = temp_repo("nested-upload-repair");
+        let chapters_root = repo_path.join("chapters");
+        let chapter_dir = chapters_root.join("13-el-sutra-del-coraz");
+        let rows_dir = chapter_dir.join("rows");
+        let nested_a = write_nested_upload(&chapter_dir, ROW_A, "es", "embedded-image.png", b"a");
+        let nested_b = write_nested_upload(&chapter_dir, ROW_B, "es", "embedded-image.png", b"b");
+        write_row_with_upload(
+            &rows_dir,
+            ROW_A,
+            "es",
+            "chapters/13-el-sutra-del-coraz/images/embedded-image-2.png",
+        );
+        write_row_with_upload(
+            &rows_dir,
+            ROW_B,
+            "es",
+            "chapters/13-el-sutra-del-coraz/images/embedded-image.png",
+        );
+        let rows_before = [ROW_A, ROW_B]
+            .map(|row_id| fs::read(rows_dir.join(format!("{row_id}.json"))).expect("read row"));
+
+        let outcome = repair_nested_uploaded_image_files(&repo_path, &chapters_root)
+            .expect("repair succeeds");
+
+        assert_eq!(
+            outcome,
+            ImagePathRepairOutcome {
+                moved_files: 2,
+                ..ImagePathRepairOutcome::default()
+            }
+        );
+        let images_dir = chapter_dir.join("images");
+        assert_eq!(
+            fs::read(images_dir.join("embedded-image-2.png")).expect("read row A image"),
+            b"a"
+        );
+        assert_eq!(
+            fs::read(images_dir.join("embedded-image.png")).expect("read row B image"),
+            b"b"
+        );
+        // The rows already reference the flat paths and stay byte-for-byte.
+        let rows_after = [ROW_A, ROW_B]
+            .map(|row_id| fs::read(rows_dir.join(format!("{row_id}.json"))).expect("read row"));
+        assert_eq!(rows_after, rows_before);
+        // The emptied per-row folders are gone.
+        assert!(!nested_a.exists() && !nested_b.exists());
+        assert_eq!(
+            sorted_file_names(&images_dir),
+            ["embedded-image-2.png", "embedded-image.png"]
+        );
+
+        // Idempotent: a second run finds nothing to do.
+        let second = repair_nested_uploaded_image_files(&repo_path, &chapters_root)
+            .expect("second repair succeeds");
+        assert_eq!(second, ImagePathRepairOutcome::default());
+
+        let _ = fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn nested_upload_repair_allocates_a_fresh_name_for_a_shared_reference() {
+        let repo_path = temp_repo("nested-upload-repair-duplicate");
+        let chapters_root = repo_path.join("chapters");
+        let chapter_dir = chapters_root.join("chapter-one");
+        let rows_dir = chapter_dir.join("rows");
+        let images_dir = chapter_dir.join("images");
+        fs::create_dir_all(&images_dir).expect("create images folder");
+        fs::write(images_dir.join("photo-2.png"), b"existing").expect("write existing image");
+        // Both rows reference the same missing flat name.
+        for (row_id, bytes) in [(ROW_A, b"a"), (ROW_B, b"b")] {
+            write_nested_upload(&chapter_dir, row_id, "es", "photo.png", bytes);
+            write_row_with_upload(
+                &rows_dir,
+                row_id,
+                "es",
+                "chapters/chapter-one/images/photo.png",
+            );
+        }
+
+        let outcome = repair_nested_uploaded_image_files(&repo_path, &chapters_root)
+            .expect("repair succeeds");
+
+        assert_eq!(outcome.moved_files, 2);
+        assert_eq!(outcome.rewritten_paths, 1);
+        assert_eq!(outcome.unresolved_paths, 0);
+        // Rows are visited in sorted order: the first keeps the referenced
+        // name, the second gets the next free one and its row is rewritten.
+        assert_eq!(
+            row_upload_path(&rows_dir, ROW_A, "es"),
+            "chapters/chapter-one/images/photo.png"
+        );
+        assert_eq!(
+            row_upload_path(&rows_dir, ROW_B, "es"),
+            "chapters/chapter-one/images/photo-3.png"
+        );
+        assert_eq!(
+            fs::read(images_dir.join("photo.png")).expect("read A"),
+            b"a"
+        );
+        assert_eq!(
+            fs::read(images_dir.join("photo-3.png")).expect("read B"),
+            b"b"
+        );
+        assert_eq!(
+            fs::read(images_dir.join("photo-2.png")).expect("read existing"),
+            b"existing"
+        );
+
+        let _ = fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn nested_upload_repair_leaves_unmatched_references_untouched() {
+        let repo_path = temp_repo("nested-upload-repair-skips");
+        let chapters_root = repo_path.join("chapters");
+        let chapter_dir = chapters_root.join("chapter-one");
+        let rows_dir = chapter_dir.join("rows");
+        let images_dir = chapter_dir.join("images");
+        let row = |suffix: &str| format!("019e0000-0000-7000-8000-0000000000{suffix}");
+
+        // Valid: the referenced flat file exists.
+        fs::create_dir_all(&images_dir).expect("create images folder");
+        fs::write(images_dir.join("valid.png"), b"png").expect("write valid image");
+        write_row_with_upload(
+            &rows_dir,
+            &row("01"),
+            "es",
+            "chapters/chapter-one/images/valid.png",
+        );
+
+        // Ambiguous: two per-row folders for the same row and language.
+        write_nested_upload(&chapter_dir, &row("02"), "es", "twin.png", b"1");
+        write_nested_upload(&chapter_dir, &row("02"), "es", "twin.png", b"2");
+        write_row_with_upload(
+            &rows_dir,
+            &row("02"),
+            "es",
+            "chapters/chapter-one/images/twin.png",
+        );
+
+        // Name mismatch: the nested file is not what the reference names.
+        write_nested_upload(&chapter_dir, &row("03"), "es", "other.png", b"png");
+        write_row_with_upload(
+            &rows_dir,
+            &row("03"),
+            "es",
+            "chapters/chapter-one/images/photo.png",
+        );
+
+        // Language prefix: a `pt-BR` folder must not satisfy a `pt` field.
+        write_nested_upload(&chapter_dir, &row("04"), "pt-BR", "photo.png", b"png");
+        write_row_with_upload(
+            &rows_dir,
+            &row("04"),
+            "pt",
+            "chapters/chapter-one/images/photo.png",
+        );
+
+        // Unlocatable: no nested file at all.
+        write_row_with_upload(
+            &rows_dir,
+            &row("05"),
+            "es",
+            "chapters/chapter-one/images/lost.png",
+        );
+
+        // Missing, but not a flat reference.
+        write_row_with_upload(
+            &rows_dir,
+            &row("06"),
+            "es",
+            "chapters/gone/images/row-1-es-2/lost.png",
+        );
+
+        // Unreadable row files are skipped, not fatal.
+        fs::write(rows_dir.join("corrupt.json"), b"not json").expect("write corrupt row");
+
+        let images_before = sorted_file_names(&images_dir);
+        let outcome = repair_nested_uploaded_image_files(&repo_path, &chapters_root)
+            .expect("repair succeeds");
+
+        assert_eq!(outcome.moved_files, 0);
+        assert_eq!(outcome.rewritten_paths, 0);
+        assert_eq!(outcome.unresolved_paths, 5);
+        assert_eq!(outcome.skipped_unreadable_rows, 1);
+        assert_eq!(outcome.affected_row_files.len(), 6);
+        assert_eq!(sorted_file_names(&images_dir), images_before);
+        assert_eq!(
+            row_upload_path(&rows_dir, &row("04"), "pt"),
+            "chapters/chapter-one/images/photo.png"
+        );
+
+        let _ = fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn flat_name_must_be_allocated_from_the_nested_name() {
+        assert!(is_flat_name_allocated_from(
+            "embedded-image.png",
+            "embedded-image.png"
+        ));
+        assert!(is_flat_name_allocated_from(
+            "embedded-image-2.png",
+            "embedded-image.png"
+        ));
+        assert!(is_flat_name_allocated_from(
+            "Original-Photo-12.PNG",
+            "original photo.png"
+        ));
+        assert!(!is_flat_name_allocated_from(
+            "photo.png",
+            "embedded-image.png"
+        ));
+        assert!(!is_flat_name_allocated_from(
+            "embedded-image-x.png",
+            "embedded-image.png"
+        ));
+        assert!(!is_flat_name_allocated_from(
+            "embedded-image-2.jpg",
+            "embedded-image.png"
+        ));
     }
 
     #[test]
