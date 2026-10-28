@@ -926,15 +926,13 @@ fn element_text(element: ElementRef<'_>, preserve_breaks: bool) -> String {
 }
 
 fn normalize_html_text(value: &str, preserve_breaks: bool) -> String {
-    // Preformatted lines stay lines of one paragraph: a bare newline in a row
-    // would be a paragraph break, so each line ends with a `<br>` line break.
     if preserve_breaks {
         return value
             .lines()
             .map(|line| normalize_html_text(line, false))
             .filter(|line| !line.is_empty())
             .collect::<Vec<_>>()
-            .join("<br>\n");
+            .join("\n");
     }
 
     value.split_whitespace().collect::<Vec<_>>().join(" ")

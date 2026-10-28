@@ -523,11 +523,7 @@ pub(super) fn extract_project_translation_text_sync(
                 bytes: input.bytes,
                 source_language_code: "en".to_string(),
             })?;
-            // Alignment units are lines, so a DOCX line break stays a plain newline.
             parsed_plain_text_blocks(parsed, "en")
-                .into_iter()
-                .map(|block| block.replace("<br>", ""))
-                .collect()
         }
         "rtf" => extract_rtf_plain_text(&input.bytes)?,
         _ => {
@@ -1009,37 +1005,6 @@ mod tests {
         assert_eq!(response.plain_text, "First paragraph\nSecond paragraph");
         assert_eq!(response.unit_count, 2);
         assert!(!response.plain_text.contains("Hidden footnote"));
-    }
-
-    #[test]
-    fn docx_text_wrapping_breaks_import_as_line_breaks() {
-        let document_xml = r#"
-            <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-              <w:body>
-                <w:p>
-                  <w:r><w:br/><w:t>First line</w:t><w:br/><w:t>second line</w:t></w:r>
-                  <w:r><w:br w:type="page"/><w:t>Next page</w:t><w:br/></w:r>
-                </w:p>
-              </w:body>
-            </w:document>
-        "#;
-        let parsed = parse_docx_file(docx_input(minimal_docx(document_xml, None), "en"))
-            .expect("DOCX should parse");
-        assert_eq!(
-            parsed.rows[0]
-                .fields
-                .get("en")
-                .map(|field| field.plain_text.as_str()),
-            Some("First line<br>\nsecond line\nNext page")
-        );
-
-        let response = extract_project_translation_text_sync(ExtractProjectTranslationTextInput {
-            file_name: "translation.docx".to_string(),
-            bytes: minimal_docx(document_xml, None),
-        })
-        .expect("DOCX translation text should extract");
-        assert_eq!(response.plain_text, "First line\nsecond line\nNext page");
-        assert_eq!(response.unit_count, 3);
     }
 
     #[test]
