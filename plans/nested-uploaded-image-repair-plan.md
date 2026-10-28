@@ -1,4 +1,4 @@
-# Move uploaded images left in per-row folders (0.8.137 content migration)
+# Move uploaded images left in per-row folders (0.8.138 content migration)
 
 ## Problem
 
@@ -44,7 +44,7 @@ either, it keeps the reference pointing at the chapter-relocated path and does
 not allocate a flat name for a file it cannot move. Repos still pending 0.8.10
 then migrate correctly.
 
-### 2. New content migration `MIGRATION_08137 = "0.8.137"`
+### 2. New content migration `MIGRATION_08138 = "0.8.138"`
 
 Registered after 0.8.75 (Project repos only), same execution model as
 0.8.56/0.8.75: skip on dirty worktree, tolerant per-file edits, metadata
@@ -89,14 +89,14 @@ whose `images/` remainder is unique repo-wide. For flat references like
 `chapters/A/images/embedded-image.png` that would point a row at another
 chapter's image when exactly one other chapter has that name. Restrict the
 relocation to references whose chapter folder is gone; others are counted as
-unresolved. Repos still pending 0.8.75 run it before 0.8.137, so this guard
+unresolved. Repos still pending 0.8.75 run it before 0.8.138, so this guard
 keeps it from claiming the nested-folder cases first.
 
 ## Files
 
-- `src-tauri/src/repo_layout_metadata.rs` — `MIGRATION_08137`.
+- `src-tauri/src/repo_layout_metadata.rs` — `MIGRATION_08138`.
 - `src-tauri/src/repo_migrations.rs` — root-cause fix, guard, registry
-  entry, `migrate_project_repo_to_08137`, `repair_nested_uploaded_image_files`,
+  entry, `migrate_project_repo_to_08138`, `repair_nested_uploaded_image_files`,
   tests.
 - `src-tauri/src/project_repo_sync.rs` — tests that record "all content
   migrations" include the new id.
@@ -112,7 +112,7 @@ keeps it from claiming the nested-folder cases first.
 - Ambiguous (two nested folders), name-mismatched, language-prefix (`pt` vs
   `pt-BR`) and unlocatable cases are left untouched and counted.
 - 0.8.75 no longer relocates a reference whose chapter folder exists.
-- Registry/pending-state tests include 0.8.137.
+- Registry/pending-state tests include 0.8.138.
 
 ## Non-goals
 

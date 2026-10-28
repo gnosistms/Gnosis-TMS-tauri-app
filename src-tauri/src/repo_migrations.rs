@@ -14,7 +14,7 @@ use crate::{
     repo_layout_metadata::{
         new_v2_repo_layout_metadata, parse_repo_layout_metadata_bytes,
         read_repo_layout_metadata_state, write_repo_layout_metadata, RepoKind, RepoLayoutMetadata,
-        RepoLayoutMetadataState, MIGRATION_0810, MIGRATION_08137, MIGRATION_0856, MIGRATION_0875,
+        RepoLayoutMetadataState, MIGRATION_0810, MIGRATION_08138, MIGRATION_0856, MIGRATION_0875,
         REPO_METADATA_RELATIVE_PATH,
     },
     repo_sync_shared::{format_git_spawn_error, git_command, git_output},
@@ -72,11 +72,11 @@ const REPO_MIGRATION_REGISTRY: &[RepoMigrationDescriptor] = &[
         run_content: Some(migrate_project_repo_to_0875),
     },
     RepoMigrationDescriptor {
-        id: MIGRATION_08137,
+        id: MIGRATION_08138,
         kind: RepoMigrationKind::Content,
         applies_to: &[RepoKind::Project],
         pending_description: "the uploaded image file repair migration",
-        run_content: Some(migrate_project_repo_to_08137),
+        run_content: Some(migrate_project_repo_to_08138),
     },
 ];
 
@@ -1594,7 +1594,7 @@ fn repo_relative_display_path(repo_path: &Path, path: &Path) -> String {
 /// mergeable edits, dirty worktree skips the run and the next sync retries.
 /// It inspects every missing chapter-image reference, so its report
 /// supersedes the 0.8.75 one.
-fn migrate_project_repo_to_08137(app: &AppHandle, repo_path: &Path) -> Result<(), String> {
+fn migrate_project_repo_to_08138(app: &AppHandle, repo_path: &Path) -> Result<(), String> {
     let status = git_output(repo_path, &["status", "--porcelain"], None)?;
     if !status.trim().is_empty() {
         return Ok(());
@@ -1607,13 +1607,13 @@ fn migrate_project_repo_to_08137(app: &AppHandle, repo_path: &Path) -> Result<()
     }
 
     write_image_path_repair_report(repo_path, &outcome)?;
-    record_image_path_repair_migration(repo_path, MIGRATION_08137)?;
+    record_image_path_repair_migration(repo_path, MIGRATION_08138)?;
     git_output(repo_path, &["add", "-A"], None)?;
     commit_migration_if_dirty(
         app,
         repo_path,
-        MIGRATION_08137,
-        "Move uploaded images out of per-row folders (0.8.137 migration)",
+        MIGRATION_08138,
+        "Move uploaded images out of per-row folders (0.8.138 migration)",
     )
 }
 
@@ -1771,7 +1771,7 @@ mod tests {
             .expect("write metadata");
         assert_eq!(
             pending_ids(&repo_path, &RepoKind::Project),
-            vec![MIGRATION_0856, MIGRATION_0875, MIGRATION_08137]
+            vec![MIGRATION_0856, MIGRATION_0875, MIGRATION_08138]
         );
         assert!(pending_ids(&repo_path, &RepoKind::Glossary).is_empty());
 
@@ -1781,7 +1781,7 @@ mod tests {
         metadata.applied_migrations.push(MIGRATION_0875.to_string());
         metadata
             .applied_migrations
-            .push(MIGRATION_08137.to_string());
+            .push(MIGRATION_08138.to_string());
         write_repo_layout_metadata(&repo_path, &metadata).expect("write migrated metadata");
         assert!(pending_ids(&repo_path, &RepoKind::Project).is_empty());
 
@@ -1924,7 +1924,7 @@ mod tests {
 
         assert_eq!(
             pending_ids(&repo_path, &RepoKind::Project),
-            vec![MIGRATION_0856, MIGRATION_08137]
+            vec![MIGRATION_0856, MIGRATION_08138]
         );
         let report = read_json_value(
             &repo_path.join(IMAGE_PATH_REPAIR_REPORT_RELATIVE_PATH),
@@ -1957,7 +1957,7 @@ mod tests {
         .expect("write stale report");
         write_image_path_repair_report(&repo_path, &ImagePathRepairOutcome::default())
             .expect("remove stale report");
-        record_image_path_repair_migration(&repo_path, MIGRATION_08137)
+        record_image_path_repair_migration(&repo_path, MIGRATION_08138)
             .expect("complete repair records marker");
 
         assert!(pending_ids(&repo_path, &RepoKind::Project).is_empty());
@@ -2055,7 +2055,7 @@ mod tests {
         // Chapter folders are renamed before rows are migrated, so the nested
         // file must be found under the new folder, not at the stored old path.
         // Before the fix the rows were rewritten to flat names and the files
-        // stayed nested — the field state the 0.8.137 repair heals.
+        // stayed nested — the field state the 0.8.138 repair heals.
         let repo_path = temp_repo("in-place-renamed-chapter-images");
         let chapter_dir = repo_path.join("chapters/short-folder");
         let rows_dir = chapter_dir.join("rows");
