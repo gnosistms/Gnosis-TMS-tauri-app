@@ -13,6 +13,9 @@ pub(crate) const MIGRATION_0810: &str = "0.8.10";
 // Unlike 0.8.10 it is git-mergeable and runs inline during project repo sync.
 pub(crate) const MIGRATION_0856: &str = "0.8.56";
 pub(crate) const MIGRATION_0875: &str = "0.8.75";
+// Content-only repair: moves uploaded images the 0.8.10 in-place migration
+// left in per-row folders to the flat paths their rows already reference.
+pub(crate) const MIGRATION_08137: &str = "0.8.137";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum RepoKind {
