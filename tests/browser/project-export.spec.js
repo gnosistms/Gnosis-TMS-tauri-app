@@ -959,6 +959,9 @@ test("book preview uses print typography for body, headings, quotes, captions, a
   expect(styles.h2.size / styles.body.size).toBeCloseTo(12 / 11.5, 3);
   expect(styles.h1.caps).toBe("uppercase");
   expect(styles.h2.caps).toBe("uppercase");
+  // One body line below each heading: trimmed boxes add it as margin.
+  expect(styles.h1.after / styles.body.size).toBeCloseTo(styles.trimmed ? .78 : 0, 3);
+  expect(styles.h2.after / styles.body.size).toBeCloseTo(styles.trimmed ? .78 : 0, 3);
   expect(styles.h1.weight).toBe("400");
   expect(styles.quote.italic).toBe("normal");
   expect(styles.quote.size / styles.body.size).toBeCloseTo(.9, 3);

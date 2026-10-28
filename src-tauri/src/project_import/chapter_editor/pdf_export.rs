@@ -2678,7 +2678,10 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
     // Kindred style: Alegreya leads titles and body headings on Latin-script
     // exports, with the body's own fallbacks behind it. Body headings are set
     // in capitals so an H2, only half a point above the body size, still reads
-    // as a heading. Other scripts keep their body families for headings.
+    // as a heading. The space below a heading is the body's own leading, so it
+    // sits one ordinary line above its text instead of crowding it; `em` here
+    // would follow the larger heading size. Other scripts keep their body
+    // families for headings.
     let heading_families = heading_font_families(document);
     let heading_family_list = heading_families
         .iter()
@@ -2686,7 +2689,7 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     let heading_rule = if latin {
-        format!("#show heading: set text(font: ({heading_family_list}), weight: \"regular\")\n#show heading: upper\n#show heading.where(level: 1): set text(size: 13pt)\n#show heading.where(level: 2): set text(size: 12pt)\n#show heading: set block(above: 1.3em, below: 0.5em)\n")
+        format!("#show heading: set text(font: ({heading_family_list}), weight: \"regular\")\n#show heading: upper\n#show heading.where(level: 1): set text(size: 13pt)\n#show heading.where(level: 2): set text(size: 12pt)\n#show heading: set block(above: 1.3em, below: {size_pt}pt * {leading_em})\n")
     } else {
         String::new()
     };
@@ -4519,6 +4522,9 @@ mod tests {
         assert!(vietnamese_preamble.contains("#show heading: upper\n"));
         assert!(vietnamese_preamble.contains("#show heading.where(level: 1): set text(size: 13pt)"));
         assert!(vietnamese_preamble.contains("#show heading.where(level: 2): set text(size: 12pt)"));
+        // One body line of space below each heading, whatever its size.
+        assert!(vietnamese_preamble
+            .contains("#show heading: set block(above: 1.3em, below: 11.5pt * 0.78)"));
         assert!(!vietnamese_preamble.contains("Noto Serif"));
         assert!(vietnamese_preamble.contains("size: 11.5pt"));
         assert!(vietnamese_preamble.contains("leading: 0.78em"));
