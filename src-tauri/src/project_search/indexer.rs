@@ -480,7 +480,11 @@ pub(super) fn row_search_documents_from_value(
             .unwrap_or_default()
             .trim()
             .to_string();
-        if !image_caption.is_empty() {
+        // A caption whose image was removed is not shown, so it is not indexed.
+        let has_image = field_value
+            .get("image")
+            .is_some_and(|image| !image.is_null());
+        if has_image && !image_caption.is_empty() {
             documents.push(RowSearchDocument {
                 language_code: language_code.clone(),
                 language_name,

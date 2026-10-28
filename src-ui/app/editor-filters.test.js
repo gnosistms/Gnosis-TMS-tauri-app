@@ -274,7 +274,10 @@ test("search includes visible image captions", () => {
         "row-1",
         { es: "sin termino" },
         "active",
-        { imageCaptions: { es: "distintos imagen" } },
+        {
+          imageCaptions: { es: "distintos imagen" },
+          images: { es: { kind: "url", url: "https://example.com/photo.jpg" } },
+        },
       ),
     ],
     languages: [language("es")],
@@ -291,6 +294,25 @@ test("search includes visible image captions", () => {
     [...(result.searchMatchesByRowId.get("row-1")?.keys() ?? [])],
     ["es:image-caption"],
   );
+});
+
+test("search skips a caption left behind when its image was removed", () => {
+  const result = buildEditorFilterResult({
+    rows: [
+      row(
+        "row-1",
+        { vi: "Ta sẽ cho người chiến thắng làm trụ cột" },
+        "active",
+        { searchImageCaptions: { vi: "phép thần thông điều khiển nước" } },
+      ),
+    ],
+    languages: [language("vi")],
+    collapsedLanguageCodes: new Set(),
+    filters: { searchQuery: "nước" },
+  });
+
+  assert.deepEqual(result.filteredRows, []);
+  assert.deepEqual(result.searchResults, []);
 });
 
 test("search and target-empty filtering use visible text instead of raw inline tags", () => {

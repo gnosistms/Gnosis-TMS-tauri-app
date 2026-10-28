@@ -34,7 +34,7 @@ use refresh::{
 const MAX_RESULT_ROWS: usize = 500;
 pub(crate) use research::population as research_population;
 const MIN_SEARCH_QUERY_LENGTH: usize = 2;
-const PROJECT_SEARCH_CONTENT_VERSION: i64 = 2;
+const PROJECT_SEARCH_CONTENT_VERSION: i64 = 3;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -868,11 +868,14 @@ mod tests {
                 "es": {
                     "plain_text": "Texto principal",
                     "footnote": "Nota visible",
-                    "image_caption": "Pie de foto"
+                    "image_caption": "Pie de foto",
+                    "image": { "kind": "url", "url": "https://example.com/foto.jpg" }
                 },
                 "en": {
                     "plain_text": "Reference",
-                    "footnote": "   "
+                    "footnote": "   ",
+                    "image_caption": "Caption left after its image was removed",
+                    "image": null
                 }
             }
         });

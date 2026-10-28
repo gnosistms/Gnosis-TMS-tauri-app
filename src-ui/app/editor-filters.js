@@ -282,7 +282,11 @@ function buildRowSearchMatches(row, searchQuery, visibleLanguageCodes, caseSensi
     }
     const imageCaption = String(section?.imageCaption ?? "");
     const searchImageCaption = String(section?.searchImageCaption ?? imageCaption);
-    if (section?.hasVisibleImageCaption === true || searchImageCaption.trim().length > 0) {
+    // A caption whose image was removed is not shown, so it must not match either.
+    if (
+      section?.image
+      && (section?.hasVisibleImageCaption === true || searchImageCaption.trim().length > 0)
+    ) {
       contentSections.push({
         contentKind: "image-caption",
         text: searchImageCaption,
