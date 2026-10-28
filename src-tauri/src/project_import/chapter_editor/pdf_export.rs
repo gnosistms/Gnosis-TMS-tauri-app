@@ -1458,6 +1458,7 @@ fn render_typst_chapter(
         None
     };
     let mut indent_next = false;
+    let mut set_citation = None;
     for block_index in emission_order {
         let block = &document.blocks[block_index];
         check_cancelled(cancelled)?;
@@ -1491,37 +1492,38 @@ fn render_typst_chapter(
                         "#set par(first-line-indent: (amount: {amount}, all: true))\n"
                     ));
                 }
-                let mut text_block = render_typst_text_block(
-                    text_style,
-                    &inline,
-                    Some(block_index) == dropcap_index,
-                );
-                if book_chapter && style == "heading1" {
-                    // Keep the metadata outside heading content (where a label
-                    // binds to the heading itself), and move both as one unit.
-                    text_block = format!("#block(sticky: true, breakable: false)[#metadata((title: {}, numbering: \"1\", level: 1)) <gnosis-book-entry>\n{text_block}]\n", typst_string(&inline_visible_text(text)));
-                }
-                let cited = matches!(
-                    document.blocks.get(block_index + 1),
-                    Some(ExportBlock::Attribution { .. })
-                );
-                if matches!(style.as_str(), "quote" | "blockquote") {
-                    // Typst drops spacing at a block's edges, so this wrapper's
-                    // spacing replaces the quote's built-in 2.4em above and 1.8em
-                    // below: every quote gets the citation's 1.5em, while a cited
-                    // quote keeps normal paragraph spacing down to its citation.
-                    let spacing = if cited {
-                        "sticky: true, breakable: true, above: 1.5em"
-                    } else {
-                        "above: 1.5em, below: 1.5em"
-                    };
-                    source.push_str(&format!("#block({spacing})[{text_block}]\n"));
-                } else if cited {
-                    source.push_str(&format!(
-                        "#block(sticky: true, breakable: true)[{text_block}]\n"
-                    ));
+                let dropcap = Some(block_index) == dropcap_index;
+                let citation = match document.blocks.get(block_index + 1) {
+                    Some(ExportBlock::Attribution { text }) => Some(text),
+                    _ => None,
+                };
+                let cited_block = citation.filter(|_| !dropcap).and_then(|citation| {
+                    render_typst_cited_text_block(
+                        text_style,
+                        &inline,
+                        &render_inline_typst(citation, false),
+                    )
+                });
+                if let Some(cited_block) = cited_block {
+                    source.push_str(&cited_block);
+                    set_citation = Some(block_index + 1);
                 } else {
-                    source.push_str(&text_block);
+                    let mut text_block = render_typst_text_block(text_style, &inline, dropcap);
+                    if book_chapter && style == "heading1" {
+                        // Keep the metadata outside heading content (where a label
+                        // binds to the heading itself), and move both as one unit.
+                        text_block = format!("#block(sticky: true, breakable: false)[#metadata((title: {}, numbering: \"1\", level: 1)) <gnosis-book-entry>\n{text_block}]\n", typst_string(&inline_visible_text(text)));
+                    }
+                    if citation.is_some() {
+                        // A heading or drop-cap opening cannot carry its citation
+                        // as a last line; both are short enough to move with it
+                        // to the next page as one unit.
+                        source.push_str(&format!(
+                            "#block(sticky: true, breakable: true)[{text_block}]\n"
+                        ));
+                    } else {
+                        source.push_str(&text_block);
+                    }
                 }
                 if !inline_visible_text(text).trim().is_empty() {
                     indent_next = plain;
@@ -1529,6 +1531,10 @@ fn render_typst_chapter(
             }
             ExportBlock::Attribution { text } => {
                 indent_next = false;
+                // Already set as the last line of the block it cites.
+                if set_citation == Some(block_index) {
+                    continue;
+                }
                 // Resolve below in body-text units, outside the smaller citation.
                 // Block spacing collapses with larger following gaps and at page
                 // boundaries; 1.5em adds about half a line over normal paragraphs.
@@ -2017,13 +2023,38 @@ fn render_typst_text_block(style: &str, inline: &str, dropcap: bool) -> String {
     match export_text_style(Some(style)).as_str() {
         "heading1" => format!("= {inline}\n\n"),
         "heading2" => format!("== {inline}\n\n"),
-        "quote" | "blockquote" => {
-            format!("#quote(block: true)[#set par(first-line-indent: 0pt)\n#text(size: 0.9em, style: \"normal\")[{inline}]]\n\n")
-        }
+        "quote" | "blockquote" => format!("#gnosis-quote[{inline}]\n\n"),
         "centered" => format!("#align(center)[{inline}]\n\n"),
         "indented" => format!("#pad(left: 2em)[{inline}]\n\n"),
         _ if dropcap => format!("#gnosis-dropcap[{inline}]\n\n"),
         _ => format!("{inline}\n\n"),
+    }
+}
+
+/// A block followed by a citation, with the citation set as the block's own last
+/// line. Typst never leaves a paragraph's last line alone at the top of a page, so
+/// the citation always crosses a page break together with at least one line of the
+/// text it cites. A separate citation block could only be held to its text with
+/// `sticky`, and Typst moves a sticky block whole instead of splitting it, which
+/// left long quotes jumping to the next page. Headings return `None`: they cannot
+/// carry a citation line.
+fn render_typst_cited_text_block(style: &str, inline: &str, citation: &str) -> Option<String> {
+    if style == "chapter_heading" {
+        return None;
+    }
+    let citation_line = format!("#gnosis-citation[{citation}]");
+    match export_text_style(Some(style)).as_str() {
+        "heading1" | "heading2" => None,
+        "quote" | "blockquote" => Some(format!(
+            "#gnosis-quote(citation: [{citation}])[{inline}]\n\n"
+        )),
+        "centered" => Some(format!(
+            "#block(below: 1.5em)[#align(center)[{inline}{citation_line}]]\n\n"
+        )),
+        "indented" => Some(format!(
+            "#block(below: 1.5em)[#pad(left: 2em)[{inline}{citation_line}]]\n\n"
+        )),
+        _ => Some(format!("#block(below: 1.5em)[{inline}{citation_line}]\n\n")),
     }
 }
 
@@ -2696,7 +2727,7 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
         ""
     };
     format!(
-        "#set page(paper: \"{paper_size}\", margin: {margins}, numbering: \"1\")\n#set text(font: ({family_list}), size: {size_pt}pt, lang: {}, dir: {direction})\n{word_spacing}#set par(justify: true, leading: {leading_em}em, spacing: {leading_em}em)\n{GNOSIS_FOOTNOTE_RULE}{greek_rule}{heading_rule}{dropcap_rule}{title_rule}#show link: set text(fill: rgb(\"245c8a\"))\n{GNOSIS_IMAGE_RULE}\n",
+        "#set page(paper: \"{paper_size}\", margin: {margins}, numbering: \"1\")\n#set text(font: ({family_list}), size: {size_pt}pt, lang: {}, dir: {direction})\n{word_spacing}#set par(justify: true, leading: {leading_em}em, spacing: {leading_em}em)\n{GNOSIS_FOOTNOTE_RULE}{greek_rule}{heading_rule}{dropcap_rule}{title_rule}#show link: set text(fill: rgb(\"245c8a\"))\n{GNOSIS_IMAGE_RULE}{GNOSIS_QUOTE_RULE}\n",
         typst_string(&document.language_code)
     )
 }
@@ -2747,6 +2778,32 @@ const GNOSIS_FOOTNOTE_RULE: &str = r#"#set footnote.entry(indent: 0em)
 /// container to resolve a relative width against, so `width: 100%` there reports the
 /// wrong height and the cap never applies.
 const GNOSIS_IMAGE_RULE: &str = "#let gnosis-image(path, caption: none) = layout(region => {\n  let width = region.width\n  let reserved = if caption == none { 0pt } else {\n    measure(block(width: width, caption)).height + (0.85em).to-absolute()\n  }\n  let limit = region.height - reserved - (1.5em).to-absolute()\n  let natural = measure(image(path, width: width))\n  if natural.height > limit { align(center, image(path, height: limit)) } else { image(path, width: width) }\n})\n";
+
+/// Quotations and their citations.
+///
+/// `gnosis-citation` is a citation set as the last line of the paragraph it cites
+/// (see `render_typst_cited_text_block`), drawn where a separate citation block
+/// would be: one paragraph space below the text instead of one line's leading (the
+/// box's top inset adds the difference) and flush with the right margin. Inside a
+/// quote the text is 0.9em, so `scale` keeps its lengths in body-text units, and
+/// `outdent` reaches past the quote's 1em right padding to that margin.
+///
+/// `gnosis-quote` keeps a quotation of up to six lines on one page and lets a longer
+/// one split like any paragraph. Typst has no keep-together-if-short setting, so the
+/// quote is measured against six lines of the same quote, with half an em of slack
+/// for lines a footnote marker makes a little taller. Its own 1.5em above and below
+/// replace Typst's built-in 2.4em and 1.8em, which are dropped at the wrapper's
+/// edges.
+const GNOSIS_QUOTE_RULE: &str = r#"#let gnosis-citation(body, scale: 1, outdent: 0em) = [#linebreak(justify: false)#h(1fr)#context box(inset: (top: par.spacing / scale - par.leading))[#text(size: 0.8em / scale, style: "normal", tracking: 0.06em)[#upper(body)]]#h(-outdent / scale)]
+#let gnosis-quote-body(body, citation) = quote(block: true)[#set par(first-line-indent: 0pt)
+#text(size: 0.9em, style: "normal")[#body#if citation != none { gnosis-citation(citation, scale: 0.9, outdent: 1em) }]]
+#let gnosis-quote(body, citation: none) = block(above: 1.5em, below: 1.5em, layout(region => {
+  let quoted = gnosis-quote-body(body, citation)
+  let sample = gnosis-quote-body(range(6).map(_ => [X]).join(linebreak()), citation)
+  let limit = measure(block(width: region.width, sample)).height + (0.5em).to-absolute()
+  block(breakable: measure(block(width: region.width, quoted)).height > limit, quoted)
+}))
+"#;
 
 fn render_inline_typst(text: &str, show_link_urls: bool) -> String {
     let normalized = text.nfc().collect::<String>();
@@ -4482,13 +4539,13 @@ mod tests {
     #[test]
     fn quotes_use_smaller_upright_text_and_preserve_inline_emphasis() {
         let quote = render_typst_text_block("quote", "Quotation", false);
-        assert!(quote.contains("#quote(block: true)"));
-        assert!(quote.contains("#text(size: 0.9em, style: \"normal\")[Quotation]"));
-        assert!(!quote.contains("#align"));
+        assert_eq!(quote, "#gnosis-quote[Quotation]\n\n");
+        assert!(GNOSIS_QUOTE_RULE.contains("quote(block: true)"));
+        assert!(GNOSIS_QUOTE_RULE.contains("#text(size: 0.9em, style: \"normal\")[#body"));
     }
 
     #[test]
-    fn quotes_get_the_same_space_whether_or_not_a_citation_follows() {
+    fn citations_are_set_as_the_last_line_of_what_they_cite() {
         let workspace = pdf_workspace().unwrap();
         let _cleanup = WorkspaceCleanup(workspace.clone());
         let document = ExportDocument {
@@ -4525,19 +4582,120 @@ mod tests {
         )
         .unwrap();
         let source = fs::read_to_string(workspace.join("chapter.typ")).unwrap();
-        // The wrapper's edges replace Typst's own 2.4em/1.8em quote spacing.
-        assert!(source
-            .contains("#block(sticky: true, breakable: true, above: 1.5em)[#quote(block: true)"));
-        assert!(source.contains("#block(above: 1.5em, below: 1.5em)[#quote(block: true)"));
-        assert_eq!(source.matches("#quote(block: true)").count(), 2);
-        // Other cited blocks keep normal spacing and only stay with their citation.
-        assert_eq!(
-            source
-                .matches("#block(sticky: true, breakable: true)[")
-                .count(),
-            1
+        assert!(source.contains(
+            "#gnosis-quote(citation: [#text(\"Giăng 1:14\")])[#text(\"A cited quotation.\")]"
+        ));
+        assert!(source.contains("#gnosis-quote[#text(\"An uncited quotation.\")]"));
+        assert!(source.contains(
+            "#block(below: 1.5em)[#text(\"An epigraph-style paragraph.\")#gnosis-citation[#text(\"An Author\")]]"
+        ));
+        // No citation is left as a separate block, and nothing has to move whole
+        // to the next page to stay with one.
+        assert!(!source.contains("#align(right)"));
+        assert!(!source.contains("sticky: true, breakable: true"));
+    }
+
+    #[test]
+    fn short_quotes_stay_on_one_page_and_long_quotes_split_with_their_citation() {
+        let workspace = pdf_workspace().unwrap();
+        let _cleanup = WorkspaceCleanup(workspace.clone());
+        let document = ExportDocument {
+            title: "Quotes".into(),
+            language_code: "vi".into(),
+            blocks: vec![text_block("paragraph", "Body.")],
+            book_parts: Vec::new(),
+        };
+        let session = begin_pdf_image_cache(&test_image_cache_scope("quote-page-breaks"));
+        let options = PdfWorkspacePreparationOptions {
+            paper_size: "a5",
+            footnote_links_as_plain_text: true,
+            image_cache_session: &session,
+        };
+        prepare_typst_workspace(
+            None,
+            "",
+            &workspace,
+            &document,
+            &options,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let (Some(binary), Some(font_dir)) = (
+            std::env::var_os("GNOSIS_TYPST_BIN"),
+            std::env::var_os("GNOSIS_TYPST_SMOKE_FONT_DIR"),
+        ) else {
+            return;
+        };
+        // Each case starts a page with a different amount of body text, so the
+        // quotes meet the page foot at every line position. Markers record the
+        // page of each quote's first line, last line, and citation.
+        let mark = |case: usize, name: &str| {
+            format!("#context [#metadata((case: {case}, mark: \"{name}\", page: here().page())) <quote-audit>]")
+        };
+        let mut source = typst_preamble(&document, "a5");
+        let mut cases = Vec::new();
+        for (words, quote_words) in (120..330)
+            .step_by(3)
+            .flat_map(|words| [(words, 40), (words, 170)])
+        {
+            let case = cases.len();
+            cases.push(quote_words);
+            source.push_str(&format!(
+                "#pagebreak(weak: true)\n#lorem({words})\n\n#gnosis-quote(citation: [{}Giăng 1:14])[{}#lorem({quote_words}){}]\n\n#lorem(40)\n\n",
+                mark(case, "citation"),
+                mark(case, "start"),
+                mark(case, "end"),
+            ));
+        }
+        let source_path = workspace.join("quotes.typ");
+        fs::write(&source_path, source).unwrap();
+        let query = std::process::Command::new(&binary)
+            .arg("query")
+            .arg("--root")
+            .arg(&workspace)
+            .arg("--font-path")
+            .arg(&font_dir)
+            .arg("--ignore-system-fonts")
+            .arg("--package-path")
+            .arg(workspace.join("packages"))
+            .arg("--field")
+            .arg("value")
+            .arg(&source_path)
+            .arg("<quote-audit>")
+            .output()
+            .unwrap();
+        assert!(
+            query.status.success(),
+            "{}",
+            String::from_utf8_lossy(&query.stderr)
         );
-        assert_eq!(source.matches("below: 1.5em)[#align(right)").count(), 2);
+        let marks: Vec<serde_json::Value> = serde_json::from_slice(&query.stdout).unwrap();
+        let page = |case: usize, name: &str| {
+            marks
+                .iter()
+                .find(|entry| entry["case"] == case && entry["mark"] == name)
+                .unwrap_or_else(|| panic!("No {name} mark for case {case}"))["page"]
+                .as_u64()
+                .unwrap()
+        };
+        let mut long_splits = 0;
+        for (case, quote_words) in cases.iter().enumerate() {
+            let (start, end, citation) = (
+                page(case, "start"),
+                page(case, "end"),
+                page(case, "citation"),
+            );
+            assert_eq!(end, citation, "case {case}: citation left its quote");
+            if *quote_words == 40 {
+                assert_eq!(start, end, "case {case}: a five-line quote was split");
+            } else if start < end {
+                long_splits += 1;
+            }
+        }
+        assert!(
+            long_splits > 10,
+            "long quotes moved whole instead of splitting"
+        );
     }
 
     #[test]
