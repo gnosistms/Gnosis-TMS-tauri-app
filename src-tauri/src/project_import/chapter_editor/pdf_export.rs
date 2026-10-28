@@ -1511,8 +1511,12 @@ fn render_typst_chapter(
                     let mut text_block = render_typst_text_block(text_style, &inline, dropcap);
                     if book_chapter && style == "heading1" {
                         // Keep the metadata outside heading content (where a label
-                        // binds to the heading itself), and move both as one unit.
-                        text_block = format!("#block(sticky: true, breakable: false)[#metadata((title: {}, numbering: \"1\", level: 1)) <gnosis-book-entry>\n{text_block}]\n", typst_string(&inline_visible_text(text)));
+                        // binds to the heading itself), directly before it rather
+                        // than in a wrapping block: a block would replace the
+                        // heading's own spacing with paragraph spacing. Typst
+                        // carries the zero-size metadata forward with the sticky
+                        // heading, so the entry still lands on the heading's page.
+                        text_block = format!("#metadata((title: {}, numbering: \"1\", level: 1)) <gnosis-book-entry>\n{text_block}", typst_string(&inline_visible_text(text)));
                     }
                     if citation.is_some() {
                         // A heading or drop-cap opening cannot carry its citation
@@ -4311,6 +4315,111 @@ mod tests {
         if let Some(destination) = std::env::var_os("GNOSIS_BOOK_SMOKE_OUTPUT") {
             fs::copy(pdf_path, destination).unwrap();
         }
+    }
+
+    #[test]
+    fn book_h1_contents_entries_stay_unwrapped_on_their_heading_page() {
+        use super::super::book_export::{BookItemInput, BookPart};
+        let workspace = pdf_workspace().unwrap();
+        let _cleanup = WorkspaceCleanup(workspace.clone());
+        // Each chapter pushes its H1 one line further down, so the sweep crosses
+        // a page break and some H1s must start (or be carried to) a new page.
+        let parts: Vec<BookPart> = (1..=36)
+            .map(|fillers| {
+                let mut blocks = vec![text_block("heading1", &format!("Chapter {fillers}"))];
+                blocks
+                    .extend((0..fillers).map(|_| text_block("paragraph", "A one-line paragraph.")));
+                blocks.push(text_block("heading1", &format!("Section {fillers}")));
+                blocks.push(text_block(
+                    "paragraph",
+                    &"Text that follows the heading. ".repeat(20),
+                ));
+                BookPart {
+                    item: BookItemInput {
+                        id: format!("chapter-{fillers}"),
+                        kind: "chapter".into(),
+                        title: format!("Chapter {fillers}"),
+                        ..Default::default()
+                    },
+                    document: ExportDocument {
+                        title: format!("Chapter {fillers}"),
+                        language_code: "en".into(),
+                        blocks,
+                        book_parts: Vec::new(),
+                    },
+                }
+            })
+            .collect();
+        let document = ExportDocument {
+            title: "A Book".into(),
+            language_code: "en".into(),
+            blocks: parts
+                .iter()
+                .flat_map(|part| part.document.blocks.clone())
+                .collect(),
+            book_parts: parts,
+        };
+        let cache_session = begin_pdf_image_cache(&test_image_cache_scope("book-h1"));
+        let options = PdfWorkspacePreparationOptions {
+            footnote_links_as_plain_text: true,
+            paper_size: "us-letter",
+            image_cache_session: &cache_session,
+        };
+        prepare_typst_workspace(
+            None,
+            "",
+            &workspace,
+            &document,
+            &options,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let source_path = workspace.join("chapter.typ");
+        let mut source = fs::read_to_string(&source_path).unwrap();
+        // A wrapping block would replace the heading's own spacing.
+        assert!(source.contains(
+            "#metadata((title: \"Section 1\", numbering: \"1\", level: 1)) <gnosis-book-entry>\n= "
+        ));
+        assert!(!source.contains("#block(sticky: true, breakable: false)"));
+        let (Some(binary), Some(font_dir)) = (
+            std::env::var_os("GNOSIS_TYPST_BIN"),
+            std::env::var_os("GNOSIS_TYPST_SMOKE_FONT_DIR"),
+        ) else {
+            return;
+        };
+        source.push_str("\n#context [#metadata(query(<gnosis-book-entry>).filter(entry => entry.value.level == 1).map(entry => { let it = query(selector(heading).after(entry.location())).first(); (entry: entry.location().page(), heading: it.location().page(), starts-page: query(selector(par).before(entry.location())).last().location().page() < it.location().page()) })) <gnosis-h1-audit>]\n");
+        fs::write(&source_path, source).unwrap();
+        let query = std::process::Command::new(&binary)
+            .arg("query")
+            .arg("--root")
+            .arg(&workspace)
+            .arg("--font-path")
+            .arg(&font_dir)
+            .arg("--ignore-system-fonts")
+            .arg("--package-path")
+            .arg(workspace.join("packages"))
+            .arg("--field")
+            .arg("value")
+            .arg(&source_path)
+            .arg("<gnosis-h1-audit>")
+            .output()
+            .unwrap();
+        assert!(
+            query.status.success(),
+            "{}",
+            String::from_utf8_lossy(&query.stderr)
+        );
+        let audit: serde_json::Value = serde_json::from_slice(&query.stdout).unwrap();
+        let sections = audit[0]
+            .as_array()
+            .unwrap_or_else(|| panic!("Unexpected H1 audit: {audit}"));
+        assert_eq!(sections.len(), 36);
+        for section in sections {
+            assert_eq!(section["entry"], section["heading"], "{section}");
+        }
+        assert!(sections
+            .iter()
+            .any(|section| section["starts-page"] == true));
     }
 
     #[test]
