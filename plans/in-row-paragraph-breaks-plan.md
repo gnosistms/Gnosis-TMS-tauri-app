@@ -2,99 +2,87 @@
 
 ## Goal
 
-One row is normally one paragraph, but a translator may press Return inside a
-row to split it into paragraphs without splitting the row. Each such paragraph
-is set exactly as a separate row of the same style would be, in the editor's
-closed display, the Translate and book previews, and every export.
+One row is normally one paragraph, but a translator may split a row into
+paragraphs without splitting the row. Each such paragraph is set exactly as a
+separate row of the same style would be, in the editor's closed display, the
+Translate and book previews, and every export.
 
 ## Decisions (Hans, 2026-10-28)
 
-- A return in a row is a paragraph break. Existing returns are reinterpreted;
-  no content migration.
-- Shift+Return inserts a line break inside the paragraph.
+- A blank line in a row is a paragraph break; a single return is a line break.
+  Return inserts the blank line, Shift+Return a single newline.
 - Cmd+S (macOS) / Ctrl+S (other platforms) saves and leaves the field, replacing
-  Shift+Return in that role.
+  Shift+Return in that role. The field hint reads "Command + S to save" /
+  "Ctrl + S to save".
 - Headings follow the same rule as every other style.
+- No migration. An earlier version of this branch stored line breaks as
+  `<br>` and read every return as a paragraph break; existing rows would have
+  needed a migration, and edits from older or offline apps could slip past it.
+
+## Existing rows
+
+Hans's 78 local repos (non-subtitle chapters) hold 5,875 text fields with a
+return. Every return there rendered as a line break, so the blank-line rule
+keeps them as they were, except blank lines, which now set real paragraphs:
+
+| Use of returns | Fields | After this change |
+|---|---|---|
+| Short lines: verse, prayers, lists | 3,028 | unchanged |
+| Paragraphs separated by a blank line | 918 | separate paragraphs |
+| Long prose lines, single return | 631 | unchanged (line breaks) |
+| Mixed: numbered items, heading + text | 1,298 | unchanged unless blank lines |
 
 ## Representation
 
-A textarea draws only LF as a line break (U+2028 renders as a blank space in
-both Chromium and WebKit), so a line break is stored as visible inline markup:
-`<br>` followed by a newline. Shift+Return inserts `<br>\n`.
-
-- An LF is a **line break** when the last thing before it, ignoring tags,
-  spaces, tabs and CR, is `<br>`. Every other LF is a **paragraph break**.
-- A `<br>` with no such LF after it is a line break on its own.
-- `<br>` is a zero-width void tag like `<hr>`: it adds nothing to visible or
-  base text, so word counts, glossary matching and search are unaffected.
-- Empty paragraphs are dropped, as empty rows are.
-- Custom HTML rows are opaque and unchanged. SRT chapters keep LF as a subtitle
-  line, both in the editor and in SRT export.
-- Image captions and quote attributions keep LF as a line break; Shift+Return
-  there inserts a plain newline.
-- Footnotes already treat LF as a paragraph; they gain the same `<br>` line
-  break.
+- A **paragraph break** is a blank line: two newlines with only spaces, tabs,
+  CR or inline tags between them (a blank line may cross formatting). Longer
+  runs are one break; empty paragraphs are dropped, as empty rows are.
+- A single newline is a **line break** inside its paragraph, rendered as every
+  view and exporter already renders a newline in a row.
+- `<hr>` between two newlines is content, so it does not make a blank line.
+- Not split: subtitle (SRT) text, custom HTML rows.
+- Unchanged: footnotes (every newline is a paragraph, as before), image
+  captions and quote attributions (every newline is a line break).
 
 ## Steps
 
-1. **Inline markup (JS).** Support `br` as a void tag. The parser records which
-   `br` absorbs the following LF and which LFs are line breaks. Display
-   serialization emits a line break as one `<br>` (dropping its LF), so every
-   existing view shows a single break and `footnoteParagraphsHtml` keeps
-   splitting only on paragraph LFs. Add `splitInlineMarkupTextIntoParagraphs`,
-   which splits at paragraph LFs (keeping `<hr>` inside its paragraph for the
-   separator pass), reopening inline tags.
+1. **Inline markup (JS).** `splitInlineMarkupTextIntoParagraphs` finds the
+   newlines of each blank line across text nodes and splits there, reopening
+   formatting that spans the break and dropping empty paragraphs.
 2. **Previews.** `buildEditorPreviewDocument` splits each row (other than
-   custom HTML and subtitle cues) into paragraphs, so each is its own block with
-   the row's style and `data-row-id`. Footnotes keep one numbering; each note
-   goes with the first paragraph that cites it (uncited notes with the last),
-   and the attribution stays on the last one. Book preview and
-   HTML/WordPress/Markdown/Vellum/plain-text copy follow.
-3. **Editor.** Closed display wraps paragraphs in blocks with a paragraph gap
-   (not in subtitle chapters). Shift+Return inserts `<br>\n` in text and
-   footnote fields (native undo kept; subtitle text keeps a plain newline).
-   Cmd/Ctrl+S saves and leaves any row field. Update the "Shift + Return to
-   save" hint.
-4. **Rust exports.** A shared splitter turns row text into paragraphs whose only
-   remaining LFs are line breaks, with `<br>` removed — the in-paragraph format
-   every exporter already renders. `push_text_blocks_with_separators` emits one
-   text block per paragraph, so PDF, DOCX, RTF, EPUB, HTML, Markdown and plain
-   text set them like separate rows. Footnotes use the same splitter
-   (`inline_paragraphs`, formerly `footnote_paragraphs`). SRT chapters are not
-   split.
-5. **Imports.** DOCX `<w:br/>` (text-wrapping breaks) imports as `<br>\n`; page
-   and column breaks stay paragraph breaks, and breaks at either end of a
-   paragraph are dropped. Add Translation strips the `<br>` so alignment units
-   stay one per line. HTML `<pre>` lines import as `<br>\n`; HTML `<br>` was
-   already dropped on import and is unchanged.
-6. **Tests.** Parser/serializer round trips, block splitting (formatting across
-   returns, footnote markers, `<br>` variants, CRLF), preview blocks, keyboard
-   behavior, Rust splitter and per-format exports, a Typst render, and a browser
-   check of the closed display and previews.
+   custom HTML and subtitle cues) into paragraph blocks with the row's style and
+   `data-row-id`. Footnotes keep one numbering; each note goes with the first
+   paragraph that cites it (uncited notes with the last), and the attribution
+   stays on the last one. Book preview and HTML/WordPress/Markdown/Vellum/
+   plain-text copy follow.
+3. **Editor.** The screen model marks row text that splits
+   (`textHasParagraphs`: not subtitles, not custom HTML). Its closed display
+   wraps each paragraph in a block with a paragraph gap, and its textarea
+   carries `data-text-has-paragraphs`, where Return inserts `\n\n` (one `\n`
+   after a newline, which turns a line break into a paragraph break). Native
+   undo is kept. Cmd/Ctrl+S saves and leaves any row field.
+4. **Rust exports.** `row_paragraphs` splits at blank lines with the same
+   rule; `push_text_blocks_with_separators` emits one text block per paragraph
+   (not in SRT chapters), so PDF, DOCX, RTF, EPUB, HTML, Markdown and plain
+   text set them like separate rows. `footnote_paragraphs` is unchanged.
+5. **Imports.** Unchanged: DOCX soft returns and HTML `<pre>` lines already
+   import as single newlines, which are line breaks.
+6. **Tests.** Splitter (formatting across breaks, whitespace lines, runs, tags
+   in a blank line, `<hr>`), closed display, preview blocks and footnotes,
+   keyboard behavior, Rust splitter and block builder, and a browser check of
+   the display, Return, Shift+Return, the hint and Cmd/Ctrl+S.
 
 ## Known effects
 
-- About 700 existing rows use returns for verse, prayers and lists; they now
-  render as one paragraph per line until retyped with Shift+Return.
-- Rows merged with Merge keep their original paragraphs.
-- A heading with a return becomes two headings (two contents entries).
+- Rows with blank lines (918 fields locally, mostly prose) now set separate
+  paragraphs instead of an empty line inside one paragraph.
+- Prose rows that separate paragraphs with a single return stay as line breaks
+  until a translator adds the blank line (Return at the start of the line).
+- A heading with a blank line becomes two headings (two contents entries).
+- Shift+Return no longer saves; Cmd/Ctrl+S does.
 
 ## Status
 
-Implemented 2026-10-28 on `claude/in-row-paragraph-breaks`: `0c70f605`,
-`d112382f`, `baedb721`, `74ea0fa4`, `d6896ddb`. Not yet merged.
-
-Verified:
-
-- `npm test`: 3,238 + 26 pass. ESLint: no errors (the one warning in a changed
-  file predates this work).
-- Rust: 513 `project_import` tests pass (7 opt-in AI/corpus tests ignored);
-  clippy clean.
-- Typst 0.15.1 render: a stored line break stays inside its paragraph, and a
-  return starts a new indented paragraph, in body text and footnotes.
-- Playwright (editor regression, export, HTML footnotes, SRT grouping, import
-  format): 262 pass. New tests cover the closed display, Shift+Return,
-  Cmd/Ctrl+S and the subtitle exception; earlier tests that saved with
-  Shift+Return now use the platform's save key.
-
-Not verified: the native Tauri app by hand, and Windows.
+Implemented 2026-10-28 on `claude/in-row-paragraph-breaks` (draft PR #408).
+The first commits used `<br>` line breaks; later commits on the branch replace
+them with blank-line paragraphs.
