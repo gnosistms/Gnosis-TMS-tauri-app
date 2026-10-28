@@ -81,7 +81,8 @@ both Chromium and WebKit), so a line break is stored as visible inline markup:
 
 ## Status
 
-Implemented 2026-10-28 on `claude/in-row-paragraph-breaks`, not yet committed.
+Implemented 2026-10-28 on `claude/in-row-paragraph-breaks`: `0c70f605`,
+`d112382f`, `baedb721`, `74ea0fa4`, `d6896ddb`. Not yet merged.
 
 Verified:
 
