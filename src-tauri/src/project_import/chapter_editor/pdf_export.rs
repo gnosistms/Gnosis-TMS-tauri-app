@@ -1439,19 +1439,26 @@ fn render_typst_chapter(
     }
     let leading_title = leading_heading_title(document);
     let title = leading_title.as_deref().unwrap_or(document.title.as_str());
+    let cover_end = chapter_cover_end(&document.blocks, leading_title.is_some());
+    let image_cover =
+        cover_end.is_some_and(|end| matches!(document.blocks[end], ExportBlock::Image { .. }));
     // The ornament under the chapter title; referenced by the gnosis-title rule.
     let mut source = String::new();
     // No spacer after the title: it is a top float now, and its `clearance`
     // provides the gap to whatever the page starts with.
     source.push_str(&format!(
-        "#gnosis-title({}{})\n",
+        "#gnosis-title({}{}{})\n",
         typst_string(title),
         chapter_number
             .map(|number| format!(", number: {number}"))
-            .unwrap_or_default()
+            .unwrap_or_default(),
+        if image_cover { ", tight: true" } else { "" }
     ));
-    let (emission_order, trailing_start) =
-        typst_block_emission_order(&document.blocks, image_paths);
+    let (emission_order, trailing_start) = typst_block_emission_order(
+        &document.blocks,
+        image_paths,
+        cover_end.map_or(0, |end| end + 1),
+    );
     let dropcap_index = if latin_body(&document.language_code) {
         dropcap_block_index(&document.blocks, &emission_order, leading_title.is_some())
     } else {
@@ -1459,9 +1466,16 @@ fn render_typst_chapter(
     };
     let mut indent_next = false;
     let mut set_citation = None;
+    let mut cover_open = cover_end.is_some();
     for block_index in emission_order {
         let block = &document.blocks[block_index];
         check_cancelled(cancelled)?;
+        // Checked before anything else, so a citation already set inside its quote
+        // (and skipped below) cannot carry the cover's page break away with it.
+        if cover_open && cover_end.is_some_and(|end| block_index > end) {
+            source.push_str("#pagebreak(weak: true)\n");
+            cover_open = false;
+        }
         // A leading H1 promoted to the chapter title is not also printed as a
         // body heading — it has become the title above.
         if leading_title.is_some() && block_index == 0 {
@@ -1502,13 +1516,15 @@ fn render_typst_chapter(
                         text_style,
                         &inline,
                         &render_inline_typst(citation, false),
+                        cover_open,
                     )
                 });
                 if let Some(cited_block) = cited_block {
                     source.push_str(&cited_block);
                     set_citation = Some(block_index + 1);
                 } else {
-                    let mut text_block = render_typst_text_block(text_style, &inline, dropcap);
+                    let mut text_block =
+                        render_typst_text_block(text_style, &inline, dropcap, cover_open);
                     if book_chapter && style == "heading1" {
                         // Keep the metadata outside heading content (where a label
                         // binds to the heading itself), directly before it rather
@@ -1587,15 +1603,23 @@ fn render_typst_chapter(
                 // it lands directly under the chapter's final lines when it
                 // fits there, and at the top of the next page when it does not
                 // — never above text and never at the foot of an empty page.
-                let floating = block_index < trailing_start;
-                if caption.trim().is_empty() {
+                let cover = Some(block_index) == cover_end;
+                let floating = block_index < trailing_start && !cover;
+                let figure = if caption.trim().is_empty() {
                     let placement = if floating { ", placement: auto" } else { "" };
-                    source.push_str(&format!("#figure({body}{placement})\n\n"));
+                    format!("#figure({body}{placement})")
                 } else {
-                    source.push_str(&format!(
-                        "{}\n\n",
-                        render_typst_figure(&body, caption, floating)
-                    ));
+                    render_typst_figure(&body, caption, floating)
+                };
+                if cover {
+                    // A cover image stays under the title. The 1fr block is the
+                    // space the title leaves on the page, so gnosis-image measures
+                    // that instead of the whole page and shrinks the image to fit.
+                    // A 1fr block shrinks to its content's width unless given one,
+                    // which would leave a shrunken image off centre.
+                    source.push_str(&format!("#block(width: 100%, height: 1fr)[{figure}]\n\n"));
+                } else {
+                    source.push_str(&format!("{figure}\n\n"));
                 }
             }
         }
@@ -1874,13 +1898,17 @@ fn section_prepared_image<'a>(
 /// ones follow on the pages after it. Rendered height at full text width is
 /// proportional to the height-to-width ratio, so that ratio is the sort key;
 /// placeholders render as short notice boxes and sort ahead of real images.
-/// The sort is stable: equal ratios keep their document order.
+/// The sort is stable: equal ratios keep their document order. Blocks before
+/// `fixed_until` (a chapter's cover) always keep their place.
 fn typst_block_emission_order(
     blocks: &[ExportBlock],
     image_paths: &HashMap<String, PreparedTypstImage>,
+    fixed_until: usize,
 ) -> (Vec<usize>, usize) {
     let mut trailing_start = blocks.len();
-    while trailing_start > 0 && matches!(blocks[trailing_start - 1], ExportBlock::Image { .. }) {
+    while trailing_start > fixed_until
+        && matches!(blocks[trailing_start - 1], ExportBlock::Image { .. })
+    {
         trailing_start -= 1;
     }
     let estimate = |index: &usize| -> f64 {
@@ -1902,17 +1930,19 @@ fn typst_block_emission_order(
 /// sees (after a leading H1 was promoted to the title), provided it is a plain
 /// paragraph that starts with a letter. Chapters that open with a heading,
 /// quote, or separator get no drop cap — matching the book-design convention
-/// the style imitates. Blocks that put nothing in the reading flow at that
-/// position are looked past: footnotes (rendered at the page foot), blank rows,
-/// and images (floated away or standing as figures — the opening sentence is
-/// still the first paragraph).
+/// the style imitates — unless the quote is the chapter's cover: the text then
+/// opens its own page, so its first paragraph takes the drop cap. Blocks that put
+/// nothing in the reading flow at that position are looked past: footnotes
+/// (rendered at the page foot), blank rows, and images (floated away or standing
+/// as figures — the opening sentence is still the first paragraph).
 fn dropcap_block_index(
     blocks: &[ExportBlock],
     emission_order: &[usize],
     title_promoted: bool,
 ) -> Option<usize> {
+    let cover_end = chapter_cover_end(blocks, title_promoted);
     for &index in emission_order {
-        if title_promoted && index == 0 {
+        if (title_promoted && index == 0) || cover_end.is_some_and(|end| index <= end) {
             continue;
         }
         match &blocks[index] {
@@ -1934,6 +1964,49 @@ fn dropcap_block_index(
         }
     }
     None
+}
+
+/// The last block of a chapter's cover page. When the first thing after the title
+/// is a quote or an image, it stands alone beneath the title and the chapter text
+/// starts on the next page, so the title and its epigraph or image read as a cover
+/// for the chapter. A quote cover is the run of consecutive quotes with their
+/// citations, so a multi-paragraph epigraph (or a pair of them) stays together; an
+/// image cover is that one image. Blocks that put nothing in the reading flow are
+/// looked past: a leading H1 promoted to the title, blank rows, and footnotes (set
+/// at the page foot). With nothing visible after the opener there is no cover: the
+/// opener already has the page to itself.
+fn chapter_cover_end(blocks: &[ExportBlock], title_promoted: bool) -> Option<usize> {
+    let blank = |block: &ExportBlock| match block {
+        ExportBlock::Footnote { .. } => true,
+        ExportBlock::Text { text, .. } => inline_visible_text(text).trim().is_empty(),
+        _ => false,
+    };
+    let quote = |block: &ExportBlock| {
+        !blank(block)
+            && matches!(block, ExportBlock::Text { text_style, .. }
+                if matches!(export_text_style(Some(text_style)).as_str(), "quote" | "blockquote"))
+    };
+    let start = if title_promoted { 1 } else { 0 };
+    let first = (start..blocks.len()).find(|index| !blank(&blocks[*index]))?;
+    let mut end = first;
+    if quote(&blocks[first]) {
+        for (index, block) in blocks.iter().enumerate().skip(first + 1) {
+            let citation = index == end + 1
+                && quote(&blocks[end])
+                && matches!(block, ExportBlock::Attribution { .. });
+            if quote(block) || citation {
+                end = index;
+            } else if !blank(block) {
+                break;
+            }
+        }
+    } else if !matches!(blocks[first], ExportBlock::Image { .. }) {
+        return None;
+    }
+    blocks[end + 1..]
+        .iter()
+        .any(|block| !blank(block))
+        .then_some(end)
 }
 
 struct PreparedPdfWorkspace {
@@ -2020,13 +2093,16 @@ fn report_font_coverage_gap(
     }
 }
 
-fn render_typst_text_block(style: &str, inline: &str, dropcap: bool) -> String {
+/// `cover` marks a block on a chapter's cover page (see `chapter_cover_end`), where
+/// a short quote is centred.
+fn render_typst_text_block(style: &str, inline: &str, dropcap: bool, cover: bool) -> String {
     if style == "chapter_heading" {
         return format!("#pagebreak(weak: true)\n= {inline}\n\n");
     }
     match export_text_style(Some(style)).as_str() {
         "heading1" => format!("= {inline}\n\n"),
         "heading2" => format!("== {inline}\n\n"),
+        "quote" | "blockquote" if cover => format!("#gnosis-quote(cover: true)[{inline}]\n\n"),
         "quote" | "blockquote" => format!("#gnosis-quote[{inline}]\n\n"),
         "centered" => format!("#align(center)[{inline}]\n\n"),
         "indented" => format!("#pad(left: 2em)[{inline}]\n\n"),
@@ -2041,16 +2117,22 @@ fn render_typst_text_block(style: &str, inline: &str, dropcap: bool) -> String {
 /// text it cites. A separate citation block could only be held to its text with
 /// `sticky`, and Typst moves a sticky block whole instead of splitting it, which
 /// left long quotes jumping to the next page. Headings return `None`: they cannot
-/// carry a citation line.
-fn render_typst_cited_text_block(style: &str, inline: &str, citation: &str) -> Option<String> {
+/// carry a citation line. `cover` is as for `render_typst_text_block`.
+fn render_typst_cited_text_block(
+    style: &str,
+    inline: &str,
+    citation: &str,
+    cover: bool,
+) -> Option<String> {
     if style == "chapter_heading" {
         return None;
     }
     let citation_line = format!("#gnosis-citation[{citation}]");
+    let cover_argument = if cover { ", cover: true" } else { "" };
     match export_text_style(Some(style)).as_str() {
         "heading1" | "heading2" => None,
         "quote" | "blockquote" => Some(format!(
-            "#gnosis-quote(citation: [{citation}])[{inline}]\n\n"
+            "#gnosis-quote(citation: [{citation}]{cover_argument})[{inline}]\n\n"
         )),
         "centered" => Some(format!(
             "#block(below: 1.5em)[#align(center)[{inline}{citation_line}]]\n\n"
@@ -2720,9 +2802,12 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
     // Vellum Kindred reference: one line's distance below the title (the weak
     // spacer replaces the default paragraph spacing instead of adding to it),
     // then a wider clearance before the body begins. Kindred style: the title
-    // renders in the heading family, all caps with a little letterspacing.
+    // renders in the heading family, all caps with a little letterspacing. Over
+    // an image cover (`tight: true`) the title sits higher and closer to the
+    // image, 2em above and 2.5em below instead of 5.5em and 6em, so the image
+    // keeps more of the page.
     let title_rule = format!(
-        "#let gnosis-title(t, number: none) = place(top, float: true, clearance: 6em, block(width: 100%, align(center)[#v(5.5em, weak: false)#if number != none {{ text(font: ({heading_family_list}), size: 12pt, str(number)); v(0.75em) }}#text(font: ({heading_family_list}), size: 16pt, weight: \"regular\", tracking: 0.1em)[#upper(t)]#v(1.2em, weak: false)#image(\"flourish.svg\", width: 0.75in)]))\n"
+        "#let gnosis-title(t, number: none, tight: false) = place(top, float: true, clearance: if tight {{ 2.5em }} else {{ 6em }}, block(width: 100%, align(center)[#v(if tight {{ 2em }} else {{ 5.5em }}, weak: false)#if number != none {{ text(font: ({heading_family_list}), size: 12pt, str(number)); v(0.75em) }}#text(font: ({heading_family_list}), size: 16pt, weight: \"regular\", tracking: 0.1em)[#upper(t)]#v(1.2em, weak: false)#image(\"flourish.svg\", width: 0.75in)]))\n"
     );
     let margins = if paper_size == "a5" {
         "(inside: 22mm, outside: 19mm, top: 20mm, bottom: 20mm)"
@@ -2802,14 +2887,28 @@ const GNOSIS_IMAGE_RULE: &str = "#let gnosis-image(path, caption: none) = layout
 /// for lines a footnote marker makes a little taller. Its own 1.5em above and below
 /// replace Typst's built-in 2.4em and 1.8em, which are dropped at the wrapper's
 /// edges.
+///
+/// On a chapter cover (`cover: true`) a quote that fits on one line is centred
+/// rather than left alone at the start of an empty page: the quote shrinks to its
+/// text in a centred box, and its citation is stacked under it, flush with the
+/// quote's right edge as on a full-width quote and one quote line below it. A
+/// citation line inside the paragraph cannot do this, because its `h(1fr)` would
+/// stretch the box back to the full width. The centring block is given the full
+/// width explicitly: the wrapping block otherwise shrinks to the box, leaving
+/// `align` nothing to centre in.
 const GNOSIS_QUOTE_RULE: &str = r#"#let gnosis-citation(body, scale: 1, outdent: 0em) = [#linebreak(justify: false)#h(1fr)#context box(inset: (top: par.spacing / scale - par.leading))[#text(size: 0.8em / scale, style: "normal", tracking: 0.06em)[#upper(body)]]#h(-outdent / scale)]
 #let gnosis-quote-body(body, citation) = quote(block: true)[#set par(first-line-indent: 0pt)
 #text(size: 0.9em, style: "normal")[#body#if citation != none { gnosis-citation(citation, scale: 0.9, outdent: 1em) }]]
-#let gnosis-quote(body, citation: none) = block(above: 1.5em, below: 1.5em, layout(region => {
+#let gnosis-quote(body, citation: none, cover: false) = block(above: 1.5em, below: 1.5em, layout(region => {
+  let height(content) = measure(block(width: region.width, content)).height
+  let slack = (0.5em).to-absolute()
+  if cover and height(gnosis-quote-body(body, none)) <= height(gnosis-quote-body([X], none)) + slack {
+    let cited = if citation == none { () } else { (align(right, text(size: 0.8em, style: "normal", tracking: 0.06em)[#upper(citation)]),) }
+    return block(width: region.width, align(center, box(stack(spacing: 0.9 * par.leading, gnosis-quote-body(body, none), ..cited))))
+  }
   let quoted = gnosis-quote-body(body, citation)
   let sample = gnosis-quote-body(range(6).map(_ => [X]).join(linebreak()), citation)
-  let limit = measure(block(width: region.width, sample)).height + (0.5em).to-absolute()
-  block(breakable: measure(block(width: region.width, quoted)).height > limit, quoted)
+  block(breakable: height(quoted) > height(sample) + slack, quoted)
 }))
 "#;
 
@@ -4440,7 +4539,7 @@ mod tests {
         assert_eq!(leading_heading_title(&document), None);
         assert_eq!(dropcap_block_index(&document.blocks, &[0], false), None);
         assert_eq!(
-            render_typst_text_block("chapter_heading", "Chapter One", false),
+            render_typst_text_block("chapter_heading", "Chapter One", false, false),
             "#pagebreak(weak: true)\n= Chapter One\n\n"
         );
         assert!(document_characters(&document).contains(&'B'));
@@ -4561,10 +4660,11 @@ mod tests {
         // The chapter title is emitted as the first top float so a
         // `placement: auto` image can never be hoisted above it on page one.
         // Kindred style: Alegreya, all caps, tracked, with the flourish one line
-        // below and a wider clearance before the body text.
-        assert!(vietnamese_preamble.contains("#let gnosis-title(t, number: none)"));
-        assert!(vietnamese_preamble.contains("clearance: 6em"));
-        assert!(vietnamese_preamble.contains("#v(5.5em, weak: false)"));
+        // below and a wider clearance before the body text; tighter over an
+        // image cover.
+        assert!(vietnamese_preamble.contains("#let gnosis-title(t, number: none, tight: false)"));
+        assert!(vietnamese_preamble.contains("clearance: if tight { 2.5em } else { 6em }"));
+        assert!(vietnamese_preamble.contains("#v(if tight { 2em } else { 5.5em }, weak: false)"));
         assert!(vietnamese_preamble.contains("size: 16pt, weight: \"regular\", tracking: 0.1em"));
         let japanese_preamble = typst_preamble(&japanese, "a4");
         assert!(japanese_preamble.contains("\"Shippori Mincho\", \"EB Garamond\""));
@@ -4579,7 +4679,7 @@ mod tests {
         assert!(!japanese_preamble.contains("dropcap"));
         // Non-Latin body faces carry their own Greek coverage, so no Greek run rule.
         assert!(!japanese_preamble.contains(GREEK_RUN_RULE_PREFIX));
-        assert!(japanese_preamble.contains("#let gnosis-title(t, number: none)"));
+        assert!(japanese_preamble.contains("#let gnosis-title(t, number: none, tight: false)"));
         assert!(
             japanese_preamble.contains("font: (\"Shippori Mincho\", \"EB Garamond\"), size: 16pt")
         );
@@ -4643,6 +4743,16 @@ mod tests {
             paragraph("Đức Cha là trí tuệ."),
         ];
         assert_eq!(dropcap_block_index(&blocks, &[0, 1], false), Some(1));
+        // A quote on the chapter's cover leaves the drop cap to the text, which
+        // opens the next page.
+        let blocks = vec![
+            text_block("quote", "An epigraph."),
+            ExportBlock::Attribution {
+                text: "An Author".to_string(),
+            },
+            paragraph("Đức Cha là trí tuệ."),
+        ];
+        assert_eq!(dropcap_block_index(&blocks, &[0, 1, 2], false), Some(2));
     }
 
     #[test]
@@ -4659,7 +4769,7 @@ mod tests {
 
     #[test]
     fn quotes_use_smaller_upright_text_and_preserve_inline_emphasis() {
-        let quote = render_typst_text_block("quote", "Quotation", false);
+        let quote = render_typst_text_block("quote", "Quotation", false, false);
         assert_eq!(quote, "#gnosis-quote[Quotation]\n\n");
         assert!(GNOSIS_QUOTE_RULE.contains("quote(block: true)"));
         assert!(GNOSIS_QUOTE_RULE.contains("#text(size: 0.9em, style: \"normal\")[#body"));
@@ -4817,6 +4927,206 @@ mod tests {
             long_splits > 10,
             "long quotes moved whole instead of splitting"
         );
+    }
+
+    #[test]
+    fn opening_quotes_and_images_become_the_chapter_cover() {
+        let title = || text_block("heading1", "Title");
+        let quote = || text_block("quote", "An epigraph.");
+        let citation = || ExportBlock::Attribution {
+            text: "An Author".into(),
+        };
+        let body = || text_block("paragraph", "Body.");
+        let blank = || text_block("paragraph", "");
+        let image = |name: &str| ExportBlock::Image {
+            image: ExportImage::Url(format!("https://example.com/{name}.png")),
+            caption: String::new(),
+        };
+        let footnote = |anchor: usize| ExportBlock::Footnote {
+            number: 1,
+            marker: 1,
+            anchor_block: Some(anchor),
+            text: "A note.".into(),
+        };
+        // A cited quote, looking past blank rows and the quote's footnote.
+        assert_eq!(
+            chapter_cover_end(
+                &[title(), blank(), quote(), citation(), footnote(2), body()],
+                true
+            ),
+            Some(3)
+        );
+        // Consecutive quotes are one epigraph, even with a blank row between them.
+        assert_eq!(
+            chapter_cover_end(
+                &[title(), quote(), citation(), blank(), quote(), body()],
+                true
+            ),
+            Some(4)
+        );
+        // Without a promoted title, the first block itself opens the cover.
+        assert_eq!(chapter_cover_end(&[quote(), body()], false), Some(0));
+        // An image cover is that one image; a second image starts the next page.
+        assert_eq!(
+            chapter_cover_end(&[title(), image("a"), image("b"), body()], true),
+            Some(1)
+        );
+        assert_eq!(
+            chapter_cover_end(&[title(), image("a"), image("b")], true),
+            Some(1)
+        );
+        // Other openers, and openers with nothing after them, make no cover.
+        for blocks in [
+            vec![title(), body(), quote()],
+            vec![title(), text_block("heading2", "Section"), quote(), body()],
+            vec![title(), ExportBlock::Separator, image("a"), body()],
+            vec![title(), quote(), citation(), blank()],
+            vec![title(), blank(), image("a")],
+        ] {
+            assert_eq!(chapter_cover_end(&blocks, true), None, "{blocks:?}");
+        }
+    }
+
+    #[test]
+    fn chapter_covers_break_before_the_text_center_short_quotes_and_fit_their_image() {
+        let workspace = pdf_workspace().unwrap();
+        let _cleanup = WorkspaceCleanup(workspace.clone());
+        // At full text width this image is far taller than the page, so it only
+        // fits under the title if it is capped by the space the title leaves.
+        let tall = workspace.join("tall.svg");
+        fs::write(
+            &tall,
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="80" height="400"><rect width="80" height="400" fill="#c87900"/></svg>"##,
+        )
+        .unwrap();
+        let image = ExportBlock::Image {
+            image: ExportImage::Upload {
+                repo_relative_path: "tall.svg".into(),
+                raw_url: None,
+                absolute_path: tall,
+            },
+            caption: "A caption under the cover image.".into(),
+        };
+        let cases = [
+            (
+                "quote",
+                vec![
+                    text_block("quote", "An epigraph."),
+                    ExportBlock::Attribution {
+                        text: "An Author".into(),
+                    },
+                ],
+            ),
+            (
+                "long quote",
+                vec![
+                    text_block("quote", &"A longer epigraph. ".repeat(6)),
+                    ExportBlock::Attribution {
+                        text: "An Author".into(),
+                    },
+                ],
+            ),
+            ("image", vec![image]),
+            (
+                "none",
+                vec![text_block("paragraph", "An opening paragraph.")],
+            ),
+        ];
+        let session = begin_pdf_image_cache(&test_image_cache_scope("chapter-covers"));
+        let options = PdfWorkspacePreparationOptions {
+            paper_size: "a5",
+            footnote_links_as_plain_text: true,
+            image_cache_session: &session,
+        };
+        let typst = std::env::var_os("GNOSIS_TYPST_BIN")
+            .zip(std::env::var_os("GNOSIS_TYPST_SMOKE_FONT_DIR"));
+        for (case, opener) in cases {
+            let mut blocks = vec![text_block("heading1", "A Chapter")];
+            blocks.extend(opener);
+            blocks.push(text_block("heading2", "The text begins"));
+            blocks.push(text_block("paragraph", &"Body text. ".repeat(40)));
+            let document = ExportDocument {
+                title: "A Chapter".into(),
+                language_code: "en".into(),
+                blocks,
+                book_parts: Vec::new(),
+            };
+            prepare_typst_workspace(
+                None,
+                "",
+                &workspace,
+                &document,
+                &options,
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+            let source_path = workspace.join("chapter.typ");
+            let mut source = fs::read_to_string(&source_path).unwrap();
+            let cover = case != "none";
+            assert_eq!(
+                source.matches("#pagebreak(weak: true)").count(),
+                usize::from(cover),
+                "{case}"
+            );
+            assert_eq!(
+                source.contains("#block(width: 100%, height: 1fr)[#figure("),
+                case == "image",
+                "{case}"
+            );
+            // The title moves up and closer to an image cover only.
+            assert_eq!(
+                source.contains("#gnosis-title(\"A Chapter\", tight: true)"),
+                case == "image",
+                "{case}"
+            );
+            assert_eq!(
+                source.contains("#gnosis-quote(citation: [#text(\"An Author\")], cover: true)["),
+                case.ends_with("quote"),
+                "{case}"
+            );
+            let Some((binary, font_dir)) = &typst else {
+                continue;
+            };
+            source.push_str("\n#context [#metadata((text: query(heading).first().location().page(), quote: query(quote).map(it => it.location().page()), quote-x: query(quote).map(it => it.location().position().x.pt()), figure: query(figure).map(it => it.location().page()), caption-fits: query(figure.caption).all(it => it.location().position().y < page.height - 20mm))) <cover-audit>]\n");
+            fs::write(&source_path, source).unwrap();
+            let query = std::process::Command::new(binary)
+                .arg("query")
+                .arg("--root")
+                .arg(&workspace)
+                .arg("--font-path")
+                .arg(font_dir)
+                .arg("--ignore-system-fonts")
+                .arg("--package-path")
+                .arg(workspace.join("packages"))
+                .arg("--field")
+                .arg("value")
+                .arg(&source_path)
+                .arg("<cover-audit>")
+                .output()
+                .unwrap();
+            assert!(
+                query.status.success(),
+                "{}",
+                String::from_utf8_lossy(&query.stderr)
+            );
+            let audit: serde_json::Value = serde_json::from_slice(&query.stdout).unwrap();
+            let audit = &audit[0];
+            assert_eq!(audit["text"], if cover { 2 } else { 1 }, "{case}: {audit}");
+            match case {
+                "quote" | "long quote" => {
+                    assert_eq!(audit["quote"], serde_json::json!([1]), "{audit}");
+                    // A5 margins are about 54-62pt: a one-line quote is centred, a
+                    // longer one keeps the full measure.
+                    let x = audit["quote-x"][0].as_f64().unwrap();
+                    assert_eq!(x > 120.0, case == "quote", "{case}: {audit}");
+                }
+                "image" => {
+                    assert_eq!(audit["figure"], serde_json::json!([1]), "{audit}");
+                    assert_eq!(audit["caption-fits"], true, "{audit}");
+                }
+                _ => {}
+            }
+        }
     }
 
     #[test]
@@ -5057,7 +5367,7 @@ mod tests {
             export_image_key(&image("failed")),
             PreparedTypstImage::Placeholder("failed".to_string()),
         );
-        let (order, trailing_start) = typst_block_emission_order(&blocks, &prepared);
+        let (order, trailing_start) = typst_block_emission_order(&blocks, &prepared, 0);
         // The mid-chapter image at index 1 is not part of the trailing run.
         assert_eq!(trailing_start, 3);
         // Placeholder (short notice box) first, then wide, then square.

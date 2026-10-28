@@ -594,7 +594,9 @@ export function renderEditorPreviewDocumentHtml(blocks, options = {}) {
       : (() => "");
   const matchCounter = { current: 0 };
   const footnoteState = { items: [] };
-  const html = (Array.isArray(blocks) ? blocks : [])
+  // One entry per input block (empty when it renders nothing), so callers can
+  // split the body while footnotes keep one numbering.
+  const blocksHtml = (Array.isArray(blocks) ? blocks : [])
     .map((block) => {
       if (block?.kind === "image") {
         options.blockClassName?.(block, "image");
@@ -651,9 +653,8 @@ export function renderEditorPreviewDocumentHtml(blocks, options = {}) {
         })
         .filter(Boolean)
         .join("");
-    })
-    .filter(Boolean)
-    .join("");
+    });
+  const html = blocksHtml.join("");
   const footnotesHtml = renderWordPressFootnotesList(
     footnoteState,
     (text, languageCode) => renderPreviewHighlightedText(text, searchState, matchCounter, languageCode, true),
@@ -662,7 +663,7 @@ export function renderEditorPreviewDocumentHtml(blocks, options = {}) {
 
   return {
     html: `${html}${footnotesHtml}`,
-    bodyHtml: html, footnotesHtml,
+    bodyHtml: html, blocksHtml, footnotesHtml,
     searchState,
   };
 }

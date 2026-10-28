@@ -4,7 +4,7 @@ import { renderExportSelect } from "./export-fields.js";
 import { BOOK_SECTION_TYPES, bookChapterPreviewBlocks, bookChapterNumbers, bookContentsEntries, bookItemIncluded, bookItemTitle, bookSectionLabel } from "../app/project-book-model.js";
 import { bookPaperStyle } from "../app/project-book-paper.js";
 import { bookImageSrc } from "../app/project-book-flow.js";
-import { renderBookChapterBody } from "../app/project-book-chapter-preview.js";
+import { renderBookChapterPages } from "../app/project-book-chapter-preview.js";
 import { convertLocalFileSrc } from "../app/runtime.js";
 import { DEFAULT_PDF_PAPER_SIZE, PDF_PAPER_SIZES } from "../app/editor-export-options.js";
 import { renderBookTextHtml } from "../app/project-book-text.js";
@@ -103,8 +103,9 @@ export function renderSelectedBookPage(modal) {
     const title = extractVellumLeadingHeadingTitle(blocks);
     const bodyBlocks = title ? blocks.slice(1) : blocks;
     const number = bookChapterNumbers(book.items).get(item.id);
-    const html = renderBookChapterBody(bodyBlocks, modal, (image) => image.kind === "url" ? image.url : convertLocalFileSrc(image.filePath || ""));
-    return paper("chapter", `<article class="book-page book-page--chapter translate-preview" aria-label="Chapter preview" lang="${escapeHtml(modal.languageCode || "en")}"><header class="book-chapter__header">${number ? `<span class="book-chapter__number">${number}</span>` : ""}<h1>${escapeHtml(title || bookItemTitle(item))}</h1>${flourish}</header>${html}</article>`);
+    const pages = renderBookChapterPages(bodyBlocks, modal, (image) => image.kind === "url" ? image.url : convertLocalFileSrc(image.filePath || ""));
+    const header = `<header class="book-chapter__header">${number ? `<span class="book-chapter__number">${number}</span>` : ""}<h1>${escapeHtml(title || bookItemTitle(item))}</h1>${flourish}</header>`;
+    return pages.map((html, index) => paper("chapter", `<article class="book-page book-page--chapter translate-preview" aria-label="${index ? "Chapter preview, continued" : "Chapter preview"}" lang="${escapeHtml(modal.languageCode || "en")}">${index ? "" : header}${html}</article>`)).join("");
   }
   if (item.kind === "title") return titlePageEditor(modal, item);
   let body = "";

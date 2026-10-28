@@ -1,8 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { renderBookChapterBody } from "./project-book-chapter-preview.js";
+import { renderBookChapterPages } from "./project-book-chapter-preview.js";
 const text = (textStyle, value, extra = {}) => ({ kind: "text", rowId: "row", languageCode: "en", textStyle, text: value, ...extra });
-const render = (blocks, languageCode = "en") => renderBookChapterBody(blocks, { languageCode }, () => "data:image/svg+xml,test");
+const pages = (blocks, languageCode = "en") => renderBookChapterPages(blocks, { languageCode }, () => "data:image/svg+xml,test");
+const render = (blocks, languageCode) => pages(blocks, languageCode).join("");
 
 test("book paragraphs follow print drop-cap and indentation boundaries", () => {
   const html = render([
@@ -31,4 +32,37 @@ test("opening headings and non-Latin chapters omit drop caps, and notes have a s
 test("book export preview indents subsequent footnote paragraphs without adding blank lines", () => {
   const html = render([text("paragraph", "Body [1]", { footnotes: [{ marker: 1, text: "<i>First\nSecond</i>" }] })]);
   assert.match(html, /book-footnote__text[^]*text-indent:0"><em>First<\/em><\/p><p[^>]*text-indent:1.5em"><em>Second<\/em>/);
+});
+
+test("an opening quote or image stands alone on a cover page before the chapter text", () => {
+  const image = { kind: "image", image: {}, caption: "A caption" };
+  const epigraph = [
+    text("paragraph", ""), text("quote", "A first epigraph [1].", { attribution: "— One", footnotes: [{ marker: 1, text: "A note." }] }),
+    text("paragraph", ""), text("quote", "A second epigraph."),
+  ];
+  const [cover, body, ...rest] = pages([...epigraph, text("paragraph", "The text [1].", { footnotes: [{ marker: 1, text: "Another." }] })]);
+  assert.deepEqual(rest, []);
+  assert.match(cover, /^<div class="book-chapter__body book-chapter__cover">[^]*A first epigraph[^]*— One[^]*A second epigraph[^]*<\/div>$/);
+  assert.doesNotMatch(cover, /The text|book-chapter__footnotes/);
+  // Each quote shrinks to its own text, with its citation, so short ones centre.
+  assert.equal((cover.match(/<div class="book-chapter__epigraph"><blockquote/g) || []).length, 2);
+  assert.match(cover, /<div class="book-chapter__epigraph"><blockquote[^]*<\/blockquote><cite[^]*— One<\/cite><\/div>/);
+  // The text opens the next page, so it takes the drop cap the quote would not.
+  assert.match(body, /<p class="[^"]*book-print-dropcap/);
+  assert.doesNotMatch(cover, /book-print-dropcap/);
+  // Footnotes keep one numbering across both pages and are listed after the text.
+  assert.match(body, /^<div class="book-chapter__body">[^]*The text[^]*>2<\/a>[^]*book-chapter__footnotes[^]*A note\.[^]*Another\./);
+
+  const [imageCover, imageBody] = pages([image, image, text("paragraph", "After the images.")]);
+  assert.match(imageCover, /^<div class="book-chapter__body book-chapter__cover book-chapter__cover--image"><figure[^]*<\/figure><\/div>$/);
+  assert.match(imageBody, /^<div class="book-chapter__body"><figure[^]*After the images\./);
+  // An image cover passes the drop cap to the first paragraph, as in the PDF.
+  assert.match(imageBody, /book-print-dropcap/);
+
+  for (const blocks of [
+    [text("paragraph", "An opening."), text("quote", "A quote.")],
+    [text("heading2", "A heading"), image, text("paragraph", "Body.")],
+    [text("quote", "Only an epigraph.", { attribution: "— One" }), text("paragraph", "")],
+    [image],
+  ]) assert.equal(pages(blocks).length, 1);
 });

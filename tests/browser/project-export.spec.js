@@ -975,6 +975,51 @@ test("book preview uses print typography for body, headings, quotes, captions, a
   await page.screenshot({ path: test.info().outputPath("book-print-elements.png") });
 });
 
+test("book preview sets an opening quote or image alone on a cover sheet, as the PDF does", async ({ page }) => {
+  await page.route("https://example.com/book-cover.svg", (route) => route.fulfill({ contentType: "image/svg+xml", body: '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="400"><rect width="80" height="400" fill="#b79858"/></svg>' }));
+  await page.addInitScript(() => {
+    const row = (textStyle, text, extra = {}) => ({ rowId: crypto.randomUUID(), textStyle, fields: { en: text }, ...extra });
+    window.__bookHeadingRows = {
+      "fixture-chapter-0-0": [
+        row("heading1", "An Opening Quote"),
+        row("quote", "A first epigraph.", { attributions: { en: "— One" } }), row("quote", "A second epigraph."),
+        row("paragraph", "The chapter text."),
+      ],
+      "fixture-chapter-0-1": [
+        row("heading1", "An Opening Image"),
+        row("paragraph", "", { images: { en: { kind: "url", url: "https://example.com/book-cover.svg" } }, imageCaptions: { en: "A cover caption" } }),
+        row("paragraph", "The chapter text."),
+      ],
+    };
+  });
+  await mountProjectExport(page);
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  await chooseBookOption(modal, "editor-export-paper-size", "A5 (148 × 210 mm)");
+  const sheets = modal.locator(".book-page--chapter");
+  await expect(sheets).toHaveCount(2);
+  await expect(sheets.nth(0)).toContainText("A first epigraph.");
+  await expect(sheets.nth(0)).toContainText("A second epigraph.");
+  await expect(sheets.nth(0)).not.toContainText("The chapter text.");
+  await expect(sheets.nth(1).locator(".book-chapter__header")).toHaveCount(0);
+  await expect(sheets.nth(1)).toContainText("The chapter text.");
+
+  await modal.locator('[data-action="book-select:fixture-chapter-0-1"]').click();
+  await expect(sheets.nth(0).locator("h1")).toHaveText("An Opening Image");
+  await expect(sheets).toHaveCount(2);
+  // The tall image shrinks so it and its caption fit under the header on one
+  // sheet. Polled: the preview can redraw the sheet while the image loads.
+  await expect.poll(() => sheets.nth(0).evaluate((sheet) => {
+    const image = sheet.querySelector("img");
+    if (!image?.complete || !image.naturalHeight) return "loading";
+    const box = (element) => element.getBoundingClientRect();
+    const content = box(sheet).bottom - parseFloat(getComputedStyle(sheet).paddingBottom);
+    return { below: box(image).top >= box(sheet.querySelector(".book-chapter__header")).bottom,
+      visible: box(image).height > 50, fits: box(sheet.querySelector("figcaption")).bottom <= content + 0.5 };
+  })).toEqual({ below: true, visible: true, fits: true });
+  await expect(sheets.nth(1)).toContainText("The chapter text.");
+  await page.screenshot({ path: test.info().outputPath("book-chapter-cover.png") });
+});
+
 test("shared paper size gives copyright pages print proportions and survives export steps", async ({ page }) => {
   await mountProjectExport(page);
   const modal = page.getByRole("dialog", { name: "Export project", exact: true });

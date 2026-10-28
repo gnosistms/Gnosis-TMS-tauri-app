@@ -68,17 +68,28 @@
 .book-page--chapter .translate-preview__image-block { display: block; margin: .78em 0; text-indent: 0; break-inside: avoid; }
 .book-page--chapter .translate-preview__image { width: 100%; max-height: calc(var(--book-paper-height) - var(--book-paper-top) - var(--book-paper-bottom) - 5em); margin: 0 auto; object-fit: contain; }
 .book-page--chapter .translate-preview__image-caption { font-size: .75em; font-style: italic; text-align: center; margin-top: calc(var(--book-paper-font) * .85); word-spacing: var(--book-word-spacing); }
+/* As in the PDF, a chapter that opens with a quote or an image shows it alone
+   under the title, and its text starts on the next sheet. A cover image shrinks
+   to the space the header leaves, like the PDF's 1fr block. */
+.book-paper + .book-paper { margin-top: 24px; }
+.book-page--chapter:has(> .book-chapter__cover--image) { height: var(--book-paper-height); }
+.book-chapter__cover--image { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.book-page--chapter .book-chapter__cover--image > .translate-preview__image-block { display: flex; flex-direction: column; min-height: 0; margin-top: 0; }
+.book-page--chapter .book-chapter__cover--image .translate-preview__image { min-height: 0; }
+/* Each cover quote shrinks to its text, as in the PDF, so a one-line quote is
+   centred and its citation stays flush with the quote's right edge. */
+.book-chapter__epigraph { width: fit-content; max-width: 100%; margin-inline: auto; }
 /* Typst measures text from cap height to baseline. Where supported, trim the
    browser's extra font space and let collapsed paragraph margins supply leading.
    Older webviews retain the untrimmed, continuous line-box approximation above. */
 @supports (text-box: trim-both cap alphabetic) {
-  .book-chapter__body > .translate-preview__block, .book-chapter__body > cite { text-box: trim-both cap alphabetic; }
+  :is(.book-chapter__body, .book-chapter__epigraph) > :is(.translate-preview__block, cite) { text-box: trim-both cap alphabetic; }
   .book-chapter__body > .translate-preview__block--paragraph, .book-chapter__body > .translate-preview__block--centered, .book-chapter__body > .translate-preview__block--indented { margin: .78em 0; }
   .book-chapter__body > .translate-preview__block--heading1, .book-chapter__body > .translate-preview__block--heading2 { margin-bottom: calc(var(--book-paper-font) * .78); }
-  .book-chapter__body > .translate-preview__block--quote { margin: calc(var(--book-paper-font) * 1.5) 0; }
-  .book-chapter__body > .translate-preview__block--quote:has(+ cite) { margin-bottom: calc(var(--book-paper-font) * .78); }
-  .book-chapter__body > .translate-preview__attribution { margin-bottom: calc(var(--book-paper-font) * 1.5); }
-  .book-chapter__body > :first-child { margin-top: 0; }
+  :is(.book-chapter__body, .book-chapter__epigraph) > .translate-preview__block--quote { margin: calc(var(--book-paper-font) * 1.5) 0; }
+  :is(.book-chapter__body, .book-chapter__epigraph) > .translate-preview__block--quote:has(+ cite) { margin-bottom: calc(var(--book-paper-font) * .78); }
+  :is(.book-chapter__body, .book-chapter__epigraph) > .translate-preview__attribution { margin-bottom: calc(var(--book-paper-font) * 1.5); }
+  .book-chapter__body > :first-child, .book-chapter__epigraph:first-child > :first-child { margin-top: 0; }
   .book-page--chapter .book-print-dropcap::first-letter { margin-block: .125em -.125em; margin-inline-end: .2em; }
 }
 .book-page a { color: #245c8a; }
@@ -96,6 +107,9 @@
 .book-chapter__number { display: block; font-family: var(--book-heading-font); font-size: calc(var(--book-paper-font) * 12 / 11.5); margin-bottom: calc(var(--book-paper-font) * .75); line-height: var(--book-heading-line-height); }
 .book-chapter__header h1 { font-family: var(--book-heading-font); font-size: calc(var(--book-paper-font) * 16 / 11.5); font-weight: 400; line-height: var(--book-heading-line-height); letter-spacing: .1em; text-transform: uppercase; margin: 0 0 calc(var(--book-paper-font) * 1.2); }
 .book-chapter__header svg { width: calc(var(--book-paper-mm) * 19.05); height: auto; }
+/* As in the PDF, the title sits higher and closer to an image cover, so the
+   image keeps more of the page. */
+.book-page--chapter:has(> .book-chapter__cover--image) > .book-chapter__header { padding-top: 2em; margin-bottom: 2.5em; }
 .book-page__input { display: block; border: 0; border-bottom: 1px solid transparent; background: transparent; color: inherit; font: inherit; width: 100%; min-height: 1em; text-align: center; white-space: pre-wrap; overflow-wrap: anywhere; padding: 0; outline-offset: 3px; }
 .book-page__input:hover, .book-page__input:focus { border-bottom-color: #b3864a55; }
 .book-page__input::placeholder, .book-page textarea::placeholder { color: #9d8e7c; opacity: 1; }
