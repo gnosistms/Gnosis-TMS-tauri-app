@@ -79,6 +79,16 @@ pub(crate) struct UpdateMetadata {
     message: Option<String>,
 }
 
+#[derive(serde::Serialize)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub(crate) enum DownloadUpdateOutcome {
+    Downloaded,
+    AlreadyInstalled {
+        #[serde(rename = "currentVersion")]
+        current_version: String,
+    },
+}
+
 #[allow(clippy::large_enum_variant)]
 enum ResolvedUpdate {
     Available(Update),
@@ -383,6 +393,11 @@ fn version_satisfies_requested(version: &str, requested_version: Option<&str>) -
     }
 }
 
+fn requested_version_is_installed(current_version: &str, requested_version: Option<&str>) -> bool {
+    requested_version
+        .is_some_and(|requested| version_satisfies_requested(current_version, Some(requested)))
+}
+
 fn release_tag_candidates_for_version(version: &str) -> Vec<String> {
     let trimmed = version.trim();
     if trimmed.is_empty() {
@@ -648,6 +663,15 @@ pub(crate) async fn check_for_app_update(
     }
 
     let requested_version = normalize_requested_version(requested_version);
+    // Tauri returns no update for an already-running version. That is success,
+    // not evidence that this platform's release artifacts are missing.
+    if requested_version_is_installed(&current_version, requested_version.as_deref()) {
+        *pending_update
+            .0
+            .lock()
+            .map_err(|_| "Could not store the pending update.".to_string())? = None;
+        return Ok(build_no_update_metadata(current_version, None));
+    }
     let resolved = tokio::time::timeout(
         UPDATE_CHECK_TOTAL_TIMEOUT,
         resolve_install_update(&app, requested_version.as_deref()),
@@ -677,7 +701,7 @@ pub(crate) async fn download_app_update(
     pending_update: State<'_, PendingUpdate>,
     installation: State<'_, UpdateInstallation>,
     requested_version: Option<String>,
-) -> Result<(), String> {
+) -> Result<DownloadUpdateOutcome, String> {
     if !updates_enabled() {
         return Err(DEVELOPMENT_UPDATE_INSTALL_ERROR.to_string());
     }
@@ -686,6 +710,10 @@ pub(crate) async fn download_app_update(
 
     let requested_version = normalize_requested_version(requested_version);
     let requested_version_ref = requested_version.as_deref();
+    let current_version = app.package_info().version.to_string();
+    if requested_version_is_installed(&current_version, requested_version_ref) {
+        return Ok(DownloadUpdateOutcome::AlreadyInstalled { current_version });
+    }
     let pending_update = pending_update
         .0
         .lock()
@@ -732,7 +760,7 @@ pub(crate) async fn download_app_update(
         .downloaded
         .lock()
         .map_err(|_| "Could not store the downloaded update.".to_string())? = Some((update, bytes));
-    Ok(())
+    Ok(DownloadUpdateOutcome::Downloaded)
 }
 
 // Called only after the user confirms restart and the frontend has flushed and
@@ -789,6 +817,43 @@ pub(crate) async fn install_app_update(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn already_installed_requests_do_not_require_release_or_platform_lookup() {
+        assert!(super::requested_version_is_installed(
+            "0.8.136",
+            Some("0.8.136")
+        ));
+        assert!(super::requested_version_is_installed(
+            "0.8.137",
+            Some("v0.8.136")
+        ));
+        assert!(!super::requested_version_is_installed(
+            "0.8.135",
+            Some("0.8.136")
+        ));
+        assert!(!super::requested_version_is_installed("0.8.136", None));
+    }
+
+    #[test]
+    fn an_installed_request_reports_current_version_without_claiming_a_download() {
+        let outcome = super::DownloadUpdateOutcome::AlreadyInstalled {
+            current_version: "0.8.136".into(),
+        };
+        assert_eq!(
+            serde_json::to_value(outcome).unwrap(),
+            serde_json::json!({
+                "status": "alreadyInstalled", "currentVersion": "0.8.136"
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(super::DownloadUpdateOutcome::Downloaded).unwrap(),
+            serde_json::json!({ "status": "downloaded" })
+        );
+        let current = super::build_no_update_metadata("0.8.136".into(), None);
+        assert!(!current.available);
+        assert!(current.message.is_none());
+    }
+
     #[test]
     fn update_operation_rejects_overlap_and_releases_on_failure() {
         let busy = std::sync::atomic::AtomicBool::new(false);

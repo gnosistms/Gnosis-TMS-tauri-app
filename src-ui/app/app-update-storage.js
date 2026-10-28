@@ -1,8 +1,10 @@
+/* global __GNOSIS_APP_VERSION__ */
 import { readPersistentValue, writePersistentValue, removePersistentValue } from "./persistent-store.js";
 
 const KEY = "app-update-availability";
 
-export function loadKnownAppUpdate() {
+export function loadKnownAppUpdate(runningVersion =
+  typeof __GNOSIS_APP_VERSION__ === "undefined" ? null : __GNOSIS_APP_VERSION__) {
   const update = readPersistentValue(KEY);
   if (!update || typeof update.version !== "string" || !update.version.trim()) return null;
   const requirement = update.requirement ?? (update.required === true ? {
@@ -10,10 +12,20 @@ export function loadKnownAppUpdate() {
     currentVersion: update.currentVersion,
     message: update.message,
   } : null);
+  const currentVersion = String(runningVersion ?? "").trim();
+  const versionKnown = isAppVersionAtLeast(currentVersion, currentVersion);
+  if (versionKnown && isAppVersionAtLeast(currentVersion, update.version)
+      && (!requirement || isAppVersionAtLeast(currentVersion, requirement.requiredVersion))) {
+    // The bundled build version is available before the asynchronous startup
+    // check. Do not offer a cached update that this running app already has.
+    removePersistentValue(KEY);
+    return null;
+  }
   // A saved repository requirement is not proof that this platform can update.
   // Recheck it each session before restoring an app-wide prompt/action lock.
   return {
     ...update,
+    currentVersion: versionKnown ? currentVersion : update.currentVersion,
     requirement,
     required: false,
     available: !requirement,

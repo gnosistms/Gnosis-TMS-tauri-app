@@ -1,6 +1,6 @@
 import { invoke, listen } from "./runtime.js";
 import { clearNoticeBadgeIfText, showNoticeBadge } from "./status-feedback.js";
-import { state } from "./state.js";
+import { createAppUpdateState, state } from "./state.js";
 import { confirmsKnownUpdateInstalled, isAppVersionAtLeast, storeKnownAppUpdate } from "./app-update-storage.js";
 
 const APP_UPDATE_REQUIRED_PREFIX = "APP_UPDATE_REQUIRED:";
@@ -381,7 +381,20 @@ export async function installAppUpdate(render) {
   render();
 
   try {
-    await invoke("download_app_update", { requestedVersion: requestedUpdateVersion() });
+    const outcome = await invoke("download_app_update", { requestedVersion: requestedUpdateVersion() });
+    if (outcome?.status === "alreadyInstalled") {
+      const currentVersion = outcome.currentVersion;
+      const requirement = state.appUpdate.requirement;
+      const remaining = requirement
+        && !isAppVersionAtLeast(currentVersion, requirement.requiredVersion) ? requirement : null;
+      state.appUpdate = { ...createAppUpdateState(), currentVersion,
+        requirement: remaining, version: remaining?.requiredVersion ?? null };
+      storeKnownAppUpdate(state.appUpdate);
+      render();
+      if (remaining) void checkForAppUpdate(render, { silent: true });
+      else showNoticeBadge(`Gnosis TMS ${currentVersion} is already installed.`, render, 2200);
+      return;
+    }
     state.appUpdate.status = "downloaded";
     state.appUpdate.downloadPercent = 100;
     render();
