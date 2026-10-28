@@ -765,7 +765,14 @@ fn migrate_uploaded_image_path(
         return Ok(Some(path_in_new_chapter));
     }
 
-    let source_path = repo_path.join(&normalized);
+    // Chapter folders are renamed before their rows are migrated, so the file
+    // now lives under the new chapter folder, not at the stored path. With no
+    // file to move, keep the reference following its chapter instead of
+    // pointing it at a flat name nothing will occupy.
+    let source_path = repo_path.join(&path_in_new_chapter);
+    if !source_path.is_file() {
+        return Ok(Some(path_in_new_chapter));
+    }
     let extension = Path::new(file_name)
         .extension()
         .and_then(|value| value.to_str())
@@ -786,7 +793,7 @@ fn migrate_uploaded_image_path(
             )
         })?;
     }
-    if source_path.exists() && source_path != target_path {
+    if source_path != target_path {
         fs::rename(&source_path, &target_path).map_err(|error| {
             format!(
                 "Could not move image '{}' to '{}': {error}",
@@ -1626,6 +1633,111 @@ mod tests {
         assert!(!repo_path
             .join(IMAGE_PATH_REPAIR_REPORT_RELATIVE_PATH)
             .exists());
+
+        let _ = fs::remove_dir_all(repo_path);
+    }
+
+    const ROW_A: &str = "019e674b-ff24-7fb2-9ef3-221d71c56144";
+    const ROW_B: &str = "019e674b-ff26-7663-bf7e-60591290cc6d";
+
+    fn write_row_with_upload(rows_dir: &Path, row_id: &str, language: &str, image_path: &str) {
+        fs::create_dir_all(rows_dir).expect("create rows dir");
+        let mut fields = serde_json::Map::new();
+        fields.insert(
+            language.to_string(),
+            serde_json::json!({
+                "plain_text": "Texto",
+                "image": { "kind": "upload", "path": image_path },
+            }),
+        );
+        let row = serde_json::json!({ "row_id": row_id, "fields": fields });
+        fs::write(
+            rows_dir.join(format!("{row_id}.json")),
+            serde_json::to_string_pretty(&row).expect("serialize row"),
+        )
+        .expect("write row");
+    }
+
+    fn row_upload_path(rows_dir: &Path, row_id: &str, language: &str) -> String {
+        let row = fs::read_to_string(rows_dir.join(format!("{row_id}.json"))).expect("read row");
+        let value: Value = serde_json::from_str(&row).expect("parse row");
+        value["fields"][language]["image"]["path"]
+            .as_str()
+            .expect("image path")
+            .to_string()
+    }
+
+    /// Write an upload in the old per-row layout,
+    /// `images/row-<rowId>-<lang>-<uuid>/<name>`, and return its folder.
+    fn write_nested_upload(
+        chapter_dir: &Path,
+        row_id: &str,
+        language: &str,
+        name: &str,
+        bytes: &[u8],
+    ) -> std::path::PathBuf {
+        let folder = chapter_dir
+            .join("images")
+            .join(format!("row-{row_id}-{language}-{}", Uuid::now_v7()));
+        fs::create_dir_all(&folder).expect("create nested upload folder");
+        fs::write(folder.join(name), bytes).expect("write nested upload");
+        folder
+    }
+
+    #[test]
+    fn in_place_layout_migration_flattens_images_of_renamed_chapters() {
+        // Chapter folders are renamed before rows are migrated, so the nested
+        // file must be found under the new folder, not at the stored old path.
+        // Before the fix the rows were rewritten to flat names and the files
+        // stayed nested — the field state the 0.8.137 repair heals.
+        let repo_path = temp_repo("in-place-renamed-chapter-images");
+        let chapter_dir = repo_path.join("chapters/short-folder");
+        let rows_dir = chapter_dir.join("rows");
+        let mut nested_folders = Vec::new();
+        for (row_id, bytes) in [(ROW_A, b"a"), (ROW_B, b"b")] {
+            let folder =
+                write_nested_upload(&chapter_dir, row_id, "es", "embedded-image.png", bytes);
+            let folder_name = folder
+                .file_name()
+                .and_then(|value| value.to_str())
+                .expect("folder name");
+            write_row_with_upload(
+                &rows_dir,
+                row_id,
+                "es",
+                &format!("chapters/long-old-folder-name/images/{folder_name}/embedded-image.png"),
+            );
+            nested_folders.push(folder);
+        }
+
+        migrate_project_chapter(
+            &repo_path,
+            &ProjectChapterMigration {
+                old_folder: "long-old-folder-name".to_string(),
+                new_folder: "short-folder".to_string(),
+                title: None,
+            },
+        )
+        .expect("migrate chapter");
+
+        let mut paths = Vec::new();
+        for (row_id, bytes) in [(ROW_A, b"a"), (ROW_B, b"b")] {
+            let path = row_upload_path(&rows_dir, row_id, "es");
+            assert_eq!(
+                fs::read(repo_path.join(&path)).expect("referenced image exists"),
+                bytes
+            );
+            paths.push(path);
+        }
+        paths.sort();
+        assert_eq!(
+            paths,
+            [
+                "chapters/short-folder/images/embedded-image-2.png",
+                "chapters/short-folder/images/embedded-image.png",
+            ]
+        );
+        assert!(nested_folders.iter().all(|folder| !folder.exists()));
 
         let _ = fs::remove_dir_all(repo_path);
     }
