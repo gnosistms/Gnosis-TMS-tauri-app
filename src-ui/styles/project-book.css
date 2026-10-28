@@ -54,10 +54,14 @@
 .book-page--chapter .translate-preview__block--heading1, .book-page--chapter .translate-preview__block--heading2 { font-family: var(--book-heading-font); font-weight: var(--book-heading-weight); line-height: var(--book-heading-line-height); margin: 1.3em 0 .5em; text-transform: none; text-align: start; letter-spacing: normal; }
 .book-page--chapter .translate-preview__block--heading1 { font-size: var(--book-h1-size); }
 .book-page--chapter .translate-preview__block--heading2 { font-size: var(--book-h2-size); }
-.book-page--chapter .translate-preview__block--quote { font-size: .9em; font-style: normal; padding-inline: var(--book-paper-font); margin: .78em 0; }
+/* As in the PDF, quotes take 1.5em of space and a cited quote stays one line
+   above its citation. Untrimmed line boxes already hold the .78em leading, so
+   here the margins add only the remaining .72em. */
+.book-page--chapter .translate-preview__block--quote { font-size: .9em; font-style: normal; padding-inline: var(--book-paper-font); margin: calc(var(--book-paper-font) * .72) 0; }
+.book-page--chapter .translate-preview__block--quote:has(+ cite) { margin-bottom: 0; }
 .book-page--chapter .translate-preview__block--indented { padding-inline: 0; padding-left: 2em; }
 .book-page--chapter .translate-preview__block--centered { text-align: center; }
-.book-page--chapter .translate-preview__attribution { display: block; font-family: var(--book-body-font); font-size: calc(var(--book-paper-font) * .8); line-height: var(--book-line-height); text-align: right; font-style: normal; text-transform: uppercase; letter-spacing: .06em; word-spacing: var(--book-word-spacing); margin: .5em 0 .78em; }
+.book-page--chapter .translate-preview__attribution { display: block; font-family: var(--book-body-font); font-size: calc(var(--book-paper-font) * .8); line-height: var(--book-line-height); text-align: right; font-style: normal; text-transform: uppercase; letter-spacing: .06em; word-spacing: var(--book-word-spacing); margin: 0 0 calc(var(--book-paper-font) * .72); }
 .book-page--chapter .translate-preview__separator { margin: .78em 0 .8em; border-top: calc(var(--book-paper-mm) * .176389) solid #000; }
 .book-page--chapter .translate-preview__image-block { display: block; margin: .78em 0; text-indent: 0; break-inside: avoid; }
 .book-page--chapter .translate-preview__image { width: 100%; max-height: calc(var(--book-paper-height) - var(--book-paper-top) - var(--book-paper-bottom) - 5em); margin: 0 auto; object-fit: contain; }
@@ -68,6 +72,9 @@
 @supports (text-box: trim-both cap alphabetic) {
   .book-chapter__body > .translate-preview__block, .book-chapter__body > cite { text-box: trim-both cap alphabetic; }
   .book-chapter__body > .translate-preview__block--paragraph, .book-chapter__body > .translate-preview__block--centered, .book-chapter__body > .translate-preview__block--indented { margin: .78em 0; }
+  .book-chapter__body > .translate-preview__block--quote { margin: calc(var(--book-paper-font) * 1.5) 0; }
+  .book-chapter__body > .translate-preview__block--quote:has(+ cite) { margin-bottom: calc(var(--book-paper-font) * .78); }
+  .book-chapter__body > .translate-preview__attribution { margin-bottom: calc(var(--book-paper-font) * 1.5); }
   .book-chapter__body > :first-child { margin-top: 0; }
   .book-page--chapter .book-print-dropcap::first-letter { margin-block: .125em -.125em; margin-inline-end: .2em; }
 }
