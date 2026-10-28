@@ -3328,7 +3328,9 @@ mod tests {
             .unwrap();
         assert!(xml.contains("<w:pStyle w:val=\"VellumAttribution\"/>"));
         assert!(styles_xml().contains("w:val=\"Vellum Attribution\""));
-        assert!(styles_xml().contains(r#"<w:name w:val="Quote"/><w:pPr><w:ind w:left="720" w:right="720"/></w:pPr></w:style>"#));
+        assert!(styles_xml().contains(
+            r#"<w:name w:val="Quote"/><w:pPr><w:ind w:left="720" w:right="720"/></w:pPr></w:style>"#
+        ));
     }
 
     #[test]
