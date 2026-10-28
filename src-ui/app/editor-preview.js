@@ -12,6 +12,7 @@ import {
   renderSanitizedInlineMarkupWithRanges,
   renderSanitizedInlineMarkupWithHighlights,
   splitInlineMarkupTextBySeparators,
+  splitInlineMarkupTextIntoParagraphs,
 } from "./editor-inline-markup.js";
 import { parseInlineMarkup } from "./editor-inline-markup/parser.js";
 import {
@@ -103,6 +104,38 @@ function previewFootnoteValue(row, languageCode) {
   return normalizeEditorFootnotes(row?.footnotes?.[languageCode]);
 }
 
+// A subtitle cue's newline is a subtitle line, not a paragraph break.
+function previewRowIsSubtitleCue(row) {
+  return Boolean(row?.srtTiming) || Object.keys(row?.timings ?? {}).length > 0;
+}
+
+// Each paragraph of a row becomes a block of its own, set exactly as a separate
+// row of the same style would be. Custom HTML is opaque and subtitle cues keep
+// their newlines as lines. Empty paragraphs are dropped, as empty rows are.
+function previewRowParagraphs(row, text, textStyle) {
+  if (isCustomHtmlRowTextStyle(textStyle) || previewRowIsSubtitleCue(row)) {
+    return text.trim() ? [text] : [];
+  }
+  return splitInlineMarkupTextIntoParagraphs(text).filter((paragraph) => paragraph.trim());
+}
+
+// A footnote belongs to the first paragraph that cites it; notes cited nowhere
+// follow the row's last paragraph, as they follow the last text of a row.
+function previewFootnotesByParagraph(paragraphs, footnotes) {
+  if (paragraphs.length < 2) {
+    return [footnotes];
+  }
+  const citedMarkers = paragraphs.map((paragraph) => new Set(
+    parseUnescapedFootnoteMarkers(extractInlineMarkupVisibleText(paragraph)).map((marker) => marker.marker),
+  ));
+  const groups = paragraphs.map(() => []);
+  for (const entry of footnotes) {
+    const index = citedMarkers.findIndex((markers) => markers.has(entry.marker));
+    groups[index >= 0 ? index : groups.length - 1].push(entry);
+  }
+  return groups;
+}
+
 export function buildEditorPreviewDocument(rows, languageCode) {
   if (!languageCode) {
     return [];
@@ -120,15 +153,29 @@ export function buildEditorPreviewDocument(rows, languageCode) {
     const textStyle = normalizeEditorRowTextStyle(row?.textStyle);
     const attribution = textStyle === "quote" ? previewTextValue(row?.attributions?.[languageCode]) : "";
     const blocks = [];
+    const paragraphs = previewRowParagraphs(row, text, textStyle);
+    const paragraphFootnotes = previewFootnotesByParagraph(paragraphs, footnotes);
 
-    if (text.trim() || attribution.trim()) {
+    paragraphs.forEach((paragraph, index) => {
+      blocks.push({
+        kind: "text",
+        rowId: row.rowId ?? "",
+        languageCode,
+        textStyle,
+        text: paragraph,
+        ...(attribution.trim() && index === paragraphs.length - 1 ? { attribution } : {}),
+        footnotes: paragraphFootnotes[index],
+      });
+    });
+
+    if (paragraphs.length === 0 && attribution.trim()) {
       blocks.push({
         kind: "text",
         rowId: row.rowId ?? "",
         languageCode,
         textStyle,
         text,
-        ...(attribution.trim() ? { attribution } : {}),
+        attribution,
         footnotes,
       });
     }

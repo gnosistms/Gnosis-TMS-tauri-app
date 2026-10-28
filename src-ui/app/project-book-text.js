@@ -1,7 +1,7 @@
 import { escapeHtml } from "../lib/ui.js";
 
-// Front matter uses LF for paragraphs and U+2028 for Shift+Return. Chapter-row
-// newlines retain their existing soft-break semantics.
+// Front matter uses LF for paragraphs and U+2028 for Shift+Return. Chapter rows
+// also use LF for paragraphs but store their line breaks as "<br>\n".
 export function bookTextParts(value) {
   const parts = [];
   let text = "";
