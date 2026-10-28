@@ -233,14 +233,15 @@ test("formatting shortcuts leave unavailable and non-editor fields alone", (t) =
   assert.equal(fixture.button.clickCount, 0);
 });
 
-function rowFieldFixture({ contentKind, srt = false } = {}) {
-  const originalChapter = state.editorChapter;
+function rowFieldFixture({ contentKind, paragraphs = false, value = "", caret = value.length } = {}) {
   const originalExecCommand = document.execCommand;
-  state.editorChapter = { ...originalChapter, sourceFormats: srt ? ["srt"] : [] };
   const target = new HTMLTextAreaElement();
   target.dataset = contentKind ? { contentKind } : {};
-  target.matches = (selector) => selector === "[data-editor-row-field]";
+  target.matches = (selector) => selector === "[data-editor-row-field]"
+    || (paragraphs && selector === "[data-editor-row-field][data-text-has-paragraphs]");
   target.closest = () => null;
+  target.value = value;
+  target.selectionStart = caret;
   target.blurCount = 0;
   target.blur = () => { target.blurCount += 1; };
   const commands = [];
@@ -255,33 +256,43 @@ function rowFieldFixture({ contentKind, srt = false } = {}) {
       return event;
     },
     restore: () => {
-      state.editorChapter = originalChapter;
       document.execCommand = originalExecCommand;
     },
   };
 }
 
-test("Shift+Return breaks a line in row text and footnotes without leaving the field", (t) => {
+test("Return starts a paragraph with a blank line in row text", (t) => {
   navigator.platform = "MacIntel";
-  for (const contentKind of [undefined, "footnote"]) {
-    const fixture = rowFieldFixture({ contentKind });
+  for (const [value, caret, inserted] of [
+    ["Line", 4, "\n\n"],
+    ["Ab", 1, "\n\n"],
+    ["Line\n", 5, "\n"],
+    ["", 0, "\n"],
+  ]) {
+    const fixture = rowFieldFixture({ paragraphs: true, value, caret });
     t.after(fixture.restore);
-    const event = fixture.run({ key: "Enter", shiftKey: true });
+    const event = fixture.run({ key: "Enter" });
     assert.equal(event.prevented, true);
-    assert.deepEqual(fixture.commands, [["insertText", false, "<br>\n"]]);
+    assert.deepEqual(fixture.commands, [["insertText", false, inserted]]);
     assert.equal(fixture.target.blurCount, 0);
-    for (const excluded of [{ altKey: true }, { metaKey: true }, { isComposing: true }, { shiftKey: false }]) {
-      assert.equal(fixture.run({ key: "Enter", shiftKey: true, ...excluded }).prevented, false);
-    }
-    assert.equal(fixture.commands.length, 1);
   }
+
+  // Shift+Return is the native newline, a line break; other modifiers are not Return.
+  const fixture = rowFieldFixture({ paragraphs: true, value: "Line" });
+  t.after(fixture.restore);
+  for (const modifiers of [{ shiftKey: true }, { altKey: true }, { metaKey: true }, { ctrlKey: true }, { isComposing: true }]) {
+    assert.equal(fixture.run({ key: "Enter", ...modifiers }).prevented, false);
+  }
+  assert.deepEqual(fixture.commands, []);
+  assert.equal(fixture.target.blurCount, 0);
 });
 
-test("Shift+Return keeps the native newline in captions, attributions and subtitles", (t) => {
+test("Return keeps the native newline in footnotes, captions, attributions, subtitles and custom HTML", (t) => {
   navigator.platform = "MacIntel";
-  for (const options of [{ contentKind: "image-caption" }, { contentKind: "attribution" }, { srt: true }]) {
-    const fixture = rowFieldFixture(options);
+  for (const contentKind of [undefined, "footnote", "image-caption", "attribution"]) {
+    const fixture = rowFieldFixture({ contentKind, value: "Line" });
     t.after(fixture.restore);
+    assert.equal(fixture.run({ key: "Enter" }).prevented, false);
     assert.equal(fixture.run({ key: "Enter", shiftKey: true }).prevented, false);
     assert.deepEqual(fixture.commands, []);
     assert.equal(fixture.target.blurCount, 0);

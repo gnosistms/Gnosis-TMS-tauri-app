@@ -428,7 +428,7 @@ function renderStaticEditorFieldTextHtml(language, options = {}) {
       language?.footnotes ?? language?.footnote,
     ),
   });
-  return language?.isSubtitleCue === true ? html : rowTextParagraphsHtml(html);
+  return language?.textHasParagraphs === true ? rowTextParagraphsHtml(html) : html;
 }
 
 function editorLanguageImageSrc(image) {
@@ -1109,6 +1109,7 @@ function renderEditorLanguageField(row, language) {
           data-editor-row-field
           data-row-id="${escapeHtml(row.id)}"
           data-language-code="${escapeHtml(language.code)}"
+          ${language.textHasParagraphs === true ? "data-text-has-paragraphs" : ""}
           lang="${escapeHtml(language.baseCode || language.code)}"
           rows="1"
           spellcheck="false"

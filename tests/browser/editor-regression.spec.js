@@ -6177,45 +6177,53 @@ test.describe("editor regressions", () => {
     }).toBeLessThan(4);
   });
 
-  test("a row's returns display as paragraphs and Shift+Return adds a line break", async ({ page }) => {
+  test("blank lines display as paragraphs; Return starts one and Shift+Return breaks a line", async ({ page }) => {
     const rowId = "fixture-row-0001";
-    const text = "First paragraph with a<br>\nline break\nSecond paragraph";
+    const text = "First paragraph with a\nline break\n\nSecond paragraph";
     await mountEditorFixture(page, {
       rowCount: 4,
       fieldsByRowId: { [rowId]: { vi: text } },
     }, { mockTauri: true });
     const displayField = page.locator(`[data-editor-display-field][data-row-id="${rowId}"][data-language-code="vi"]`);
     const paragraphs = displayField.locator(".translation-language-panel__paragraph");
-    await expect(paragraphs).toHaveText(["First paragraph with aline break", "Second paragraph"]);
-    await expect(paragraphs.first().locator("br")).toHaveCount(1);
-    await expect(displayField).not.toContainText("<br>");
+    const renderedParagraphs = () => paragraphs.evaluateAll((nodes) => nodes.map((node) => node.innerText));
+    await expect.poll(renderedParagraphs).toEqual(["First paragraph with a\nline break", "Second paragraph"]);
     const [first, second] = await paragraphs.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect()));
     expect(second.top - first.bottom).toBeGreaterThan(4);
     await displayField.screenshot({ path: test.info().outputPath("row-paragraphs.png") });
 
     const field = await activateMainEditorField(page, rowId, "vi");
     await expect(field).toHaveValue(text);
+    const saveShortcut = await editorSaveShortcut(page);
+    await expect(page.locator(".translation-row-text-style-actions__hint").first())
+      .toHaveText(saveShortcut === "Meta+s" ? "Command + S to save" : "Ctrl + S to save");
     await field.evaluate((element) => element.setSelectionRange(element.value.length, element.value.length));
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("Third paragraph");
     await page.keyboard.press("Shift+Enter");
-    await page.keyboard.type("continued");
-    await expect(field).toHaveValue(`${text}<br>\ncontinued`);
+    await page.keyboard.type("with a break");
+    const edited = `${text}\n\nThird paragraph\nwith a break`;
+    await expect(field).toHaveValue(edited);
     await expect(field).toBeFocused();
 
-    await page.keyboard.press(await editorSaveShortcut(page));
+    await page.keyboard.press(saveShortcut);
     await expect(field).toHaveCount(0);
     await expect.poll(async () => (await readMockTauriState(page)).invocations
       .filter((entry) => entry.command === "update_gtms_editor_row_fields")
-      .map((entry) => entry.payload.input.fields.vi)).toEqual([`${text}<br>\ncontinued`]);
-    await expect(paragraphs).toHaveText(["First paragraph with aline break", "Second paragraphcontinued"]);
-    await expect(paragraphs.nth(1).locator("br")).toHaveCount(1);
+      .map((entry) => entry.payload.input.fields.vi)).toEqual([edited]);
+    await expect.poll(renderedParagraphs).toEqual([
+      "First paragraph with a\nline break",
+      "Second paragraph",
+      "Third paragraph\nwith a break",
+    ]);
   });
 
-  test("subtitle text keeps returns as lines and Shift+Return as a plain newline", async ({ page }) => {
+  test("subtitle text keeps blank lines in the cue and Return as a plain newline", async ({ page }) => {
     const rowId = "fixture-row-0001";
     await mountEditorFixture(page, {
       rowCount: 4,
       srt: true,
-      fieldsByRowId: { [rowId]: { vi: "Subtitle line one\nline two" } },
+      fieldsByRowId: { [rowId]: { vi: "Subtitle line one\n\nline two" } },
     }, { mockTauri: true });
     const displayField = page.locator(`[data-editor-display-field][data-row-id="${rowId}"][data-language-code="vi"]`);
     await expect(displayField).toContainText("Subtitle line one");
@@ -6223,9 +6231,9 @@ test.describe("editor regressions", () => {
 
     const field = await activateMainEditorField(page, rowId, "vi");
     await field.evaluate((element) => element.setSelectionRange(element.value.length, element.value.length));
-    await page.keyboard.press("Shift+Enter");
+    await page.keyboard.press("Enter");
     await page.keyboard.type("line three");
-    await expect(field).toHaveValue("Subtitle line one\nline two\nline three");
+    await expect(field).toHaveValue("Subtitle line one\n\nline two\nline three");
   });
 
   test("replace selected and undo replace round-trip through history", async ({ page }) => {

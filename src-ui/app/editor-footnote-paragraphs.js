@@ -1,10 +1,13 @@
 // Accept only HTML already produced by an editor sanitizer. Reopen inline tags
 // at paragraph boundaries so formatting/highlights may safely span a return.
-function splitHtmlParagraphs(html) {
+// endsParagraph(tokens, index) says whether the newline token at index is a
+// paragraph break; other newlines stay in the paragraph as line breaks.
+function splitHtmlParagraphs(html, endsParagraph = () => true) {
   const stack = [];
   const paragraphs = [""];
-  for (const token of String(html).replace(/\r\n?/g, "\n").split(/(<[^>]+>|\n)/g)) {
-    if (token === "\n") {
+  const tokens = String(html).replace(/\r\n?/g, "\n").split(/(<[^>]+>|\n)/g);
+  for (const [index, token] of tokens.entries()) {
+    if (token === "\n" && endsParagraph(tokens, index)) {
       paragraphs[paragraphs.length - 1] += [...stack].reverse().map(({ name }) => `</${name}>`).join("");
       paragraphs.push(stack.map(({ opening }) => opening).join(""));
       continue;
@@ -20,8 +23,30 @@ function splitHtmlParagraphs(html) {
   return paragraphs;
 }
 
-function paragraphHasText(paragraph) {
-  return paragraph.replace(/<[^>]*>/g, "").trim().length > 0;
+function isSeparatorTag(token) {
+  return /^<hr\b/i.test(token) || /\brole="separator"/.test(token);
+}
+
+// Tags (other than a separator), spaces and tabs may sit inside a blank line.
+function isBlankLineFiller(token) {
+  return /^[ \t]*$/.test(token) || (token.startsWith("<") && !isSeparatorTag(token));
+}
+
+function adjacentNewline(tokens, index, step) {
+  for (let cursor = index + step; cursor >= 0 && cursor < tokens.length; cursor += step) {
+    if (tokens[cursor] === "\n") return true;
+    if (!isBlankLineFiller(tokens[cursor])) return false;
+  }
+  return false;
+}
+
+function isBlankLineNewline(tokens, index) {
+  return adjacentNewline(tokens, index, -1) || adjacentNewline(tokens, index, 1);
+}
+
+function paragraphHasContent(paragraph) {
+  return /\S/.test(paragraph.replace(/<[^>]*>/g, ""))
+    || (paragraph.match(/<[^>]+>/g) ?? []).some(isSeparatorTag);
 }
 
 export function footnoteParagraphsHtml(html, tag = "span") {
@@ -33,12 +58,13 @@ export function footnoteParagraphsHtml(html, tag = "span") {
   }).join("");
 }
 
-// A row's returns are paragraph breaks (its line breaks already render as <br>).
-// Empty paragraphs are dropped, as the previews and exports drop them.
+// A blank line in a row is a paragraph break; a single return is a line break
+// and stays in its paragraph. Empty paragraphs are dropped, as the previews
+// and exports drop them.
 export function rowTextParagraphsHtml(html) {
-  if (!/[\r\n]/.test(html)) return html;
-  return splitHtmlParagraphs(html)
-    .filter(paragraphHasText)
+  if (!/\n[ \t\r]*(<[^>]+>[ \t\r]*)*\n/.test(html)) return html;
+  return splitHtmlParagraphs(html, isBlankLineNewline)
+    .filter(paragraphHasContent)
     .map((paragraph) => `<span class="translation-language-panel__paragraph">${paragraph}</span>`)
     .join("");
 }
