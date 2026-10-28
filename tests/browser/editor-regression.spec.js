@@ -5451,16 +5451,16 @@ test.describe("editor regressions", () => {
 
     await clickLocatorCenter(page, quoteButton);
     await expect.poll(async () => {
-      return (await readEditorFieldMetrics(page, "fixture-row-0001", "vi"))?.fontStyle ?? "";
-    }).toBe("italic");
+      return (await readEditorFieldMetrics(page, "fixture-row-0001", "vi"))?.fontSizePx ?? 0;
+    }).toBeCloseTo(paragraphMetrics.fontSizePx * .9, 2);
     const quoteMetrics = await readEditorFieldMetrics(page, "fixture-row-0001", "vi");
+    expect(quoteMetrics.fontStyle).toBe("normal");
     expect(quoteMetrics.paddingLeftPx).toBeGreaterThan(paragraphMetrics.paddingLeftPx);
-    expect(quoteMetrics.fontSizePx).toBeCloseTo(paragraphMetrics.fontSizePx, 2);
 
     await clickLocatorCenter(page, indentedButton);
     await expect.poll(async () => {
-      return (await readEditorFieldMetrics(page, "fixture-row-0001", "vi"))?.fontStyle ?? "";
-    }).toBe("normal");
+      return (await readEditorFieldMetrics(page, "fixture-row-0001", "vi"))?.fontSizePx ?? 0;
+    }).toBeCloseTo(paragraphMetrics.fontSizePx, 2);
     const indentedMetrics = await readEditorFieldMetrics(page, "fixture-row-0001", "vi");
     expect(indentedMetrics.paddingLeftPx).toBe(quoteMetrics.paddingLeftPx);
 
