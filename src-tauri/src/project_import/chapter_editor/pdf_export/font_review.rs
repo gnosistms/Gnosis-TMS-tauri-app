@@ -82,7 +82,7 @@ pub(super) fn prepare(
                 let inline = paragraph_inline(document, index, text);
                 excerpts.push((
                     label,
-                    render_typst_text_block(text_style, &inline, dropcap == Some(index)),
+                    render_typst_text_block(text_style, &inline, dropcap == Some(index), false),
                 ));
             }
             ExportBlock::Image { caption, .. } => {

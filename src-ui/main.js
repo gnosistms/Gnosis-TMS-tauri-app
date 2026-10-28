@@ -1,6 +1,7 @@
 import { reconcileEditorRowConnection } from "./app/editor-row-connection.js";
 import { updateBookRedundancyView } from "./screens/project-book-redundancy.js";
 import { renderProjectBookPreview } from "./app/project-book-preview-render.js";
+import { sizeBookDropcaps } from "./app/project-book-dropcap.js";
 import { commitProjectsPageHtml, deferProjectsBackgroundRender, rememberProjectsExportRender } from "./app/projects-background-render.js";
 import {
   beginStoredBrokerSessionInspection,
@@ -933,6 +934,7 @@ function renderWithOptionsImpl(options = {}) {
     app.firstElementChild.inert = ["preparing", "restarting"].includes(state.appUpdate.status);
   }
   syncGlossaryVariantTextareaHeights(app);
+  sizeBookDropcaps(app);
   if (app.firstElementChild instanceof HTMLElement) {
     app.firstElementChild.dataset.screen = state.screen;
   }

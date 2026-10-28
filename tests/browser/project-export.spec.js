@@ -975,6 +975,99 @@ test("book preview uses print typography for body, headings, quotes, captions, a
   await page.screenshot({ path: test.info().outputPath("book-print-elements.png") });
 });
 
+test("book preview sets an opening quote or image alone on a cover sheet, as the PDF does", async ({ page }) => {
+  await page.route("https://example.com/book-cover.svg", (route) => route.fulfill({ contentType: "image/svg+xml", body: '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="400"><rect width="80" height="400" fill="#b79858"/></svg>' }));
+  await page.addInitScript(() => {
+    const row = (textStyle, text, extra = {}) => ({ rowId: crypto.randomUUID(), textStyle, fields: { en: text }, ...extra });
+    window.__bookHeadingRows = {
+      "fixture-chapter-0-0": [
+        row("heading1", "An Opening Quote"),
+        row("quote", "A first epigraph.", { attributions: { en: "— One" } }), row("quote", "A second epigraph."),
+        row("paragraph", "The chapter text."),
+      ],
+      "fixture-chapter-0-1": [
+        row("heading1", "An Opening Image"),
+        row("paragraph", "", { images: { en: { kind: "url", url: "https://example.com/book-cover.svg" } }, imageCaptions: { en: "A cover caption" } }),
+        row("paragraph", "The chapter text."),
+      ],
+    };
+  });
+  await mountProjectExport(page);
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  await chooseBookOption(modal, "editor-export-paper-size", "A5 (148 × 210 mm)");
+  const sheets = modal.locator(".book-page--chapter");
+  await expect(sheets).toHaveCount(2);
+  await expect(sheets.nth(0)).toContainText("A first epigraph.");
+  await expect(sheets.nth(0)).toContainText("A second epigraph.");
+  await expect(sheets.nth(0)).not.toContainText("The chapter text.");
+  await expect(sheets.nth(1).locator(".book-chapter__header")).toHaveCount(0);
+  await expect(sheets.nth(1)).toContainText("The chapter text.");
+
+  await modal.locator('[data-action="book-select:fixture-chapter-0-1"]').click();
+  await expect(sheets.nth(0).locator("h1")).toHaveText("An Opening Image");
+  await expect(sheets).toHaveCount(2);
+  // The tall image shrinks so it and its caption fit under the header on one
+  // sheet. Polled: the preview can redraw the sheet while the image loads.
+  await expect.poll(() => sheets.nth(0).evaluate((sheet) => {
+    const image = sheet.querySelector("img");
+    if (!image?.complete || !image.naturalHeight) return "loading";
+    const box = (element) => element.getBoundingClientRect();
+    const content = box(sheet).bottom - parseFloat(getComputedStyle(sheet).paddingBottom);
+    return { below: box(image).top >= box(sheet.querySelector(".book-chapter__header")).bottom,
+      visible: box(image).height > 50, fits: box(sheet.querySelector("figcaption")).bottom <= content + 0.5 };
+  })).toEqual({ below: true, visible: true, fits: true });
+  await expect(sheets.nth(1)).toContainText("The chapter text.");
+  await page.screenshot({ path: test.info().outputPath("book-chapter-cover.png") });
+});
+
+test("book preview drops its cap as many lines as the opening paragraph has, as the PDF does", async ({ page }) => {
+  await page.addInitScript(() => {
+    const row = (text) => ({ rowId: crypto.randomUUID(), textStyle: "paragraph", fields: { en: text } });
+    const next = "The following paragraph starts at the margin, clear of the cap. ".repeat(4);
+    window.__bookHeadingRows = {
+      "fixture-chapter-0-0": [row("One short line."), row(next)],
+      "fixture-chapter-0-1": [row("Two\nlines."), row(next)],
+      "fixture-chapter-0-2": [row("An opening paragraph long enough for the full cap. ".repeat(5)), row(next)],
+    };
+  });
+  await mountProjectExport(page);
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  await chooseBookOption(modal, "editor-export-paper-size", "A5 (148 × 210 mm)");
+  const sheet = modal.locator(".book-page--chapter");
+  // The cap's size, how many lines after the first the opening paragraph sets
+  // beside it, and whether the next paragraph's first line starts at its own
+  // indent rather than beside a cap that reaches past the paragraph.
+  const cap = () => sheet.evaluate((page) => {
+    const [first, next] = page.querySelectorAll(".book-chapter__body > p");
+    const lineStarts = (paragraph, from = 0) => {
+      const range = document.createRange();
+      range.setStart(paragraph.firstChild, from);
+      range.setEnd(paragraph.lastChild, paragraph.lastChild.length ?? paragraph.lastChild.childNodes.length);
+      const starts = new Map();
+      for (const rect of range.getClientRects()) if (!starts.has(Math.round(rect.top))) starts.set(Math.round(rect.top), rect.left);
+      return [...starts.values()];
+    };
+    const left = (paragraph) => paragraph.getBoundingClientRect().left;
+    const letter = getComputedStyle(first, "::first-letter");
+    return { lines: first.dataset.bookDropcapLines, float: letter.cssFloat,
+      scale: Math.round(parseFloat(letter.fontSize) / parseFloat(getComputedStyle(first).fontSize) * 100) / 100,
+      beside: lineStarts(first, 1).slice(1).filter((start) => start > left(first) + 1).length,
+      clear: Math.abs(lineStarts(next)[0] - left(next) - parseFloat(getComputedStyle(next).textIndent)) < 1 };
+  });
+  const shoot = async (name) => {
+    const box = await sheet.boundingBox();
+    await page.screenshot({ path: test.info().outputPath(name), clip: { x: box.x, y: box.y, width: box.width, height: box.height / 2 } });
+  };
+  await expect.poll(cap).toEqual({ lines: "1", float: "none", scale: 1, beside: 0, clear: true });
+  await shoot("book-dropcap-one-line.png");
+  await modal.locator('[data-action="book-select:fixture-chapter-0-1"]').click();
+  await expect.poll(cap).toEqual({ lines: "2", float: "inline-start", scale: 2.29, beside: 1, clear: true });
+  await shoot("book-dropcap-two-lines.png");
+  await modal.locator('[data-action="book-select:fixture-chapter-0-2"]').click();
+  await expect.poll(cap).toEqual({ lines: "3", float: "inline-start", scale: 3.9, beside: 2, clear: true });
+  await shoot("book-dropcap-three-lines.png");
+});
+
 test("shared paper size gives copyright pages print proportions and survives export steps", async ({ page }) => {
   await mountProjectExport(page);
   const modal = page.getByRole("dialog", { name: "Export project", exact: true });
