@@ -2853,6 +2853,12 @@ const GREEK_RUN_RULE_PREFIX: &str =
 /// indent their first lines. Typst's native
 /// footnote callout remains untouched, so references in the body stay superscripted.
 /// The marker is rebuilt as a link to preserve navigation in exported PDFs.
+///
+/// Widow prevention is off inside entries, so a footnote may run over with a single
+/// line rather than be kept whole. A three-line footnote has no split that keeps two
+/// lines on each page, so Typst moved its referencing line to the next page instead,
+/// leaving a gap above the footnotes and a widow in the body text. Orphan prevention
+/// stays: a footnote never starts with a lone line at the foot of a page.
 const GNOSIS_FOOTNOTE_RULE: &str = r#"#set footnote.entry(indent: 0em)
 #show footnote.entry: it => {
   let marker-width = 12pt
@@ -2866,6 +2872,7 @@ const GNOSIS_FOOTNOTE_RULE: &str = r#"#set footnote.entry(indent: 0em)
     align: (end + top, start + top),
     marker,
     context block[
+      #set text(costs: (widow: 0%))
       #set par(first-line-indent: (amount: 1.5em, all: false), spacing: par.leading)
       #it.note.body
     ],
@@ -4608,6 +4615,9 @@ mod tests {
         assert!(preamble
             .contains("first-line-indent: (amount: 1.5em, all: false), spacing: par.leading"));
         assert!(preamble.contains("#it.note.body"));
+        // A footnote may run over with one line; only widows are released, so the
+        // orphan rule still keeps two lines at the foot of the first page.
+        assert!(preamble.contains("#set text(costs: (widow: 0%))"));
     }
 
     #[test]

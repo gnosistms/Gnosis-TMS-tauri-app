@@ -20,7 +20,7 @@ fn document(title: &str, blocks: Vec<ExportBlock>) -> ExportDocument {
 }
 
 fn unpack(document: &ExportDocument) -> std::collections::BTreeMap<String, Vec<u8>> {
-    let bytes = render_epub_document(document).unwrap();
+    let bytes = render_epub_document(document, &mut |_, _| {}).unwrap();
     // Optional artifacts for running the same regression cases through EPUBCheck.
     if let Ok(directory) = std::env::var("GNOSIS_EPUB_FIXTURE_DIR") {
         fs::create_dir_all(&directory).unwrap();
@@ -281,6 +281,115 @@ fn epub_embeds_uploaded_images_once_and_converts_webp() {
     assert!(content.contains("<figcaption><em>Caption</em> &amp; text</figcaption>"));
 }
 
+fn encoded(image: image::DynamicImage, format: image::ImageFormat) -> Vec<u8> {
+    let mut bytes = Cursor::new(Vec::new());
+    image.write_to(&mut bytes, format).unwrap();
+    bytes.into_inner()
+}
+
+#[test]
+fn epub_reencodes_opaque_webp_as_jpeg_and_downscales_oversized_images() {
+    let photo = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+        40,
+        30,
+        image::Rgb([200, 120, 40]),
+    ));
+    let (extension, media_type, bytes) =
+        prepare_image(encoded(photo, image::ImageFormat::WebP)).unwrap();
+    assert_eq!((extension, media_type), ("jpg", "image/jpeg"));
+    assert_eq!(
+        image::guess_format(&bytes).unwrap(),
+        image::ImageFormat::Jpeg
+    );
+
+    // Web photos were embedded at full size, producing 300 MB chapters.
+    let wide = image::DynamicImage::ImageRgb8(image::RgbImage::new(4000, 1100));
+    let (extension, _, bytes) = prepare_image(encoded(wide, image::ImageFormat::Png)).unwrap();
+    assert_eq!(extension, "png");
+    let resized = image::load_from_memory(&bytes).unwrap();
+    assert!(u64::from(resized.width()) * u64::from(resized.height()) <= MAX_IMAGE_PIXELS);
+    assert_eq!(resized.width() / 100, 38);
+    assert_eq!(resized.height() / 100, 10);
+
+    // Images within the budget keep their exact bytes.
+    let small = encoded(
+        image::DynamicImage::ImageRgb8(image::RgbImage::new(8, 8)),
+        image::ImageFormat::Jpeg,
+    );
+    assert_eq!(prepare_image(small.clone()).unwrap().2, small);
+}
+
+#[test]
+fn epub_loads_images_in_parallel_but_numbers_them_in_document_order_with_progress() {
+    let directory = std::env::temp_dir().join(format!("gnosis-epub-{}", uuid::Uuid::now_v7()));
+    fs::create_dir_all(&directory).unwrap();
+    let blocks: Vec<_> = [9, 3, 9, 5, 7, 2, 4, 6]
+        .into_iter()
+        .map(|width| {
+            let path = directory.join(format!("{width}.png"));
+            fs::write(
+                &path,
+                encoded(
+                    image::DynamicImage::ImageRgb8(image::RgbImage::new(width, 1)),
+                    image::ImageFormat::Png,
+                ),
+            )
+            .unwrap();
+            ExportBlock::Image {
+                image: ExportImage::Upload {
+                    repo_relative_path: format!("{width}.png"),
+                    raw_url: None,
+                    absolute_path: path,
+                },
+                caption: String::new(),
+            }
+        })
+        .collect();
+    let mut reports = Vec::new();
+    let bytes = render_epub_document(&document("Gallery", blocks), &mut |done, total| {
+        reports.push((done, total))
+    })
+    .unwrap();
+    fs::remove_dir_all(directory).unwrap();
+    // The repeated image is loaded once: seven distinct images.
+    assert_eq!(reports, (0..=7).map(|done| (done, 7)).collect::<Vec<_>>());
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let widths: Vec<_> = (1..=7)
+        .map(|number| {
+            let mut data = Vec::new();
+            let mut file = archive
+                .by_name(&format!("EPUB/images/image-{number}.png"))
+                .unwrap();
+            assert_eq!(file.compression(), CompressionMethod::Stored);
+            file.read_to_end(&mut data).unwrap();
+            image::load_from_memory(&data).unwrap().width()
+        })
+        .collect();
+    assert_eq!(widths, [9, 3, 5, 7, 2, 4, 6]);
+}
+
+#[test]
+fn epub_shows_a_notice_for_remote_images_that_cannot_be_included() {
+    // Public-download validation rejects both sources before doing network I/O.
+    let image = |url: &str, caption: &str| ExportBlock::Image {
+        image: ExportImage::Url(url.into()),
+        caption: caption.into(),
+    };
+    let files = unpack(&document(
+        "Remote",
+        vec![
+            image("http://127.0.0.1/photo.png?a=1&b=2", "Lost <em>photo</em>"),
+            image("file:///etc/passwd", ""),
+            paragraph("paragraph", "After the images"),
+        ],
+    ));
+    let content = file(&files, "EPUB/section-1.xhtml");
+    assert!(content.contains("<p class=\"missing-image\">An image from <a href=\"http://127.0.0.1/photo.png?a=1&amp;b=2\">127.0.0.1</a> could not be included: the image hostname does not resolve exclusively to public addresses.</p><figcaption>Lost <em>photo</em></figcaption>"));
+    assert!(content.contains("<p class=\"missing-image\">An image could not be included: only HTTP and HTTPS image URLs are supported.</p></figure>"));
+    assert!(content.contains("After the images"));
+    assert!(!files.keys().any(|name| name.starts_with("EPUB/images/")));
+}
+
 #[test]
 fn epub_includes_static_svg_and_rejects_missing_or_unsupported_images() {
     let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>"#;
@@ -295,11 +404,9 @@ fn epub_includes_static_svg_and_rejects_missing_or_unsupported_images() {
         },
         caption: String::new(),
     };
-    let error = render_epub_document(&document("Missing", vec![block])).unwrap_err();
+    let error =
+        render_epub_document(&document("Missing", vec![block]), &mut |_, _| {}).unwrap_err();
     assert!(error.contains("Upload it again"));
-    // Public-download validation rejects non-HTTP sources before doing network I/O.
-    let error = image_bytes(&ExportImage::Url("file:///etc/passwd".into())).unwrap_err();
-    assert!(error.contains("HTTP and HTTPS"));
 }
 
 #[test]

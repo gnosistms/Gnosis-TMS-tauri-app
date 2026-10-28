@@ -48,3 +48,39 @@ using the existing local snapshot and native save flow.
   elsewhere in the existing workspace; no findings in the changed frontend files.
 - For future conformance checks, set `GNOSIS_EPUB_FIXTURE_DIR` when running the
   EPUB Rust tests to save the tested archives for EPUBCheck.
+
+## Follow-up: real-data export failures (2026-10-28)
+A user reported EPUB export not working. Rendering every locally cached chapter
+(3,260 chapter/language pairs) through the EPUB writer found two EPUB-only faults:
+- A remote image that cannot be fetched (expired signed link → HTTP 403, an image
+  over 25 MB) aborted the whole export. PDF substitutes a placeholder and DOCX a
+  link, so one dead link anywhere in a chapter or book blocked only EPUB.
+- WebP was re-encoded as full-resolution lossless PNG. Chapters with ~35 web
+  photos became 190–295 MB EPUBs and took close to a minute to write.
+
+Fix:
+- Remote image failures (download or undecodable content) render an in-book
+  notice naming the host and reason, keep the caption, and the export continues.
+  Missing uploaded files still fail clearly, matching PDF.
+- Opaque WebP becomes JPEG; WebP with transparency stays PNG so it still works on
+  dark reading themes. Any raster above 4 megapixels is downscaled (EXIF
+  orientation applied); smaller PNG/JPEG/GIF bytes pass through untouched.
+
+- Images load on six worker threads before rendering (numbered in document
+  order), already-compressed rasters are stored rather than re-deflated, and
+  `export_gtms_chapter_file` emits `chapter-file-export-progress` for EPUB jobs.
+  The export modal shows "n of N images" with the PDF progress bar while saving.
+
+Results:
+- Real-data probe: 3,249 of 3,260 exports succeed (was 3,247). The 11 remaining
+  failures are uploaded images missing from the local repos (rows point at flat
+  `chapters/<id>/images/<name>` paths whose files are still in the old nested
+  layout); PDF fails the same way, so that is a separate data repair.
+- HNHH chapter 07-p2 (vi): 294 MB → 43 MB. Whole HNHH vi book, 92 images:
+  31.6 s in a debug build with steady progress, 114 MB (86 JPEG, 5 PNG).
+  All generated archives: 1.5 GB → 470 MB.
+- EPUBCheck 5.4.0: 3,250 archives (every probe output plus the HNHH book), 0
+  errors or warnings.
+- Rust EPUB tests: 10 passed. `npm test`: 3,229 frontend and 26 workflow tests
+  passed. ESLint clean; clippy reports nothing in the changed files; unused-export
+  audit unchanged (345 files, 32 exports, none in changed files).

@@ -10,11 +10,20 @@ use std::{
     fmt::Write as _,
     fs,
     io::{Cursor, Read, Write},
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        mpsc,
+    },
+    thread,
 };
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
 
 const MAX_IMAGE_BYTES: u64 = 25 * 1024 * 1024;
-const STYLES: &str = "body{font-family:serif;line-height:1.5;margin:1em;}h1,h2{line-height:1.2;break-after:avoid;}blockquote{margin:1em 2em;}.quote-attribution{display:block;text-align:right;font-style:normal;}.indented{margin-inline-start:2em;}.centered,.title{text-align:center;}figure{text-align:center;break-inside:avoid;}img{max-width:100%;height:auto;}figcaption{font-style:italic;margin-top:.5em;}.footnote{font-size:.9em;}hr{width:30%;margin:1.5em auto;}.noteref{vertical-align:super;font-size:.75em;}";
+// Reader screens never need more; full-size web photos made 300 MB chapters.
+const MAX_IMAGE_PIXELS: u64 = 4_000_000;
+const JPEG_QUALITY: u8 = 90;
+const IMAGE_WORKERS: usize = 6;
+const STYLES: &str = "body{font-family:serif;line-height:1.5;margin:1em;}h1,h2{line-height:1.2;break-after:avoid;}blockquote{margin:1em 2em;}.quote-attribution{display:block;text-align:right;font-style:normal;}.indented{margin-inline-start:2em;}.centered,.title{text-align:center;}figure{text-align:center;break-inside:avoid;}img{max-width:100%;height:auto;}figcaption{font-style:italic;margin-top:.5em;}.missing-image{border:1px solid;padding:.5em;font-size:.9em;}.footnote{font-size:.9em;}hr{width:30%;margin:1.5em auto;}.noteref{vertical-align:super;font-size:.75em;}";
 
 struct Section {
     document: ExportDocument,
@@ -23,7 +32,6 @@ struct Section {
 }
 
 struct ImageAsset {
-    source: ExportImage,
     path: String,
     media_type: &'static str,
     data: Vec<u8>,
@@ -192,73 +200,219 @@ fn inline_children(
     output
 }
 
-fn image_bytes(image: &ExportImage) -> Result<Vec<u8>, String> {
-    let bytes = match image {
-        ExportImage::Url(url) => download_public_image_bytes_detailed(url)
-            .map_err(|error| format!("Could not include an image in the EPUB: {error}. Check the image or upload a local copy."))?,
-        ExportImage::Upload { absolute_path, .. } => {
-            let file = fs::File::open(absolute_path).map_err(|_| "Could not read an image for EPUB export. Upload it again and retry.".to_string())?;
-            let mut bytes = Vec::new();
-            file.take(MAX_IMAGE_BYTES + 1).read_to_end(&mut bytes).map_err(|_| "Could not read an image for EPUB export.".to_string())?;
-            bytes
-        }
-    };
+enum LoadedImage {
+    /// Extension, media type, and bytes to package.
+    Ready(&'static str, &'static str, Vec<u8>),
+    /// Reader-facing notice for a remote image that could not be included.
+    Unavailable(String),
+}
+
+enum EmbeddedImage {
+    Path(String),
+    Unavailable(String),
+}
+
+fn upload_bytes(absolute_path: &std::path::Path) -> Result<Vec<u8>, String> {
+    let file = fs::File::open(absolute_path).map_err(|_| {
+        "Could not read an image for EPUB export. Upload it again and retry.".to_string()
+    })?;
+    let mut bytes = Vec::new();
+    file.take(MAX_IMAGE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "Could not read an image for EPUB export.".to_string())?;
     if bytes.len() as u64 > MAX_IMAGE_BYTES {
         return Err("An EPUB image is larger than 25 MB. Choose a smaller image and retry.".into());
     }
     Ok(bytes)
 }
 
+/// The largest size within the pixel budget, or None if the image already fits.
+fn fitted_size(width: u32, height: u32) -> Option<(u32, u32)> {
+    let pixels = u64::from(width) * u64::from(height);
+    if pixels <= MAX_IMAGE_PIXELS {
+        return None;
+    }
+    let scale = (MAX_IMAGE_PIXELS as f64 / pixels as f64).sqrt();
+    Some((
+        ((f64::from(width) * scale) as u32).max(1),
+        ((f64::from(height) * scale) as u32).max(1),
+    ))
+}
+
+fn decode_image(bytes: &[u8], format: image::ImageFormat) -> Option<image::DynamicImage> {
+    use image::ImageDecoder as _;
+    let mut reader = image::ImageReader::with_format(Cursor::new(bytes), format);
+    let mut limits = image::Limits::default();
+    limits.max_alloc = Some(128 * 1024 * 1024);
+    reader.limits(limits);
+    let mut decoder = reader.into_decoder().ok()?;
+    // Re-encoding drops EXIF, so bake its rotation into the pixels.
+    let orientation = decoder
+        .orientation()
+        .unwrap_or(image::metadata::Orientation::NoTransforms);
+    let mut decoded = image::DynamicImage::from_decoder(decoder).ok()?;
+    decoded.apply_orientation(orientation);
+    Some(decoded)
+}
+
+/// Re-encodes WebP (not universally supported by readers) and downscales any
+/// raster over the pixel budget. Other images keep their original bytes. Opaque
+/// WebP becomes JPEG; transparent images stay PNG so they still sit on the
+/// reader's own page color, such as a dark theme.
 fn prepare_image(bytes: Vec<u8>) -> Result<(&'static str, &'static str, Vec<u8>), String> {
-    use image::ImageFormat;
-    match image::guess_format(&bytes).ok() {
-        Some(ImageFormat::Png) => Ok(("png", "image/png", bytes)),
-        Some(ImageFormat::Jpeg) => Ok(("jpg", "image/jpeg", bytes)),
-        Some(ImageFormat::Gif) => Ok(("gif", "image/gif", bytes)),
-        Some(ImageFormat::WebP) => {
-            let mut reader = image::ImageReader::with_format(Cursor::new(bytes), ImageFormat::WebP);
-            let mut limits = image::Limits::default();
-            limits.max_alloc = Some(128 * 1024 * 1024);
-            reader.limits(limits);
-            let decoded = reader.decode().map_err(|_| {
-                "Could not convert a WebP image for EPUB export. Choose PNG or JPEG.".to_string()
-            })?;
-            let mut png = Cursor::new(Vec::new());
-            decoded
-                .write_to(&mut png, ImageFormat::Png)
-                .map_err(|_| "Could not convert an EPUB image to PNG.".to_string())?;
-            Ok(("png", "image/png", png.into_inner()))
-        }
+    use image::{imageops::FilterType, ImageFormat};
+    let format = match image::guess_format(&bytes).ok() {
+        Some(format @ (ImageFormat::Png | ImageFormat::Jpeg | ImageFormat::WebP)) => format,
+        // GIFs can be animated, and resizing would keep only the first frame.
+        Some(ImageFormat::Gif) => return Ok(("gif", "image/gif", bytes)),
         _ => {
             if std::str::from_utf8(&bytes).is_ok_and(|value| value.contains("<svg")) {
                 let sanitized = super::book_svg::sanitize(&bytes)?;
                 return Ok(("svg", "image/svg+xml", sanitized.into_owned()));
             }
-            Err("An image cannot be included in EPUB. Choose PNG, JPEG, GIF, WebP, or a static SVG image.".into())
+            return Err("An image cannot be included in EPUB. Choose PNG, JPEG, GIF, WebP, or a static SVG image.".into());
         }
+    };
+    let original = match format {
+        ImageFormat::Png => Some(("png", "image/png")),
+        ImageFormat::Jpeg => Some(("jpg", "image/jpeg")),
+        _ => None,
+    };
+    if let Some((extension, media_type)) = original {
+        let fits = image::ImageReader::with_format(Cursor::new(&bytes), format)
+            .into_dimensions()
+            .map_or(true, |(width, height)| fitted_size(width, height).is_none());
+        if fits {
+            return Ok((extension, media_type, bytes));
+        }
+    }
+    let Some(mut decoded) = decode_image(&bytes, format) else {
+        return match original {
+            // Embedding an oversized original is better than failing the export.
+            Some((extension, media_type)) => Ok((extension, media_type, bytes)),
+            None => {
+                Err("Could not convert a WebP image for EPUB export. Choose PNG or JPEG.".into())
+            }
+        };
+    };
+    if let Some((width, height)) = fitted_size(decoded.width(), decoded.height()) {
+        decoded = decoded.resize_exact(width, height, FilterType::Lanczos3);
+    }
+    let opaque = !decoded.color().has_alpha()
+        || decoded.to_rgba8().pixels().all(|pixel| pixel[3] == u8::MAX);
+    let as_png = format == ImageFormat::Png || !opaque;
+    let mut output = Cursor::new(Vec::new());
+    let written =
+        if as_png {
+            decoded.write_to(&mut output, ImageFormat::Png)
+        } else {
+            decoded.to_rgb8().write_with_encoder(
+                image::codecs::jpeg::JpegEncoder::new_with_quality(&mut output, JPEG_QUALITY),
+            )
+        };
+    match (written, original) {
+        (Ok(()), _) if as_png => Ok(("png", "image/png", output.into_inner())),
+        (Ok(()), _) => Ok(("jpg", "image/jpeg", output.into_inner())),
+        (Err(_), Some((extension, media_type))) => Ok((extension, media_type, bytes)),
+        (Err(_), None) => Err("Could not convert a WebP image for EPUB export.".into()),
     }
 }
 
-fn embed_image(image: &ExportImage, assets: &mut Vec<ImageAsset>) -> Result<String, String> {
-    if let Some(asset) = assets.iter().find(|asset| asset.source == *image) {
-        return Ok(asset.path.clone());
+fn unavailable_image_notice(url: &str, reason: &str) -> String {
+    // Link the source so a reader who is online can still open it.
+    let source = url::Url::parse(url)
+        .ok()
+        .filter(|parsed| matches!(parsed.scheme(), "http" | "https"))
+        .and_then(|parsed| {
+            parsed
+                .host_str()
+                .map(|host| format!(" from <a href=\"{}\">{}</a>", xml(url), xml(host)))
+        })
+        .unwrap_or_default();
+    format!(
+        "<p class=\"missing-image\">An image{source} could not be included: {}.</p>",
+        xml(reason)
+    )
+}
+
+fn load_image(image: &ExportImage) -> Result<LoadedImage, String> {
+    let (extension, media_type, data) = match image {
+        // Remote links expire and move. Like PDF export, show a notice in place
+        // of the image so one dead link does not block the whole ebook.
+        ExportImage::Url(url) => match download_public_image_bytes_detailed(url) {
+            Err(error) => {
+                return Ok(LoadedImage::Unavailable(unavailable_image_notice(
+                    url,
+                    &error.to_string(),
+                )))
+            }
+            Ok(bytes) => match prepare_image(bytes) {
+                Ok(prepared) => prepared,
+                Err(_) => {
+                    return Ok(LoadedImage::Unavailable(unavailable_image_notice(
+                        url,
+                        "it is not a supported PNG, JPEG, GIF, WebP, or SVG image",
+                    )))
+                }
+            },
+        },
+        ExportImage::Upload { absolute_path, .. } => prepare_image(upload_bytes(absolute_path)?)?,
+    };
+    Ok(LoadedImage::Ready(extension, media_type, data))
+}
+
+/// Loads every distinct image once, several at a time: a book can hold a
+/// hundred remote photos, and fetching them one by one dominated export time.
+/// Calls `progress(done, total)` as images finish. Results keep input order.
+fn load_images(
+    images: &[&ExportImage],
+    progress: &mut dyn FnMut(usize, usize),
+) -> Result<Vec<LoadedImage>, String> {
+    let total = images.len();
+    if total == 0 {
+        return Ok(Vec::new());
     }
-    let (extension, media_type, data) = prepare_image(image_bytes(image)?)?;
-    let path = format!("images/image-{}.{}", assets.len() + 1, extension);
-    assets.push(ImageAsset {
-        source: image.clone(),
-        path: path.clone(),
-        media_type,
-        data,
+    progress(0, total);
+    let next = AtomicUsize::new(0);
+    let failed = AtomicBool::new(false);
+    let mut results: Vec<Option<Result<LoadedImage, String>>> = (0..total).map(|_| None).collect();
+    let (sender, receiver) = mpsc::channel();
+    thread::scope(|scope| {
+        for _ in 0..IMAGE_WORKERS.min(total) {
+            let (sender, next, failed) = (sender.clone(), &next, &failed);
+            scope.spawn(move || {
+                // A failed upload ends the export, so stop starting new images.
+                while !failed.load(Ordering::Relaxed) {
+                    let index = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(image) = images.get(index) else {
+                        break;
+                    };
+                    let result = load_image(image);
+                    failed.fetch_or(result.is_err(), Ordering::Relaxed);
+                    if sender.send((index, result)).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        drop(sender);
+        for (done, (index, result)) in receiver.into_iter().enumerate() {
+            results[index] = Some(result);
+            progress(done + 1, total);
+        }
     });
-    Ok(path)
+    // Images are taken in order, so a skipped one always follows the failure.
+    results
+        .into_iter()
+        .map(|result| result.unwrap_or_else(|| Err("Could not prepare the EPUB images.".into())))
+        .collect()
 }
 
 fn section_body(
     section: &Section,
     contents: &str,
-    assets: &mut Vec<ImageAsset>,
-) -> Result<String, String> {
+    images: &[(&ExportImage, EmbeddedImage)],
+) -> String {
     let notes: Vec<_> = section
         .document
         .blocks
@@ -328,13 +482,23 @@ fn section_body(
             }
             ExportBlock::Separator => body.push_str("<hr/>"),
             ExportBlock::Image { image, caption } => {
-                let path = embed_image(image, assets)?;
-                let _ = write!(
-                    body,
-                    "<figure><img src=\"{}\" alt=\"{}\"/>",
-                    xml(&path),
-                    xml(&inline_visible_text(caption))
-                );
+                // Every image in the document was loaded before rendering.
+                let Some((_, embedded)) = images.iter().find(|(source, _)| *source == image) else {
+                    continue;
+                };
+                match embedded {
+                    EmbeddedImage::Path(path) => {
+                        let _ = write!(
+                            body,
+                            "<figure><img src=\"{}\" alt=\"{}\"/>",
+                            xml(path),
+                            xml(&inline_visible_text(caption))
+                        );
+                    }
+                    EmbeddedImage::Unavailable(notice) => {
+                        let _ = write!(body, "<figure>{notice}");
+                    }
+                }
                 if !caption.trim().is_empty() {
                     let _ = write!(
                         body,
@@ -386,7 +550,7 @@ fn section_body(
         body.push_str("</section>");
     }
     body.push_str("</section>");
-    Ok(body)
+    body
 }
 
 fn navigation(sections: &[Section], chapters_only: bool, include_h1: bool) -> String {
@@ -445,7 +609,11 @@ fn write_entry(
         .map_err(|_| "Could not write the EPUB archive.".to_string())
 }
 
-pub(super) fn render_epub_document(document: &ExportDocument) -> Result<Vec<u8>, String> {
+/// `progress(done, total)` reports image loading, which is most of the work.
+pub(super) fn render_epub_document(
+    document: &ExportDocument,
+    progress: &mut dyn FnMut(usize, usize),
+) -> Result<Vec<u8>, String> {
     let sections = if document.book_parts.is_empty() {
         vec![Section {
             document: document.clone(),
@@ -484,7 +652,35 @@ pub(super) fn render_epub_document(document: &ExportDocument) -> Result<Vec<u8>,
     } else {
         &document.language_code
     };
+    let mut sources: Vec<&ExportImage> = Vec::new();
+    for block in sections.iter().flat_map(|section| &section.document.blocks) {
+        if let ExportBlock::Image { image, .. } = block {
+            if !sources.contains(&image) {
+                sources.push(image);
+            }
+        }
+    }
     let mut assets = Vec::new();
+    let images: Vec<_> = sources
+        .iter()
+        .copied()
+        .zip(load_images(&sources, progress)?)
+        .map(|(source, loaded)| {
+            let embedded = match loaded {
+                LoadedImage::Ready(extension, media_type, data) => {
+                    let path = format!("images/image-{}.{}", assets.len() + 1, extension);
+                    assets.push(ImageAsset {
+                        path: path.clone(),
+                        media_type,
+                        data,
+                    });
+                    EmbeddedImage::Path(path)
+                }
+                LoadedImage::Unavailable(notice) => EmbeddedImage::Unavailable(notice),
+            };
+            (source, embedded)
+        })
+        .collect();
     let mut files = Vec::new();
     let mut manifest = String::from("<item id=\"nav\" href=\"nav.xhtml\" media-type=\"application/xhtml+xml\" properties=\"nav\"/><item id=\"style\" href=\"styles.css\" media-type=\"text/css\"/>");
     let mut spine = String::new();
@@ -494,7 +690,7 @@ pub(super) fn render_epub_document(document: &ExportDocument) -> Result<Vec<u8>,
         } else {
             String::new()
         };
-        let body = section_body(section, &contents, &mut assets)?;
+        let body = section_body(section, &contents, &images);
         let file = format!("section-{}.xhtml", index + 1);
         files.push((
             format!("EPUB/{file}"),
@@ -553,11 +749,12 @@ pub(super) fn render_epub_document(document: &ExportDocument) -> Result<Vec<u8>,
         write_entry(&mut zip, &path, content.as_bytes(), false)?;
     }
     for asset in assets {
+        // Raster formats are already compressed; deflating them again only costs time.
         write_entry(
             &mut zip,
             &format!("EPUB/{}", asset.path),
             &asset.data,
-            false,
+            asset.media_type != "image/svg+xml",
         )?;
     }
     zip.finish()

@@ -8,6 +8,7 @@ use std::fmt;
 use std::io::{Cursor, Read, Write};
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::time::Duration;
+use tauri::Emitter as _;
 use zip::{write::SimpleFileOptions, ZipWriter};
 
 // Cap embedded-image downloads so a hostile or accidental URL cannot buffer an unbounded
@@ -70,6 +71,18 @@ impl fmt::Display for PublicImageDownloadError {
         };
         formatter.write_str(message)
     }
+}
+
+/// Emitted during EPUB export (the slow file format) when the input has a job id.
+const FILE_EXPORT_PROGRESS_EVENT: &str = "chapter-file-export-progress";
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FileExportProgressPayload {
+    job_id: String,
+    message: String,
+    progress_current: usize,
+    progress_total: usize,
 }
 
 #[derive(Serialize)]
@@ -251,11 +264,27 @@ pub(crate) fn export_gtms_chapter_file_sync(
         }
         "html" => fs::write(&output_path, render_html_document(&document)?)
             .map_err(|error| format!("Could not write '{}': {error}", output_path.display())),
-        "epub" => fs::write(
-            &output_path,
-            super::epub_export::render_epub_document(&print_document)?,
-        )
-        .map_err(|error| format!("Could not write '{}': {error}", output_path.display())),
+        "epub" => {
+            let mut progress = |current: usize, total: usize| {
+                if input.job_id.is_empty() {
+                    return;
+                }
+                let _ = app.emit(
+                    FILE_EXPORT_PROGRESS_EVENT,
+                    FileExportProgressPayload {
+                        job_id: input.job_id.clone(),
+                        message: "Preparing images…".into(),
+                        progress_current: current,
+                        progress_total: total,
+                    },
+                );
+            };
+            fs::write(
+                &output_path,
+                super::epub_export::render_epub_document(&print_document, &mut progress)?,
+            )
+            .map_err(|error| format!("Could not write '{}': {error}", output_path.display()))
+        }
         "txt" => fs::write(&output_path, render_txt_document(&print_document))
             .map_err(|error| format!("Could not write '{}': {error}", output_path.display())),
         "docx" => fs::write(

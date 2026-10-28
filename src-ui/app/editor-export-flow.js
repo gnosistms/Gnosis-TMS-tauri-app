@@ -648,11 +648,29 @@ function failEditorExport(render, error) {
   render();
 }
 
-function createPdfExportJobId() {
+function createExportJobId(format) {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
   }
-  return `pdf-export-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+  return `${format}-export-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+}
+
+// EPUB downloads and converts every image before writing; books with many
+// remote photos take long enough to need a progress bar. It shares the PDF
+// progress fields, but not pdfJobId, because EPUB export cannot be cancelled.
+function handleFileExportProgress(payload, jobId, render) {
+  const modal = currentExportModal();
+  if (!modal?.isOpen || modal.status !== "exporting" || payload?.jobId !== jobId) {
+    return;
+  }
+  updateEditorExportModal({
+    pdfStage: String(payload.message ?? "Exporting…"),
+    pdfProgressCurrent: Number(payload.progressCurrent) || 0,
+    pdfProgressTotal: Number(payload.progressTotal) || 0,
+    pdfProgressUnit: "items",
+    pdfProgressIndeterminate: false,
+  });
+  render();
 }
 
 async function submitEditorFileExport(render, option, operations) {
@@ -711,19 +729,21 @@ async function submitEditorFileExport(render, option, operations) {
     return;
   }
 
-  const pdfJobId = option.format === "pdf" ? createPdfExportJobId() : "";
+  const pdfJobId = option.format === "pdf" ? createExportJobId("pdf") : "";
+  const fileJobId = option.format === "epub" ? createExportJobId("epub") : "";
+  const showsProgress = Boolean(pdfJobId || fileJobId);
   updateEditorExportModal({
     status: "exporting",
     error: "",
     pdfJobId,
     pdfStartPending: option.format === "pdf",
-    pdfStage: option.format === "pdf" ? (currentExportModal()?.projectId ? "Preparing the project…" : "Preparing the chapter…") : "",
+    pdfStage: showsProgress ? (currentExportModal()?.projectId ? "Preparing the project…" : "Preparing the chapter…") : "",
     pdfDownloadedBytes: 0,
     pdfTotalBytes: 0,
     pdfProgressCurrent: 0,
     pdfProgressTotal: 0,
     pdfProgressUnit: "",
-    pdfProgressIndeterminate: option.format === "pdf",
+    pdfProgressIndeterminate: showsProgress,
     pdfOutputFileName: defaultFileName,
     pdfFontReview: null,
   });
@@ -740,7 +760,7 @@ async function submitEditorFileExport(render, option, operations) {
       updateEditorExportModal({ pdfStartPending: false });
     }
     const input = {
-      ...(pdfJobId ? { jobId: pdfJobId } : {}),
+      ...(showsProgress ? { jobId: pdfJobId || fileJobId } : {}),
       installationId: team.installationId,
       repoName: context.project.name,
       projectId: context.project.id ?? null,
@@ -768,11 +788,22 @@ async function submitEditorFileExport(render, option, operations) {
       }
       return;
     }
-    const exportResult = await invokeCommand("export_gtms_chapter_file", {
-      input: {
-        ...input,
-      },
-    });
+    const listenForProgress = operations.listen ?? listen;
+    const stopListening = fileJobId && typeof listenForProgress === "function"
+      ? await listenForProgress("chapter-file-export-progress", (event) => {
+        handleFileExportProgress(event.payload, fileJobId, render);
+      })
+      : null;
+    let exportResult;
+    try {
+      exportResult = await invokeCommand("export_gtms_chapter_file", {
+        input: {
+          ...input,
+        },
+      });
+    } finally {
+      stopListening?.();
+    }
     updateEditorExportModal({ isOpen: false, status: "idle", error: "" });
     saveStoredEditorExportDefault(exportDefaultKey(), { optionId: option.id });
     // Full render to remove the modal; showNoticeBadge only repaints the

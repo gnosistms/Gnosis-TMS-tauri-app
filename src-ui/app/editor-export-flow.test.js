@@ -1027,6 +1027,47 @@ test("project EPUB export sends the arranged book and ebook save filter", async 
   assert.equal(state.editorChapter.exportModal.isOpen, false);
 });
 
+test("EPUB export shows its own image progress and stops listening afterwards", async () => {
+  installEditorExportFixture();
+  openExportModal("file:epub");
+  const listeners = [];
+  const renders = [];
+  await submitEditorExport(() => {
+    renders.push({ ...state.editorChapter.exportModal });
+  }, {
+    saveDialog: async () => "/tmp/chapter-one.epub",
+    waitForRepoQueue: async () => {},
+    listen: async (eventName, handler) => {
+      const listener = { eventName, handler, stopped: false };
+      listeners.push(listener);
+      return () => { listener.stopped = true; };
+    },
+    invoke: async (command, { input }) => {
+      assert.equal(command, "export_gtms_chapter_file");
+      assert.ok(input.jobId);
+      assert.equal(listeners[0].eventName, "chapter-file-export-progress");
+      // Another export's events must not move this bar.
+      listeners[0].handler({ payload: { jobId: "other", message: "Other", progressCurrent: 9, progressTotal: 9 } });
+      listeners[0].handler({ payload: { jobId: input.jobId, message: "Preparing images…", progressCurrent: 3, progressTotal: 8 } });
+      const modal = state.editorChapter.exportModal;
+      assert.equal(modal.status, "exporting");
+      assert.equal(modal.pdfJobId, "");
+      assert.equal(modal.pdfStage, "Preparing images…");
+      assert.equal(modal.pdfProgressCurrent, 3);
+      assert.equal(modal.pdfProgressTotal, 8);
+      assert.equal(modal.pdfProgressUnit, "items");
+      assert.equal(modal.pdfProgressIndeterminate, false);
+      return null;
+    },
+  });
+
+  assert.equal(listeners.length, 1);
+  assert.equal(listeners[0].stopped, true);
+  assert.equal(renders[0].pdfStage, "Preparing the chapter…");
+  assert.equal(renders.some((modal) => modal.pdfStage === "Other"), false);
+  assert.equal(state.editorChapter.exportModal.isOpen, false);
+});
+
 test("project clipboard export reads all chapters and preserves content order and footnotes", async () => {
   installProjectExportFixture();
   const { openProjectExportOptions } = await import("./editor-export-flow.js");
