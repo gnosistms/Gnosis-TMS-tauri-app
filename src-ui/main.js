@@ -1,7 +1,7 @@
 import { reconcileEditorRowConnection } from "./app/editor-row-connection.js";
 import { updateBookRedundancyView } from "./screens/project-book-redundancy.js";
 import { renderProjectBookPreview } from "./app/project-book-preview-render.js";
-import { commitProjectsPageHtml, deferProjectsBackgroundRender } from "./app/projects-background-render.js";
+import { commitProjectsPageHtml, deferProjectsBackgroundRender, rememberProjectsExportRender } from "./app/projects-background-render.js";
 import {
   beginStoredBrokerSessionInspection,
   prepareStoredBrokerSessionRestore,
@@ -819,6 +819,7 @@ function renderWithOptionsImpl(options = {}) {
   const bookUpdated = options.scope === "book-redundancy" ? updateBookRedundancyView(app, state)
     : options.scope === "project-book-preview" ? renderProjectBookPreview(app, state) : false;
   if (bookUpdated) {
+    rememberProjectsExportRender(app, state);
     // A scoped book update changes the visible export dialog too. Keep the
     // projects no-op key current so reverting an edit cannot skip its repaint.
     lastProjectsRenderKey = state.screen === "projects" ? currentProjectsRenderKey() : null;

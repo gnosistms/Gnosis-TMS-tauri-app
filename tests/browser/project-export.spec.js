@@ -291,17 +291,95 @@ test("background project refresh draws once and retains an unrelated export dial
   }))).toEqual({ draws: { page: 1, modal: 0 }, sameDialog: true, title: true, selection: [3, 8], scrollUnchanged: true });
   await expect(title).toHaveValue("My draft title");
 
-  // This project changes: one final dialog redraw, with the draft preserved.
+  // This project's title changes on the list, but the dialog output is unchanged.
   await page.evaluate(() => {
     window.__publishProjectsRefresh(true, "active");
     window.__publishProjectsRefresh(true, "active");
     window.__publishProjectsRefresh(false, "active");
     window.__publishProjectsRefresh(false, "active");
   });
-  expect(await page.evaluate(() => window.__refreshDraws)).toEqual({ page: 2, modal: 1 });
+  expect(await page.evaluate(() => window.__refreshDraws)).toEqual({ page: 2, modal: 0 });
   await expect(title).toHaveValue("My draft title");
   await advanceToExport(modal);
   await expect(modal.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
+});
+
+test("same-project summary refresh retains a scrolled chapter preview after scoped updates", async ({ page }) => {
+  await mountProjectExport(page, false, false, 30);
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  await expect(modal.locator(".book-page--chapter")).toBeVisible();
+  await expect.poll(() => page.evaluate(async () => {
+    const { state } = await import("/app/state.js");
+    return state.editorChapter.exportModal.book.previewFonts?.status;
+  })).toBe("ready");
+
+  await page.evaluate(async () => {
+    const { state } = await import("/app/state.js");
+    state.projectsPage.isRefreshing = true;
+    window.__gnosisDebug.renderProjectsBackground();
+    // Selecting a chapter during sync finishes through the scoped preview path.
+    const book = state.editorChapter.exportModal.book;
+    const chapter = book.items.filter((item) => item.kind === "chapter")[1];
+    book.previewCache.delete(chapter.id);
+    window.__bookHeadingRows = { [chapter.chapterId]: Array.from({ length: 60 }, (_, index) => ({
+      rowId: `paragraph-${index}`, textStyle: "paragraph", fields: { en: `Paragraph ${index}. ${"Chapter text for reading. ".repeat(20)}` },
+    })) };
+  });
+  await modal.locator("[data-book-preview-select]").nth(1).click();
+  await expect(modal.locator(".book-chapter__body")).toContainText("Paragraph 59.");
+  await modal.locator("[data-book-chapter-title]").nth(1).fill("My chapter title");
+  await page.evaluate(async () => {
+    const { state } = await import("/app/state.js");
+    const scroll = document.querySelector(".book-composer__page-scroll");
+    const list = document.querySelector(".book-composer__list");
+    scroll.scrollTop = 450;
+    list.scrollTop = 170;
+    window.__chapterRefresh = {
+      page: document.querySelector("#app").firstElementChild,
+      modal: document.querySelector('[data-modal-dialog="editor-export"]'),
+      scroll, list, preview: scroll.firstElementChild, top: scroll.scrollTop, listTop: list.scrollTop,
+    };
+    const paragraph = scroll.querySelector("p").firstChild;
+    const range = document.createRange();
+    range.setStart(paragraph, 2);
+    range.setEnd(paragraph, 12);
+    window.getSelection().removeAllRanges();
+    window.getSelection().addRange(range);
+    window.__chapterRefresh.selection = window.getSelection().toString();
+
+    const { createProjectsQuerySnapshot, applyProjectsQuerySnapshotToState } = await import("/app/project-query.js");
+    const projects = structuredClone(state.projects);
+    projects[0].chapters[0].wordCounts = { en: 4321 };
+    projects[0].chapters[0].workflowStatus = "translated";
+    projects[0].title = "Refreshed project title";
+    applyProjectsQuerySnapshotToState(createProjectsQuerySnapshot({ items: projects, discovery: { status: "ready" } }), {
+      teamId: state.selectedTeamId, isFetching: false,
+    });
+    window.__gnosisDebug.renderProjectsBackground();
+    window.__gnosisDebug.renderProjectsBackground();
+  });
+  expect(await page.evaluate(() => {
+    const before = window.__chapterRefresh;
+    return {
+      pageUpdated: document.querySelector("#app").firstElementChild !== before.page,
+      sameModal: document.querySelector('[data-modal-dialog="editor-export"]') === before.modal,
+      samePreview: document.querySelector(".book-composer__page-scroll").firstElementChild === before.preview,
+      top: document.querySelector(".book-composer__page-scroll").scrollTop,
+      listTop: document.querySelector(".book-composer__list").scrollTop,
+      selection: window.getSelection().toString(),
+      expectedSelection: before.selection,
+    };
+  })).toEqual({ pageUpdated: true, sameModal: true, samePreview: true, top: 450, listTop: 170,
+    selection: "ragraph 0.", expectedSelection: "ragraph 0." });
+  await expect(page.locator('[data-screen="projects"]')).toContainText("Refreshed project title");
+
+  // A genuine change to the dialog still renders on background completion.
+  await page.evaluate(async () => {
+    const { state } = await import("/app/state.js");
+    state.editorChapter.exportModal.error = "Preview unavailable";
+    window.__gnosisDebug.renderProjectsBackground();
+  });
+  await expect(modal).toContainText("Preview unavailable");
 });
 
 test("background migration progress updates without rebuilding the projects page or export", async ({ page }) => {

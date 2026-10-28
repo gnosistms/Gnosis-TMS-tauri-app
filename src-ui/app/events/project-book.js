@@ -2,6 +2,7 @@ import { setBookRedundancyChoice } from "../project-book-redundancy-flow.js";
 import { importBookImage, moveProjectBookItem, updateBookField } from "../project-book-flow.js";
 import { escapeHtml } from "../../lib/ui.js";
 import { state } from "../state.js";
+import { rememberProjectsExportRender } from "../projects-background-render.js";
 import { renderSelectedBookPage } from "../../screens/project-book-composer.js";
 import { dismissBookChapterMenu, dismissBookChapterMenuOutside, handleBookChapterMenuClick, handleBookChapterMenuKeydown } from "../project-book-chapter-menu.js";
 let drag = null;
@@ -26,6 +27,8 @@ export function registerProjectBookEvents(render) {
       const preview = document.querySelector(".book-composer__page-scroll");
       if (preview) preview.innerHTML = renderSelectedBookPage(state.editorChapter.exportModal);
     } : render);
+    // Field edits patch the mounted DOM directly, without a full/scoped render.
+    if (field) rememberProjectsExportRender(document.querySelector("#app"), state);
   });
   document.addEventListener("mousedown", (event) => { if (event.target.closest?.('[data-action^="book-copyright:"]')) event.preventDefault(); });
   document.addEventListener("paste", (event) => {
@@ -36,6 +39,7 @@ export function registerProjectBookEvents(render) {
       .map((line) => `<p>${escapeHtml(line).replaceAll("\u2028", "<br>") || "<br>"}</p>`).join("");
     document.execCommand("insertHTML", false, paragraphs);
     updateBookField(editor);
+    rememberProjectsExportRender(document.querySelector("#app"), state);
   });
   document.addEventListener("pointerdown", (event) => {
     dismissBookChapterMenuOutside(event.target);

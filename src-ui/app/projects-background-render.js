@@ -1,3 +1,5 @@
+import { renderEditorExportModal } from "../screens/editor-export-modal.js";
+
 // Project discovery publishes many useful snapshots. Keep applying those through
 // Query, but draw the mounted list only when discovery finishes. User actions use
 // the ordinary render path and remain immediate.
@@ -22,21 +24,19 @@ export function deferProjectsBackgroundRender(root, state, options = {}) {
     && (options.projectUpdatePending === true || projectRefreshInProgress(state));
 }
 
-function stableValue(value) {
-  if (Array.isArray(value)) return value.map(stableValue);
-  if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(Object.keys(value).sort()
-    .filter((key) => key !== "fileLoadState")
-    .map((key) => [key, stableValue(value[key])]));
-}
-
-export function exportProjectFingerprint(state) {
+export function exportDialogRenderKey(state) {
   const modal = state.editorChapter?.exportModal;
   if (!modal?.isOpen) return "";
-  const project = state.projects.find((entry) => modal.projectId
-    ? entry.id === modal.projectId
-    : entry.chapters?.some((chapter) => chapter.id === modal.chapterId));
-  return JSON.stringify([state.selectedTeamId, modal.projectId ?? modal.chapterId, stableValue(project)]);
+  // Discovery refreshes chapter summaries even without remote edits. Only a
+  // change to what this dialog renders should invalidate its mounted preview.
+  return JSON.stringify([state.selectedTeamId, modal.projectId, modal.chapterId, renderEditorExportModal(state)]);
+}
+
+export function rememberProjectsExportRender(root, state) {
+  const previous = mounted.get(root);
+  if (state.screen === "projects" && previous?.teamId === state.selectedTeamId) {
+    previous.exportDialogKey = exportDialogRenderKey(state);
+  }
 }
 
 // Replace siblings around the retained backdrop, never removing or moving that
@@ -61,7 +61,7 @@ export function commitProjectsPageHtml(root, html, state, options = {}) {
   template.innerHTML = html;
   const placeholder = template.content.querySelector(EXPORT_DIALOG)?.closest(".modal-backdrop");
   const retained = root.querySelector(EXPORT_DIALOG)?.closest(".modal-backdrop");
-  const project = exportProjectFingerprint(state);
+  const exportDialogKey = exportDialogRenderKey(state);
   // Compare the page independently of the dialog and the separately patched
   // status surface. Typing in the dialog must not invalidate the project list.
   const comparison = template.content.cloneNode(true);
@@ -70,7 +70,7 @@ export function commitProjectsPageHtml(root, html, state, options = {}) {
   const container = root.ownerDocument.createElement("div");
   container.append(comparison);
   const pageHtml = container.innerHTML;
-  const preserveExport = background && retained && placeholder && previous.project === project;
+  const preserveExport = background && retained && placeholder && previous.exportDialogKey === exportDialogKey;
   if (background && previous.pageHtml === pageHtml && (preserveExport || (!retained && !placeholder))) {
     return false;
   }
@@ -80,9 +80,7 @@ export function commitProjectsPageHtml(root, html, state, options = {}) {
     teamId: state.selectedTeamId,
     hasProjects: state.projects.length > 0 || (state.deletedProjects?.length ?? 0) > 0,
     pageHtml,
-    // An explicit dialog action during sync does not consume the pending project
-    // change. Compare the final snapshot with the last settled project instead.
-    project: previous && retained && projectRefreshInProgress(state) ? previous.project : project,
+    exportDialogKey,
   });
   return true;
 }
