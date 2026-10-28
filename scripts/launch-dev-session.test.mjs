@@ -69,7 +69,7 @@ for (const scenario of ['normal', 'failure', 'SIGINT', 'SIGHUP']) {
   });
 }
 
-test('Applications launcher starts an older working checkout without relabeling it', { timeout: 10000, skip: process.platform === 'win32' }, async (t) => {
+test('Applications launcher rejects an older checkout instead of forcing the stale-version bypass', { timeout: 10000, skip: process.platform === 'win32' }, async (t) => {
   const { execFileSync } = await import('node:child_process');
   const { chmod, mkdir } = await import('node:fs/promises');
   const directory = await mkdtemp(path.join(os.tmpdir(), 'gnosis-launcher-version-'));
@@ -104,8 +104,8 @@ test('Applications launcher starts an older working checkout without relabeling 
   child.stdout.on('data', (data) => { output += data; });
   child.stderr.on('data', (data) => { output += data; });
   const [code] = await once(child, 'exit');
-  assert.equal(code, 0, output);
-  assert.match(output, /Starting this checkout/);
-  assert.doesNotMatch(output, /Automatic development version repair stopped/);
+  assert.equal(code, 1, output);
+  assert.doesNotMatch(output, /Starting this checkout/);
+  assert.match(output, /Automatic development version repair stopped/);
   for (const [name, text] of Object.entries(versions)) assert.equal(await readFile(path.join(directory, name), 'utf8'), text);
 });

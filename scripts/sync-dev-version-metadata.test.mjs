@@ -37,12 +37,12 @@ function fixture(t, { dependencyChange = false, includeSource = true } = {}) {
   if (includeSource) write('source.js', source(2) + '// unfinished local change\n');
   const run = () => spawnSync(process.execPath, [guard], {
     cwd: root, encoding: 'utf8',
-    env: { ...process.env, GNOSIS_SYNC_DEV_VERSION: '1', GNOSIS_ALLOW_STALE_DEV_VERSION: '0' },
+    env: { ...process.env, GNOSIS_SYNC_DEV_VERSION: '', GNOSIS_ALLOW_STALE_DEV_VERSION: '0', GNOSIS_FETCH_DEV_RELEASES: '0' },
   });
   return { root, git, write, read, run };
 }
 
-test('startup repairs metadata with release code and extra unfinished edits, then is idempotent', (t) => {
+test('startup repairs metadata by default with release code and extra unfinished edits, then is idempotent', (t) => {
   const { read, write, run, git } = fixture(t);
   const source = read('source.js');
   const originalHead = git('rev-parse', 'HEAD');
