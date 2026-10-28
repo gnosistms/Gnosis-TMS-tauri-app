@@ -1838,11 +1838,14 @@
 }
 
 .translation-language-panel__footnote-static {
-  display: block;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 6px;
+  align-items: first baseline;
 }
 
 .translation-language-panel__footnote-static .translation-language-panel__footnote-marker {
-  margin-right: 6px;
+  margin-right: 0;
 }
 
 /* Closed footnote: a button styled to look exactly like the footnote textarea

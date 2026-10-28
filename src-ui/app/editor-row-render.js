@@ -1,3 +1,4 @@
+import { footnoteParagraphsHtml } from "./editor-footnote-paragraphs.js";
 import {
   escapeHtml,
   primaryButton,
@@ -801,9 +802,9 @@ function renderDisabledConflictField(row, language, textStyle) {
 // inserted text (its diff against "" says so).
 function footnoteDisplayHtml(language, entry) {
   const change = language?.changeView?.footnotes?.find((candidate) => candidate.marker === entry.marker);
-  return change?.diff
+  return footnoteParagraphsHtml(change?.diff
     ? renderEditorChangeDiffHtml(change.diff)
-    : renderAttachmentTextHtml(entry.text, language);
+    : renderAttachmentTextHtml(entry.text, language));
 }
 
 // Footnotes someone deleted keep their box, with the deleted text struck through.
@@ -811,7 +812,7 @@ function renderDeletedFootnotes(language, footnotes, renderEntry) {
   const currentMarkers = new Set(footnotes.map((entry) => entry.marker));
   return (language?.changeView?.footnotes ?? [])
     .filter((entry) => entry.change === "delete" && entry.diff && !currentMarkers.has(entry.marker))
-    .map((entry) => renderEntry(entry.marker, renderEditorChangeDiffHtml(entry.diff)))
+    .map((entry) => renderEntry(entry.marker, footnoteParagraphsHtml(renderEditorChangeDiffHtml(entry.diff))))
     .join("");
 }
 

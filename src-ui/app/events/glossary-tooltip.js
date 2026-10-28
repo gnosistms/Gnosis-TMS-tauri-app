@@ -1,3 +1,4 @@
+import { footnoteParagraphsHtml } from "../editor-footnote-paragraphs.js";
 import {
   renderGlossaryRubyHtml,
   renderGlossaryRubyTermListHtml,
@@ -402,7 +403,7 @@ function renderStructuredGlossaryTooltipBody(
 
       const paragraph = document.createElement("p");
       paragraph.className = "editor-glossary-info-card__comment editor-glossary-info-card__footnote";
-      paragraph.innerHTML = renderSanitizedInlineMarkupHtml(text);
+      paragraph.innerHTML = footnoteParagraphsHtml(renderSanitizedInlineMarkupHtml(text));
       footnoteSection.append(paragraph);
     }
     if (footnoteSection.childElementCount > 0) {

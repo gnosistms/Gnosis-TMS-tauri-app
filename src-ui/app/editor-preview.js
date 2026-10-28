@@ -1,3 +1,4 @@
+import { footnoteParagraphsHtml } from "./editor-footnote-paragraphs.js";
 import { normalizeEditorFieldImage } from "./editor-images.js";
 import {
   normalizeEditorFootnotes,
@@ -248,11 +249,13 @@ function renderPreviewPlainText(text) {
   return renderSanitizedInlineMarkupHtml(previewTextValue(text)).replaceAll("\n", "<br>");
 }
 
-function renderPreviewHighlightedText(text, searchState, matchCounter, languageCode = "") {
+function renderPreviewHighlightedText(text, searchState, matchCounter, languageCode = "", preserveParagraphs = false) {
   const normalizedState = normalizeEditorPreviewSearchState(searchState);
   const query = previewSearchQuery(normalizedState);
   if (!query) {
-    return renderPreviewPlainText(text);
+    return preserveParagraphs
+      ? renderSanitizedInlineMarkupHtml(previewTextValue(text))
+      : renderPreviewPlainText(text);
   }
 
   const baseMatchIndex = matchCounter.current;
@@ -575,9 +578,9 @@ function renderWordPressFootnotesList(footnoteState, renderSegment, options = {}
     const backLink = options.serialize
       ? `<a href="#fnref-${escapeHtml(item.id)}" aria-label="Jump to footnote reference ${escapeHtml(item.number)}">&#8617;</a>`
       : `<a class="translate-preview__footnote-backlink" href="#fnref-${escapeHtml(item.id)}" aria-label="Jump to footnote reference ${escapeHtml(item.number)}">&#8617;</a>`;
-    const text = renderSegment(item.text, item.languageCode);
-    const body = options.footnoteTextClass ? `<span class="${escapeHtml(options.footnoteTextClass)}">${text}</span>` : text;
-    return `<li id="fn-${escapeHtml(item.id)}" data-preview-block="footnote" data-row-id="${escapeHtml(item.rowId)}" lang="${escapeHtml(item.languageCode)}" data-tooltip="Double-click to edit.">${body} ${backLink}</li>`;
+    const text = footnoteParagraphsHtml(`${renderSegment(item.text, item.languageCode)} ${backLink}`, "p");
+    const body = options.footnoteTextClass ? `<div class="${escapeHtml(options.footnoteTextClass)}">${text}</div>` : text;
+    return `<li id="fn-${escapeHtml(item.id)}" data-preview-block="footnote" data-row-id="${escapeHtml(item.rowId)}" lang="${escapeHtml(item.languageCode)}" data-tooltip="Double-click to edit.">${body}</li>`;
   }).join("");
 
   return `<ol class="wp-block-footnotes">${items}</ol>`;
@@ -653,7 +656,7 @@ export function renderEditorPreviewDocumentHtml(blocks, options = {}) {
     .join("");
   const footnotesHtml = renderWordPressFootnotesList(
     footnoteState,
-    (text, languageCode) => renderPreviewHighlightedText(text, searchState, matchCounter, languageCode),
+    (text, languageCode) => renderPreviewHighlightedText(text, searchState, matchCounter, languageCode, true),
     { footnoteTextClass: options.footnoteTextClass },
   );
 
@@ -836,7 +839,7 @@ function serializeHtmlFootnotes(footnoteState) {
       const arrow = multipleReferences ? `&#8617;<sup>${index + 1}</sup>` : "&#8617;";
       return `<a href="#${escapeHtml(referenceId)}" role="doc-backlink" aria-label="${label}">${arrow}</a>`;
     }).join(" ");
-    return `<li id="${escapeHtml(item.id)}" tabindex="-1">${serializePreviewText(item.text)} ${backlinks}</li>`;
+    return `<li id="${escapeHtml(item.id)}" tabindex="-1">${footnoteParagraphsHtml(`${renderSanitizedInlineMarkupHtml(unescapeLiteralFootnoteMarkers(item.text))} ${backlinks}`, "p")}</li>`;
   }).join("\n");
   // A static Custom HTML block also survives WordPress paste without depending
   // on footnote post metadata, which cannot be carried on the clipboard.
@@ -897,7 +900,7 @@ export function serializeEditorPreviewWordPress(blocks) {
       .join("\n\n"),
     footnotes: footnoteState.items.map((item) => ({
       id: item.id,
-      content: serializePreviewText(item.text),
+      content: footnoteParagraphsHtml(renderSanitizedInlineMarkupHtml(unescapeLiteralFootnoteMarkers(item.text)), "p"),
     })),
     title: titleEntry?.title ?? null,
   };

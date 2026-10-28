@@ -29,9 +29,9 @@ pub(crate) use title_preview::{start_project_book_title_preview, TitlePagePrevie
 
 use super::chapter_export::{
     apply_print_custom_html_policy, build_scoped_export_document,
-    download_public_image_bytes_detailed, export_text_style, inline_segments, inline_visible_text,
-    load_export_chapters, ExportBlock, ExportChapterFileInput, ExportDocument, ExportImage,
-    InlineStyleState,
+    download_public_image_bytes_detailed, export_text_style, footnote_paragraphs, inline_segments,
+    inline_visible_text, load_export_chapters, ExportBlock, ExportChapterFileInput, ExportDocument,
+    ExportImage, InlineStyleState,
 };
 
 const PDF_EXPORT_EVENT: &str = "chapter-pdf-export-progress";
@@ -1532,7 +1532,7 @@ fn render_typst_chapter(
             ExportBlock::Footnote { number, text, .. } if !anchored_numbers.contains(number) => {
                 source.push_str(&format!(
                     "#footnote[{}]\n",
-                    render_inline_typst(text, options.footnote_links_as_plain_text)
+                    render_footnote_typst(text, options.footnote_links_as_plain_text)
                 ));
             }
             ExportBlock::Footnote { .. } => {}
@@ -2695,7 +2695,8 @@ const GREEK_RUN_RULE_PREFIX: &str =
     "#show regex(\"[\\u{0370}-\\u{03FF}\\u{1F00}-\\u{1FFF}]+\"): set text(font: ";
 
 /// Knuth-style footnotes: a normal baseline number sits in a fixed, right-aligned
-/// gutter while every line of note text shares one stable left edge. Typst's native
+/// gutter while wrapped lines share one stable left edge and later paragraphs
+/// indent their first lines. Typst's native
 /// footnote callout remains untouched, so references in the body stay superscripted.
 /// The marker is rebuilt as a link to preserve navigation in exported PDFs.
 const GNOSIS_FOOTNOTE_RULE: &str = r#"#set footnote.entry(indent: 0em)
@@ -2710,7 +2711,10 @@ const GNOSIS_FOOTNOTE_RULE: &str = r#"#set footnote.entry(indent: 0em)
     column-gutter: marker-gap,
     align: (end + top, start + top),
     marker,
-    it.note.body,
+    context block[
+      #set par(first-line-indent: (amount: 1.5em, all: false), spacing: par.leading)
+      #it.note.body
+    ],
   )
 }
 "#;
@@ -2739,6 +2743,21 @@ fn render_inline_typst(text: &str, show_link_urls: bool) -> String {
         .map(|segment| render_styled_typst_text(&segment.text, &segment.style, show_link_urls))
         .collect::<Vec<_>>()
         .join("")
+}
+
+fn render_footnote_typst(text: &str, show_link_urls: bool) -> String {
+    footnote_paragraphs(text)
+        .iter()
+        .map(|paragraph| {
+            if inline_visible_text(paragraph).is_empty() {
+                // An authored empty paragraph still occupies a line.
+                "#text(\"\\u{a0}\")".to_string()
+            } else {
+                render_inline_typst(paragraph, show_link_urls)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("#parbreak()")
 }
 
 /// When the first block is an H1, that heading becomes the chapter title (the same
@@ -2839,7 +2858,7 @@ fn render_inline_typst_with_footnotes(
                 }
                 rendered.push_str(&format!(
                     "#footnote[{}]",
-                    render_inline_typst(note, footnote_links_as_plain_text)
+                    render_footnote_typst(note, footnote_links_as_plain_text)
                 ));
                 used.insert(marker);
                 last_emitted_footnote = true;
@@ -2869,7 +2888,7 @@ fn render_inline_typst_with_footnotes(
         }
         rendered.push_str(&format!(
             "#footnote[{}]",
-            render_inline_typst(note, footnote_links_as_plain_text)
+            render_footnote_typst(note, footnote_links_as_plain_text)
         ));
         used.insert(*marker);
         last_emitted_footnote = true;
@@ -4287,7 +4306,9 @@ mod tests {
         assert!(preamble.contains("columns: (marker-width, 1fr)"));
         assert!(preamble.contains("column-gutter: marker-gap"));
         assert!(preamble.contains("align: (end + top, start + top)"));
-        assert!(preamble.contains("marker,\n    it.note.body"));
+        assert!(preamble
+            .contains("first-line-indent: (amount: 1.5em, all: false), spacing: par.leading"));
+        assert!(preamble.contains("#it.note.body"));
     }
 
     #[test]
@@ -4457,6 +4478,22 @@ mod tests {
     #[test]
     fn typst_strings_escape_code_boundaries() {
         assert_eq!(typst_string("a\\b\"c\nd"), "\"a\\\\b\\\"c\\nd\"");
+    }
+
+    #[test]
+    fn typst_footnote_paragraphs_have_real_boundaries_and_preserve_blank_lines() {
+        assert_eq!(
+            render_footnote_typst("<i>First\nSecond</i>", false),
+            "#emph[#text(\"First\")]#parbreak()#emph[#text(\"Second\")]"
+        );
+        let blank = render_footnote_typst("First\n\nLast", false);
+        assert_eq!(blank.matches("#parbreak()").count(), 2);
+        assert!(blank.contains("#text(\"\\u{a0}\")"));
+        // Ordinary within-row newlines must retain their old soft-break path.
+        assert_eq!(
+            render_inline_typst("First\nSecond", false),
+            "#text(\"First\\nSecond\")"
+        );
     }
 
     #[test]

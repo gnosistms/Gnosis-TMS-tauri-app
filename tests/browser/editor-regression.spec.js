@@ -6390,6 +6390,43 @@ test.describe("editor regressions", () => {
       ?.footnotes?.["fixture-chapter"]?.[rowId]?.vi).toBe("Edited footnote to preserve while switching editors.");
   });
 
+  test("footnote paragraphs format on blur while native typing and stored returns stay unchanged", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 18, chapterStatus: "ready" }, { mockTauri: true });
+    const rowId = "fixture-row-0001";
+    await activateMainEditorField(page, rowId, "vi");
+    await page.locator(`[data-editor-footnote-button][data-row-id="${rowId}"][data-language-code="vi"]`).click();
+    const field = page.locator(`textarea[data-editor-row-field][data-row-id="${rowId}"][data-language-code="vi"][data-content-kind="footnote"]`);
+    await expect(field).toBeFocused();
+    await field.pressSequentially("First paragraph.");
+    await field.press("Enter");
+    await field.pressSequentially("Second paragraph.");
+    await expect(field).toHaveValue("First paragraph.\nSecond paragraph.");
+    await page.locator("[data-editor-search-input]").click();
+    const display = page.locator(`[data-editor-footnote-display][data-row-id="${rowId}"][data-language-code="vi"]`);
+    const paragraphs = display.locator(".footnote-paragraph");
+    await expect(paragraphs).toHaveCount(2);
+    await expect(paragraphs.nth(0)).toHaveCSS("text-indent", "0px");
+    const fontSize = await paragraphs.nth(1).evaluate((element) => parseFloat(getComputedStyle(element).fontSize));
+    await expect(paragraphs.nth(1)).toHaveCSS("text-indent", `${fontSize * 1.5}px`);
+    const geometry = await paragraphs.evaluateAll((elements) => elements.map((element) => {
+      const rect = element.getBoundingClientRect();
+      return { top: rect.top, bottom: rect.bottom };
+    }));
+    expect(Math.abs(geometry[1].top - geometry[0].bottom)).toBeLessThan(1);
+    await expect.poll(async () => (await readMockTauriState(page))?.footnotes?.["fixture-chapter"]?.[rowId]?.vi)
+      .toBe("First paragraph.\nSecond paragraph.");
+    await display.click();
+    await expect(field).toBeFocused();
+    await expect(field).toHaveValue("First paragraph.\nSecond paragraph.");
+    await page.locator("[data-editor-search-input]").click();
+    await page.locator('[data-action="set-editor-mode:preview"]').click();
+    const previewParagraphs = page.locator('.wp-block-footnotes .footnote-paragraph');
+    await expect(previewParagraphs).toHaveCount(2);
+    await expect(previewParagraphs.nth(0)).toHaveCSS("text-indent", "0px");
+    const previewFont = await previewParagraphs.nth(1).evaluate((element) => parseFloat(getComputedStyle(element).fontSize));
+    await expect(previewParagraphs.nth(1)).toHaveCSS("text-indent", `${previewFont * 1.5}px`);
+  });
+
   test("a referenced empty footnote survives blur, save, and reopen", async ({ page }) => {
     const rowId = "fixture-row-0001";
     const languageCode = "vi";
@@ -7617,7 +7654,7 @@ for (const canEdit of [false, true]) {
         : ".translation-language-panel__footnote-static");
       await expect(entries).toHaveCount(2);
       await expect(footnote.locator("a")).toHaveAttribute("href", "https://example.com");
-      expect(await entries.first().textContent()).toContain("First paragraph.\nSecond paragraph");
+      expect(await entries.first().innerText()).toContain("First paragraph.\nSecond paragraph");
       await expect(entries.first()).toHaveCSS("white-space", "pre-wrap");
       await host.screenshot({ path: `/tmp/footnote-spacing-${canEdit ? "editable" : "read-only"}-${fontSize}.png` });
     });

@@ -1,3 +1,4 @@
+import { footnoteParagraphsHtml } from "./editor-footnote-paragraphs.js";
 import { buildEditorGlossaryModel } from "./editor-glossary-highlighting.js";
 import { waitForGlossaryTermWritesToSettle } from "./glossary-term-write-coordinator.js";
 import { buildEditorRowSearchHighlightMap } from "./editor-search-flow.js";
@@ -323,13 +324,11 @@ function applyEditorTextHighlightLayersToRowCard(
 
     if (displayText instanceof HTMLElement) {
       if (!isAiTranslating) {
-        setElementInnerHtmlIfChanged(
-          displayText,
-          row.srtTexts?.[languageCode] && contentKind === "field"
-            ? renderSrtStaticText({ code: languageCode, text: row.srtTexts[languageCode].text,
-              srtParts: row.srtTexts[languageCode].parts, srtMarkers: row.srtTexts[languageCode].markers,
-              searchHighlightRanges: searchHighlightRanges }, glossaryHighlightHtml)
-            : renderSanitizedInlineMarkupWithEditorHighlightState(highlightableText, {
+        const displayHtml = row.srtTexts?.[languageCode] && contentKind === "field"
+          ? renderSrtStaticText({ code: languageCode, text: row.srtTexts[languageCode].text,
+            srtParts: row.srtTexts[languageCode].parts, srtMarkers: row.srtTexts[languageCode].markers,
+            searchHighlightRanges: searchHighlightRanges }, glossaryHighlightHtml)
+          : renderSanitizedInlineMarkupWithEditorHighlightState(highlightableText, {
             glossaryHighlightHtml,
             searchRanges: searchHighlightRanges,
             extraRanges: contentKind === "field"
@@ -338,8 +337,9 @@ function applyEditorTextHighlightLayersToRowCard(
                 row?.footnotes?.[languageCode],
               )
               : [],
-          }),
-        );
+          });
+        setElementInnerHtmlIfChanged(displayText, contentKind === "footnote"
+          ? footnoteParagraphsHtml(displayHtml) : displayHtml);
       }
     }
 
