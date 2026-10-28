@@ -1075,7 +1075,7 @@ pub(crate) fn remove_gtms_editor_language_image_sync(
             row_json_path.display()
         )
     })?;
-    apply_editor_field_image_update(&mut row_value, &input.language_code, None)?;
+    apply_editor_field_image_removal(&mut row_value, &input.language_code)?;
 
     let updated_row_json = serde_json::to_string_pretty(&row_value).map_err(|error| {
         format!(
@@ -2110,6 +2110,19 @@ pub(super) fn apply_editor_field_image_update(
     Ok(())
 }
 
+// A caption belongs to its image. Left behind, it is hidden in the editor but
+// still found by search, so removing the image removes the caption too.
+fn apply_editor_field_image_removal(
+    row_value: &mut Value,
+    language_code: &str,
+) -> Result<(), String> {
+    super::row_fields::apply_editor_image_caption_updates(
+        row_value,
+        &BTreeMap::from([(language_code.to_string(), String::new())]),
+    )?;
+    apply_editor_field_image_update(row_value, language_code, None)
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -2843,6 +2856,26 @@ mod tests {
 
         let _ = fs::remove_dir_all(repo_path);
         let _ = fs::remove_dir_all(outside_path);
+    }
+
+    #[test]
+    fn image_removal_clears_that_language_caption_only() {
+        let image = json!({ "kind": "url", "url": "https://example.com/photo.jpg" });
+        let mut row_value = json!({
+            "row_id": "row-1",
+            "fields": {
+                "vi": { "plain_text": "Text", "image_caption": "Removed caption", "image": image },
+                "es": { "plain_text": "Texto", "image_caption": "Kept caption", "image": image }
+            }
+        });
+
+        apply_editor_field_image_removal(&mut row_value, "vi").expect("remove image");
+
+        assert_eq!(row_value["fields"]["vi"]["image"], Value::Null);
+        assert_eq!(row_value["fields"]["vi"]["image_caption"], "");
+        assert_eq!(row_value["fields"]["vi"]["plain_text"], "Text");
+        assert_eq!(row_value["fields"]["es"]["image"], image);
+        assert_eq!(row_value["fields"]["es"]["image_caption"], "Kept caption");
     }
 
     #[test]
