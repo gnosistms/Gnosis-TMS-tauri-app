@@ -63,7 +63,7 @@ function collectDiffUnits(value) {
         }
         continue;
       }
-      if (node.tag === "ruby" || node.tag === "hr" || node.tag === "br") {
+      if (node.tag === "ruby" || node.tag === "hr") {
         const source = serializeNodesAsInlineMarkupSource([node]);
         units.push({ identity: `\u0000${source}`, atom: node, format: formatKey(tokens) });
         continue;

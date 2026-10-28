@@ -15,9 +15,7 @@ const TAG_TO_STYLE = {
   ruby: "ruby",
 };
 
-const SUPPORTED_TAGS = new Set(["strong", "em", "u", "ruby", "rt", "a", "hr", "br"]);
-// <hr> separates parts of a row; <br> breaks a line inside a paragraph.
-const VOID_TAGS = new Set(["hr", "br"]);
+const SUPPORTED_TAGS = new Set(["strong", "em", "u", "ruby", "rt", "a", "hr"]);
 const TAG_ALIASES = {
   b: "strong",
   i: "em",
@@ -122,13 +120,13 @@ function parseTagToken(rawTag) {
 
   const rawAttributes = match[3] ?? "";
   if (isClosing) {
-    if (VOID_TAGS.has(normalizedName)) {
+    if (normalizedName === "hr") {
       return null;
     }
     return rawAttributes.trim() ? null : { isClosing, tag: normalizedName };
   }
 
-  if (VOID_TAGS.has(normalizedName)) {
+  if (normalizedName === "hr") {
     return rawAttributes.trim()
       ? null
       : {
@@ -251,49 +249,12 @@ function parseInlineMarkup(value) {
   }
 
   finalizeElement(root, visibleCursor, source.length);
-  markLineBreakNewlines(root.children);
   return {
     source,
     nodes: root.children,
     visibleText: flattenNodesToVisibleText(root.children),
     visibleLength: visibleCursor,
   };
-}
-
-// A row's returns are paragraph breaks, except the newline that follows a <br>
-// (Shift+Return stores "<br>\n" so the textarea shows the break). That newline
-// belongs to the line break: tags, spaces, tabs and CR may sit between them.
-// Marks each such <br> with absorbsNewline and lists the newline's offset in its
-// text node's lineBreakOffsets; every other newline is a paragraph break.
-function markLineBreakNewlines(nodes, state = { pendingBreak: null }) {
-  for (const node of Array.isArray(nodes) ? nodes : []) {
-    if (!node) {
-      continue;
-    }
-
-    if (node.type === "text") {
-      node.lineBreakOffsets = [];
-      for (let index = 0; index < node.text.length && state.pendingBreak; index += 1) {
-        const character = node.text[index];
-        if (character === "\n") {
-          state.pendingBreak.absorbsNewline = true;
-          node.lineBreakOffsets.push(index);
-          state.pendingBreak = null;
-        } else if (character !== " " && character !== "\t" && character !== "\r") {
-          state.pendingBreak = null;
-        }
-      }
-      continue;
-    }
-
-    if (node.tag === "br") {
-      node.absorbsNewline = false;
-      state.pendingBreak = node;
-      continue;
-    }
-
-    markLineBreakNewlines(node.children, state);
-  }
 }
 
 function flattenNodesToVisibleText(nodes) {

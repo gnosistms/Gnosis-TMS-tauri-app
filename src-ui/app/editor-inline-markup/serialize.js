@@ -64,10 +64,6 @@ function flattenNodesToHistoryText(nodes) {
         return " --- ";
       }
 
-      if (node.tag === "br") {
-        return node.absorbsNewline ? "" : "\n";
-      }
-
       if (node.tag === "ruby") {
         const { baseChildren, annotationChildren } = splitRubyNodeChildren(node.children);
         const baseText = flattenNodesToHistoryText(baseChildren);
@@ -98,10 +94,6 @@ function renderNodesForHistoryHtml(nodes) {
 
       if (node.tag === "hr") {
         return renderInlineSeparatorHtml("history-inline-separator");
-      }
-
-      if (node.tag === "br") {
-        return node.absorbsNewline ? "" : "<br>";
       }
 
       if (node.tag === "ruby") {
@@ -140,14 +132,6 @@ function serializeNodesWithAllowedTags(source, nodes, allowedTags) {
         return allowedTags.has(node.tag) ? "<hr>" : escapeHtml("<hr>");
       }
 
-      if (node.tag === "br") {
-        // The newline a <br> absorbs stays in the text and is rendered there.
-        if (node.absorbsNewline) {
-          return "";
-        }
-        return allowedTags.has(node.tag) ? "<br>" : "\n";
-      }
-
       if (allowedTags.has(node.tag)) {
         return `<${node.tag}${serializeElementAttributes(node)}>${serializeNodesWithAllowedTags(source, node.children, allowedTags)}</${node.tag}>`;
       }
@@ -180,10 +164,6 @@ function serializeNodesForRubyNotation(nodes, insideRubyAnnotation = false) {
 
       if (node.tag === "hr") {
         return "";
-      }
-
-      if (node.tag === "br") {
-        return node.absorbsNewline ? "" : "\n";
       }
 
       if (node.tag === "ruby") {
@@ -310,9 +290,9 @@ function serializeTextWithHighlights(text, visibleStart, highlightRanges, markRe
   return html;
 }
 
-// Splits at <hr> separators, or with splitParagraphs at paragraph-break newlines
-// instead (a line break's newline stays in its part).
-function splitNodesOnInlineSeparators(nodes, { splitParagraphs = false } = {}) {
+// Splits at <hr> separators, or, given paragraphBreaks (see
+// findParagraphBreakNewlines), at blank lines instead, keeping <hr> in place.
+function splitNodesOnInlineSeparators(nodes, paragraphBreaks = null) {
   const parts = [];
   let currentNodes = [];
 
@@ -330,22 +310,22 @@ function splitNodesOnInlineSeparators(nodes, { splitParagraphs = false } = {}) {
         continue;
       }
 
-      if (node.type === "element" && node.tag === "hr" && !splitParagraphs) {
+      if (node.type === "element" && node.tag === "hr" && !paragraphBreaks) {
         pushTextPart();
         parts.push({ kind: "separator" });
         continue;
       }
 
       if (node.type !== "element" || node.tag === "hr") {
-        if (splitParagraphs && node.type === "text") {
-          appendTextSplitAtParagraphBreaks(node);
+        if (paragraphBreaks?.has(node)) {
+          appendTextSplitAtParagraphBreaks(node, paragraphBreaks.get(node));
         } else {
           currentNodes.push(node);
         }
         continue;
       }
 
-      const childParts = splitNodesOnInlineSeparators(node.children, { splitParagraphs });
+      const childParts = splitNodesOnInlineSeparators(node.children, paragraphBreaks);
       if (childParts.length === 1 && childParts[0]?.kind === "text") {
         currentNodes.push({
           ...node,
@@ -369,25 +349,19 @@ function splitNodesOnInlineSeparators(nodes, { splitParagraphs = false } = {}) {
     }
   }
 
-  function appendTextSplitAtParagraphBreaks(node) {
-    const lineBreakOffsets = new Set(node.lineBreakOffsets ?? []);
+  function appendTextSplitAtParagraphBreaks(node, breakOffsets) {
     let start = 0;
-    for (let index = 0; index < node.text.length; index += 1) {
-      if (node.text[index] !== "\n" || lineBreakOffsets.has(index)) {
-        continue;
-      }
-      // A CRLF return ends the paragraph at its CR.
-      const end = index > start && node.text[index - 1] === "\r" ? index - 1 : index;
+    for (const offset of [...breakOffsets].sort((left, right) => left - right)) {
+      // A CRLF blank line ends the paragraph at its CR.
+      const end = offset > start && node.text[offset - 1] === "\r" ? offset - 1 : offset;
       if (end > start) {
         currentNodes.push({ ...node, text: node.text.slice(start, end) });
       }
       pushTextPart();
       parts.push({ kind: "paragraph-break" });
-      start = index + 1;
+      start = offset + 1;
     }
-    if (start === 0) {
-      currentNodes.push(node);
-    } else if (start < node.text.length) {
+    if (start < node.text.length) {
       currentNodes.push({ ...node, text: node.text.slice(start) });
     }
   }
@@ -410,21 +384,6 @@ function splitNodesOnInlineSeparators(nodes, { splitParagraphs = false } = {}) {
   return compactParts;
 }
 
-// A line break's newline renders as one <br> (its <br> tag renders nothing), so
-// views that show newlines as breaks show it once, and paragraph splitters see
-// only the paragraph-break newlines.
-function serializeTextWithLineBreaks(node, highlightRanges, markRenderer) {
-  const offsets = Array.isArray(node.lineBreakOffsets) ? node.lineBreakOffsets : [];
-  let html = "";
-  let start = 0;
-  for (const offset of offsets) {
-    html += serializeTextWithHighlights(node.text.slice(start, offset), node.visibleStart + start, highlightRanges, markRenderer);
-    html += "<br>";
-    start = offset + 1;
-  }
-  return html + serializeTextWithHighlights(node.text.slice(start), node.visibleStart + start, highlightRanges, markRenderer);
-}
-
 function serializeNodes(nodes, highlightRanges = [], markRenderer = null, options = {}) {
   return (Array.isArray(nodes) ? nodes : [])
     .map((node) => {
@@ -433,15 +392,11 @@ function serializeNodes(nodes, highlightRanges = [], markRenderer = null, option
       }
 
       if (node.type === "text") {
-        return serializeTextWithLineBreaks(node, highlightRanges, markRenderer);
+        return serializeTextWithHighlights(node.text, node.visibleStart, highlightRanges, markRenderer);
       }
 
       if (node.tag === "hr") {
         return serializeSeparatorNode(options);
-      }
-
-      if (node.tag === "br") {
-        return node.absorbsNewline ? "" : "<br>";
       }
 
       return `<${node.tag}${serializeElementAttributes(node)}>${serializeNodes(node.children, highlightRanges, markRenderer, options)}</${node.tag}>`;
@@ -449,7 +404,7 @@ function serializeNodes(nodes, highlightRanges = [], markRenderer = null, option
     .join("");
 }
 
-export function serializeNodesAsInlineMarkupSource(nodes, options = {}) {
+export function serializeNodesAsInlineMarkupSource(nodes) {
   return (Array.isArray(nodes) ? nodes : [])
     .map((node) => {
       if (!node) {
@@ -460,17 +415,74 @@ export function serializeNodesAsInlineMarkupSource(nodes, options = {}) {
         return node.text;
       }
 
-      if (node.tag === "br") {
-        return options.completeLineBreaks === true && !node.absorbsNewline ? "<br>\n" : "<br>";
-      }
-
       if (node.tag === "hr") {
         return "<hr>";
       }
 
-      return `<${node.tag}${serializeElementAttributes(node)}>${serializeNodesAsInlineMarkupSource(node.children, options)}</${node.tag}>`;
+      return `<${node.tag}${serializeElementAttributes(node)}>${serializeNodesAsInlineMarkupSource(node.children)}</${node.tag}>`;
     })
     .join("");
+}
+
+// A blank line is a paragraph break: two newlines with only spaces, tabs, CR or
+// inline tags between them, so a blank line may cross formatting. Returns, by
+// text node, the offsets of every newline in a blank-line run. A single newline
+// is a line break and stays in its paragraph.
+function findParagraphBreakNewlines(nodes) {
+  const offsetsByNode = new Map();
+  let lastNewline = null;
+  const mark = ({ node, index }) => {
+    if (!offsetsByNode.has(node)) {
+      offsetsByNode.set(node, new Set());
+    }
+    offsetsByNode.get(node).add(index);
+  };
+  const visit = (children) => {
+    for (const node of Array.isArray(children) ? children : []) {
+      if (!node) {
+        continue;
+      }
+      if (node.type !== "text") {
+        if (node.tag === "hr") {
+          lastNewline = null;
+        } else {
+          visit(node.children);
+        }
+        continue;
+      }
+      for (let index = 0; index < node.text.length; index += 1) {
+        const character = node.text[index];
+        if (character === "\n") {
+          const newline = { node, index };
+          if (lastNewline) {
+            mark(lastNewline);
+            mark(newline);
+          }
+          lastNewline = newline;
+        } else if (character !== " " && character !== "\t" && character !== "\r") {
+          lastNewline = null;
+        }
+      }
+    }
+  };
+  visit(nodes);
+  return offsetsByNode;
+}
+
+function nodesHaveContent(nodes) {
+  return (Array.isArray(nodes) ? nodes : []).some((node) => node?.type === "text"
+    ? /\S/.test(node.text)
+    : node?.tag === "hr" || nodesHaveContent(node?.children));
+}
+
+// A row's paragraphs: its text split at blank lines, without empty paragraphs.
+// Single newlines stay as line breaks, and inline formatting that spans a blank
+// line reopens in the next paragraph.
+export function splitInlineMarkupTextIntoParagraphs(value) {
+  const parsed = parseInlineMarkup(value);
+  return splitNodesOnInlineSeparators(parsed.nodes, findParagraphBreakNewlines(parsed.nodes))
+    .filter((part) => part.kind === "text" && nodesHaveContent(part.nodes))
+    .map((part) => serializeNodesAsInlineMarkupSource(part.nodes));
 }
 
 export function splitInlineMarkupTextBySeparators(value) {
@@ -482,17 +494,6 @@ export function splitInlineMarkupTextBySeparators(value) {
         kind: "text",
         text: serializeNodesAsInlineMarkupSource(part.nodes),
       });
-}
-
-// A row's paragraphs. A return is a paragraph break unless it follows <br>
-// (see markLineBreakNewlines). Each paragraph keeps its line breaks as "<br>\n",
-// adding the newline a lone <br> lacks, so its only newlines are line breaks.
-// Inline formatting that spans a paragraph break reopens in the next paragraph.
-export function splitInlineMarkupTextIntoParagraphs(value) {
-  const parsed = parseInlineMarkup(value);
-  return splitNodesOnInlineSeparators(parsed.nodes, { splitParagraphs: true })
-    .filter((part) => part.kind === "text")
-    .map((part) => serializeNodesAsInlineMarkupSource(part.nodes, { completeLineBreaks: true }));
 }
 
 export function extractInlineMarkupVisibleText(value) {

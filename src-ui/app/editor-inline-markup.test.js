@@ -104,42 +104,24 @@ test("separator splitting preserves unescaped text for downstream sanitization",
   );
 });
 
-test("row returns split into paragraphs that reopen formatting", () => {
+test("row text splits into paragraphs at blank lines, reopening formatting", () => {
   assert.deepEqual(
-    splitInlineMarkupTextIntoParagraphs("One <em>two\nthree</em> four\r\nFive<hr>Six\nSeven"),
-    ["One <em>two</em>", "<em>three</em> four", "Five<hr>Six", "Seven"],
+    splitInlineMarkupTextIntoParagraphs("One <em>two\n\nthree</em> four\r\n\r\nFive<hr>Six\nSeven"),
+    ["One <em>two</em>", "<em>three</em> four", "Five<hr>Six\nSeven"],
   );
-  assert.deepEqual(splitInlineMarkupTextIntoParagraphs("A\n\nB"), ["A", "", "B"]);
-  assert.deepEqual(splitInlineMarkupTextIntoParagraphs(""), [""]);
+  // Whitespace-only lines, longer runs and tags inside the blank line still
+  // make one paragraph break; empty paragraphs are dropped.
+  assert.deepEqual(splitInlineMarkupTextIntoParagraphs("A\n \t\nB\n\n\n\nC"), ["A", "B", "C"]);
+  assert.deepEqual(splitInlineMarkupTextIntoParagraphs("A\n<em>\nB</em>"), ["A", "<em>B</em>"]);
+  assert.deepEqual(splitInlineMarkupTextIntoParagraphs("\n\nA\n\n"), ["A"]);
+  assert.deepEqual(splitInlineMarkupTextIntoParagraphs(""), []);
 });
 
-test("a newline after <br> is a line break inside the paragraph", () => {
-  assert.deepEqual(
-    splitInlineMarkupTextIntoParagraphs("Line one<br>\nline <strong>two<br></strong> \r\nthree\nNext"),
-    ["Line one<br>\nline <strong>two<br></strong> \r\nthree", "Next"],
-  );
-  // A lone <br> gains its newline so a paragraph's newlines are exactly its line breaks.
-  assert.deepEqual(splitInlineMarkupTextIntoParagraphs("A<br>B<br>\nC"), ["A<br>\nB<br>\nC"]);
-  // Only one newline belongs to a <br>; the next one starts a paragraph.
-  assert.deepEqual(splitInlineMarkupTextIntoParagraphs("A<br>\n\nB"), ["A<br>\n", "B"]);
-});
-
-test("line breaks render as one <br> and add nothing to visible or base text", () => {
-  assert.equal(renderSanitizedInlineMarkupHtml("A<br>\nB\nC<br>D"), "A<br>B\nC<br>D");
-  assert.equal(renderSanitizedInlineMarkupHtml("<em>A<br></em>\nB"), "<em>A</em><br>B");
-  assert.equal(extractInlineMarkupVisibleText("A<br>\nB<br>C"), "A\nBC");
-  assert.equal(extractInlineMarkupBaseText("A<br>\nB"), "A\nB");
-  assert.equal(extractInlineMarkupHistoryText("A<br>\nB<br>C"), "A\nB\nC");
-  assert.equal(renderSanitizedInlineMarkupHtml("<br/>"), "&lt;br/&gt;");
-  assert.equal(renderSanitizedInlineMarkupHtml("</br>"), "&lt;/br&gt;");
-});
-
-test("line breaks keep search and glossary highlights aligned", () => {
-  const highlight = buildInlineMarkupSearchHighlightMarkup("Alpha<br>\nBeta beta", "beta");
-  assert.equal(
-    renderSanitizedInlineMarkupWithEditorHighlightState("Alpha<br>\nBeta beta", { searchRanges: highlight.ranges }),
-    'Alpha<br><mark class="translation-language-panel__search-match">Beta</mark> <mark class="translation-language-panel__search-match">beta</mark>',
-  );
+test("single newlines and separators stay inside their paragraph", () => {
+  assert.deepEqual(splitInlineMarkupTextIntoParagraphs("Line one\nline two\r\nthree"), ["Line one\nline two\r\nthree"]);
+  // A separator between blank lines is content, not part of the blank line.
+  assert.deepEqual(splitInlineMarkupTextIntoParagraphs("A\n<hr>\nB"), ["A\n<hr>\nB"]);
+  assert.deepEqual(splitInlineMarkupTextIntoParagraphs("A\n\n<hr>\n\nB"), ["A", "<hr>", "B"]);
 });
 
 test("separator markup rejects unsupported hr variants as escaped text", () => {

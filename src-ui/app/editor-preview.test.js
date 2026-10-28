@@ -386,14 +386,14 @@ function paragraphRow(fields, extra = {}) {
   };
 }
 
-test("a return in a row makes paragraphs set like separate rows", () => {
+test("a blank line in a row makes paragraphs set like separate rows", () => {
   const blocks = buildEditorPreviewDocument([
-    paragraphRow({ vi: "First <em>one\ntwo</em>\n\nThird line<br>\nsame paragraph" }),
+    paragraphRow({ vi: "First <em>one\n\ntwo</em>\n \n\nThird line\nsame paragraph" }),
   ], "vi");
   assert.deepEqual(blocks.map((block) => [block.rowId, block.text]), [
     ["row-1", "First <em>one</em>"],
     ["row-1", "<em>two</em>"],
-    ["row-1", "Third line<br>\nsame paragraph"],
+    ["row-1", "Third line\nsame paragraph"],
   ]);
 
   const rendered = renderEditorPreviewDocumentHtml(blocks);
@@ -406,7 +406,7 @@ test("a return in a row makes paragraphs set like separate rows", () => {
 test("paragraph blocks keep their own footnotes and the quote attribution goes last", () => {
   const blocks = buildEditorPreviewDocument([
     paragraphRow(
-      { vi: "Cites two[2].\nCites one[1].\nCites none." },
+      { vi: "Cites two[2].\n\nCites one[1].\n\nCites none." },
       {
         textStyle: "quote",
         footnotes: { vi: "[1] Note one\n\n[2] Note two\n\n[3] Note three" },
@@ -424,22 +424,22 @@ test("paragraph blocks keep their own footnotes and the quote attribution goes l
   assert.match(rendered, /Cites none\.<sup[^>]*><a[^>]*>3<\/a><\/sup><cite/);
 });
 
-test("headings split at a return like separate heading rows", () => {
+test("headings split at a blank line like separate heading rows", () => {
   const blocks = buildEditorPreviewDocument([
-    paragraphRow({ vi: "Part one\nThe beginning<br>\nof it" }, { textStyle: "heading1" }),
+    paragraphRow({ vi: "Part one\n\nThe beginning\nof it" }, { textStyle: "heading1" }),
   ], "vi");
   const rendered = renderEditorPreviewDocumentHtml(blocks).html;
   assert.equal(rendered.match(/<h1 /g).length, 2);
   assert.match(rendered, /<h1 [^>]*>The beginning<br>of it<\/h1>/);
 });
 
-test("subtitle cues and custom HTML keep newlines inside their block", () => {
+test("subtitle cues and custom HTML keep blank lines inside their block", () => {
   const blocks = buildEditorPreviewDocument([
-    paragraphRow({ vi: "Line one\nline two" }, { srtTiming: { startMs: 0, endMs: 1000 } }),
-    paragraphRow({ vi: "<p>A</p>\n<p>B</p>" }, { rowId: "row-2", textStyle: "custom_html" }),
+    paragraphRow({ vi: "Line one\n\nline two" }, { srtTiming: { startMs: 0, endMs: 1000 } }),
+    paragraphRow({ vi: "<p>A</p>\n\n<p>B</p>" }, { rowId: "row-2", textStyle: "custom_html" }),
   ], "vi");
-  assert.deepEqual(blocks.map((block) => block.text), ["Line one\nline two", "<p>A</p>\n<p>B</p>"]);
-  assert.match(renderEditorPreviewDocumentHtml(blocks).html, />Line one<br>line two<\/p>/);
+  assert.deepEqual(blocks.map((block) => block.text), ["Line one\n\nline two", "<p>A</p>\n\n<p>B</p>"]);
+  assert.match(renderEditorPreviewDocumentHtml(blocks).html, />Line one<br><br>line two<\/p>/);
 });
 
 test("preview footnote refs preserve inline markup when markers are inside tags", () => {

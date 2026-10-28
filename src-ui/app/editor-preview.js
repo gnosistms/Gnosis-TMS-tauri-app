@@ -104,14 +104,15 @@ function previewFootnoteValue(row, languageCode) {
   return normalizeEditorFootnotes(row?.footnotes?.[languageCode]);
 }
 
-// A subtitle cue's newline is a subtitle line, not a paragraph break.
+// A subtitle cue's newlines, blank lines included, stay in the cue.
 function previewRowIsSubtitleCue(row) {
   return Boolean(row?.srtTiming) || Object.keys(row?.timings ?? {}).length > 0;
 }
 
-// Each paragraph of a row becomes a block of its own, set exactly as a separate
-// row of the same style would be. Custom HTML is opaque and subtitle cues keep
-// their newlines as lines. Empty paragraphs are dropped, as empty rows are.
+// Each paragraph of a row (text between blank lines) becomes a block of its
+// own, set exactly as a separate row of the same style would be. Custom HTML is
+// opaque and subtitle cues are not split. Empty paragraphs are dropped, as
+// empty rows are.
 function previewRowParagraphs(row, text, textStyle) {
   if (isCustomHtmlRowTextStyle(textStyle) || previewRowIsSubtitleCue(row)) {
     return text.trim() ? [text] : [];
