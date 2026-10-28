@@ -218,7 +218,7 @@ fn parse_docx_notes_xml(
                 } else if current_id.is_some() && name == "tab" {
                     current_text.push('\t');
                 } else if current_id.is_some() && name == "br" {
-                    current_text.push('\n');
+                    current_text.push_str(docx_break_text(&event)?);
                 }
             }
             Ok(Event::Empty(event)) => {
@@ -226,7 +226,7 @@ fn parse_docx_notes_xml(
                 if current_id.is_some() && name == "tab" {
                     current_text.push('\t');
                 } else if current_id.is_some() && name == "br" {
-                    current_text.push('\n');
+                    current_text.push_str(docx_break_text(&event)?);
                 }
             }
             Ok(Event::Text(event)) if in_text => {
@@ -306,7 +306,7 @@ fn parse_docx_document_xml(
                         in_text = true;
                     }
                     "tab" => append_to_docx_paragraph(&mut paragraph, "\t"),
-                    "br" => append_to_docx_paragraph(&mut paragraph, "\n"),
+                    "br" => append_to_docx_paragraph(&mut paragraph, docx_break_text(&event)?),
                     "tbl" => table_depth += 1,
                     "tr" if table_depth > 0 => {
                         table_row_position += 1;
@@ -351,7 +351,7 @@ fn parse_docx_document_xml(
                 let name = local_xml_name(event.name().as_ref());
                 match name.as_str() {
                     "tab" => append_to_docx_paragraph(&mut paragraph, "\t"),
-                    "br" => append_to_docx_paragraph(&mut paragraph, "\n"),
+                    "br" => append_to_docx_paragraph(&mut paragraph, docx_break_text(&event)?),
                     "pStyle" => apply_docx_paragraph_style(&mut paragraph, &event)?,
                     "footnoteReference" => append_docx_footnote_reference(
                         &mut paragraph,
@@ -455,6 +455,16 @@ fn xml_attribute_value(
         }
     }
     Ok(None)
+}
+
+/// Word's Shift+Return (a text-wrapping break) is a line break inside the
+/// paragraph, stored as `<br>\n`; a bare return would be a paragraph break. Page
+/// and column breaks only end the paragraph.
+fn docx_break_text(event: &quick_xml::events::BytesStart<'_>) -> Result<&'static str, String> {
+    Ok(match xml_attribute_value(event, "type")?.as_deref() {
+        Some("page" | "column") => "\n",
+        _ => "<br>\n",
+    })
 }
 
 fn append_to_docx_paragraph(paragraph: &mut Option<DocxParagraphState>, text: &str) {
@@ -606,14 +616,25 @@ fn ensure_docx_row_budget(existing_rows: usize, text: &str) -> Result<(), String
 }
 
 fn normalize_docx_text(value: &str) -> String {
-    value
+    let text = value
         .lines()
         .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>()
-        .join("\n")
-        .trim()
-        .to_string()
+        .join("\n");
+    trim_docx_line_breaks(&text).to_string()
+}
+
+// A text-wrapping break at either end of a paragraph sets nothing.
+fn trim_docx_line_breaks(value: &str) -> &str {
+    let mut text = value.trim();
+    while let Some(rest) = text
+        .strip_prefix("<br>")
+        .or_else(|| text.strip_suffix("<br>"))
+    {
+        text = rest.trim();
+    }
+    text
 }
 
 fn increment_docx_unsupported(summary: &mut DocxImportSummary, key: &str) {
