@@ -187,6 +187,23 @@ test("PDF cancellation is enabled while the export waits for the repository queu
   assert.doesNotMatch(html, /data-action="close-editor-export-options" disabled/);
 });
 
+test("EPUB pane shows image progress without offering cancellation", () => {
+  const html = renderEditorExportModal(exportState({
+    selectedOptionId: "file:epub",
+    status: "exporting",
+    pdfStage: "Preparing images…",
+    pdfProgressCurrent: 23,
+    pdfProgressTotal: 91,
+    pdfProgressUnit: "items",
+    pdfProgressIndeterminate: false,
+  }));
+
+  assert.match(html, /Preparing images…/);
+  assert.match(html, /23 of 91 images/);
+  assert.match(html, /role="progressbar"[^>]*aria-valuenow="25"/);
+  assert.match(html, /data-action="close-editor-export-options"[^>]*disabled[^>]*>Cancel</);
+});
+
 test("PDF pane reports cached fonts without offering another download", () => {
   const html = renderEditorExportModal(exportState({
     selectedOptionId: "file:pdf",

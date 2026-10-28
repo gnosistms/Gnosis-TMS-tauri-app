@@ -579,7 +579,10 @@ function exportDetail(option, isExporting, modal, appState) {
   }
 
   if (option.kind === "file") {
-    const pdfProgress = option.format === "pdf" ? renderPdfExportProgress(modal, isExporting) : "";
+    // EPUB reports image loading through the same progress fields as PDF.
+    const exportProgress = ["pdf", "epub"].includes(option.format)
+      ? renderPdfExportProgress(modal, isExporting)
+      : "";
     const pdfDisclosure = option.format === "pdf" ? pdfFontDisclosure(modal) : "";
     const pdfReady = option.format !== "pdf" || modal.pdfFontStatus === "ready" || isExporting;
     const pdfChecking = option.format === "pdf" && !isExporting
@@ -597,7 +600,7 @@ function exportDetail(option, isExporting, modal, appState) {
         ${footnoteLinkFallbackSection(option, modal)}
         ${omitCustomHtmlSection(option, modal)}
         ${option.format === "pdf" ? savedPdfFontSettings(modal, isExporting) : ""}
-        ${pdfProgress}
+        ${exportProgress}
       `,
       submitButton: pdfReady || pdfChecking ? loadingPrimaryButton({
         label: "Save",
