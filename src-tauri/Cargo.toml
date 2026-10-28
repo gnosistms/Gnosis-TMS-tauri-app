@@ -54,3 +54,23 @@ unicode-segmentation = "1.12"
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSPasteboard"] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSArray", "NSData", "NSString"] }
+
+# Unoptimized image decoding made PDF image preparation ~30x slower in dev builds.
+# These crates are only reached through `image`, so changing them rebuilds little.
+[profile.dev.package.image]
+opt-level = 3
+
+[profile.dev.package.image-webp]
+opt-level = 3
+
+[profile.dev.package.zune-jpeg]
+opt-level = 3
+
+[profile.dev.package.zune-core]
+opt-level = 3
+
+[profile.dev.package.moxcms]
+opt-level = 3
+
+[profile.dev.package.pxfm]
+opt-level = 3
