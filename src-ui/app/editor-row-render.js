@@ -1,4 +1,4 @@
-import { footnoteParagraphsHtml } from "./editor-footnote-paragraphs.js";
+import { footnoteParagraphsHtml, rowTextParagraphsHtml } from "./editor-footnote-paragraphs.js";
 import {
   escapeHtml,
   primaryButton,
@@ -10,7 +10,7 @@ import {
 import { editorFieldImageMetadataText } from "./editor-images.js";
 import { editorGlossaryEntryButtonEnabled, glossaryEntryTooltip } from "./editor-glossary-entry-selection.js";
 import { editorImagePreviewFrameSizeForSrc } from "./editor-image-preview-size.js";
-import { convertLocalFileSrc } from "./runtime.js";
+import { convertLocalFileSrc, isMacPlatform } from "./runtime.js";
 import {
   buildEditorRowHeights,
   calculateEditorVirtualWindow,
@@ -412,13 +412,13 @@ function renderRowTextStyleButtons(row, language) {
           `
           : ""
       }
-      <span class="translation-row-text-style-actions__hint">Shift + Return to save</span>
+      <span class="translation-row-text-style-actions__hint">${isMacPlatform() ? "Command" : "Ctrl"} + S to save</span>
     </div>
   `;
 }
 
 function renderStaticEditorFieldTextHtml(language, options = {}) {
-  return renderSanitizedInlineMarkupWithEditorHighlightState(language?.text ?? "", {
+  const html = renderSanitizedInlineMarkupWithEditorHighlightState(language?.text ?? "", {
     glossaryHighlightHtml: typeof options.glossaryHighlightHtml === "string"
       ? options.glossaryHighlightHtml
       : "",
@@ -428,6 +428,7 @@ function renderStaticEditorFieldTextHtml(language, options = {}) {
       language?.footnotes ?? language?.footnote,
     ),
   });
+  return language?.isSubtitleCue === true ? html : rowTextParagraphsHtml(html);
 }
 
 function editorLanguageImageSrc(image) {

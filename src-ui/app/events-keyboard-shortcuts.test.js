@@ -232,3 +232,80 @@ test("formatting shortcuts leave unavailable and non-editor fields alone", (t) =
   assert.equal(fixture.run().prevented, false);
   assert.equal(fixture.button.clickCount, 0);
 });
+
+function rowFieldFixture({ contentKind, srt = false } = {}) {
+  const originalChapter = state.editorChapter;
+  const originalExecCommand = document.execCommand;
+  state.editorChapter = { ...originalChapter, sourceFormats: srt ? ["srt"] : [] };
+  const target = new HTMLTextAreaElement();
+  target.dataset = contentKind ? { contentKind } : {};
+  target.matches = (selector) => selector === "[data-editor-row-field]";
+  target.closest = () => null;
+  target.blurCount = 0;
+  target.blur = () => { target.blurCount += 1; };
+  const commands = [];
+  document.execCommand = (...args) => { commands.push(args); return true; };
+  registerKeyboardShortcutEvents(async () => {});
+  return {
+    target,
+    commands,
+    run: (overrides) => {
+      const event = keyboardEvent({ target, metaKey: false, ...overrides });
+      keydownHandler(event);
+      return event;
+    },
+    restore: () => {
+      state.editorChapter = originalChapter;
+      document.execCommand = originalExecCommand;
+    },
+  };
+}
+
+test("Shift+Return breaks a line in row text and footnotes without leaving the field", (t) => {
+  navigator.platform = "MacIntel";
+  for (const contentKind of [undefined, "footnote"]) {
+    const fixture = rowFieldFixture({ contentKind });
+    t.after(fixture.restore);
+    const event = fixture.run({ key: "Enter", shiftKey: true });
+    assert.equal(event.prevented, true);
+    assert.deepEqual(fixture.commands, [["insertText", false, "<br>\n"]]);
+    assert.equal(fixture.target.blurCount, 0);
+    for (const excluded of [{ altKey: true }, { metaKey: true }, { isComposing: true }, { shiftKey: false }]) {
+      assert.equal(fixture.run({ key: "Enter", shiftKey: true, ...excluded }).prevented, false);
+    }
+    assert.equal(fixture.commands.length, 1);
+  }
+});
+
+test("Shift+Return keeps the native newline in captions, attributions and subtitles", (t) => {
+  navigator.platform = "MacIntel";
+  for (const options of [{ contentKind: "image-caption" }, { contentKind: "attribution" }, { srt: true }]) {
+    const fixture = rowFieldFixture(options);
+    t.after(fixture.restore);
+    assert.equal(fixture.run({ key: "Enter", shiftKey: true }).prevented, false);
+    assert.deepEqual(fixture.commands, []);
+    assert.equal(fixture.target.blurCount, 0);
+  }
+});
+
+for (const { platform, modifiers } of [
+  { platform: "MacIntel", modifiers: { metaKey: true, ctrlKey: false } },
+  { platform: "Win32", modifiers: { metaKey: false, ctrlKey: true } },
+]) {
+  test(`the primary modifier with S saves and leaves any row field on ${platform}`, (t) => {
+    navigator.platform = platform;
+    for (const contentKind of [undefined, "footnote", "image-caption", "attribution"]) {
+      const fixture = rowFieldFixture({ contentKind });
+      t.after(fixture.restore);
+      const event = fixture.run({ key: "s", ...modifiers });
+      assert.equal(event.prevented, true);
+      assert.equal(fixture.target.blurCount, 1);
+      for (const excluded of [
+        { metaKey: !modifiers.metaKey, ctrlKey: !modifiers.ctrlKey }, { shiftKey: true }, { altKey: true },
+      ]) {
+        assert.equal(fixture.run({ key: "s", ...modifiers, ...excluded }).prevented, false);
+      }
+      assert.equal(fixture.target.blurCount, 1);
+    }
+  });
+}

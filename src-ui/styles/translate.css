@@ -1488,6 +1488,15 @@
   font-family: inherit;
 }
 
+/* A return in a row is a paragraph break; the gap tells it from a line break. */
+.translation-language-panel__paragraph {
+  display: block;
+}
+
+.translation-language-panel__paragraph + .translation-language-panel__paragraph {
+  margin-top: 0.6em;
+}
+
 .translation-language-panel__inline-separator,
 .history-inline-separator {
   display: block;

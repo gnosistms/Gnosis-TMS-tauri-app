@@ -48,8 +48,50 @@ function shouldBlurActiveEditorField(event) {
     return false;
   }
 
+  // Cmd+S / Ctrl+S saves and leaves the field (Shift+Return now breaks a line).
   const key = typeof event.key === "string" ? event.key.toLowerCase() : "";
-  return key === "enter" && event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey;
+  const hasModifier = isMacPlatform()
+    ? event.metaKey && !event.ctrlKey
+    : event.ctrlKey && !event.metaKey;
+  return key === "s" && hasModifier && !event.altKey && !event.shiftKey;
+}
+
+// In a row's text and its footnotes a return is a paragraph break, so Shift+Return
+// inserts a line break as "<br>\n": the newline shows the break while editing and
+// the <br> marks it as a line break. Captions, attributions and subtitle text
+// already treat every newline as a line, so they keep the native newline.
+function shouldInsertEditorLineBreak(event) {
+  if (event.defaultPrevented || event.isComposing) {
+    return false;
+  }
+
+  const target = event.target;
+  if (
+    !(target instanceof HTMLTextAreaElement)
+    || !target.matches("[data-editor-row-field]")
+    || target.disabled
+    || target.readOnly
+  ) {
+    return false;
+  }
+
+  const contentKind = target.dataset?.contentKind ?? "";
+  if (contentKind !== "" && contentKind !== "footnote") {
+    return false;
+  }
+  if (contentKind === "" && chapterHasSrtSourceFormat(state.editorChapter?.sourceFormats)) {
+    return false;
+  }
+
+  const key = typeof event.key === "string" ? event.key.toLowerCase() : "";
+  return (key === "enter" || key === "return")
+    && event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey;
+}
+
+// execCommand keeps native undo and passes through the editor's beforeinput
+// gate, which may refuse the edit (a stale or read-only row).
+function insertEditorLineBreak() {
+  document.execCommand("insertText", false, "<br>\n");
 }
 
 const EDITOR_INLINE_STYLE_SHORTCUTS = new Map([
@@ -178,6 +220,12 @@ export function registerKeyboardShortcutEvents(dispatchAction) {
       if (focusPageSearchInput(true)) {
         event.preventDefault();
       }
+      return;
+    }
+
+    if (shouldInsertEditorLineBreak(event)) {
+      event.preventDefault();
+      insertEditorLineBreak();
       return;
     }
 

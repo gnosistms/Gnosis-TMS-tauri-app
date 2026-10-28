@@ -297,6 +297,8 @@ function buildLiveTranslationRows(editorChapter, languages) {
             editorChapter?.activeRowId === row.rowId
             && editorChapter?.activeLanguageCode === language.code,
           showTiming,
+          // Subtitle newlines are lines, never paragraph breaks — also in grouped views.
+          isSubtitleCue: showTiming,
           timing: showTiming ? effectiveRowTiming(row, language.code) : null,
           timingStartError:
             timingErrorsByRowId.get(row.rowId)?.[language.code]?.startError === true,
