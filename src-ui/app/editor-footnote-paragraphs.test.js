@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { footnoteParagraphsHtml } from "./editor-footnote-paragraphs.js";
+import { footnoteParagraphsHtml, rowTextParagraphsHtml } from "./editor-footnote-paragraphs.js";
 import { renderSanitizedInlineMarkupHtml } from "./editor-inline-markup.js";
 
 test("footnote paragraphs indent continuations and keep cross-paragraph markup balanced", () => {
@@ -19,4 +19,21 @@ test("footnote paragraph layout preserves empty paragraphs and CRLF boundaries",
 test("single-paragraph footnotes retain their existing markup and sanitization", () => {
   const html = renderSanitizedInlineMarkupHtml('<script>alert(1)</script> <i>note</i>');
   assert.equal(footnoteParagraphsHtml(html), html);
+});
+
+const rowParagraphs = (html) => [...html.matchAll(/<span class="translation-language-panel__paragraph">(.*?)<\/span>(?=<span class="translation-language-panel__paragraph">|$)/gs)]
+  .map((match) => match[1]);
+
+test("row text displays a paragraph per blank line and keeps single returns as line breaks", () => {
+  const html = rowTextParagraphsHtml(renderSanitizedInlineMarkupHtml("Line one\nline <em>two\n\nthree</em>\n \n\nFour"));
+  assert.deepEqual(rowParagraphs(html), ["Line one\nline <em>two</em>", "<em>three</em>", "Four"]);
+  assert.equal(rowTextParagraphsHtml("No blank line\nhere"), "No blank line\nhere");
+});
+
+test("a separator between returns is content, not a blank line", () => {
+  const html = renderSanitizedInlineMarkupHtml("A\n<hr>\nB");
+  assert.equal(rowParagraphs(rowTextParagraphsHtml(html)).length, 1);
+  const alone = rowTextParagraphsHtml(renderSanitizedInlineMarkupHtml("A\n\n<hr>\n\nB"));
+  assert.equal(rowParagraphs(alone).length, 3);
+  assert.match(rowParagraphs(alone)[1], /role="separator"/);
 });

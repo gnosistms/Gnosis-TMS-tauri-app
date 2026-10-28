@@ -232,3 +232,91 @@ test("formatting shortcuts leave unavailable and non-editor fields alone", (t) =
   assert.equal(fixture.run().prevented, false);
   assert.equal(fixture.button.clickCount, 0);
 });
+
+function rowFieldFixture({ contentKind, paragraphs = false, value = "", caret = value.length } = {}) {
+  const originalExecCommand = document.execCommand;
+  const target = new HTMLTextAreaElement();
+  target.dataset = contentKind ? { contentKind } : {};
+  target.matches = (selector) => selector === "[data-editor-row-field]"
+    || (paragraphs && selector === "[data-editor-row-field][data-text-has-paragraphs]");
+  target.closest = () => null;
+  target.value = value;
+  target.selectionStart = caret;
+  target.blurCount = 0;
+  target.blur = () => { target.blurCount += 1; };
+  const commands = [];
+  document.execCommand = (...args) => { commands.push(args); return true; };
+  registerKeyboardShortcutEvents(async () => {});
+  return {
+    target,
+    commands,
+    run: (overrides) => {
+      const event = keyboardEvent({ target, metaKey: false, ...overrides });
+      keydownHandler(event);
+      return event;
+    },
+    restore: () => {
+      document.execCommand = originalExecCommand;
+    },
+  };
+}
+
+test("Return starts a paragraph with a blank line in row text", (t) => {
+  navigator.platform = "MacIntel";
+  for (const [value, caret, inserted] of [
+    ["Line", 4, "\n\n"],
+    ["Ab", 1, "\n\n"],
+    ["Line\n", 5, "\n"],
+    ["", 0, "\n"],
+  ]) {
+    const fixture = rowFieldFixture({ paragraphs: true, value, caret });
+    t.after(fixture.restore);
+    const event = fixture.run({ key: "Enter" });
+    assert.equal(event.prevented, true);
+    assert.deepEqual(fixture.commands, [["insertText", false, inserted]]);
+    assert.equal(fixture.target.blurCount, 0);
+  }
+
+  // Shift+Return is the native newline, a line break; other modifiers are not Return.
+  const fixture = rowFieldFixture({ paragraphs: true, value: "Line" });
+  t.after(fixture.restore);
+  for (const modifiers of [{ shiftKey: true }, { altKey: true }, { metaKey: true }, { ctrlKey: true }, { isComposing: true }]) {
+    assert.equal(fixture.run({ key: "Enter", ...modifiers }).prevented, false);
+  }
+  assert.deepEqual(fixture.commands, []);
+  assert.equal(fixture.target.blurCount, 0);
+});
+
+test("Return keeps the native newline in footnotes, captions, attributions, subtitles and custom HTML", (t) => {
+  navigator.platform = "MacIntel";
+  for (const contentKind of [undefined, "footnote", "image-caption", "attribution"]) {
+    const fixture = rowFieldFixture({ contentKind, value: "Line" });
+    t.after(fixture.restore);
+    assert.equal(fixture.run({ key: "Enter" }).prevented, false);
+    assert.equal(fixture.run({ key: "Enter", shiftKey: true }).prevented, false);
+    assert.deepEqual(fixture.commands, []);
+    assert.equal(fixture.target.blurCount, 0);
+  }
+});
+
+for (const { platform, modifiers } of [
+  { platform: "MacIntel", modifiers: { metaKey: true, ctrlKey: false } },
+  { platform: "Win32", modifiers: { metaKey: false, ctrlKey: true } },
+]) {
+  test(`the primary modifier with S saves and leaves any row field on ${platform}`, (t) => {
+    navigator.platform = platform;
+    for (const contentKind of [undefined, "footnote", "image-caption", "attribution"]) {
+      const fixture = rowFieldFixture({ contentKind });
+      t.after(fixture.restore);
+      const event = fixture.run({ key: "s", ...modifiers });
+      assert.equal(event.prevented, true);
+      assert.equal(fixture.target.blurCount, 1);
+      for (const excluded of [
+        { metaKey: !modifiers.metaKey, ctrlKey: !modifiers.ctrlKey }, { shiftKey: true }, { altKey: true },
+      ]) {
+        assert.equal(fixture.run({ key: "s", ...modifiers, ...excluded }).prevented, false);
+      }
+      assert.equal(fixture.target.blurCount, 1);
+    }
+  });
+}

@@ -48,8 +48,43 @@ function shouldBlurActiveEditorField(event) {
     return false;
   }
 
+  // Cmd+S / Ctrl+S saves and leaves the field (Shift+Return now breaks a line).
   const key = typeof event.key === "string" ? event.key.toLowerCase() : "";
-  return key === "enter" && event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey;
+  const hasModifier = isMacPlatform()
+    ? event.metaKey && !event.ctrlKey
+    : event.ctrlKey && !event.metaKey;
+  return key === "s" && hasModifier && !event.altKey && !event.shiftKey;
+}
+
+// Row text splits into paragraphs at blank lines, so Return inserts one: two
+// newlines, or one when the caret already follows a newline. Shift+Return keeps
+// the native single newline, a line break. Subtitle text, custom HTML,
+// footnotes, captions and attributions keep native newlines throughout.
+function shouldInsertEditorParagraphBreak(event) {
+  if (event.defaultPrevented || event.isComposing) {
+    return false;
+  }
+
+  const target = event.target;
+  if (
+    !(target instanceof HTMLTextAreaElement)
+    || !target.matches("[data-editor-row-field][data-text-has-paragraphs]")
+    || target.disabled
+    || target.readOnly
+  ) {
+    return false;
+  }
+
+  const key = typeof event.key === "string" ? event.key.toLowerCase() : "";
+  return (key === "enter" || key === "return")
+    && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey;
+}
+
+// execCommand keeps native undo and passes through the editor's beforeinput
+// gate, which may refuse the edit (a stale or read-only row).
+function insertEditorParagraphBreak(textarea) {
+  const before = textarea.value.slice(0, textarea.selectionStart);
+  document.execCommand("insertText", false, before === "" || before.endsWith("\n") ? "\n" : "\n\n");
 }
 
 const EDITOR_INLINE_STYLE_SHORTCUTS = new Map([
@@ -178,6 +213,12 @@ export function registerKeyboardShortcutEvents(dispatchAction) {
       if (focusPageSearchInput(true)) {
         event.preventDefault();
       }
+      return;
+    }
+
+    if (shouldInsertEditorParagraphBreak(event)) {
+      event.preventDefault();
+      insertEditorParagraphBreak(event.target);
       return;
     }
 

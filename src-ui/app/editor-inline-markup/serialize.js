@@ -290,7 +290,9 @@ function serializeTextWithHighlights(text, visibleStart, highlightRanges, markRe
   return html;
 }
 
-function splitNodesOnInlineSeparators(nodes) {
+// Splits at <hr> separators, or, given paragraphBreaks (see
+// findParagraphBreakNewlines), at blank lines instead, keeping <hr> in place.
+function splitNodesOnInlineSeparators(nodes, paragraphBreaks = null) {
   const parts = [];
   let currentNodes = [];
 
@@ -308,18 +310,22 @@ function splitNodesOnInlineSeparators(nodes) {
         continue;
       }
 
-      if (node.type === "element" && node.tag === "hr") {
+      if (node.type === "element" && node.tag === "hr" && !paragraphBreaks) {
         pushTextPart();
         parts.push({ kind: "separator" });
         continue;
       }
 
-      if (node.type !== "element") {
-        currentNodes.push(node);
+      if (node.type !== "element" || node.tag === "hr") {
+        if (paragraphBreaks?.has(node)) {
+          appendTextSplitAtParagraphBreaks(node, paragraphBreaks.get(node));
+        } else {
+          currentNodes.push(node);
+        }
         continue;
       }
 
-      const childParts = splitNodesOnInlineSeparators(node.children);
+      const childParts = splitNodesOnInlineSeparators(node.children, paragraphBreaks);
       if (childParts.length === 1 && childParts[0]?.kind === "text") {
         currentNodes.push({
           ...node,
@@ -329,9 +335,9 @@ function splitNodesOnInlineSeparators(nodes) {
       }
 
       for (const childPart of childParts) {
-        if (childPart.kind === "separator") {
+        if (childPart.kind === "separator" || childPart.kind === "paragraph-break") {
           pushTextPart();
-          parts.push({ kind: "separator" });
+          parts.push({ kind: childPart.kind });
           continue;
         }
 
@@ -340,6 +346,23 @@ function splitNodesOnInlineSeparators(nodes) {
           children: childPart.nodes,
         });
       }
+    }
+  }
+
+  function appendTextSplitAtParagraphBreaks(node, breakOffsets) {
+    let start = 0;
+    for (const offset of [...breakOffsets].sort((left, right) => left - right)) {
+      // A CRLF blank line ends the paragraph at its CR.
+      const end = offset > start && node.text[offset - 1] === "\r" ? offset - 1 : offset;
+      if (end > start) {
+        currentNodes.push({ ...node, text: node.text.slice(start, end) });
+      }
+      pushTextPart();
+      parts.push({ kind: "paragraph-break" });
+      start = offset + 1;
+    }
+    if (start < node.text.length) {
+      currentNodes.push({ ...node, text: node.text.slice(start) });
     }
   }
 
@@ -399,6 +422,67 @@ export function serializeNodesAsInlineMarkupSource(nodes) {
       return `<${node.tag}${serializeElementAttributes(node)}>${serializeNodesAsInlineMarkupSource(node.children)}</${node.tag}>`;
     })
     .join("");
+}
+
+// A blank line is a paragraph break: two newlines with only spaces, tabs, CR or
+// inline tags between them, so a blank line may cross formatting. Returns, by
+// text node, the offsets of every newline in a blank-line run. A single newline
+// is a line break and stays in its paragraph.
+function findParagraphBreakNewlines(nodes) {
+  const offsetsByNode = new Map();
+  let lastNewline = null;
+  const mark = ({ node, index }) => {
+    if (!offsetsByNode.has(node)) {
+      offsetsByNode.set(node, new Set());
+    }
+    offsetsByNode.get(node).add(index);
+  };
+  const visit = (children) => {
+    for (const node of Array.isArray(children) ? children : []) {
+      if (!node) {
+        continue;
+      }
+      if (node.type !== "text") {
+        if (node.tag === "hr") {
+          lastNewline = null;
+        } else {
+          visit(node.children);
+        }
+        continue;
+      }
+      for (let index = 0; index < node.text.length; index += 1) {
+        const character = node.text[index];
+        if (character === "\n") {
+          const newline = { node, index };
+          if (lastNewline) {
+            mark(lastNewline);
+            mark(newline);
+          }
+          lastNewline = newline;
+        } else if (character !== " " && character !== "\t" && character !== "\r") {
+          lastNewline = null;
+        }
+      }
+    }
+  };
+  visit(nodes);
+  return offsetsByNode;
+}
+
+function nodesHaveContent(nodes) {
+  return (Array.isArray(nodes) ? nodes : []).some((node) => node?.type === "text"
+    ? /\S/.test(node.text)
+    : node?.tag === "hr" || nodesHaveContent(node?.children));
+}
+
+// A row's paragraphs: its text split at blank lines, without empty paragraphs.
+// Single newlines stay as line breaks, and inline formatting that spans a blank
+// line reopens in the next paragraph.
+export function splitInlineMarkupTextIntoParagraphs(value) {
+  const parsed = parseInlineMarkup(value);
+  return splitNodesOnInlineSeparators(parsed.nodes, findParagraphBreakNewlines(parsed.nodes))
+    .filter((part) => part.kind === "text" && nodesHaveContent(part.nodes))
+    .map((part) => serializeNodesAsInlineMarkupSource(part.nodes));
 }
 
 export function splitInlineMarkupTextBySeparators(value) {

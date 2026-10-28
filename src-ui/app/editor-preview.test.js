@@ -373,6 +373,75 @@ test("preview rendering splits separator markup into a horizontal rule block", (
   assert.equal(plainText, "Alpha\n\n---\n\nBeta");
 });
 
+function paragraphRow(fields, extra = {}) {
+  return {
+    rowId: "row-1",
+    lifecycleState: "active",
+    textStyle: "paragraph",
+    fields,
+    footnotes: {},
+    imageCaptions: {},
+    images: {},
+    ...extra,
+  };
+}
+
+test("a blank line in a row makes paragraphs set like separate rows", () => {
+  const blocks = buildEditorPreviewDocument([
+    paragraphRow({ vi: "First <em>one\n\ntwo</em>\n \n\nThird line\nsame paragraph" }),
+  ], "vi");
+  assert.deepEqual(blocks.map((block) => [block.rowId, block.text]), [
+    ["row-1", "First <em>one</em>"],
+    ["row-1", "<em>two</em>"],
+    ["row-1", "Third line\nsame paragraph"],
+  ]);
+
+  const rendered = renderEditorPreviewDocumentHtml(blocks);
+  assert.equal(rendered.html.match(/<p class="translate-preview__block translate-preview__block--paragraph"/g).length, 3);
+  assert.match(rendered.html, /data-row-id="row-1"[^>]*>Third line<br>same paragraph<\/p>/);
+  assert.match(serializeEditorPreviewWordPress(blocks).content, /<p><em>two<\/em><\/p>\n<!-- \/wp:paragraph -->\n\n<!-- wp:paragraph -->\n<p>Third line<br>same paragraph<\/p>/);
+  assert.equal(serializeEditorPreviewPlainText(blocks), "First one\n\ntwo\n\nThird line\nsame paragraph");
+});
+
+test("paragraph blocks keep their own footnotes and the quote attribution goes last", () => {
+  const blocks = buildEditorPreviewDocument([
+    paragraphRow(
+      { vi: "Cites two[2].\n\nCites one[1].\n\nCites none." },
+      {
+        textStyle: "quote",
+        footnotes: { vi: "[1] Note one\n\n[2] Note two\n\n[3] Note three" },
+        attributions: { vi: "Author" },
+      },
+    ),
+  ], "vi");
+  assert.deepEqual(blocks.map((block) => block.footnotes.map((entry) => entry.marker)), [[2], [1], [3]]);
+  assert.deepEqual(blocks.map((block) => block.attribution ?? ""), ["", "", "Author"]);
+
+  const rendered = renderEditorPreviewDocumentHtml(blocks).html;
+  assert.equal(rendered.match(/<blockquote /g).length, 3);
+  assert.match(rendered, /Cites two<sup[^>]*><a[^>]*>1<\/a><\/sup>/);
+  assert.match(rendered, /Cites one<sup[^>]*><a[^>]*>2<\/a><\/sup>/);
+  assert.match(rendered, /Cites none\.<sup[^>]*><a[^>]*>3<\/a><\/sup><cite/);
+});
+
+test("headings split at a blank line like separate heading rows", () => {
+  const blocks = buildEditorPreviewDocument([
+    paragraphRow({ vi: "Part one\n\nThe beginning\nof it" }, { textStyle: "heading1" }),
+  ], "vi");
+  const rendered = renderEditorPreviewDocumentHtml(blocks).html;
+  assert.equal(rendered.match(/<h1 /g).length, 2);
+  assert.match(rendered, /<h1 [^>]*>The beginning<br>of it<\/h1>/);
+});
+
+test("subtitle cues and custom HTML keep blank lines inside their block", () => {
+  const blocks = buildEditorPreviewDocument([
+    paragraphRow({ vi: "Line one\n\nline two" }, { srtTiming: { startMs: 0, endMs: 1000 } }),
+    paragraphRow({ vi: "<p>A</p>\n\n<p>B</p>" }, { rowId: "row-2", textStyle: "custom_html" }),
+  ], "vi");
+  assert.deepEqual(blocks.map((block) => block.text), ["Line one\n\nline two", "<p>A</p>\n\n<p>B</p>"]);
+  assert.match(renderEditorPreviewDocumentHtml(blocks).html, />Line one<br><br>line two<\/p>/);
+});
+
 test("preview footnote refs preserve inline markup when markers are inside tags", () => {
   const blocks = buildEditorPreviewDocument([{
     rowId: "row-1",

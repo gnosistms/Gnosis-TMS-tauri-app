@@ -16,6 +16,7 @@ import {
   renderSanitizedInlineMarkupWithGlossaryHighlightHtml,
   rubyButtonConfig,
   splitInlineMarkupTextBySeparators,
+  splitInlineMarkupTextIntoParagraphs,
   toggleInlineMarkupSelection,
 } from "./editor-inline-markup.js";
 
@@ -101,6 +102,26 @@ test("separator splitting preserves unescaped text for downstream sanitization",
       { kind: "text", text: "Gamma" },
     ],
   );
+});
+
+test("row text splits into paragraphs at blank lines, reopening formatting", () => {
+  assert.deepEqual(
+    splitInlineMarkupTextIntoParagraphs("One <em>two\n\nthree</em> four\r\n\r\nFive<hr>Six\nSeven"),
+    ["One <em>two</em>", "<em>three</em> four", "Five<hr>Six\nSeven"],
+  );
+  // Whitespace-only lines, longer runs and tags inside the blank line still
+  // make one paragraph break; empty paragraphs are dropped.
+  assert.deepEqual(splitInlineMarkupTextIntoParagraphs("A\n \t\nB\n\n\n\nC"), ["A", "B", "C"]);
+  assert.deepEqual(splitInlineMarkupTextIntoParagraphs("A\n<em>\nB</em>"), ["A", "<em>B</em>"]);
+  assert.deepEqual(splitInlineMarkupTextIntoParagraphs("\n\nA\n\n"), ["A"]);
+  assert.deepEqual(splitInlineMarkupTextIntoParagraphs(""), []);
+});
+
+test("single newlines and separators stay inside their paragraph", () => {
+  assert.deepEqual(splitInlineMarkupTextIntoParagraphs("Line one\nline two\r\nthree"), ["Line one\nline two\r\nthree"]);
+  // A separator between blank lines is content, not part of the blank line.
+  assert.deepEqual(splitInlineMarkupTextIntoParagraphs("A\n<hr>\nB"), ["A\n<hr>\nB"]);
+  assert.deepEqual(splitInlineMarkupTextIntoParagraphs("A\n\n<hr>\n\nB"), ["A", "<hr>", "B"]);
 });
 
 test("separator markup rejects unsupported hr variants as escaped text", () => {

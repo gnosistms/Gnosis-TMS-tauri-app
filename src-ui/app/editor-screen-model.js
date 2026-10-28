@@ -14,6 +14,7 @@ import { normalizeEditorAiTranslateState } from "./editor-ai-translate-state.js"
 import { normalizeEditorDerivedGlossariesByRowId } from "./editor-derived-glossary-state.js";
 import { editorRowHasGlossaryError } from "./editor-glossary-highlight-cache.js";
 import { coerceEditorFontSizePx } from "./state.js";
+import { isCustomHtmlRowTextStyle } from "./editor-row-text-style.js";
 import { canPermanentlyDeleteProjectFiles } from "./resource-capabilities.js";
 import {
   findChapterContextById,
@@ -297,6 +298,9 @@ function buildLiveTranslationRows(editorChapter, languages) {
             editorChapter?.activeRowId === row.rowId
             && editorChapter?.activeLanguageCode === language.code,
           showTiming,
+          // Blank lines split row text into paragraphs, except in subtitles (also
+          // in grouped views) and custom HTML.
+          textHasParagraphs: !showTiming && !isCustomHtmlRowTextStyle(row.textStyle),
           timing: showTiming ? effectiveRowTiming(row, language.code) : null,
           timingStartError:
             timingErrorsByRowId.get(row.rowId)?.[language.code]?.startError === true,

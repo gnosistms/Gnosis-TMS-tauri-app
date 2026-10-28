@@ -1469,6 +1469,15 @@ async function activateMainEditorField(page, rowId, languageCode) {
   return textarea;
 }
 
+// The save shortcut follows the platform the app detects, which Playwright's
+// device profile may report differently from the host.
+async function editorSaveShortcut(page) {
+  return await page.evaluate(async () => {
+    const { isMacPlatform } = await import(new URL("/app/runtime.js", window.location.href).href);
+    return isMacPlatform() ? "Meta+s" : "Control+s";
+  });
+}
+
 async function activateImageCaptionEditor(page, rowId, languageCode) {
   const textarea = page.locator(
     `[data-editor-row-field][data-row-id="${rowId}"][data-language-code="${languageCode}"][data-content-kind="image-caption"]`,
@@ -1744,7 +1753,7 @@ test.describe("editor regressions", () => {
     expect(after.histories).toEqual(before.histories);
     expect(after.invocations.filter((entry) => entry.command === "update_gtms_editor_row_fields")).toHaveLength(0);
     // The normal deliberate save remains available after sync deferred.
-    await field.press("Shift+Enter");
+    await field.press(await editorSaveShortcut(page));
     await expect.poll(async () => (await readMockTauriState(page)).invocations.filter(
       (entry) => entry.command === "update_gtms_editor_row_fields",
     ).length).toBe(1);
@@ -1788,7 +1797,7 @@ test.describe("editor regressions", () => {
       expect(calls.filter((entry) => entry.command === "load_gtms_chapter_editor_data")).toHaveLength(loadsBefore);
       await expect(page.locator(".modal-card--navigation-loading")).toHaveCount(0);
       // A deliberate save releases the deferred conflict reload.
-      await field.press("Shift+Enter");
+      await field.press(await editorSaveShortcut(page));
       await expect.poll(async () => (await readMockTauriState(page)).invocations.filter(
         (entry) => entry.command === "update_gtms_editor_row_fields",
       ).length).toBe(1);
@@ -1823,7 +1832,7 @@ test.describe("editor regressions", () => {
     });
     let field = await activateMainEditorField(page, "fixture-row-0001", "vi");
     await field.fill("earlier deliberate save");
-    await field.press("Shift+Enter");
+    await field.press(await editorSaveShortcut(page));
     await page.waitForFunction(() => globalThis.__earlierSaveStarted === true);
     field = await activateMainEditorField(page, "fixture-row-0001", "vi");
     await field.fill("newer unsaved draft");
@@ -3144,7 +3153,7 @@ test.describe("editor regressions", () => {
   });
 
   for (const destination of ["Projects", "glossary header", "glossary term"]) {
-    test(`leaving through ${destination} saves the focused row without Shift+Enter`, async ({ page }) => {
+    test(`leaving through ${destination} saves the focused row without Cmd/Ctrl+S`, async ({ page }) => {
       await page.addInitScript(() => {
         globalThis.__gnosisMockTauriHandlers = {
           async load_gtms_glossary_editor_data() {
@@ -6098,7 +6107,7 @@ test.describe("editor regressions", () => {
     }).toBeLessThan(4);
   });
 
-  test("saving the active main field with shift-enter keeps the scroll position stable", async ({ page }) => {
+  test("saving the active main field with Cmd/Ctrl+S keeps the scroll position stable", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 18 }, { mockTauri: true });
 
     const rowId = "fixture-row-0010";
@@ -6118,7 +6127,7 @@ test.describe("editor regressions", () => {
     await page.keyboard.type(" saved");
 
     const beforeScrollTop = await readTranslateScrollTop(page);
-    await page.keyboard.press("Shift+Enter");
+    await page.keyboard.press(await editorSaveShortcut(page));
 
     await expect(displayField).toBeVisible();
     await expect.poll(async () => {
@@ -6126,7 +6135,7 @@ test.describe("editor regressions", () => {
     }).toBeLessThan(4);
   });
 
-  test("saving an image caption with shift-enter keeps the scroll position stable", async ({ page }) => {
+  test("saving an image caption with Cmd/Ctrl+S keeps the scroll position stable", async ({ page }) => {
     const rowId = "fixture-row-0010";
     const languageCode = "vi";
     await mountEditorFixture(page, {
@@ -6156,7 +6165,7 @@ test.describe("editor regressions", () => {
     });
 
     const beforeScrollTop = await readTranslateScrollTop(page);
-    await page.keyboard.press("Shift+Enter");
+    await page.keyboard.press(await editorSaveShortcut(page));
 
     await expect(
       page.locator(
@@ -6166,6 +6175,65 @@ test.describe("editor regressions", () => {
     await expect.poll(async () => {
       return Math.abs((await readTranslateScrollTop(page)) - beforeScrollTop);
     }).toBeLessThan(4);
+  });
+
+  test("blank lines display as paragraphs; Return starts one and Shift+Return breaks a line", async ({ page }) => {
+    const rowId = "fixture-row-0001";
+    const text = "First paragraph with a\nline break\n\nSecond paragraph";
+    await mountEditorFixture(page, {
+      rowCount: 4,
+      fieldsByRowId: { [rowId]: { vi: text } },
+    }, { mockTauri: true });
+    const displayField = page.locator(`[data-editor-display-field][data-row-id="${rowId}"][data-language-code="vi"]`);
+    const paragraphs = displayField.locator(".translation-language-panel__paragraph");
+    const renderedParagraphs = () => paragraphs.evaluateAll((nodes) => nodes.map((node) => node.innerText));
+    await expect.poll(renderedParagraphs).toEqual(["First paragraph with a\nline break", "Second paragraph"]);
+    const [first, second] = await paragraphs.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect()));
+    expect(second.top - first.bottom).toBeGreaterThan(4);
+    await displayField.screenshot({ path: test.info().outputPath("row-paragraphs.png") });
+
+    const field = await activateMainEditorField(page, rowId, "vi");
+    await expect(field).toHaveValue(text);
+    const saveShortcut = await editorSaveShortcut(page);
+    await expect(page.locator(".translation-row-text-style-actions__hint").first())
+      .toHaveText(saveShortcut === "Meta+s" ? "Command + S to save" : "Ctrl + S to save");
+    await field.evaluate((element) => element.setSelectionRange(element.value.length, element.value.length));
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("Third paragraph");
+    await page.keyboard.press("Shift+Enter");
+    await page.keyboard.type("with a break");
+    const edited = `${text}\n\nThird paragraph\nwith a break`;
+    await expect(field).toHaveValue(edited);
+    await expect(field).toBeFocused();
+
+    await page.keyboard.press(saveShortcut);
+    await expect(field).toHaveCount(0);
+    await expect.poll(async () => (await readMockTauriState(page)).invocations
+      .filter((entry) => entry.command === "update_gtms_editor_row_fields")
+      .map((entry) => entry.payload.input.fields.vi)).toEqual([edited]);
+    await expect.poll(renderedParagraphs).toEqual([
+      "First paragraph with a\nline break",
+      "Second paragraph",
+      "Third paragraph\nwith a break",
+    ]);
+  });
+
+  test("subtitle text keeps blank lines in the cue and Return as a plain newline", async ({ page }) => {
+    const rowId = "fixture-row-0001";
+    await mountEditorFixture(page, {
+      rowCount: 4,
+      srt: true,
+      fieldsByRowId: { [rowId]: { vi: "Subtitle line one\n\nline two" } },
+    }, { mockTauri: true });
+    const displayField = page.locator(`[data-editor-display-field][data-row-id="${rowId}"][data-language-code="vi"]`);
+    await expect(displayField).toContainText("Subtitle line one");
+    await expect(displayField.locator(".translation-language-panel__paragraph")).toHaveCount(0);
+
+    const field = await activateMainEditorField(page, rowId, "vi");
+    await field.evaluate((element) => element.setSelectionRange(element.value.length, element.value.length));
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("line three");
+    await expect(field).toHaveValue("Subtitle line one\n\nline two\nline three");
   });
 
   test("replace selected and undo replace round-trip through history", async ({ page }) => {
