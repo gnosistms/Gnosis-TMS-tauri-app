@@ -64,6 +64,10 @@ function flattenNodesToHistoryText(nodes) {
         return " --- ";
       }
 
+      if (node.tag === "br") {
+        return node.absorbsNewline ? "" : "\n";
+      }
+
       if (node.tag === "ruby") {
         const { baseChildren, annotationChildren } = splitRubyNodeChildren(node.children);
         const baseText = flattenNodesToHistoryText(baseChildren);
@@ -94,6 +98,10 @@ function renderNodesForHistoryHtml(nodes) {
 
       if (node.tag === "hr") {
         return renderInlineSeparatorHtml("history-inline-separator");
+      }
+
+      if (node.tag === "br") {
+        return node.absorbsNewline ? "" : "<br>";
       }
 
       if (node.tag === "ruby") {
@@ -132,6 +140,14 @@ function serializeNodesWithAllowedTags(source, nodes, allowedTags) {
         return allowedTags.has(node.tag) ? "<hr>" : escapeHtml("<hr>");
       }
 
+      if (node.tag === "br") {
+        // The newline a <br> absorbs stays in the text and is rendered there.
+        if (node.absorbsNewline) {
+          return "";
+        }
+        return allowedTags.has(node.tag) ? "<br>" : "\n";
+      }
+
       if (allowedTags.has(node.tag)) {
         return `<${node.tag}${serializeElementAttributes(node)}>${serializeNodesWithAllowedTags(source, node.children, allowedTags)}</${node.tag}>`;
       }
@@ -164,6 +180,10 @@ function serializeNodesForRubyNotation(nodes, insideRubyAnnotation = false) {
 
       if (node.tag === "hr") {
         return "";
+      }
+
+      if (node.tag === "br") {
+        return node.absorbsNewline ? "" : "\n";
       }
 
       if (node.tag === "ruby") {
@@ -290,7 +310,9 @@ function serializeTextWithHighlights(text, visibleStart, highlightRanges, markRe
   return html;
 }
 
-function splitNodesOnInlineSeparators(nodes) {
+// Splits at <hr> separators, or with splitParagraphs at paragraph-break newlines
+// instead (a line break's newline stays in its part).
+function splitNodesOnInlineSeparators(nodes, { splitParagraphs = false } = {}) {
   const parts = [];
   let currentNodes = [];
 
@@ -308,18 +330,22 @@ function splitNodesOnInlineSeparators(nodes) {
         continue;
       }
 
-      if (node.type === "element" && node.tag === "hr") {
+      if (node.type === "element" && node.tag === "hr" && !splitParagraphs) {
         pushTextPart();
         parts.push({ kind: "separator" });
         continue;
       }
 
-      if (node.type !== "element") {
-        currentNodes.push(node);
+      if (node.type !== "element" || node.tag === "hr") {
+        if (splitParagraphs && node.type === "text") {
+          appendTextSplitAtParagraphBreaks(node);
+        } else {
+          currentNodes.push(node);
+        }
         continue;
       }
 
-      const childParts = splitNodesOnInlineSeparators(node.children);
+      const childParts = splitNodesOnInlineSeparators(node.children, { splitParagraphs });
       if (childParts.length === 1 && childParts[0]?.kind === "text") {
         currentNodes.push({
           ...node,
@@ -329,9 +355,9 @@ function splitNodesOnInlineSeparators(nodes) {
       }
 
       for (const childPart of childParts) {
-        if (childPart.kind === "separator") {
+        if (childPart.kind === "separator" || childPart.kind === "paragraph-break") {
           pushTextPart();
-          parts.push({ kind: "separator" });
+          parts.push({ kind: childPart.kind });
           continue;
         }
 
@@ -340,6 +366,29 @@ function splitNodesOnInlineSeparators(nodes) {
           children: childPart.nodes,
         });
       }
+    }
+  }
+
+  function appendTextSplitAtParagraphBreaks(node) {
+    const lineBreakOffsets = new Set(node.lineBreakOffsets ?? []);
+    let start = 0;
+    for (let index = 0; index < node.text.length; index += 1) {
+      if (node.text[index] !== "\n" || lineBreakOffsets.has(index)) {
+        continue;
+      }
+      // A CRLF return ends the paragraph at its CR.
+      const end = index > start && node.text[index - 1] === "\r" ? index - 1 : index;
+      if (end > start) {
+        currentNodes.push({ ...node, text: node.text.slice(start, end) });
+      }
+      pushTextPart();
+      parts.push({ kind: "paragraph-break" });
+      start = index + 1;
+    }
+    if (start === 0) {
+      currentNodes.push(node);
+    } else if (start < node.text.length) {
+      currentNodes.push({ ...node, text: node.text.slice(start) });
     }
   }
 
@@ -361,6 +410,21 @@ function splitNodesOnInlineSeparators(nodes) {
   return compactParts;
 }
 
+// A line break's newline renders as one <br> (its <br> tag renders nothing), so
+// views that show newlines as breaks show it once, and paragraph splitters see
+// only the paragraph-break newlines.
+function serializeTextWithLineBreaks(node, highlightRanges, markRenderer) {
+  const offsets = Array.isArray(node.lineBreakOffsets) ? node.lineBreakOffsets : [];
+  let html = "";
+  let start = 0;
+  for (const offset of offsets) {
+    html += serializeTextWithHighlights(node.text.slice(start, offset), node.visibleStart + start, highlightRanges, markRenderer);
+    html += "<br>";
+    start = offset + 1;
+  }
+  return html + serializeTextWithHighlights(node.text.slice(start), node.visibleStart + start, highlightRanges, markRenderer);
+}
+
 function serializeNodes(nodes, highlightRanges = [], markRenderer = null, options = {}) {
   return (Array.isArray(nodes) ? nodes : [])
     .map((node) => {
@@ -369,11 +433,15 @@ function serializeNodes(nodes, highlightRanges = [], markRenderer = null, option
       }
 
       if (node.type === "text") {
-        return serializeTextWithHighlights(node.text, node.visibleStart, highlightRanges, markRenderer);
+        return serializeTextWithLineBreaks(node, highlightRanges, markRenderer);
       }
 
       if (node.tag === "hr") {
         return serializeSeparatorNode(options);
+      }
+
+      if (node.tag === "br") {
+        return node.absorbsNewline ? "" : "<br>";
       }
 
       return `<${node.tag}${serializeElementAttributes(node)}>${serializeNodes(node.children, highlightRanges, markRenderer, options)}</${node.tag}>`;
@@ -381,7 +449,7 @@ function serializeNodes(nodes, highlightRanges = [], markRenderer = null, option
     .join("");
 }
 
-export function serializeNodesAsInlineMarkupSource(nodes) {
+export function serializeNodesAsInlineMarkupSource(nodes, options = {}) {
   return (Array.isArray(nodes) ? nodes : [])
     .map((node) => {
       if (!node) {
@@ -392,11 +460,15 @@ export function serializeNodesAsInlineMarkupSource(nodes) {
         return node.text;
       }
 
+      if (node.tag === "br") {
+        return options.completeLineBreaks === true && !node.absorbsNewline ? "<br>\n" : "<br>";
+      }
+
       if (node.tag === "hr") {
         return "<hr>";
       }
 
-      return `<${node.tag}${serializeElementAttributes(node)}>${serializeNodesAsInlineMarkupSource(node.children)}</${node.tag}>`;
+      return `<${node.tag}${serializeElementAttributes(node)}>${serializeNodesAsInlineMarkupSource(node.children, options)}</${node.tag}>`;
     })
     .join("");
 }
@@ -410,6 +482,17 @@ export function splitInlineMarkupTextBySeparators(value) {
         kind: "text",
         text: serializeNodesAsInlineMarkupSource(part.nodes),
       });
+}
+
+// A row's paragraphs. A return is a paragraph break unless it follows <br>
+// (see markLineBreakNewlines). Each paragraph keeps its line breaks as "<br>\n",
+// adding the newline a lone <br> lacks, so its only newlines are line breaks.
+// Inline formatting that spans a paragraph break reopens in the next paragraph.
+export function splitInlineMarkupTextIntoParagraphs(value) {
+  const parsed = parseInlineMarkup(value);
+  return splitNodesOnInlineSeparators(parsed.nodes, { splitParagraphs: true })
+    .filter((part) => part.kind === "text")
+    .map((part) => serializeNodesAsInlineMarkupSource(part.nodes, { completeLineBreaks: true }));
 }
 
 export function extractInlineMarkupVisibleText(value) {
