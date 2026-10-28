@@ -1501,10 +1501,22 @@ fn render_typst_chapter(
                     // binds to the heading itself), and move both as one unit.
                     text_block = format!("#block(sticky: true, breakable: false)[#metadata((title: {}, numbering: \"1\", level: 1)) <gnosis-book-entry>\n{text_block}]\n", typst_string(&inline_visible_text(text)));
                 }
-                if matches!(
+                let cited = matches!(
                     document.blocks.get(block_index + 1),
                     Some(ExportBlock::Attribution { .. })
-                ) {
+                );
+                if matches!(style.as_str(), "quote" | "blockquote") {
+                    // Typst drops spacing at a block's edges, so this wrapper's
+                    // spacing replaces the quote's built-in 2.4em above and 1.8em
+                    // below: every quote gets the citation's 1.5em, while a cited
+                    // quote keeps normal paragraph spacing down to its citation.
+                    let spacing = if cited {
+                        "sticky: true, breakable: true, above: 1.5em"
+                    } else {
+                        "above: 1.5em, below: 1.5em"
+                    };
+                    source.push_str(&format!("#block({spacing})[{text_block}]\n"));
+                } else if cited {
                     source.push_str(&format!(
                         "#block(sticky: true, breakable: true)[{text_block}]\n"
                     ));
@@ -4473,6 +4485,59 @@ mod tests {
         assert!(quote.contains("#quote(block: true)"));
         assert!(quote.contains("#text(size: 0.9em, style: \"normal\")[Quotation]"));
         assert!(!quote.contains("#align"));
+    }
+
+    #[test]
+    fn quotes_get_the_same_space_whether_or_not_a_citation_follows() {
+        let workspace = pdf_workspace().unwrap();
+        let _cleanup = WorkspaceCleanup(workspace.clone());
+        let document = ExportDocument {
+            title: "Quotes".into(),
+            language_code: "vi".into(),
+            blocks: vec![
+                text_block("paragraph", "Before."),
+                text_block("quote", "A cited quotation."),
+                ExportBlock::Attribution {
+                    text: "Giăng 1:14".into(),
+                },
+                text_block("quote", "An uncited quotation."),
+                text_block("paragraph", "After."),
+                text_block("paragraph", "An epigraph-style paragraph."),
+                ExportBlock::Attribution {
+                    text: "An Author".into(),
+                },
+            ],
+            book_parts: Vec::new(),
+        };
+        let session = begin_pdf_image_cache(&test_image_cache_scope("quote-spacing"));
+        let options = PdfWorkspacePreparationOptions {
+            paper_size: "a5",
+            footnote_links_as_plain_text: true,
+            image_cache_session: &session,
+        };
+        prepare_typst_workspace(
+            None,
+            "",
+            &workspace,
+            &document,
+            &options,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let source = fs::read_to_string(workspace.join("chapter.typ")).unwrap();
+        // The wrapper's edges replace Typst's own 2.4em/1.8em quote spacing.
+        assert!(source
+            .contains("#block(sticky: true, breakable: true, above: 1.5em)[#quote(block: true)"));
+        assert!(source.contains("#block(above: 1.5em, below: 1.5em)[#quote(block: true)"));
+        assert_eq!(source.matches("#quote(block: true)").count(), 2);
+        // Other cited blocks keep normal spacing and only stay with their citation.
+        assert_eq!(
+            source
+                .matches("#block(sticky: true, breakable: true)[")
+                .count(),
+            1
+        );
+        assert_eq!(source.matches("below: 1.5em)[#align(right)").count(), 2);
     }
 
     #[test]
