@@ -1139,11 +1139,12 @@ fn collect_existing_chapter_image_paths(
     Ok(index)
 }
 
-/// Recursively rewrite `{ kind: "upload", path }` references whose file is
-/// missing, when the same `images/`-remainder exists at exactly one other
-/// chapter location. Ambiguous or unlocatable references are left untouched
-/// and counted — the repair must never guess. Recursion keeps this decoupled
-/// from the row schema (image objects sit per language inside `fields`).
+/// Recursively rewrite `{ kind: "upload", path }` references whose file and
+/// chapter folder are missing, when the same `images/`-remainder exists at
+/// exactly one other chapter location. Ambiguous or unlocatable references
+/// are left untouched and counted — the repair must never guess. Recursion
+/// keeps this decoupled from the row schema (image objects sit per language
+/// inside `fields`).
 fn rewrite_stale_upload_paths_in_value(
     value: &mut Value,
     repo_path: &Path,
@@ -1161,11 +1162,19 @@ fn rewrite_stale_upload_paths_in_value(
                     let is_chapter_image =
                         normalized.starts_with("chapters/") && normalized.contains("/images/");
                     if is_chapter_image && !repo_path.join(&normalized).is_file() {
+                        // Only references into a chapter folder that no longer
+                        // exists are relocated. A file missing from an existing
+                        // chapter is never resolved by borrowing another
+                        // chapter's image that happens to share its name.
+                        let chapter_folder_exists = normalized
+                            .split('/')
+                            .nth(1)
+                            .is_some_and(|folder| repo_path.join("chapters").join(folder).is_dir());
                         let remainder = normalized
                             .find("/images/")
                             .map(|position| &normalized[position + "/images/".len()..]);
                         match remainder.and_then(|remainder| index.get(remainder)) {
-                            Some(candidates) if candidates.len() == 1 => {
+                            Some(candidates) if candidates.len() == 1 && !chapter_folder_exists => {
                                 *stored_path = candidates[0].clone();
                                 *changed = true;
                             }
@@ -1191,7 +1200,9 @@ fn rewrite_stale_upload_paths_in_value(
 
 /// Repair row image references that point at chapter folders that no longer
 /// exist (the 0.8.10 layout migration renamed orphaned image folders but only
-/// rewrote paths inside row files it was itself moving). Unparseable row
+/// rewrote paths inside row files it was itself moving). Missing files inside
+/// chapter folders that still exist are counted, not relocated; see
+/// `repair_nested_uploaded_image_files` for that case. Unparseable row
 /// files are skipped and counted, mirroring the 0.8.56 tolerance — failing a
 /// sync over one corrupt file would brick the repo.
 fn repair_stale_uploaded_image_paths(
@@ -1633,6 +1644,35 @@ mod tests {
         assert!(!repo_path
             .join(IMAGE_PATH_REPAIR_REPORT_RELATIVE_PATH)
             .exists());
+
+        let _ = fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn stale_path_repair_never_borrows_another_chapters_image() {
+        let repo_path = temp_repo("image-path-repair-existing-chapter");
+        let chapters_root = repo_path.join("chapters");
+        // The only `embedded-image.png` in the repo belongs to another chapter.
+        let other_images = chapters_root.join("12-om-masi-padme-yon/images");
+        fs::create_dir_all(&other_images).expect("create other chapter images");
+        fs::write(other_images.join("embedded-image.png"), b"png").expect("write other image");
+        // The referenced chapter still exists; only its file is missing.
+        let rows_dir = chapters_root.join("13-el-sutra-del-coraz/rows");
+        write_row_with_image_path(
+            &rows_dir,
+            "row-1.json",
+            "chapters/13-el-sutra-del-coraz/images/embedded-image.png",
+        );
+
+        let outcome =
+            repair_stale_uploaded_image_paths(&repo_path, &chapters_root).expect("repair succeeds");
+
+        assert_eq!(outcome.rewritten_paths, 0);
+        assert_eq!(outcome.unresolved_paths, 1);
+        assert_eq!(
+            row_image_path(&rows_dir, "row-1.json"),
+            "chapters/13-el-sutra-del-coraz/images/embedded-image.png",
+        );
 
         let _ = fs::remove_dir_all(repo_path);
     }
