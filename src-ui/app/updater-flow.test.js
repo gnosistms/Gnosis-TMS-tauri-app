@@ -583,6 +583,75 @@ test("manual checks and duplicate install clicks cannot replace an active downlo
   assert.deepEqual(commands, ["download_app_update"]);
 });
 
+for (const required of [false, true]) {
+  test(`an already-installed download result clears a stale ${required ? "required" : "optional"} prompt`, async () => {
+    state.appUpdate = { ...createAppUpdateState(), available: true, required,
+      status: "available", version: "0.8.136", currentVersion: "0.8.135", promptVisible: true,
+      requirement: required ? { requiredVersion: "0.8.136", currentVersion: "0.8.135" } : null };
+    storeKnownAppUpdate(state.appUpdate);
+    invokeHandler = async (command, payload) => {
+      assert.equal(command, "download_app_update", "no restart or installer should run");
+      assert.equal(payload.requestedVersion, "0.8.136");
+      return { status: "alreadyInstalled", currentVersion: "0.8.136" };
+    };
+    await installAppUpdate(() => {});
+    assert.equal(state.appUpdate.status, "idle");
+    assert.equal(state.appUpdate.available, false);
+    assert.equal(state.appUpdate.required, false);
+    assert.equal(state.appUpdate.promptVisible, false);
+    assert.equal(state.appUpdate.currentVersion, "0.8.136");
+    assert.equal(state.statusBadges.left.text, "Gnosis TMS 0.8.136 is already installed.");
+    assert.equal(state.appUpdate.error, "");
+    assert.equal(loadKnownAppUpdate(), null);
+  });
+}
+
+test("a stale cached offer clicked during startup cannot survive an already-installed result", async () => {
+  storeKnownAppUpdate({ available: true, version: "0.8.136", currentVersion: "0.8.135" });
+  hydratePersistentAppState();
+  let finishCheck;
+  invokeHandler = async (command) => {
+    if (command === "check_for_app_update") return new Promise(resolve => { finishCheck = resolve; });
+    assert.equal(command, "download_app_update");
+    return { status: "alreadyInstalled", currentVersion: "0.8.136" };
+  };
+  const checking = checkForAppUpdate(() => {}, { silent: true });
+  await installAppUpdate(() => {});
+  finishCheck({ available: false, currentVersion: "0.8.136",
+    message: "Gnosis TMS 0.8.136 is required, but it is not available for macOS yet." });
+  await checking;
+  assert.equal(state.appUpdate.currentVersion, "0.8.136");
+  assert.equal(state.appUpdate.available, false);
+  assert.equal(state.appUpdate.promptVisible, false);
+  assert.equal(state.appUpdate.message, "");
+  assert.equal(state.appUpdate.error, "");
+  assert.equal(loadKnownAppUpdate(), null);
+});
+
+test("an already-installed result preserves a newer requirement received during download", async () => {
+  let finishDownload;
+  const commands = [];
+  state.appUpdate = { ...createAppUpdateState(), available: true, status: "available",
+    version: "0.8.136", currentVersion: "0.8.135", promptVisible: true };
+  invokeHandler = async (command, payload) => {
+    commands.push(command);
+    if (command === "download_app_update") return new Promise(resolve => { finishDownload = resolve; });
+    assert.equal(command, "check_for_app_update");
+    assert.equal(payload.requestedVersion, "0.8.137");
+    return { available: false, currentVersion: "0.8.136" };
+  };
+  const download = installAppUpdate(() => {});
+  requireAppUpdate({ requiredVersion: "0.8.137", currentVersion: "0.8.135" }, () => {});
+  finishDownload({ status: "alreadyInstalled", currentVersion: "0.8.136" });
+  await download;
+  await new Promise(setImmediate);
+  assert.deepEqual(commands, ["download_app_update", "check_for_app_update"]);
+  assert.equal(state.appUpdate.requirement.requiredVersion, "0.8.137");
+  assert.equal(state.appUpdate.currentVersion, "0.8.136");
+  assert.equal(state.appUpdate.available, false);
+  assert.equal(state.appUpdate.promptVisible, false);
+});
+
 test("a new required-update signal invalidates an older pending check", async () => {
   let finishCheck;
   invokeHandler = () => new Promise((resolve) => { finishCheck = resolve; });

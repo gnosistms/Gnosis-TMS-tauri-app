@@ -1,9 +1,26 @@
 import { expect, test } from "./test.js";
+import { readFileSync } from "node:fs";
+
+const appVersion = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version;
 
 async function boot(page) {
   await page.goto("/");
   await page.waitForFunction(() => typeof window.__gnosisDebug?.waitForBootstrap === "function");
   await page.evaluate(() => window.__gnosisDebug.waitForBootstrap());
+}
+
+for (const required of [false, true]) {
+  test(`an installed ${required ? "required" : "optional"} update is cleared at bootstrap without a server check`, async ({ page }) => {
+    await page.addInitScript(({ version, required }) => {
+      localStorage.setItem("gnosis-tms-app-update-availability", JSON.stringify({
+        available: true, required, version, currentVersion: "0.0.0",
+      }));
+    }, { version: appVersion, required });
+    await boot(page);
+    await expect(page.locator(".app-update-pill")).toHaveCount(0);
+    await expect(page.locator('[data-modal-dialog^="app-update:"]')).toHaveCount(0);
+    expect(await page.evaluate(() => localStorage.getItem("gnosis-tms-app-update-availability"))).toBeNull();
+  });
 }
 
 test("known updates survive an offline reload and appear on the start screen", async ({ page }) => {
