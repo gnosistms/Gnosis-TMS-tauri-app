@@ -956,8 +956,9 @@ test("book preview uses print typography for body, headings, quotes, captions, a
   expect(styles.title.tracking / styles.title.size).toBeCloseTo(.1, 3);
   expect(styles.h1.family).toContain("Alegreya");
   expect(styles.h1.size / styles.body.size).toBeCloseTo(13 / 11.5, 3);
-  expect(styles.h2.size).toBeCloseTo(styles.body.size, 3);
-  expect(styles.h1.caps).toBe("none");
+  expect(styles.h2.size / styles.body.size).toBeCloseTo(12 / 11.5, 3);
+  expect(styles.h1.caps).toBe("uppercase");
+  expect(styles.h2.caps).toBe("uppercase");
   expect(styles.h1.weight).toBe("400");
   expect(styles.quote.italic).toBe("normal");
   expect(styles.quote.size / styles.body.size).toBeCloseTo(.9, 3);

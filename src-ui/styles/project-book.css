@@ -51,7 +51,7 @@
 .book-page--chapter .translate-preview__block { margin: 0; text-indent: 0; text-align: justify; }
 .book-page--chapter .book-print-indent { text-indent: var(--book-first-indent); }
 .book-page--chapter .book-print-dropcap::first-letter { float: inline-start; font-family: "Great Vibes", var(--book-body-font); font-size: 3.9em; line-height: .84; margin-inline-end: .125em; }
-.book-page--chapter .translate-preview__block--heading1, .book-page--chapter .translate-preview__block--heading2 { font-family: var(--book-heading-font); font-weight: var(--book-heading-weight); line-height: var(--book-heading-line-height); margin: 1.3em 0 .5em; text-transform: none; text-align: start; letter-spacing: normal; }
+.book-page--chapter .translate-preview__block--heading1, .book-page--chapter .translate-preview__block--heading2 { font-family: var(--book-heading-font); font-weight: var(--book-heading-weight); line-height: var(--book-heading-line-height); margin: 1.3em 0 .5em; text-transform: uppercase; text-align: start; letter-spacing: normal; }
 .book-page--chapter .translate-preview__block--heading1 { font-size: var(--book-h1-size); }
 .book-page--chapter .translate-preview__block--heading2 { font-size: var(--book-h2-size); }
 /* As in the PDF, quotes take 1.5em of space and a cited quote stays one line
