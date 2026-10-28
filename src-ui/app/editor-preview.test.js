@@ -792,7 +792,7 @@ test("HTML exports complete formatted notes with reciprocal links and row-local 
     assert.ok(html.includes(`<a href="#${referenceId}" role="doc-backlink"`));
   }
   assert.match(html, /Literal \[2\], first <strong><sup/);
-  assert.match(html, /Đầu tiên <em>formatted<\/em> &amp; safe<br>Next line/);
+  assert.match(html, /Đầu tiên <em>formatted<\/em> &amp; safe<\/p><p[^>]+text-indent:1.5em">Next line/);
   assert.match(html, /Second <a href="https:\/\/example.com\/source\?a=1&amp;b=2">source<\/a>/);
   assert.match(html, /Distinct row note/);
   assert.match(html, /Unmarked note/);

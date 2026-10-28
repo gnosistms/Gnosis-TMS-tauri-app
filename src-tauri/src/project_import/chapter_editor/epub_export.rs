@@ -362,6 +362,25 @@ fn section_body(
     if !notes.is_empty() {
         body.push_str("<section epub:type=\"footnotes\" role=\"doc-endnotes\">");
         for note in &notes {
+            let paragraphs = super::chapter_export::footnote_paragraphs(note.text);
+            if paragraphs.len() > 1 {
+                let _ = write!(body, "<aside id=\"note-{}\" class=\"footnote\" epub:type=\"footnote\" role=\"doc-footnote\" style=\"display:table;width:100%\"><a href=\"#ref-{}\" aria-label=\"Back to text\" style=\"display:table-cell;padding-right:.5em\">[{}]</a><div style=\"display:table-cell;width:100%\">", note.index, note.index, note.number);
+                for (index, paragraph) in paragraphs.iter().enumerate() {
+                    let indent = if index == 0 { "0" } else { "1.5em" };
+                    let content = inline(paragraph, &[], &mut BTreeSet::new());
+                    let content = if inline_visible_text(paragraph).is_empty() {
+                        "<br/>"
+                    } else {
+                        &content
+                    };
+                    let _ = write!(
+                        body,
+                        "<p style=\"margin:0;text-indent:{indent}\">{content}</p>"
+                    );
+                }
+                body.push_str("</div></aside>");
+                continue;
+            }
             let _ = write!(body, "<aside id=\"note-{}\" class=\"footnote\" epub:type=\"footnote\" role=\"doc-footnote\"><p><a href=\"#ref-{}\" aria-label=\"Back to text\">[{}]</a> {}</p></aside>", note.index, note.index, note.number, inline(note.text, &[], &mut BTreeSet::new()));
         }
         body.push_str("</section>");

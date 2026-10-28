@@ -172,6 +172,27 @@ fn epub_links_footnotes_per_row_and_keeps_literal_and_unanchored_notes() {
     assert!(content.contains("role=\"doc-footnote\""));
 }
 
+#[test]
+fn epub_footnote_paragraphs_keep_indentation_and_cross_paragraph_markup() {
+    let doc = document(
+        "Paragraph notes",
+        vec![
+            paragraph("paragraph", "Body [1]"),
+            ExportBlock::Footnote {
+                number: 1,
+                marker: 1,
+                anchor_block: Some(0),
+                text: "<i>First\nSecond</i>\n\nLast".into(),
+            },
+        ],
+    );
+    let content = file(&unpack(&doc), "EPUB/section-1.xhtml");
+    assert!(content.contains("text-indent:0\"><em>First</em></p>"));
+    assert!(content.contains("text-indent:1.5em\"><em>Second</em></p>"));
+    assert!(content.contains("text-indent:1.5em\"><br/></p>"));
+    assert_eq!(content.matches("id=\"note-1\"").count(), 1);
+}
+
 fn part(kind: &str, title: &str, blocks: Vec<ExportBlock>) -> BookPart {
     let item = BookItemInput {
         kind: kind.into(),

@@ -1438,6 +1438,25 @@ fn render_html_document(document: &ExportDocument) -> Result<String, String> {
                 let _ = writeln!(body, "<hr>");
             }
             ExportBlock::Footnote { number, text, .. } => {
+                let paragraphs = footnote_paragraphs(text);
+                if paragraphs.len() > 1 {
+                    let _ = write!(body, "<div class=\"footnote\" style=\"display:grid;grid-template-columns:auto 1fr;gap:.5em;font-style:italic\"><span>[{number}]</span><div>");
+                    for (index, paragraph) in paragraphs.iter().enumerate() {
+                        let indent = if index == 0 { "0" } else { "1.5em" };
+                        let content = sanitize_inline_html(paragraph);
+                        let content = if inline_visible_text(paragraph).is_empty() {
+                            "<br>"
+                        } else {
+                            &content
+                        };
+                        let _ = write!(
+                            body,
+                            "<p style=\"margin:0;text-indent:{indent}\">{content}</p>"
+                        );
+                    }
+                    body.push_str("</div></div>\n");
+                    continue;
+                }
                 let _ = writeln!(
                     body,
                     "<p class=\"footnote\"><em>[{}] {}</em></p>",
@@ -1742,7 +1761,11 @@ fn render_md_document(document: &ExportDocument) -> String {
                 }
             }
             ExportBlock::Footnote { number, text, .. } => {
-                let inline = md_single_line(&md_inline_text(text));
+                let inline = footnote_paragraphs(text)
+                    .iter()
+                    .map(|paragraph| md_single_line(&md_inline_text(paragraph)))
+                    .collect::<Vec<_>>()
+                    .join("\n\n    ");
                 if inline.trim().is_empty() {
                     continue;
                 }
@@ -1849,6 +1872,56 @@ fn escape_md_text(value: &str) -> String {
         output.push(ch);
     }
     output
+}
+
+/// Footnote returns are paragraphs. Close/reopen supported inline tags so a
+/// formatting run spanning a return remains valid in each exported paragraph.
+pub(super) fn footnote_paragraphs(value: &str) -> Vec<String> {
+    let normalized = value.replace("\r\n", "\n").replace('\r', "\n");
+    let mut paragraphs = Vec::new();
+    let mut paragraph = String::new();
+    let mut tags: Vec<(String, String)> = Vec::new();
+    let mut cursor = 0;
+    while cursor < normalized.len() {
+        let remaining = &normalized[cursor..];
+        if remaining.starts_with('\n') {
+            for (_, closing) in tags.iter().rev() {
+                paragraph.push_str(closing);
+            }
+            paragraphs.push(std::mem::take(&mut paragraph));
+            for (opening, _) in &tags {
+                paragraph.push_str(opening);
+            }
+            cursor += 1;
+            continue;
+        }
+        let tag = allowed_inline_tag(remaining)
+            .map(|(source, replacement)| (source.len(), replacement.to_string()))
+            .or_else(|| match inline_link_tag(remaining) {
+                Some(InlineLinkTag::Open { source_len, .. }) => {
+                    Some((source_len, remaining[..source_len].to_string()))
+                }
+                Some(InlineLinkTag::Close { source_len }) => Some((source_len, "</a>".into())),
+                None => None,
+            });
+        if let Some((length, tag)) = tag {
+            if tag.starts_with("</") {
+                tags.pop();
+            } else if tag != "<hr>" {
+                let name = tag[1..].split([' ', '>']).next().unwrap_or_default();
+                tags.push((tag.clone(), format!("</{name}>")));
+            }
+            paragraph.push_str(&tag);
+            cursor += length;
+        } else if let Some(ch) = remaining.chars().next() {
+            paragraph.push(ch);
+            cursor += ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    paragraphs.push(paragraph);
+    paragraphs
 }
 
 pub(super) fn inline_segments(value: &str) -> Vec<InlineSegment> {
@@ -2036,6 +2109,27 @@ fn render_docx_document(
                     }
                     ExportBlock::Footnote { number, text, .. } => {
                         let text = print_footnote_text(text, footnote_links_as_plain_text);
+                        let paragraphs = footnote_paragraphs(&text);
+                        if paragraphs.len() > 1 {
+                            for (index, paragraph) in paragraphs.iter().enumerate() {
+                                let indent = if index == 0 {
+                                    r#"w:hanging="360""#
+                                } else {
+                                    r#"w:firstLine="360""#
+                                };
+                                let marker = if index == 0 {
+                                    format!("<w:r><w:t>[{number}]</w:t><w:tab/></w:r>")
+                                } else {
+                                    String::new()
+                                };
+                                let runs = docx_runs_xml(paragraph, true);
+                                let _ = write!(
+                                    body,
+                                    r#"<w:p><w:pPr><w:spacing w:before="0" w:after="0"/><w:ind w:left="360" {indent}/><w:tabs><w:tab w:val="left" w:pos="360"/></w:tabs></w:pPr>{marker}{runs}</w:p>"#
+                                );
+                            }
+                            continue;
+                        }
                         body.push_str(&docx_text_paragraph_xml(
                             None,
                             &format!("[{number}] {text}"),
@@ -2714,6 +2808,23 @@ fn render_rtf_document(document: &ExportDocument, footnote_links_as_plain_text: 
             }
             ExportBlock::Footnote { number, text, .. } => {
                 let text = print_footnote_text(text, footnote_links_as_plain_text);
+                let paragraphs = footnote_paragraphs(&text);
+                if paragraphs.len() > 1 {
+                    for (index, paragraph) in paragraphs.iter().enumerate() {
+                        let paragraph = rtf_text_paragraph(None, paragraph, true);
+                        let properties = if index == 0 {
+                            "\\sa0\\sb0\\li360\\fi-360\\tx360"
+                        } else {
+                            "\\sa0\\sb0\\li360\\fi360"
+                        };
+                        let mut paragraph = paragraph.replacen("\\sa200", properties, 1);
+                        if index == 0 {
+                            paragraph = paragraph.replacen(" ", &format!(" [{number}]\\tab "), 1);
+                        }
+                        body.push_str(&paragraph);
+                    }
+                    continue;
+                }
                 body.push_str(&rtf_text_paragraph(
                     None,
                     &format!("[{number}] {text}"),
@@ -3711,6 +3822,41 @@ mod tests {
             language_code: language(),
             blocks,
         }
+    }
+
+    #[test]
+    fn footnote_paragraphs_preserve_formatting_blank_lines_and_export_structure() {
+        let note = "<i>First\nSecond</i>\n\nLast";
+        assert_eq!(
+            footnote_paragraphs(note),
+            vec!["<em>First</em>", "<em>Second</em>", "", "Last"]
+        );
+        let doc = document(vec![ExportBlock::Footnote {
+            number: 1,
+            marker: 1,
+            anchor_block: None,
+            text: note.into(),
+        }]);
+        let html = render_html_document(&doc).unwrap();
+        assert!(html.contains("text-indent:1.5em\"><em>Second</em>"));
+        assert!(html.contains("text-indent:1.5em\"><br></p>"));
+        let bytes = render_docx_document(&doc, false).unwrap();
+        let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let mut xml = String::new();
+        archive
+            .by_name("word/document.xml")
+            .unwrap()
+            .read_to_string(&mut xml)
+            .unwrap();
+        assert_eq!(xml.matches(r#"w:firstLine="360""#).count(), 3);
+        assert!(xml.contains("<w:tab/>"));
+        assert!(!xml.contains("<w:br/>"));
+        let rtf = render_rtf_document(&doc, false);
+        assert_eq!(rtf.matches("\\li360\\fi360").count(), 3);
+        assert!(rtf.contains("[1]\\tab"));
+        assert!(!rtf.contains("\\line "));
+        let markdown = render_md_document(&doc);
+        assert!(markdown.contains("\n\n    *Second*"));
     }
 
     fn png_header(width: u32, height: u32) -> Vec<u8> {

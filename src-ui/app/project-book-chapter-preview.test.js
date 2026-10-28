@@ -27,3 +27,8 @@ test("opening headings and non-Latin chapters omit drop caps, and notes have a s
   assert.match(html, /book-chapter__footnotes[^]*book-footnote__text[^]*<em>styled<\/em>/);
   assert.match(html, /translate-preview__footnote-ref/);
 });
+
+test("book export preview indents subsequent footnote paragraphs without adding blank lines", () => {
+  const html = render([text("paragraph", "Body [1]", { footnotes: [{ marker: 1, text: "<i>First\nSecond</i>" }] })]);
+  assert.match(html, /book-footnote__text[^]*text-indent:0"><em>First<\/em><\/p><p[^>]*text-indent:1.5em"><em>Second<\/em>/);
+});
