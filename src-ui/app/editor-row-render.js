@@ -383,9 +383,10 @@ function renderRowTextStyleButtons(row, language) {
       data-editor-separator-button
       data-row-id="${escapeHtml(row.id)}"
       data-language-code="${escapeHtml(language.code)}"
+      aria-label="Insert separator"
       ${tooltipAttributes("Insert separator", { side: "top" })}
     >
-      <span class="translation-row-text-style-button__label">--</span>
+      <span class="translation-row-text-style-button__flourish" aria-hidden="true"></span>
     </button>
   `);
   }

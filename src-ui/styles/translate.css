@@ -1175,9 +1175,14 @@
   height: 14px;
 }
 
-.translation-row-text-style-button--separator .translation-row-text-style-button__label {
-  font-size: 11px;
-  text-transform: lowercase;
+/* The separator button shows a small copy of the flourish it inserts. */
+.translation-row-text-style-button__flourish {
+  display: block;
+  width: 24px;
+  aspect-ratio: 1416 / 403;
+  background: currentColor;
+  -webkit-mask: url("../../src-tauri/src/project_import/chapter_editor/chapter_flourish.svg") center / contain no-repeat;
+  mask: url("../../src-tauri/src/project_import/chapter_editor/chapter_flourish.svg") center / contain no-repeat;
 }
 
 .translation-language-panel__field-highlight,
