@@ -14,7 +14,9 @@ function cancel() {
 export function registerProjectBookEvents(render) {
   document.addEventListener("change", (event) => {
     const input = event.target.closest?.("[data-book-redundancy-choice]");
-    if (input) setBookRedundancyChoice(input.dataset.bookRedundancyChoice, input.checked);
+    // The checkbox already shows the choice. The scoped update records it in the
+    // projects-page comparisons, so a later refresh does not redraw the dialog.
+    if (input && setBookRedundancyChoice(input.dataset.bookRedundancyChoice, input.checked)) render({ scope: "book-redundancy" });
   });
   document.addEventListener("click", (event) => handleBookChapterMenuClick(event, render));
   document.addEventListener("keydown", handleBookChapterMenuKeydown);
