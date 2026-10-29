@@ -23,8 +23,16 @@ import {
   EDITOR_ROW_TEXT_STYLE_PARAGRAPH,
   EDITOR_ROW_TEXT_STYLE_QUOTE,
   isCustomHtmlRowTextStyle,
+  isListRowTextStyle,
   normalizeEditorRowTextStyle,
 } from "./editor-row-text-style.js";
+import {
+  listFormatIsOrdered,
+  listItemsFromHtml,
+  listItemsFromPlainText,
+  listItemsWithMarkers,
+  renderNestedListHtml,
+} from "./editor-list.js";
 import {
   customHtmlToPlainText,
   sanitizeCustomHtmlForDisplay,
@@ -111,10 +119,10 @@ function previewRowIsSubtitleCue(row) {
 
 // Each paragraph of a row (text between blank lines) becomes a block of its
 // own, set exactly as a separate row of the same style would be. Custom HTML is
-// opaque and subtitle cues are not split. Empty paragraphs are dropped, as
-// empty rows are.
+// opaque, a list is one block of items, and subtitle cues are not split. Empty
+// paragraphs are dropped, as empty rows are.
 function previewRowParagraphs(row, text, textStyle) {
-  if (isCustomHtmlRowTextStyle(textStyle) || previewRowIsSubtitleCue(row)) {
+  if (isCustomHtmlRowTextStyle(textStyle) || isListRowTextStyle(textStyle) || previewRowIsSubtitleCue(row)) {
     return text.trim() ? [text] : [];
   }
   return splitInlineMarkupTextIntoParagraphs(text).filter((paragraph) => paragraph.trim());
@@ -514,10 +522,12 @@ function renderTextWithWordPressFootnoteRefs(block, footnoteState, options = {})
       block?.languageCode ?? "",
     );
 
+  // List items are lines, so a list keeps its returns for listItemsFromHtml.
+  const lineBreaks = (html) => options.keepNewlines ? html : html.replaceAll("\n", "<br>");
   if (footnotes.length === 0) {
     return options.serialize
-      ? serializePreviewText(text)
-      : renderSanitizedInlineMarkupWithRanges(renderText, ranges).replaceAll("\n", "<br>");
+      ? lineBreaks(renderSanitizedInlineMarkupHtml(renderText))
+      : lineBreaks(renderSanitizedInlineMarkupWithRanges(renderText, ranges));
   }
 
   const footnoteByMarker = new Map(footnotes.map((entry) => [entry.marker, entry]));
@@ -599,9 +609,7 @@ function renderTextWithWordPressFootnoteRefs(block, footnoteState, options = {})
     }
   }
 
-  const html = options.serialize
-    ? renderSanitizedInlineMarkupWithRanges(renderText, ranges).replaceAll("\n", "<br>")
-    : renderSanitizedInlineMarkupWithRanges(renderText, ranges).replaceAll("\n", "<br>");
+  const html = lineBreaks(renderSanitizedInlineMarkupWithRanges(renderText, ranges));
   // Auto-generated markers stick to the preceding text with no space. An
   // appended reference is just another adjacent marker: it takes the same
   // superscript-comma separator when it follows an inline marker, and appended
@@ -670,6 +678,25 @@ export function renderEditorPreviewDocumentHtml(blocks, options = {}) {
           return "";
         }
         return `<div class="translate-preview__block translate-preview__block--custom-html" data-preview-block="custom-html" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}" data-tooltip="Double-click to edit.">${customHtml}</div>`;
+      }
+
+      if (isListRowTextStyle(block.textStyle)) {
+        const items = listItemsFromHtml(renderTextWithWordPressFootnoteRefs(block, footnoteState, {
+          searchState,
+          matchCounter,
+          usedMarkers: new Set(),
+          keepNewlines: true,
+        }));
+        const extra = options.blockClassName?.(block, "list") || "";
+        return renderNestedListHtml(items, block.textStyle, {
+          renderList(format, itemsHtml, level) {
+            const tagName = listFormatIsOrdered(format) ? "ol" : "ul";
+            const blockAttributes = level === 0
+              ? ` class="translate-preview__block translate-preview__block--list${extra ? ` ${escapeHtml(extra)}` : ""}" data-preview-block="list" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}" data-tooltip="Double-click to edit."`
+              : "";
+            return `<${tagName}${blockAttributes} style="list-style-type:${format}">${itemsHtml}</${tagName}>`;
+          },
+        });
       }
 
       const tagName = previewTextTagForStyle(block.textStyle);
@@ -815,7 +842,36 @@ function serializePreviewTextBlock(block, footnoteState, options = {}) {
   );
 }
 
+// Core list blocks, nested the way the list and list-item blocks save them.
+// WordPress sets only ordered lists' style; copied HTML also styles bullets.
+function serializePreviewListBlock(block, footnoteState, options = {}) {
+  const textHtml = renderTextWithWordPressFootnoteRefs(block, footnoteState, {
+    serialize: true,
+    htmlFootnotes: options.htmlFootnotes ? new Map() : undefined,
+    usedMarkers: new Set(),
+    keepNewlines: true,
+  });
+  return renderNestedListHtml(listItemsFromHtml(textHtml), block.textStyle, {
+    renderList(format, itemsHtml) {
+      const ordered = listFormatIsOrdered(format);
+      const styled = ordered ? format !== "decimal" : options.localFormatting === true;
+      const tagName = ordered ? "ol" : "ul";
+      return wrapSerializedWordPressBlock(
+        "list",
+        `<${tagName} class="wp-block-list"${styled ? ` style="list-style-type:${format}"` : ""}>${itemsHtml}</${tagName}>`,
+        ordered ? { ordered: true, ...(format !== "decimal" ? { type: format } : {}) } : null,
+      );
+    },
+    renderItem(itemHtml, childListHtml) {
+      return wrapSerializedWordPressBlock("list-item", `<li>${itemHtml}${childListHtml}</li>`);
+    },
+  });
+}
+
 function serializePreviewTextBlockParts(block, footnoteState, options = {}) {
+  if (isListRowTextStyle(block.textStyle)) {
+    return serializePreviewListBlock(block, footnoteState, options);
+  }
   const parts = previewTextParts(block);
   const usedMarkers = new Set();
   const htmlFootnotes = options.htmlFootnotes ? new Map() : undefined;
@@ -1044,6 +1100,14 @@ export function serializeEditorPreviewPlainText(blocks, options = {}) {
       // them, otherwise fall back to their text content.
       if (isCustomHtmlRowTextStyle(block.textStyle)) {
         return omitCustomHtml ? "" : customHtmlToPlainText(block.text);
+      }
+      // Plain text has no lists: each item on its own line, indented four
+      // spaces a level, after its marker.
+      if (isListRowTextStyle(block.textStyle)) {
+        const text = plainTextWithFootnoteRefs(block, footnoteItems, { showFootnoteLinkUrls });
+        return listItemsWithMarkers(listItemsFromPlainText(text), block.textStyle)
+          .map((item) => `${"    ".repeat(item.level)}${item.marker} ${item.text}`)
+          .join("\n");
       }
       const parts = previewTextParts(block);
       const usedMarkers = new Set();

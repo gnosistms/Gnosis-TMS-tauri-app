@@ -2,7 +2,11 @@ import {
   parseInlineMarkup,
   splitRubyNodeChildren,
 } from "./editor-inline-markup/parser.js";
-import { extractInlineMarkupFootnoteLinkSegments } from "./editor-inline-markup/serialize.js";
+import {
+  extractInlineMarkupFootnoteLinkSegments,
+  extractInlineMarkupVisibleText,
+} from "./editor-inline-markup/serialize.js";
+import { listItemsFromMarkup, listItemsWithMarkers } from "./editor-list.js";
 import {
   normalizeEditorFootnotes,
   parseUnescapedFootnoteMarkers,
@@ -14,6 +18,7 @@ import {
   EDITOR_ROW_TEXT_STYLE_HEADING2,
   EDITOR_ROW_TEXT_STYLE_INDENTED,
   EDITOR_ROW_TEXT_STYLE_QUOTE,
+  isListRowTextStyle,
   normalizeEditorRowTextStyle,
 } from "./editor-row-text-style.js";
 
@@ -1521,6 +1526,31 @@ function appendBlockRuns(block, target, options = {}) {
   }
 }
 
+// Vellum's paste format carries no lists, so each item becomes an indented
+// paragraph that starts with its marker, deeper items further in. A footnote
+// goes with the item that cites it; notes cited nowhere follow the last item.
+function expandVellumListBlocks(blocks) {
+  return blocks.flatMap((block) => {
+    if (block?.kind !== "text" || !isListRowTextStyle(block.textStyle)) {
+      return [block];
+    }
+    const items = listItemsWithMarkers(listItemsFromMarkup(block.text), block.textStyle);
+    const footnotes = normalizeEditorFootnotes(block.footnotes);
+    const citedMarkers = items.map((item) => new Set(
+      parseUnescapedFootnoteMarkers(extractInlineMarkupVisibleText(item.markup)).map((marker) => marker.marker),
+    ));
+    return items.map((item, index) => ({
+      ...block,
+      textStyle: EDITOR_ROW_TEXT_STYLE_INDENTED,
+      text: `${"\u2003\u2003".repeat(item.level)}${item.marker}\u2002${item.markup}`,
+      footnotes: footnotes.filter((entry) => {
+        const citingIndex = citedMarkers.findIndex((markers) => markers.has(entry.marker));
+        return citingIndex === index || (citingIndex < 0 && index === items.length - 1);
+      }),
+    }));
+  });
+}
+
 function buildVellumTextRuns(blocks, options = {}) {
   const target = {
     text: "",
@@ -1530,7 +1560,7 @@ function buildVellumTextRuns(blocks, options = {}) {
     imageAttributes: new Map(),
     subheadAttributes: new Map(),
   };
-  const visibleBlocks = (Array.isArray(blocks) ? blocks : [])
+  const visibleBlocks = expandVellumListBlocks(Array.isArray(blocks) ? blocks : [])
     .filter((block) => block && (block.kind !== "image" || block.image));
 
   visibleBlocks.forEach((block, index) => {

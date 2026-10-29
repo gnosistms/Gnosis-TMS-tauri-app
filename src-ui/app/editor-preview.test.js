@@ -1145,3 +1145,54 @@ test("blank quote attribution is absent from preview and all clipboard formats",
     assert.equal(serializeEditorPreviewPlainText(blocks), "Body");
   }
 });
+
+function listRowBlocks(textStyle = "list_number") {
+  return buildEditorPreviewDocument([
+    paragraphRow(
+      { vi: "First <strong>bold</strong>[1]\n\tSub one\n\n\tSub two\n\t\tDeep\nSecond" },
+      { rowId: "row-l", textStyle, footnotes: { vi: "[1] A note" } },
+    ),
+  ], "vi");
+}
+
+test("a list row stays one block, blank lines and all", () => {
+  const blocks = listRowBlocks();
+  assert.equal(blocks.length, 1);
+  assert.equal(blocks[0].textStyle, "list_number");
+  assert.equal(blocks[0].footnotes.length, 1);
+});
+
+test("preview draws a list row as nested lists with each level's style", () => {
+  const html = renderEditorPreviewDocumentHtml(listRowBlocks()).html;
+  assert.match(
+    html,
+    /^<ol class="translate-preview__block translate-preview__block--list" data-preview-block="list" data-row-id="row-l" lang="vi"[^>]*style="list-style-type:decimal"><li>First <strong>bold<\/strong><sup[^>]*>.*?<\/sup><ol style="list-style-type:lower-alpha"><li>Sub one<\/li><li>Sub two<ol style="list-style-type:lower-roman"><li>Deep<\/li><\/ol><\/li><\/ol><\/li><li>Second<\/li><\/ol>/,
+  );
+  const bullets = renderEditorPreviewDocumentHtml(listRowBlocks("list_bullet")).html;
+  assert.match(bullets, /^<ul class="translate-preview__block translate-preview__block--list"[^>]*style="list-style-type:disc"><li>/);
+  assert.match(bullets, /<ul style="list-style-type:circle"><li>Sub one/);
+  assert.match(bullets, /<ul style="list-style-type:square"><li>Deep/);
+});
+
+test("WordPress gets nested core list blocks with each ordered level's type", () => {
+  const { content } = serializeEditorPreviewWordPress(listRowBlocks("list_roman"));
+  assert.ok(content.startsWith(
+    '<!-- wp:list {"ordered":true,"type":"upper-roman"} -->\n<ol class="wp-block-list" style="list-style-type:upper-roman"><!-- wp:list-item -->\n<li>First <strong>bold</strong><sup data-fn=',
+  ));
+  assert.ok(content.includes(
+    '<!-- wp:list {"ordered":true,"type":"upper-alpha"} -->\n<ol class="wp-block-list" style="list-style-type:upper-alpha"><!-- wp:list-item -->\n<li>Sub one</li>\n<!-- /wp:list-item --><!-- wp:list-item -->\n<li>Sub two<!-- wp:list {"ordered":true} -->\n<ol class="wp-block-list"><!-- wp:list-item -->\n<li>Deep</li>\n<!-- /wp:list-item --></ol>\n<!-- /wp:list --></li>',
+  ));
+  assert.match(content, /<li>Second<\/li>\n<!-- \/wp:list-item --><\/ol>\n<!-- \/wp:list -->\n\n<!-- wp:footnotes \/-->/);
+
+  const bullets = serializeEditorPreviewWordPress(listRowBlocks("list_bullet")).content;
+  assert.ok(bullets.startsWith('<!-- wp:list -->\n<ul class="wp-block-list"><!-- wp:list-item -->'));
+  assert.doesNotMatch(bullets, /list-style-type/, "WordPress themes style bullets by level");
+  assert.match(serializeEditorPreviewHtml(listRowBlocks("list_bullet")), /<ul class="wp-block-list" style="list-style-type:circle">/);
+});
+
+test("plain text writes list markers and indents each level four spaces", () => {
+  assert.equal(
+    serializeEditorPreviewPlainText(listRowBlocks("list_letter")),
+    "a. First bold[1]\n    i. Sub one\n    ii. Sub two\n        1. Deep\nb. Second\n\n[1] A note",
+  );
+});

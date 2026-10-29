@@ -76,6 +76,8 @@
 .book-page--chapter .translate-preview__block--quote:has(+ cite) { margin-bottom: 0; }
 .book-page--chapter .translate-preview__block--indented { padding-inline: 0; padding-left: 2em; }
 .book-page--chapter .translate-preview__block--centered { text-align: center; }
+.book-page--chapter .translate-preview__block--list { margin: .78em 0; padding-inline-start: 1.5em; }
+.book-page--chapter .translate-preview__block--list :is(ol, ul) { margin: 0; padding-inline-start: 1.5em; }
 /* As in the PDF, a citation sits a quarter em further below its text than a new
    paragraph would, so it does not read as one more line of the text. */
 .book-page--chapter .translate-preview__attribution { display: block; font-family: var(--book-body-font); font-size: calc(var(--book-paper-font) * .8); line-height: var(--book-line-height); text-align: right; font-style: normal; text-transform: uppercase; letter-spacing: .06em; word-spacing: var(--book-word-spacing); margin: 0 0 calc(var(--book-paper-font) * .72); padding-top: calc(var(--book-paper-font) * .25); }
@@ -102,7 +104,7 @@
    Older webviews retain the untrimmed, continuous line-box approximation above. */
 @supports (text-box: trim-both cap alphabetic) {
   :is(.book-chapter__body, .book-chapter__epigraph) > :is(.translate-preview__block, cite) { text-box: trim-both cap alphabetic; }
-  .book-chapter__body > .translate-preview__block--paragraph, .book-chapter__body > .translate-preview__block--centered, .book-chapter__body > .translate-preview__block--indented { margin: .78em 0; }
+  .book-chapter__body > .translate-preview__block--paragraph, .book-chapter__body > .translate-preview__block--centered, .book-chapter__body > .translate-preview__block--indented, .book-chapter__body > .translate-preview__block--list { margin: .78em 0; }
   .book-chapter__body > .translate-preview__block--heading1, .book-chapter__body > .translate-preview__block--heading2 { margin-bottom: calc(var(--book-paper-font) * .78); }
   :is(.book-chapter__body, .book-chapter__epigraph) > .translate-preview__block--quote { margin: calc(var(--book-paper-font) * 1.5) 0; }
   :is(.book-chapter__body, .book-chapter__epigraph) > .translate-preview__block--quote:has(+ cite) { margin-bottom: calc(var(--book-paper-font) * .78); }

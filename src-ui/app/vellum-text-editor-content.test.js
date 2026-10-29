@@ -602,3 +602,17 @@ test("a title page names its Vellum element on one line and keeps its line break
   assert.match(archiveObjectAtUid(xml, uidForKey(element, "title")), /<string>The Long Road Home<\/string>/);
   assert.match(xml, /<string>The Long\nRoad Home<\/string>/);
 });
+
+test("list rows fall back to indented paragraphs that start with their markers", () => {
+  const xml = buildVellumOgElementPrivateDecodedXml([{
+    kind: "text",
+    rowId: "row-l",
+    languageCode: "en",
+    textStyle: "list_number",
+    text: "One\n\tTwo [1]\nThree",
+    footnotes: [{ marker: 1, text: "A note" }],
+  }], { title: "List chapter" });
+
+  assert.match(xml, new RegExp(`<string>1\\. One\n  a\\. Two${VELLUM_ATTACHMENT_CHARACTER}\n2\\. Three\n</string>`));
+  assert.match(xml, /<string>A note<\/string>/);
+});

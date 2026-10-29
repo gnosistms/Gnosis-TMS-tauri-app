@@ -5273,6 +5273,66 @@ test.describe("editor regressions", () => {
     await expect(headingButton).toBeHidden();
   });
 
+  test("a List row nests items with Tab and takes its list style from the settings menu", async ({ page }) => {
+    const rowId = "fixture-row-0001";
+    await mountEditorFixture(page, { rowCount: 40, chapterStatus: "ready" }, { mockTauri: true });
+
+    const field = await activateMainEditorField(page, rowId, "vi");
+    await field.click();
+    await page.locator(
+      `[data-editor-row-text-style-button][data-row-id="${rowId}"][data-language-code="vi"][data-text-style="list_bullet"]`,
+    ).click();
+    await expect.poll(async () => (await readMockTauriState(page))?.textStyles?.["fixture-chapter"]?.[rowId] ?? null)
+      .toBe("list_bullet");
+
+    const listField = page.locator(`[data-editor-row-field][data-row-id="${rowId}"][data-language-code="vi"][data-text-is-list]`);
+    await expect(listField).toBeFocused();
+    await listField.evaluate((element) => {
+      element.selectionStart = element.value.length;
+      element.selectionEnd = element.value.length;
+    });
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Tab");
+    await page.keyboard.type("Nested");
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Shift+Tab");
+    await page.keyboard.type("Last");
+    await expect(listField).toHaveValue("alpha 0001 target text\n\tNested\nLast");
+    await expect(listField).toBeFocused();
+
+    const overlayMarkers = page.locator(
+      `[data-editor-glossary-field-stack][data-row-id="${rowId}"][data-language-code="vi"] [data-editor-list-markers] .translation-language-panel__list-marker`,
+    );
+    await expect(overlayMarkers).toHaveText(["•", "◦", "•"]);
+
+    const settingsButton = page.locator(`[data-editor-list-style-button][data-row-id="${rowId}"][data-language-code="vi"]`);
+    await settingsButton.click();
+    const menu = page.locator("[data-editor-list-style-menu]");
+    await expect(menu.getByRole("menuitemradio")).toHaveText(["•Bullets", "1.Numbers", "a.Letters", "I.Roman numerals"]);
+    await expect(menu.getByRole("menuitemradio", { checked: true })).toHaveText("•Bullets");
+    await expect(listField).toBeFocused();
+    await menu.getByRole("menuitemradio", { name: "Roman numerals" }).click();
+    await expect(menu).toHaveCount(0);
+    await expect.poll(async () => (await readMockTauriState(page))?.textStyles?.["fixture-chapter"]?.[rowId] ?? null)
+      .toBe("list_roman");
+    await expect.poll(async () => (await readMockTauriState(page))?.histories?.[`fixture-chapter::${rowId}::vi`]?.[0]?.plainText ?? null)
+      .toBe("alpha 0001 target text\n\tNested\nLast");
+    await expect(overlayMarkers).toHaveText(["I.", "A.", "II."]);
+
+    await page.locator("[data-editor-search-input]").click();
+    await expect(page.locator(
+      `[data-editor-display-field][data-row-id="${rowId}"][data-language-code="vi"] .translation-language-panel__list-marker`,
+    )).toHaveText(["I.", "A.", "II."]);
+
+    await page.locator('[data-action="set-editor-mode:preview"]').click();
+    await page.locator("[data-editor-preview-language-select]").selectOption("vi");
+    const previewList = page.locator(`[data-editor-preview-document] [data-preview-block="list"][data-row-id="${rowId}"]`);
+    await expect(previewList).toHaveCSS("list-style-type", "upper-roman");
+    await expect(previewList.locator(":scope > li")).toHaveCount(2);
+    await expect(previewList.locator(":scope > li > ol > li")).toHaveText(["Nested"]);
+    await expect(previewList.locator(":scope > li > ol")).toHaveCSS("list-style-type", "upper-alpha");
+  });
+
   test("changing row text style auto-saves pending text edits first", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 40 }, { mockTauri: true });
 
