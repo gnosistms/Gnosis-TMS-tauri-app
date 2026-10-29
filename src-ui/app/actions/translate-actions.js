@@ -3,6 +3,7 @@ import { reconcileEditorRowConnection } from "../editor-row-connection.js";
 import { forgetPdfFontApproval, togglePdfSavedFonts } from "../editor-export-flow.js";
 import { revealConnectedEditorRow } from "../editor-virtualization.js";
 import { actionSuffix } from "../action-helpers.js";
+import { cancelEditorImageReuse, confirmEditorImageReuse } from "../editor-image-reuse-flow.js";
 import {
   assertEditorSessionWritePermission,
   assertCurrentEditorWritePermission,
@@ -197,6 +198,7 @@ const CURRENT_WRITE_ACTIONS = new Set([
   "duplicate-editor-language-image",
   "duplicate-editor-language-image-with-caption",
   "confirm-editor-image-duplicate-overwrite",
+  "confirm-editor-image-reuse",
 ]);
 
 const SESSION_WRITE_PREFIXES = [
@@ -254,6 +256,7 @@ function blockReadOnlyWriteAction(action, render, event = null) {
         : null
     )
     ?? state.editorChapter?.imageDuplicateOverwriteModal?.rowId
+    ?? state.editorChapter?.imageReuseModal?.rowId
     ?? state.editorChapter?.rowPermanentDeletionModal?.rowId
     ?? state.editorChapter?.activeRowId
     ?? null;
@@ -436,6 +439,16 @@ export function createTranslateActions(render) {
 
     if (action === "cancel-editor-image-duplicate-overwrite") {
       cancelEditorImageDuplicateOverwrite(render);
+      return true;
+    }
+
+    if (action === "confirm-editor-image-reuse") {
+      await confirmEditorImageReuse(render);
+      return true;
+    }
+
+    if (action === "cancel-editor-image-reuse") {
+      cancelEditorImageReuse(render);
       return true;
     }
 

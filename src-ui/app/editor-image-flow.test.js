@@ -5,6 +5,12 @@ import { installMockNavigator } from "../test/mock-navigator.mjs";
 const localStorageState = new Map();
 const invokeLog = [];
 let invokeHandler = async () => null;
+// The pre-insert reuse lookup is answered separately so write-command tests keep
+// asserting only the commands they care about.
+const IMAGE_REUSE_COMMANDS = new Set(["find_gtms_editor_image_reuse", "allow_gtms_editor_image_reuse"]);
+const NO_IMAGE_REUSE = async () => ({ imageKey: "", chapters: [] });
+const imageReuseLog = [];
+let imageReuseHandler = NO_IMAGE_REUSE;
 
 function deferred() {
   let resolve = null;
@@ -82,6 +88,10 @@ globalThis.window = {
   __TAURI__: {
     core: {
       invoke(command, payload = {}) {
+        if (IMAGE_REUSE_COMMANDS.has(command)) {
+          imageReuseLog.push({ command, payload });
+          return imageReuseHandler(command, payload);
+        }
         invokeLog.push({ command, payload });
         return invokeHandler(command, payload);
       },
@@ -140,6 +150,11 @@ const {
   submitEditorImageUrl,
   updateEditorImageUrlDraft,
 } = await import("./editor-image-flow.js");
+const {
+  cancelEditorImageReuse,
+  confirmEditorImageReuse,
+  updateEditorImageReuseDontShowAgain,
+} = await import("./editor-image-reuse-flow.js");
 
 test.afterEach(() => {
   resetEditorOperationQueue();
@@ -150,6 +165,8 @@ function installEditorFixture() {
   resetSessionState();
   invokeLog.length = 0;
   invokeHandler = async () => null;
+  imageReuseLog.length = 0;
+  imageReuseHandler = NO_IMAGE_REUSE;
   state.selectedTeamId = "team-1";
   state.teams = [{
     id: "team-1",
@@ -211,6 +228,14 @@ function installEditorFixture() {
       status: "idle",
     },
   };
+}
+
+// The reuse lookup (and the upload hash) settle on later event-loop turns, so
+// wait for the write command instead of counting microtasks.
+async function waitForInvoke(command) {
+  for (let turn = 0; turn < 50 && !invokeLog.some((entry) => entry.command === command); turn += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
 }
 
 function createRenderSpy() {
@@ -671,8 +696,7 @@ test("submitEditorImageUrl closes the input while a non-empty draft is being sav
   };
 
   const submitPromise = submitEditorImageUrl(render, "row-1", "vi");
-  await Promise.resolve();
-  await Promise.resolve();
+  await waitForInvoke("save_gtms_editor_language_image_url");
 
   assert.equal(state.editorChapter.imageEditor.status, "submitting");
   assert.equal(state.editorChapter.imageEditor.mode, "url");
@@ -808,8 +832,7 @@ test("submitEditorImageUrl does not replace a URL editor reopened while the save
   });
 
   const submitPromise = submitEditorImageUrl(render, "row-1", "vi");
-  await Promise.resolve();
-  await Promise.resolve();
+  await waitForInvoke("save_gtms_editor_language_image_url");
   openEditorImageUrl(render, "row-1", "vi");
   updateEditorImageUrlDraft("https://example.com/edited.png");
   rejectSave(new Error("Original image failed."));
@@ -1318,9 +1341,7 @@ test("handleDroppedEditorImageFile shows uploaded filename in optimistic history
       },
       { updateEditorChapterRow },
     );
-    for (let index = 0; index < 10 && invokeLog.length === 0; index += 1) {
-      await Promise.resolve();
-    }
+    await waitForInvoke("upload_gtms_editor_language_image");
 
     assert.equal(state.editorChapter.history.entries[0].optimistic, true);
     assert.deepEqual(state.editorChapter.history.entries[0].image, {
@@ -1457,4 +1478,249 @@ test("handleDroppedEditorImagePath applies a native dropped file to the active u
     "read_local_dropped_file",
     "upload_gtms_editor_language_image",
   ]);
+});
+
+const REUSED_URL = "https://example.com/separator.png";
+
+function installUrlDraft(url = REUSED_URL) {
+  state.editorChapter = {
+    ...state.editorChapter,
+    imageEditor: {
+      rowId: "row-1",
+      languageCode: "vi",
+      mode: "url",
+      urlDraft: url,
+      invalidUrl: false,
+      urlErrorMessage: "",
+      status: "idle",
+    },
+  };
+}
+
+function reportImageReuse(imageKey, chapters) {
+  imageReuseHandler = async (command) => (
+    command === "find_gtms_editor_image_reuse" ? { imageKey, chapters } : null
+  );
+}
+
+async function withUploadMocks(run) {
+  const originalImage = globalThis.Image;
+  const originalFileReader = globalThis.FileReader;
+  const originalSetTimeout = globalThis.window.setTimeout;
+  const originalCreateObjectUrl = globalThis.URL.createObjectURL;
+  const originalRevokeObjectUrl = globalThis.URL.revokeObjectURL;
+  globalThis.Image = class {
+    set onload(callback) {
+      this._onload = callback;
+    }
+
+    set onerror(_callback) {}
+
+    set src(_value) {
+      this._onload?.();
+    }
+  };
+  globalThis.FileReader = class {
+    readAsDataURL(blob) {
+      void blob.arrayBuffer().then((buffer) => {
+        this.result = `data:image/png;base64,${Buffer.from(buffer).toString("base64")}`;
+        this.onload?.();
+      });
+    }
+  };
+  globalThis.window.setTimeout = () => 1;
+  globalThis.URL.createObjectURL = () => "blob:test-image";
+  globalThis.URL.revokeObjectURL = () => {};
+  try {
+    await run();
+  } finally {
+    globalThis.Image = originalImage;
+    globalThis.FileReader = originalFileReader;
+    globalThis.window.setTimeout = originalSetTimeout;
+    globalThis.URL.createObjectURL = originalCreateObjectUrl;
+    globalThis.URL.revokeObjectURL = originalRevokeObjectUrl;
+  }
+}
+
+function separatorUpload() {
+  return {
+    name: "separator.png",
+    type: "image/png",
+    size: 4,
+    async arrayBuffer() {
+      return Uint8Array.from([137, 80, 78, 71]).buffer;
+    },
+  };
+}
+
+function installUploadEditor() {
+  state.editorChapter = {
+    ...state.editorChapter,
+    imageEditor: {
+      rowId: "row-1",
+      languageCode: "vi",
+      mode: "upload",
+      urlDraft: "",
+      invalidUrl: false,
+      urlErrorMessage: "",
+      status: "idle",
+    },
+  };
+}
+
+test("submitEditorImageUrl asks before inserting a URL already used in the project", async () => {
+  installEditorFixture();
+  state.projects[0].chapters.push({ id: "chapter-2", name: "Appendix" });
+  installUrlDraft();
+  const render = createRenderSpy();
+  reportImageReuse(`url:${REUSED_URL}`, [
+    { chapterId: "chapter-1", title: "Chapter 1" },
+    { chapterId: "chapter-2", title: "appendix-on-disk" },
+  ]);
+  invokeHandler = async () => ({ status: "saved", rowId: "row-1", languageCode: "vi" });
+
+  await submitEditorImageUrl(render, "row-1", "vi");
+
+  assert.equal(invokeLog.length, 0);
+  assert.deepEqual(imageReuseLog.map((entry) => entry.payload.input), [{
+    installationId: 7,
+    projectId: "project-1",
+    repoName: "fixture-project",
+    chapterId: "chapter-1",
+    rowId: "row-1",
+    image: { kind: "url", url: REUSED_URL },
+  }]);
+  assert.equal(state.editorChapter.imageReuseModal.isOpen, true);
+  assert.deepEqual(state.editorChapter.imageReuseModal.chapterTitles, ["Appendix", "Chapter 1"]);
+  assert.equal(state.editorChapter.imageEditor.status, "submitting");
+
+  await confirmEditorImageReuse(render);
+  await waitForInvoke("save_gtms_editor_language_image_url");
+
+  assert.equal(state.editorChapter.imageReuseModal.isOpen, false);
+  assert.equal(invokeLog.at(-1)?.command, "save_gtms_editor_language_image_url");
+  assert.equal(invokeLog.at(-1)?.payload.input.url, REUSED_URL);
+  assert.equal(imageReuseLog.length, 1);
+});
+
+test("confirming a reused image with don't-show-again remembers it for the project", async () => {
+  installEditorFixture();
+  installUrlDraft();
+  const render = createRenderSpy();
+  reportImageReuse(`url:${REUSED_URL}`, [{ chapterId: "chapter-1", title: "Chapter 1" }]);
+  invokeHandler = async () => ({ status: "saved", rowId: "row-1", languageCode: "vi" });
+
+  await submitEditorImageUrl(render, "row-1", "vi");
+  updateEditorImageReuseDontShowAgain(true);
+  await confirmEditorImageReuse(render);
+  await waitForInvoke("save_gtms_editor_language_image_url");
+
+  assert.deepEqual(imageReuseLog.at(-1), {
+    command: "allow_gtms_editor_image_reuse",
+    payload: {
+      input: {
+        installationId: 7,
+        projectId: "project-1",
+        repoName: "fixture-project",
+        imageKey: `url:${REUSED_URL}`,
+      },
+    },
+  });
+  assert.equal(invokeLog.at(-1)?.command, "save_gtms_editor_language_image_url");
+});
+
+test("cancelling a reused image URL closes the URL editor without saving", async () => {
+  installEditorFixture();
+  installUrlDraft();
+  const render = createRenderSpy();
+  reportImageReuse(`url:${REUSED_URL}`, [{ chapterId: "chapter-1", title: "Chapter 1" }]);
+
+  await submitEditorImageUrl(render, "row-1", "vi");
+  cancelEditorImageReuse(render);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(state.editorChapter.imageReuseModal.isOpen, false);
+  assert.equal(state.editorChapter.imageEditor.mode, null);
+  assert.equal(state.editorChapter.imageEditor.status, "idle");
+  assert.equal(invokeLog.length, 0);
+  assert.equal(render.calls.at(-1)?.length, 0);
+});
+
+test("submitEditorImageUrl skips the reuse check when the URL is already this field's image", async () => {
+  installEditorFixture();
+  installFixtureImage(REUSED_URL);
+  installUrlDraft();
+  const render = createRenderSpy();
+  reportImageReuse(`url:${REUSED_URL}`, [{ chapterId: "chapter-1", title: "Chapter 1" }]);
+  invokeHandler = async () => ({ status: "saved", rowId: "row-1", languageCode: "vi" });
+
+  await submitEditorImageUrl(render, "row-1", "vi");
+  await waitForInvoke("save_gtms_editor_language_image_url");
+
+  assert.equal(imageReuseLog.length, 0);
+  assert.equal(state.editorChapter.imageReuseModal.isOpen, false);
+  assert.equal(invokeLog.at(-1)?.command, "save_gtms_editor_language_image_url");
+});
+
+test("a failed reuse check never blocks inserting the image", async () => {
+  installEditorFixture();
+  installUrlDraft();
+  const render = createRenderSpy();
+  imageReuseHandler = async () => {
+    throw new Error("The local project repo is not available yet.");
+  };
+  invokeHandler = async () => ({ status: "saved", rowId: "row-1", languageCode: "vi" });
+
+  await submitEditorImageUrl(render, "row-1", "vi");
+  await waitForInvoke("save_gtms_editor_language_image_url");
+
+  assert.equal(state.editorChapter.imageReuseModal.isOpen, false);
+  assert.equal(invokeLog.at(-1)?.command, "save_gtms_editor_language_image_url");
+});
+
+test("uploads are checked by name, size and SHA-256 and inserted after confirmation", async () => {
+  installEditorFixture();
+  installUploadEditor();
+  const render = createRenderSpy();
+  const { createHash } = await import("node:crypto");
+  const sha256 = createHash("sha256").update(Uint8Array.from([137, 80, 78, 71])).digest("hex");
+  reportImageReuse(`upload:${sha256}`, [{ chapterId: "chapter-1", title: "Chapter 1" }]);
+  invokeHandler = async () => ({ status: "saved", rowId: "row-1", languageCode: "vi" });
+
+  await withUploadMocks(async () => {
+    await handleDroppedEditorImageFile(render, "row-1", "vi", separatorUpload(), { updateEditorChapterRow });
+
+    assert.deepEqual(imageReuseLog[0]?.payload.input.image, {
+      kind: "upload",
+      fileName: "separator.png",
+      byteLength: 4,
+      sha256,
+    });
+    assert.equal(state.editorChapter.imageReuseModal.isOpen, true);
+    assert.equal(state.editorChapter.imageEditor.status, "saving");
+    assert.equal(invokeLog.length, 0);
+
+    await confirmEditorImageReuse(render);
+    await waitForInvoke("upload_gtms_editor_language_image");
+  });
+
+  assert.equal(invokeLog.at(-1)?.command, "upload_gtms_editor_language_image");
+  assert.equal(invokeLog.at(-1)?.payload.input.filename, "separator.png");
+});
+
+test("cancelling a reused upload returns to the idle upload editor without uploading", async () => {
+  installEditorFixture();
+  installUploadEditor();
+  const render = createRenderSpy();
+  reportImageReuse("upload:abc", [{ chapterId: "chapter-1", title: "Chapter 1" }]);
+
+  await withUploadMocks(async () => {
+    await handleDroppedEditorImageFile(render, "row-1", "vi", separatorUpload(), { updateEditorChapterRow });
+    cancelEditorImageReuse(render);
+  });
+
+  assert.equal(state.editorChapter.imageReuseModal.isOpen, false);
+  assert.equal(state.editorChapter.imageEditor.mode, "upload");
+  assert.equal(state.editorChapter.imageEditor.status, "idle");
+  assert.equal(invokeLog.length, 0);
 });

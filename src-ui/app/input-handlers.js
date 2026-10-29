@@ -6,6 +6,7 @@ import {
   updateAiProviderSecretDraft,
 } from "./ai-settings-flow.js";
 import { updateTelemetryDisclosureEnabled } from "./telemetry-disclosure-flow.js";
+import { updateEditorImageReuseDontShowAgain } from "./editor-image-reuse-flow.js";
 import { state } from "./state.js";
 import {
   syncAutoSizeTextarea,
@@ -1086,6 +1087,16 @@ function handleAiSettingsAboutModalInput(event) {
   return true;
 }
 
+function handleEditorImageReuseModalInput(event) {
+  const input = event.target.closest("[data-editor-image-reuse-dont-show-again]");
+  if (!(input instanceof HTMLInputElement) || input.type !== "checkbox") {
+    return false;
+  }
+
+  updateEditorImageReuseDontShowAgain(input.checked);
+  return true;
+}
+
 function handleTelemetryDisclosureInput(event) {
   const input = event.target.closest("[data-telemetry-disclosure-enabled-toggle]");
   if (!(input instanceof HTMLInputElement) || input.type !== "checkbox") {
@@ -1312,6 +1323,7 @@ const inputHandlers = [
   handleAiKeyInput,
   handleAiDetailedConfigurationInput,
   handleAiSettingsAboutModalInput,
+  handleEditorImageReuseModalInput,
   handleTelemetryDisclosureInput,
   handleAiActionProviderInput,
   handleAiActionModelInput,

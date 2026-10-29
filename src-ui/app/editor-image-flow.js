@@ -12,6 +12,7 @@ import { invoke, listen, convertLocalFileSrc, waitForNextPaint } from "./runtime
 import { logEditorScrollDebug } from "./editor-scroll-debug.js";
 import { noteUserScrollIntent } from "./editor-scroll-session.js";
 import { renderEditorRowScoped } from "./editor-row-scoped-render.js";
+import { findEditorImageReuse, openEditorImageReuseModal } from "./editor-image-reuse-flow.js";
 import {
   createEditorImageEditorState,
   createEditorImageDuplicateOverwriteModalState,
@@ -859,6 +860,20 @@ export async function persistEditorImageUrlOnBlur(render, rowId, languageCode, o
     return;
   }
 
+  return saveEditorImageUrlDraft(render, rowId, languageCode, draft, chapterAtRequest, operations, {
+    checkReuse: true,
+  });
+}
+
+async function saveEditorImageUrlDraft(
+  render,
+  rowId,
+  languageCode,
+  draft,
+  chapterAtRequest,
+  operations = {},
+  { checkReuse = false } = {},
+) {
   const row = await ensureEditorRowReadyForWrite(render, rowId, { allowStaleDirty: true });
   if (editorImageWriteBlocked(row, render)) {
     if (
@@ -900,6 +915,43 @@ export async function persistEditorImageUrlOnBlur(render, rowId, languageCode, o
     return;
   }
 
+  const nextImage = { kind: "url", url: draft };
+  if (checkReuse && !editorFieldImageEqual(currentImage(rowId, languageCode), nextImage)) {
+    const reuse = await findEditorImageReuse({
+      team,
+      project: context.project,
+      chapterId: chapterAtRequest,
+      rowId,
+      image: nextImage,
+    });
+    if (state.editorChapter?.chapterId !== chapterAtRequest) {
+      return;
+    }
+    if (reuse) {
+      openEditorImageReuseModal(render, {
+        reuse,
+        rowId,
+        languageCode,
+        team,
+        project: context.project,
+        insert: () => saveEditorImageUrlDraft(
+          render,
+          rowId,
+          languageCode,
+          draft,
+          chapterAtRequest,
+          operations,
+        ),
+        cancel: () => {
+          if (imageEditorMatches(state.editorChapter, rowId, languageCode)) {
+            state.editorChapter = resetImageEditor(state.editorChapter);
+          }
+        },
+      });
+      return;
+    }
+  }
+
   return queueEditorImageWrite({
     render,
     row,
@@ -920,7 +972,7 @@ export async function persistEditorImageUrlOnBlur(render, rowId, languageCode, o
       baseImage: imagePayloadValue(currentImage(rowId, languageCode)),
     },
     previousImage: currentImage(rowId, languageCode),
-    nextImage: { kind: "url", url: draft },
+    nextImage,
     operations,
     failureMessage: "The image URL could not be saved.",
     onFailure: (message) => {
@@ -1109,6 +1161,26 @@ async function saveUploadedEditorImage(render, rowId, languageCode, file, operat
     return;
   }
 
+  return saveValidatedUploadedEditorImage(
+    render,
+    rowId,
+    languageCode,
+    { file, fileBlob, fileName },
+    chapterAtRequest,
+    operations,
+    { checkReuse: true },
+  );
+}
+
+async function saveValidatedUploadedEditorImage(
+  render,
+  rowId,
+  languageCode,
+  { file, fileBlob, fileName },
+  chapterAtRequest,
+  operations = {},
+  { checkReuse = false } = {},
+) {
   const row = await ensureEditorRowReadyForWrite(render, rowId, { allowStaleDirty: true });
   if (editorImageWriteBlocked(row, render)) {
     if (state.editorChapter?.chapterId === chapterAtRequest) {
@@ -1135,6 +1207,47 @@ async function saveUploadedEditorImage(render, rowId, languageCode, file, operat
     });
     renderEditorRowScoped(render, rowId, "image-upload-state");
     return;
+  }
+
+  if (checkReuse) {
+    const reuse = await findEditorImageReuse({
+      team,
+      project: context.project,
+      chapterId: chapterAtRequest,
+      rowId,
+      image: { kind: "upload", fileBlob, fileName },
+    });
+    if (state.editorChapter?.chapterId !== chapterAtRequest) {
+      return;
+    }
+    if (reuse) {
+      openEditorImageReuseModal(render, {
+        reuse,
+        rowId,
+        languageCode,
+        team,
+        project: context.project,
+        insert: () => saveValidatedUploadedEditorImage(
+          render,
+          rowId,
+          languageCode,
+          { file, fileBlob, fileName },
+          chapterAtRequest,
+          operations,
+        ),
+        cancel: () => {
+          if (imageEditorMatches(state.editorChapter, rowId, languageCode, "upload")) {
+            setImageEditorState({
+              rowId,
+              languageCode,
+              mode: "upload",
+              status: "idle",
+            });
+          }
+        },
+      });
+      return;
+    }
   }
 
   try {

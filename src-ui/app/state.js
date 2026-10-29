@@ -491,6 +491,7 @@ export function createEditorChapterState() {
     imageEditor: createEditorImageEditorState(),
     imageInvalidFileModal: createEditorImageInvalidFileModalState(),
     imageDuplicateOverwriteModal: createEditorImageDuplicateOverwriteModalState(),
+    imageReuseModal: createEditorImageReuseModalState(),
     imageCaptionTranslationModal: createEditorImageCaptionTranslationModalState(),
     imagePreviewOverlay: createEditorImagePreviewOverlayState(),
     insertLinkModal: createEditorInsertLinkModalState(),
@@ -589,6 +590,17 @@ export function createEditorImageDuplicateOverwriteModalState() {
     withCaption: false,
     status: "idle",
     error: "",
+  };
+}
+
+export function createEditorImageReuseModalState() {
+  return {
+    isOpen: false,
+    requestId: null,
+    rowId: null,
+    languageCode: null,
+    chapterTitles: [],
+    dontShowAgain: false,
   };
 }
 

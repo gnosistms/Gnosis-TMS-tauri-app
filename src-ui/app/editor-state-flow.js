@@ -51,6 +51,7 @@ import {
   createEditorImageCaptionEditorState,
   createEditorImageEditorState,
   createEditorImageDuplicateOverwriteModalState,
+  createEditorImageReuseModalState,
   createEditorImageCaptionTranslationModalState,
   createEditorImageInvalidFileModalState,
   createEditorInsertLinkModalState,
@@ -354,6 +355,13 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
           ...previousEditorChapter.imageDuplicateOverwriteModal,
         }
         : createEditorImageDuplicateOverwriteModalState(),
+    imageReuseModal:
+      isSameChapter && previousEditorChapter?.imageReuseModal?.isOpen === true
+        ? {
+          ...createEditorImageReuseModalState(),
+          ...previousEditorChapter.imageReuseModal,
+        }
+        : createEditorImageReuseModalState(),
     imageCaptionTranslationModal:
       isSameChapter && previousEditorChapter?.imageCaptionTranslationModal?.isOpen === true
         ? {
