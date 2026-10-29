@@ -500,6 +500,10 @@ pub(super) fn normalize_editor_text_style_value(value: Option<&str>) -> String {
         "q" | "quote" => "quote".to_string(),
         "i" | "indented" => "indented".to_string(),
         "c" | "center" | "centered" => "centered".to_string(),
+        "list_bullet" | "list" | "ul" | "list-bullet" => "list_bullet".to_string(),
+        "list_number" | "ol" | "list-number" => "list_number".to_string(),
+        "list_letter" | "list-letter" => "list_letter".to_string(),
+        "list_roman" | "list-roman" => "list_roman".to_string(),
         "html" | "custom-html" | "custom_html" => "custom_html".to_string(),
         _ => DEFAULT_EDITOR_TEXT_STYLE.to_string(),
     }

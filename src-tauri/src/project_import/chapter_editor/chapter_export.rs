@@ -1,4 +1,8 @@
 use super::book_export::{section_document, BookItemInput, BookPart};
+use super::list_style::{
+    is_list_text_style, list_item_numbers, list_items, list_kind, normalized_list_text,
+    render_list_html, ListItem, ListKind, ListLevelFormat, LIST_MAX_LEVEL,
+};
 use super::row_fields::parse_labeled_footnote_text_for_merge;
 use super::*;
 use crate::project_import::chapter_import::format_srt_timestamp;
@@ -857,7 +861,20 @@ pub(super) fn build_export_document(
             .unwrap_or_default();
         let row_block_start = blocks.len();
         let style = row_text_style(row);
-        if let Some(text) = field
+        if is_list_text_style(&style) {
+            // A list row is one block holding the whole list. It is never split into
+            // paragraphs or at "<hr>", and the leading tabs of its lines (not trimmed
+            // away) give its items their nesting levels.
+            let list_text = field
+                .map(|value| normalized_list_text(&value.plain_text))
+                .unwrap_or_default();
+            if !list_text.is_empty() {
+                blocks.push(ExportBlock::Text {
+                    text_style: style.clone(),
+                    text: list_text,
+                });
+            }
+        } else if let Some(text) = field
             .map(|value| value.plain_text.trim())
             .filter(|text| !text.is_empty())
         {
@@ -1445,6 +1462,15 @@ fn render_html_document(document: &ExportDocument) -> Result<String, String> {
                     let _ = writeln!(body, "{text}");
                     continue;
                 }
+                if let Some(kind) = list_kind(text_style) {
+                    let items = list_items(text);
+                    let items_html = items
+                        .iter()
+                        .map(|item| sanitize_inline_html(&item.text))
+                        .collect::<Vec<_>>();
+                    let _ = writeln!(body, "{}", render_list_html(kind, &items, &items_html, ""));
+                    continue;
+                }
                 let text = sanitize_inline_html(text).replace('\n', "<br>");
                 match export_text_style(Some(text_style)).as_str() {
                     "heading1" => {
@@ -1657,6 +1683,13 @@ fn render_txt_document(document: &ExportDocument) -> String {
     for block in &document.blocks {
         match block {
             ExportBlock::Text { text_style, text } => {
+                if let Some(kind) = list_kind(text_style) {
+                    let list = txt_list(kind, text);
+                    if !list.is_empty() {
+                        parts.push(list);
+                    }
+                    continue;
+                }
                 let text = txt_inline_text(text).trim().to_string();
                 if text.is_empty() {
                     continue;
@@ -1689,6 +1722,25 @@ fn render_txt_document(document: &ExportDocument) -> String {
     } else {
         format!("{}\n", parts.join("\n\n"))
     }
+}
+
+/// Plain text has no lists: each item goes on its own line after its marker,
+/// indented four spaces per level.
+fn txt_list(kind: ListKind, text: &str) -> String {
+    let items = list_items(text);
+    items
+        .iter()
+        .zip(list_item_numbers(&items))
+        .map(|(item, number)| {
+            format!(
+                "{}{} {}",
+                "    ".repeat(item.level),
+                kind.level_format(item.level).marker(number),
+                txt_inline_text(&item.text).trim()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// The non-embedding link form of an export image: the original URL for url images,
@@ -1762,6 +1814,14 @@ fn render_md_document(document: &ExportDocument) -> String {
     for block in &document.blocks {
         match block {
             ExportBlock::Text { text_style, text } => {
+                if let Some(kind) = list_kind(text_style) {
+                    let list = md_list(kind, text);
+                    if !list.is_empty() {
+                        fragments.push(list);
+                        last_text_fragment = Some(fragments.len() - 1);
+                    }
+                    continue;
+                }
                 let inline = md_inline_text(text);
                 if inline.trim().is_empty() {
                     continue;
@@ -1828,6 +1888,30 @@ fn render_md_document(document: &ExportDocument) -> String {
     } else {
         format!("{}\n", fragments.join("\n\n"))
     }
+}
+
+/// Markdown nests a list by indenting each child item to its parent's content
+/// column. It has no letter or roman lists, so those levels are numbered.
+fn md_list(kind: ListKind, text: &str) -> String {
+    let items = list_items(text);
+    let mut content_columns: Vec<usize> = Vec::new();
+    let mut lines = Vec::new();
+    for (item, number) in items.iter().zip(list_item_numbers(&items)) {
+        content_columns.truncate(item.level);
+        let indent = content_columns.last().copied().unwrap_or(0);
+        let marker = if kind.level_format(item.level).is_ordered() {
+            format!("{number}.")
+        } else {
+            "-".to_string()
+        };
+        content_columns.push(indent + marker.len() + 1);
+        lines.push(format!(
+            "{}{marker} {}",
+            " ".repeat(indent),
+            md_single_line(&md_inline_text(&item.text)).trim()
+        ));
+    }
+    lines.join("\n")
 }
 
 fn md_single_line(value: &str) -> String {
@@ -2114,6 +2198,8 @@ fn render_docx_document(
     let mut rel_index = 1usize;
     let mut media_index = 1usize;
     let mut bookmark_index = document.book_parts.len();
+    // The kind of each list row, in order; list n is Word numbering instance n + 1.
+    let mut list_kinds = Vec::<ListKind>::new();
     let numbered_sections = numbered_book_documents(&document.book_parts);
 
     let sections: Vec<(Option<&BookPart>, &ExportDocument)> = if document.book_parts.is_empty() {
@@ -2173,6 +2259,17 @@ fn render_docx_document(
                                 _ => 28,
                             };
                             body.push_str(&format!("<w:p><w:pPr><w:jc w:val=\"center\"/><w:spacing w:before=\"240\" w:after=\"240\"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii=\"Alegreya\" w:hAnsi=\"Alegreya\"/><w:sz w:val=\"{size}\"/></w:rPr>{}</w:r></w:p>", docx_run_text_xml(&inline_visible_text(text))));
+                        } else if let Some(kind) = list_kind(text_style) {
+                            list_kinds.push(kind);
+                            let num_id = list_kinds.len();
+                            for (index, item) in list_items(text).iter().enumerate() {
+                                let bookmark = if index == 0 { bookmark.as_str() } else { "" };
+                                body.push_str(&docx_list_item_xml(
+                                    num_id,
+                                    item,
+                                    &format!("{bookmark}{}", docx_runs_xml(&item.text, false)),
+                                ));
+                            }
                         } else {
                             body.push_str(&docx_paragraph_runs_xml(
                                 Some(text_style),
@@ -2301,6 +2398,10 @@ fn render_docx_document(
     {
         relationships.push(r#"<Relationship Id="rIdSettings" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/>"#.into());
     }
+    let numbering_xml = (!list_kinds.is_empty()).then(|| docx_numbering_xml(&list_kinds));
+    if numbering_xml.is_some() {
+        relationships.push(r#"<Relationship Id="rIdNumbering" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>"#.into());
+    }
     let rels_xml = format!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">{} </Relationships>"#,
         relationships.join("")
@@ -2309,11 +2410,18 @@ fn render_docx_document(
     let cursor = Cursor::new(Vec::new());
     let mut writer = ZipWriter::new(cursor);
     let options = SimpleFileOptions::default();
-    write_zip_file(&mut writer, "[Content_Types].xml", content_types_xml())?;
+    write_zip_file(
+        &mut writer,
+        "[Content_Types].xml",
+        &content_types_xml(numbering_xml.is_some()),
+    )?;
     write_zip_file(&mut writer, "_rels/.rels", package_rels_xml())?;
     write_zip_file(&mut writer, "word/document.xml", &document_xml)?;
     write_zip_file(&mut writer, "word/_rels/document.xml.rels", &rels_xml)?;
     write_zip_file(&mut writer, "word/styles.xml", styles_xml())?;
+    if let Some(numbering_xml) = &numbering_xml {
+        write_zip_file(&mut writer, "word/numbering.xml", numbering_xml)?;
+    }
     {
         write_zip_file(
             &mut writer,
@@ -2386,6 +2494,80 @@ fn docx_paragraph_runs_xml(text_style: Option<&str>, runs: &str) -> String {
         format!("<w:pPr>{properties}</w:pPr>")
     };
     format!("<w:p>{ppr}{runs}</w:p>")
+}
+
+/// A list item paragraph in Word numbering instance `num_id`.
+fn docx_list_item_xml(num_id: usize, item: &ListItem, runs: &str) -> String {
+    format!(
+        r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="{}"/><w:numId w:val="{num_id}"/></w:numPr></w:pPr>{runs}</w:p>"#,
+        item.level
+    )
+}
+
+/// Word numbering for the list rows: one abstract definition per list style with
+/// all nine levels, and one instance per list row (`list_kinds[n]` is instance
+/// n + 1). Each instance starts every level at 1, so each list restarts its count.
+fn docx_numbering_xml(list_kinds: &[ListKind]) -> String {
+    const KINDS: [ListKind; 4] = [
+        ListKind::Bullet,
+        ListKind::Number,
+        ListKind::Letter,
+        ListKind::Roman,
+    ];
+    let mut xml = String::from(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">"#,
+    );
+    for (abstract_id, kind) in KINDS.iter().enumerate() {
+        let _ = write!(
+            xml,
+            r#"<w:abstractNum w:abstractNumId="{abstract_id}"><w:multiLevelType w:val="multilevel"/>"#
+        );
+        for level in 0..=LIST_MAX_LEVEL {
+            let format = kind.level_format(level);
+            let (num_fmt, text) = match format.bullet() {
+                Some(bullet) => ("bullet", bullet.to_string()),
+                None => (docx_number_format(format), format!("%{}.", level + 1)),
+            };
+            let _ = write!(
+                xml,
+                r#"<w:lvl w:ilvl="{level}"><w:start w:val="1"/><w:numFmt w:val="{num_fmt}"/><w:lvlText w:val="{}"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="{}" w:hanging="360"/></w:pPr></w:lvl>"#,
+                escape_xml(&text),
+                720 * (level + 1)
+            );
+        }
+        xml.push_str("</w:abstractNum>");
+    }
+    for (index, kind) in list_kinds.iter().enumerate() {
+        let abstract_id = KINDS
+            .iter()
+            .position(|candidate| candidate == kind)
+            .unwrap_or_default();
+        let _ = write!(
+            xml,
+            r#"<w:num w:numId="{}"><w:abstractNumId w:val="{abstract_id}"/>"#,
+            index + 1
+        );
+        for level in 0..=LIST_MAX_LEVEL {
+            let _ = write!(
+                xml,
+                r#"<w:lvlOverride w:ilvl="{level}"><w:startOverride w:val="1"/></w:lvlOverride>"#
+            );
+        }
+        xml.push_str("</w:num>");
+    }
+    xml.push_str("</w:numbering>");
+    xml
+}
+
+fn docx_number_format(format: ListLevelFormat) -> &'static str {
+    match format {
+        ListLevelFormat::LowerAlpha => "lowerLetter",
+        ListLevelFormat::UpperAlpha => "upperLetter",
+        ListLevelFormat::LowerRoman => "lowerRoman",
+        ListLevelFormat::UpperRoman => "upperRoman",
+        ListLevelFormat::Disc | ListLevelFormat::Circle | ListLevelFormat::Square => "bullet",
+        ListLevelFormat::Decimal => "decimal",
+    }
 }
 
 fn docx_separator_paragraph_xml() -> String {
@@ -2894,9 +3076,10 @@ fn render_rtf_document(document: &ExportDocument, footnote_links_as_plain_text: 
     let mut body = String::new();
     for block in &document.blocks {
         match block {
-            ExportBlock::Text { text_style, text } => {
-                body.push_str(&rtf_text_paragraph(Some(text_style), text, false));
-            }
+            ExportBlock::Text { text_style, text } => match list_kind(text_style) {
+                Some(kind) => body.push_str(&rtf_list_paragraphs(kind, text)),
+                None => body.push_str(&rtf_text_paragraph(Some(text_style), text, false)),
+            },
             ExportBlock::Attribution { text } => {
                 let paragraph = rtf_text_paragraph(None, text, false);
                 body.push_str(&paragraph.replacen("\\fs24", "\\fs22\\qr", 1));
@@ -2949,7 +3132,30 @@ fn rtf_text_paragraph(text_style: Option<&str>, text: &str, forced_italic: bool)
         "centered" => "\\qc",
         _ => "",
     };
-    let runs = link_grouped_segments(inline_segments(text))
+    let runs = rtf_runs(text, forced_italic);
+    format!("\\pard\\plain\\f0\\fs24\\sa200{properties} {runs}\\par\n")
+}
+
+/// RTF has no lists without a list table; each item is a paragraph with a hanging
+/// indent for its level and its marker set in the hang.
+fn rtf_list_paragraphs(kind: ListKind, text: &str) -> String {
+    let items = list_items(text);
+    let mut output = String::new();
+    for (index, (item, number)) in items.iter().zip(list_item_numbers(&items)).enumerate() {
+        let left = 720 * (item.level + 1);
+        let after = if index + 1 == items.len() { 200 } else { 0 };
+        let _ = writeln!(
+            output,
+            "\\pard\\plain\\f0\\fs24\\sa{after}\\li{left}\\fi-360\\tx{left} {}\\tab {}\\par",
+            rtf_escape(&kind.level_format(item.level).marker(number)),
+            rtf_runs(&item.text, false)
+        );
+    }
+    output
+}
+
+fn rtf_runs(text: &str, forced_italic: bool) -> String {
+    link_grouped_segments(inline_segments(text))
         .into_iter()
         .map(|(href, segments)| {
             let inner = segments
@@ -2969,8 +3175,7 @@ fn rtf_text_paragraph(text_style: Option<&str>, text: &str, forced_italic: bool)
                 None => inner,
             }
         })
-        .collect::<String>();
-    format!("\\pard\\plain\\f0\\fs24\\sa200{properties} {runs}\\par\n")
+        .collect::<String>()
 }
 
 fn rtf_separator_paragraph() -> String {
@@ -3225,8 +3430,15 @@ fn xlsx_workbook_rels_xml() -> &'static str {
     r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>"#
 }
 
-fn content_types_xml() -> &'static str {
-    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Default Extension="jpg" ContentType="image/jpeg"/><Default Extension="jpeg" ContentType="image/jpeg"/><Default Extension="gif" ContentType="image/gif"/><Default Extension="svg" ContentType="image/svg+xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/></Types>"#
+fn content_types_xml(numbering: bool) -> String {
+    let numbering = if numbering {
+        r#"<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>"#
+    } else {
+        ""
+    };
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Default Extension="jpg" ContentType="image/jpeg"/><Default Extension="jpeg" ContentType="image/jpeg"/><Default Extension="gif" ContentType="image/gif"/><Default Extension="svg" ContentType="image/svg+xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>{numbering}</Types>"#
+    )
 }
 
 fn package_rels_xml() -> &'static str {
@@ -5228,5 +5440,211 @@ mod tests {
         }
         assert_eq!(original.fields["en"].plain_text, "First[1] second[2]");
         assert!(original.fields["en"].image.is_some());
+    }
+
+    fn list_block(style: &str, text: &str) -> ExportBlock {
+        ExportBlock::Text {
+            text_style: style.to_string(),
+            text: text.to_string(),
+        }
+    }
+
+    fn docx_part(bytes: Vec<u8>, path: &str) -> Option<String> {
+        let mut archive = ZipArchive::new(Cursor::new(bytes)).expect("docx should be zip");
+        let mut xml = String::new();
+        archive.by_name(path).ok()?.read_to_string(&mut xml).ok()?;
+        Some(xml)
+    }
+
+    #[test]
+    fn block_builder_keeps_a_list_row_as_one_block_of_normalized_items() {
+        let mut list = row(
+            "row-1",
+            "a",
+            "\n\t\tFirst [1]\n\n<b>Second\n\t\t\tThird [2]</b><hr>still third\n",
+            "ol",
+        );
+        list.fields.get_mut("en").expect("field exists").footnote =
+            "[1] One.\n\n[2] Two.\n\n[3] Unmarked.".to_string();
+        let after = row("row-2", "b", "After.", "paragraph");
+        let document = build_export_document(
+            Path::new("/repo"),
+            &paragraph_test_chapter(""),
+            &[list, after],
+            "en",
+            None,
+            "",
+        )
+        .expect("document should build");
+
+        assert_eq!(
+            document.blocks[0],
+            list_block(
+                "list_number",
+                "First [1]\n<strong>Second</strong>\n\t<strong>Third [2]</strong><hr>still third"
+            )
+        );
+        let anchors = document
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                ExportBlock::Footnote {
+                    marker,
+                    anchor_block,
+                    ..
+                } => Some((*marker, *anchor_block)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(anchors, vec![(1, Some(0)), (2, Some(0)), (3, Some(0))]);
+        assert_eq!(document.blocks[4], list_block("paragraph", "After."));
+    }
+
+    #[test]
+    fn block_builder_skips_list_rows_without_visible_items() {
+        let empty = row("row-1", "a", "\n\t\n<i> </i>\n", "list_bullet");
+        let document = build_export_document(
+            Path::new("/repo"),
+            &paragraph_test_chapter(""),
+            &[empty],
+            "en",
+            None,
+            "",
+        )
+        .expect("document should build");
+        assert!(document.blocks.is_empty());
+    }
+
+    #[test]
+    fn html_txt_md_and_rtf_exports_render_nested_lists() {
+        let doc = document(vec![
+            list_block("list_number", "One\n\t<b>Two\n\t\tThree</b>"),
+            list_block("list_bullet", "Dot & co\n\tRing"),
+        ]);
+
+        let html = render_html_document(&doc).unwrap();
+        assert!(html.contains(
+            "<ol style=\"list-style-type:decimal\"><li>One<ol style=\"list-style-type:lower-alpha\"><li><strong>Two</strong><ol style=\"list-style-type:lower-roman\"><li><strong>Three</strong></li></ol></li></ol></li></ol>\n"
+        ));
+        assert!(html.contains(
+            "<ul style=\"list-style-type:disc\"><li>Dot &amp; co<ul style=\"list-style-type:circle\"><li>Ring</li></ul></li></ul>\n"
+        ));
+
+        assert_eq!(
+            render_txt_document(&doc),
+            "1. One\n    a. Two\n        i. Three\n\n• Dot & co\n    ◦ Ring\n"
+        );
+
+        assert_eq!(
+            render_md_document(&doc),
+            "1. One\n   1. **Two**\n      1. **Three**\n\n- Dot & co\n  - Ring\n"
+        );
+
+        let rtf = render_rtf_document(&doc, false);
+        assert!(rtf.contains(
+            "\\pard\\plain\\f0\\fs24\\sa0\\li720\\fi-360\\tx720 1.\\tab One\\par\n\\pard\\plain\\f0\\fs24\\sa0\\li1440\\fi-360\\tx1440 a.\\tab {\\b Two}\\par\n\\pard\\plain\\f0\\fs24\\sa200\\li2160\\fi-360\\tx2160 i.\\tab {\\b Three}\\par\n"
+        ));
+        assert!(rtf.contains("\\tx720 \\u8226?\\tab Dot & co\\par"));
+        assert!(rtf.contains("\\sa200\\li1440\\fi-360\\tx1440 \\u9702?\\tab Ring\\par"));
+    }
+
+    #[test]
+    fn exports_number_each_list_row_from_one_with_per_style_level_formats() {
+        let doc = document(vec![
+            list_block("list_roman", "A\n\tB\n\tC\n\t\tD\nE"),
+            list_block("list_letter", "F\nG\n\tH"),
+        ]);
+        assert_eq!(
+            render_txt_document(&doc),
+            "I. A\n    A. B\n    B. C\n        1. D\nII. E\n\na. F\nb. G\n    i. H\n"
+        );
+        // Markdown numbers letter and roman levels, and indents children to the
+        // parent's content column.
+        assert_eq!(
+            render_md_document(&doc),
+            "1. A\n   1. B\n   2. C\n      1. D\n2. E\n\n1. F\n2. G\n   1. H\n"
+        );
+        let ten = (1..=10)
+            .map(|n| n.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let markdown = render_md_document(&document(vec![list_block(
+            "list_number",
+            &format!("{ten}\n\tchild"),
+        )]));
+        assert!(markdown.ends_with("10. 10\n    1. child\n"));
+    }
+
+    #[test]
+    fn markdown_footnote_references_follow_the_last_list_item() {
+        let doc = document(vec![
+            list_block("list_bullet", "One\nTwo"),
+            ExportBlock::Footnote {
+                number: 1,
+                marker: 1,
+                anchor_block: Some(0),
+                text: "Note.".into(),
+            },
+        ]);
+        assert_eq!(
+            render_md_document(&doc),
+            "- One\n- Two[^1]\n\n[^1]: Note.\n"
+        );
+    }
+
+    #[test]
+    fn docx_export_sets_list_items_with_word_numbering() {
+        let doc = document(vec![
+            list_block("list_number", "One\n\t<i>Two</i>"),
+            list_block("paragraph", "Between"),
+            list_block("list_bullet", "Dot"),
+        ]);
+        let bytes = render_docx_document(&doc, false).expect("docx should render");
+
+        let document_xml = docx_part(bytes.clone(), "word/document.xml").expect("document");
+        assert!(document_xml.contains(
+            r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t xml:space="preserve">One</w:t></w:r></w:p>"#
+        ));
+        assert!(document_xml.contains(
+            r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="1"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:rPr><w:i/></w:rPr><w:t xml:space="preserve">Two</w:t></w:r></w:p>"#
+        ));
+        assert!(document_xml.contains(
+            r#"<w:numPr><w:ilvl w:val="0"/><w:numId w:val="2"/></w:numPr></w:pPr><w:r><w:t xml:space="preserve">Dot</w:t>"#
+        ));
+
+        let numbering = docx_part(bytes.clone(), "word/numbering.xml").expect("numbering");
+        assert_eq!(numbering.matches("<w:abstractNum ").count(), 4);
+        assert_eq!(numbering.matches("<w:lvl ").count(), 4 * 9);
+        // Numbers: 1. a. i. by level, with a hanging indent per level.
+        assert!(numbering.contains(
+            r#"<w:abstractNum w:abstractNumId="1"><w:multiLevelType w:val="multilevel"/><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr></w:lvl><w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="lowerLetter"/><w:lvlText w:val="%2."/>"#
+        ));
+        assert!(numbering.contains(
+            r#"<w:lvl w:ilvl="2"><w:start w:val="1"/><w:numFmt w:val="lowerRoman"/><w:lvlText w:val="%3."/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="2160" w:hanging="360"/></w:pPr></w:lvl>"#
+        ));
+        assert!(numbering.contains(
+            r#"<w:abstractNum w:abstractNumId="0"><w:multiLevelType w:val="multilevel"/><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="•"/>"#
+        ));
+        assert!(numbering.contains(r#"<w:numFmt w:val="upperRoman"/><w:lvlText w:val="%1."/>"#));
+        // One instance per list row, each restarting every level at 1.
+        assert!(numbering.contains(
+            r#"<w:num w:numId="1"><w:abstractNumId w:val="1"/><w:lvlOverride w:ilvl="0"><w:startOverride w:val="1"/></w:lvlOverride>"#
+        ));
+        assert!(numbering.contains(r#"<w:num w:numId="2"><w:abstractNumId w:val="0"/>"#));
+        assert_eq!(numbering.matches("<w:startOverride ").count(), 2 * 9);
+        assert!(numbering.rfind("</w:abstractNum>") < numbering.find("<w:num "));
+
+        let content_types = docx_part(bytes.clone(), "[Content_Types].xml").expect("types");
+        assert!(content_types.contains(r#"<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>"#));
+        let rels = docx_part(bytes, "word/_rels/document.xml.rels").expect("rels");
+        assert!(rels.contains(r#"Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml""#));
+
+        // Documents without lists keep their previous package.
+        let plain = render_docx_document(&document(vec![list_block("paragraph", "Text")]), false)
+            .expect("docx should render");
+        assert!(docx_part(plain.clone(), "word/numbering.xml").is_none());
+        assert!(!docx_part(plain, "[Content_Types].xml")
+            .expect("types")
+            .contains("numbering"));
     }
 }

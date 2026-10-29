@@ -5,6 +5,7 @@ use super::chapter_export::{
     download_public_image_bytes_detailed, export_text_style, inline_visible_text,
     numbered_book_documents, sanitize_inline_html, ExportBlock, ExportDocument, ExportImage,
 };
+use super::list_style::{list_items, list_kind, render_list_html};
 use scraper::{ElementRef, Html, Node};
 use std::{
     collections::BTreeSet,
@@ -449,6 +450,28 @@ fn section_body(
             .collect();
         match block {
             ExportBlock::Text { text_style, text } => {
+                if let Some(kind) = list_kind(text_style) {
+                    let items = list_items(text);
+                    let mut items_html = items
+                        .iter()
+                        .map(|item| inline(&item.text, &anchor_notes, &mut referenced))
+                        .collect::<Vec<_>>();
+                    // Notes whose markers are not in the list follow its last item.
+                    if let Some(last) = items_html.last_mut() {
+                        for note in &anchor_notes {
+                            if !referenced.contains(&note.index) {
+                                last.push_str(&noteref(note, &mut referenced));
+                            }
+                        }
+                    }
+                    body.push_str(&render_list_html(
+                        kind,
+                        &items,
+                        &items_html,
+                        &format!(" id=\"block-{index}\""),
+                    ));
+                    continue;
+                }
                 let mut text = inline(text, &anchor_notes, &mut referenced);
                 for note in &anchor_notes {
                     if !referenced.contains(&note.index) {

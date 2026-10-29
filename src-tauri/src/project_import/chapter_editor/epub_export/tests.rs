@@ -455,3 +455,34 @@ fn epub_custom_html_uses_the_existing_omission_policy_and_rtl_language() {
     assert!(file(&files, "EPUB/section-1.xhtml").contains("Custom &amp; text"));
     assert!(!file(&files, "EPUB/section-1.xhtml").contains("<div>"));
 }
+
+#[test]
+fn epub_list_rows_nest_lists_and_keep_their_note_references() {
+    let doc = document(
+        "Lists",
+        vec![
+            paragraph("list_number", "One [1]\n\t<b>Two\n\t\tThree</b> & more"),
+            ExportBlock::Footnote {
+                number: 1,
+                marker: 1,
+                anchor_block: Some(0),
+                text: "First note".into(),
+            },
+            ExportBlock::Footnote {
+                number: 2,
+                marker: 2,
+                anchor_block: Some(0),
+                text: "Unmarked note".into(),
+            },
+            paragraph("list_bullet", "Dot"),
+        ],
+    );
+    let content = file(&unpack(&doc), "EPUB/section-1.xhtml");
+    assert!(content
+        .contains("<ol id=\"block-0\" style=\"list-style-type:decimal\"><li>One <a id=\"ref-1\""));
+    assert!(content.contains("<ol style=\"list-style-type:lower-alpha\"><li><strong>Two</strong><ol style=\"list-style-type:lower-roman\"><li><strong>Three</strong> &amp; more<a id=\"ref-2\""));
+    // The note without a marker follows the last item, inside the list.
+    assert!(content.contains("href=\"#note-2\">[2]</a></li></ol></li></ol></li></ol>"));
+    assert!(content.contains("<ul id=\"block-3\" style=\"list-style-type:disc\"><li>Dot</li></ul>"));
+    assert_eq!(content.matches("id=\"ref-").count(), 2);
+}

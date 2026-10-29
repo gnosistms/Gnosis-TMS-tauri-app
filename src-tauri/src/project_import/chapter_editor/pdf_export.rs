@@ -33,6 +33,10 @@ use super::chapter_export::{
     inline_visible_text, load_export_chapters, ExportBlock, ExportChapterFileInput, ExportDocument,
     ExportImage, InlineStyleState,
 };
+use super::list_style::{
+    is_list_text_style, list_events, list_items, list_kind, ListEvent, ListItem, ListKind,
+    ListLevelFormat,
+};
 
 const PDF_EXPORT_EVENT: &str = "chapter-pdf-export-progress";
 const FONT_REVISION: &str =
@@ -1569,19 +1573,36 @@ fn render_typst_chapter(
         }
         match block {
             ExportBlock::Text { text_style, text } => {
-                let inline = render_inline_typst_with_footnotes(
-                    text,
-                    anchored_footnotes
-                        .get(&block_index)
-                        .map(Vec::as_slice)
-                        .unwrap_or_default(),
-                    options.footnote_links_as_plain_text,
-                );
+                let footnotes = anchored_footnotes
+                    .get(&block_index)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default();
+                let inline = match list_kind(text_style) {
+                    // A list row is set whole, as one native Typst list.
+                    Some(kind) => {
+                        let items = list_items(text);
+                        let texts = items
+                            .iter()
+                            .map(|item| item.text.as_str())
+                            .collect::<Vec<_>>();
+                        let items_inline = render_inline_typst_parts_with_footnotes(
+                            &texts,
+                            footnotes,
+                            options.footnote_links_as_plain_text,
+                        );
+                        render_typst_list(kind, &items, &items_inline)
+                    }
+                    None => render_inline_typst_with_footnotes(
+                        text,
+                        footnotes,
+                        options.footnote_links_as_plain_text,
+                    ),
+                };
                 let style = export_text_style(Some(text_style));
                 let plain = !matches!(
                     style.as_str(),
                     "heading1" | "heading2" | "quote" | "blockquote" | "centered" | "indented"
-                );
+                ) && !is_list_text_style(&style);
                 if latin_body(&document.language_code) {
                     let amount = if plain && indent_next && Some(block_index) != dropcap_index {
                         "1.5em"
@@ -2073,10 +2094,11 @@ fn dropcap_block_index(
                 // Blank rows emit nothing visible — look past them, the way a
                 // reader would.
                 let Some(first) = first else { continue };
+                let style = export_text_style(Some(text_style));
                 let plain = !matches!(
-                    export_text_style(Some(text_style)).as_str(),
+                    style.as_str(),
                     "heading1" | "heading2" | "quote" | "blockquote" | "centered" | "indented"
-                );
+                ) && !is_list_text_style(&style);
                 return (plain && first.is_alphabetic()).then_some(index);
             }
             _ => return None,
@@ -2225,6 +2247,8 @@ fn render_typst_text_block(style: &str, inline: &str, dropcap: bool, cover: bool
         "quote" | "blockquote" => format!("#gnosis-quote[{inline}]\n\n"),
         "centered" => format!("#align(center)[{inline}]\n\n"),
         "indented" => format!("#pad(left: 2em)[{inline}]\n\n"),
+        // `inline` is the whole list, from `render_typst_list`.
+        list if is_list_text_style(list) => format!("{inline}\n\n"),
         _ if dropcap => format!("#gnosis-dropcap[{inline}]\n\n"),
         _ => format!("{inline}\n\n"),
     }
@@ -2250,6 +2274,8 @@ fn render_typst_cited_text_block(
     let cover_argument = if cover { ", cover: true" } else { "" };
     match export_text_style(Some(style)).as_str() {
         "heading1" | "heading2" => None,
+        // Only quotes have citations.
+        list if is_list_text_style(list) => None,
         "quote" | "blockquote" => Some(format!(
             "#gnosis-quote(citation: [{citation}]{cover_argument})[{inline}]\n\n"
         )),
@@ -3157,50 +3183,71 @@ fn render_inline_typst_with_footnotes(
     footnotes: &[(usize, String)],
     footnote_links_as_plain_text: bool,
 ) -> String {
+    render_inline_typst_parts_with_footnotes(&[text], footnotes, footnote_links_as_plain_text)
+        .pop()
+        .unwrap_or_default()
+}
+
+/// Renders the parts of one block (a paragraph, or the items of a list) that share
+/// the block's footnotes. Each footnote is set at its marker in the first part that
+/// has it.
+fn render_inline_typst_parts_with_footnotes(
+    texts: &[&str],
+    footnotes: &[(usize, String)],
+    footnote_links_as_plain_text: bool,
+) -> Vec<String> {
     if footnotes.is_empty() {
-        return render_inline_typst(text, false);
+        return texts
+            .iter()
+            .map(|text| render_inline_typst(text, false))
+            .collect();
     }
-    let normalized = text.nfc().collect::<String>();
     let notes = footnotes
         .iter()
         .map(|(marker, text)| (*marker, text.as_str()))
         .collect::<HashMap<_, _>>();
-    let mut rendered = String::new();
     let mut used = HashSet::new();
+    let mut parts = Vec::new();
     // Adjacent markers separate with a superscript comma (the footmisc/AMA
     // convention), so [1][2] renders as ¹,² rather than ¹² (which reads as
     // note 12). Typst has no automatic separator yet — if a future Typst
     // release groups adjacent footnotes itself (typst/typst#7627), drop this.
     let mut last_emitted_footnote = false;
-    for segment in inline_segments(&normalized) {
-        let mut cursor = 0usize;
-        while let Some((start, end, marker)) =
-            next_unescaped_footnote_marker(&segment.text, cursor, &notes, &used)
-        {
-            let leading =
-                render_styled_typst_text(&segment.text[cursor..start], &segment.style, false);
-            if !leading.is_empty() {
+    for text in texts {
+        let normalized = text.nfc().collect::<String>();
+        let mut rendered = String::new();
+        last_emitted_footnote = false;
+        for segment in inline_segments(&normalized) {
+            let mut cursor = 0usize;
+            while let Some((start, end, marker)) =
+                next_unescaped_footnote_marker(&segment.text, cursor, &notes, &used)
+            {
+                let leading =
+                    render_styled_typst_text(&segment.text[cursor..start], &segment.style, false);
+                if !leading.is_empty() {
+                    last_emitted_footnote = false;
+                }
+                rendered.push_str(&leading);
+                if let Some(note) = notes.get(&marker) {
+                    if last_emitted_footnote {
+                        rendered.push_str("#super[,]");
+                    }
+                    rendered.push_str(&format!(
+                        "#footnote[{}]",
+                        render_footnote_typst(note, footnote_links_as_plain_text)
+                    ));
+                    used.insert(marker);
+                    last_emitted_footnote = true;
+                }
+                cursor = end;
+            }
+            let trailing = render_styled_typst_text(&segment.text[cursor..], &segment.style, false);
+            if !trailing.is_empty() {
                 last_emitted_footnote = false;
             }
-            rendered.push_str(&leading);
-            if let Some(note) = notes.get(&marker) {
-                if last_emitted_footnote {
-                    rendered.push_str("#super[,]");
-                }
-                rendered.push_str(&format!(
-                    "#footnote[{}]",
-                    render_footnote_typst(note, footnote_links_as_plain_text)
-                ));
-                used.insert(marker);
-                last_emitted_footnote = true;
-            }
-            cursor = end;
+            rendered.push_str(&trailing);
         }
-        let trailing = render_styled_typst_text(&segment.text[cursor..], &segment.style, false);
-        if !trailing.is_empty() {
-            last_emitted_footnote = false;
-        }
-        rendered.push_str(&trailing);
+        parts.push(rendered);
     }
     // Footnotes anchored to this block whose markers never appeared inline are
     // row-level footnotes: attach their references to the end of the block, matching
@@ -3213,18 +3260,69 @@ fn render_inline_typst_with_footnotes(
         .filter(|(marker, _)| !used.contains(marker))
         .collect::<Vec<_>>();
     appended.sort_by_key(|(marker, _)| *marker);
-    for (marker, note) in appended {
-        if last_emitted_footnote {
-            rendered.push_str("#super[,]");
+    if let Some(rendered) = parts.last_mut() {
+        for (marker, note) in appended {
+            if last_emitted_footnote {
+                rendered.push_str("#super[,]");
+            }
+            rendered.push_str(&format!(
+                "#footnote[{}]",
+                render_footnote_typst(note, footnote_links_as_plain_text)
+            ));
+            used.insert(*marker);
+            last_emitted_footnote = true;
         }
-        rendered.push_str(&format!(
-            "#footnote[{}]",
-            render_footnote_typst(note, footnote_links_as_plain_text)
-        ));
-        used.insert(*marker);
-        last_emitted_footnote = true;
     }
-    rendered
+    parts
+}
+
+/// A list row as one native Typst list, with `items_inline` holding each item's
+/// rendered inline content. Each nested list sets its own level's marker or
+/// numbering, and Typst restarts the count of every list.
+fn render_typst_list(kind: ListKind, items: &[ListItem], items_inline: &[String]) -> String {
+    let mut source = String::new();
+    for event in list_events(kind, items) {
+        match event {
+            ListEvent::OpenList(format) => match typst_list_numbering(format) {
+                Some(numbering) => {
+                    source.push_str(&format!("#enum(numbering: {}, ", typst_string(numbering)))
+                }
+                None => source.push_str(&format!("#list(marker: {}, ", typst_list_marker(format))),
+            },
+            ListEvent::OpenItem(index) => {
+                source.push('[');
+                source.push_str(items_inline.get(index).map(String::as_str).unwrap_or(""));
+            }
+            ListEvent::CloseItem => source.push_str("], "),
+            ListEvent::CloseList(_) => source.push(')'),
+        }
+    }
+    source
+}
+
+/// Typst's own numbering patterns. Its letters continue past z as aa, ab, …
+fn typst_list_numbering(format: ListLevelFormat) -> Option<&'static str> {
+    match format {
+        ListLevelFormat::Decimal => Some("1."),
+        ListLevelFormat::LowerAlpha => Some("a."),
+        ListLevelFormat::LowerRoman => Some("i."),
+        ListLevelFormat::UpperAlpha => Some("A."),
+        ListLevelFormat::UpperRoman => Some("I."),
+        ListLevelFormat::Disc | ListLevelFormat::Circle | ListLevelFormat::Square => None,
+    }
+}
+
+/// Bullets are drawn rather than set as text: the body fonts may have no ◦ or ▪,
+/// and a fallback font's glyphs differ in size and weight. Each shape is centred
+/// near the x-height, where a bullet glyph sits.
+fn typst_list_marker(format: ListLevelFormat) -> &'static str {
+    match format {
+        ListLevelFormat::Circle => {
+            "box(baseline: -0.12em, circle(radius: 0.11em, stroke: 0.05em + black))"
+        }
+        ListLevelFormat::Square => "box(baseline: -0.12em, square(size: 0.22em, fill: black))",
+        _ => "box(baseline: -0.11em, circle(radius: 0.12em, fill: black))",
+    }
 }
 
 fn next_unescaped_footnote_marker(
@@ -5934,5 +6032,166 @@ mod tests {
         let pdf = fs::read(workspace.join("chapter.pdf")).expect("compiled PDF");
         assert!(pdf.starts_with(b"%PDF-"));
         let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn list_rows_render_as_nested_native_typst_lists() {
+        let items = list_items("One\n\t<b>Two</b>\n\t\tThree\nFour");
+        let inline = items
+            .iter()
+            .map(|item| render_inline_typst(&item.text, false))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            render_typst_list(ListKind::Number, &items, &inline),
+            "#enum(numbering: \"1.\", [#text(\"One\")#enum(numbering: \"a.\", [#strong[#text(\"Two\")]#enum(numbering: \"i.\", [#text(\"Three\")], )], )], [#text(\"Four\")], )"
+        );
+        assert_eq!(
+            render_typst_list(ListKind::Roman, &items[..2], &inline),
+            "#enum(numbering: \"I.\", [#text(\"One\")#enum(numbering: \"A.\", [#strong[#text(\"Two\")]], )], )"
+        );
+        let bullets = render_typst_list(ListKind::Bullet, &items[..3], &inline);
+        assert!(bullets.starts_with(&format!(
+            "#list(marker: {}, [#text(\"One\")#list(marker: {}, [",
+            typst_list_marker(ListLevelFormat::Disc),
+            typst_list_marker(ListLevelFormat::Circle)
+        )));
+        assert!(bullets.contains(&format!(
+            "#list(marker: {}, [#text(\"Three\")], )",
+            typst_list_marker(ListLevelFormat::Square)
+        )));
+        assert_eq!(
+            typst_list_numbering(ListLevelFormat::LowerAlpha),
+            Some("a.")
+        );
+        assert_eq!(typst_list_numbering(ListLevelFormat::Disc), None);
+
+        let list = render_typst_list(ListKind::Letter, &items[..1], &inline);
+        assert_eq!(
+            render_typst_text_block("list_letter", &list, false, false),
+            format!("{list}\n\n")
+        );
+        assert_eq!(
+            render_typst_cited_text_block("list_letter", &list, "Citation", false),
+            None
+        );
+        // A list never opens with a drop cap.
+        assert_eq!(
+            dropcap_block_index(&[text_block("list_bullet", "Apples")], &[0], false),
+            None
+        );
+    }
+
+    #[test]
+    fn list_items_share_their_block_footnotes() {
+        let footnotes = vec![
+            (2, "Second".to_string()),
+            (1, "First".to_string()),
+            (3, "Unmarked".to_string()),
+        ];
+        let parts = render_inline_typst_parts_with_footnotes(
+            &["a [2]", "b [1] and [2] again", "c"],
+            &footnotes,
+            false,
+        );
+        assert_eq!(
+            parts,
+            vec![
+                "#text(\"a \")#footnote[#text(\"Second\")]".to_string(),
+                "#text(\"b \")#footnote[#text(\"First\")]#text(\" and [2] again\")".to_string(),
+                "#text(\"c\")#footnote[#text(\"Unmarked\")]".to_string(),
+            ]
+        );
+        assert_eq!(
+            render_inline_typst_with_footnotes("Text [1]", &footnotes, false),
+            "#text(\"Text \")#footnote[#text(\"First\")]#super[,]#footnote[#text(\"Second\")]#super[,]#footnote[#text(\"Unmarked\")]"
+        );
+    }
+
+    #[test]
+    fn list_rows_compile_in_the_pdf_export() {
+        let workspace = pdf_workspace().unwrap();
+        let _cleanup = WorkspaceCleanup(workspace.clone());
+        let document = ExportDocument {
+            title: "Lists".into(),
+            language_code: "en".into(),
+            blocks: vec![
+                text_block(
+                    "list_number",
+                    "Numbers [1]\n\tLetters\n\t\tNumerals\n\t\t\tNumbers again\nTwo",
+                ),
+                ExportBlock::Footnote {
+                    number: 1,
+                    marker: 1,
+                    anchor_block: Some(0),
+                    text: "A note in a list.".into(),
+                },
+                text_block("paragraph", "A paragraph after a list."),
+                text_block(
+                    "list_bullet",
+                    "Disc\n\tCircle\n\t\tSquare\n\t\t\tDisc again",
+                ),
+                text_block("list_letter", "a\n\ti\n\t\t1"),
+                text_block(
+                    "list_roman",
+                    "I\n\tA\n\t\t1\n\t\t\ta\n\t\t\t\ti\n\t\t\t\t\tI again",
+                ),
+                text_block("paragraph", "The end."),
+            ],
+            book_parts: Vec::new(),
+        };
+        let session = begin_pdf_image_cache(&test_image_cache_scope("list-rows"));
+        let options = PdfWorkspacePreparationOptions {
+            paper_size: "a5",
+            footnote_links_as_plain_text: true,
+            image_cache_session: &session,
+            layout: TypstLayout::Export,
+        };
+        prepare_typst_workspace(
+            None,
+            "",
+            &workspace,
+            &document,
+            &options,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let source = fs::read_to_string(workspace.join("chapter.typ")).unwrap();
+        assert!(source.contains(
+            "#set par(first-line-indent: (amount: 0pt, all: true))\n#enum(numbering: \"1.\", [#text(\"Numbers \")#footnote[#text(\"A note in a list.\")]#enum(numbering: \"a.\", "
+        ));
+        // A list is not a plain paragraph: it takes no drop cap, and the
+        // paragraph after it starts flush, as after a quote.
+        assert!(!source.contains("#gnosis-dropcap["));
+        assert!(source.contains(
+            "#set par(first-line-indent: (amount: 0pt, all: true))\n#text(\"A paragraph after a list.\")"
+        ));
+        assert!(source.contains("#enum(numbering: \"I.\", [#text(\"I\")#enum(numbering: \"A.\", "));
+        assert!(source.contains("#list(marker: box("));
+        let (Some(binary), Some(fonts)) = (
+            std::env::var_os("GNOSIS_TYPST_BIN"),
+            std::env::var_os("GNOSIS_TYPST_SMOKE_FONT_DIR"),
+        ) else {
+            return;
+        };
+        let pdf = workspace.join("lists.pdf");
+        let output = std::process::Command::new(&binary)
+            .args(["compile", "--ignore-system-fonts", "--font-path"])
+            .arg(&fonts)
+            .arg("--root")
+            .arg(&workspace)
+            .arg("--package-path")
+            .arg(workspace.join("packages"))
+            .arg(workspace.join("chapter.typ"))
+            .arg(&pdf)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        if let Some(destination) = std::env::var_os("GNOSIS_LIST_SMOKE_OUTPUT") {
+            fs::copy(&pdf, PathBuf::from(destination)).unwrap();
+        }
     }
 }
