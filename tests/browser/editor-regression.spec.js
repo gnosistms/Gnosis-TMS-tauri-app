@@ -1110,6 +1110,7 @@ async function readEditorFieldMetrics(page, rowId, languageCode, contentKind = "
       fontSizePx: Number.parseFloat(styles.fontSize),
       fontWeight: styles.fontWeight,
       fontStyle: styles.fontStyle,
+      textTransform: styles.textTransform,
       opacity: Number(styles.opacity),
       paddingLeftPx: Number.parseFloat(styles.paddingLeft),
     };
@@ -5448,15 +5449,21 @@ test.describe("editor regressions", () => {
     await expect.poll(async () => {
       return (await readEditorFieldMetrics(page, "fixture-row-0001", "vi"))?.fontSizePx ?? 0;
     }).toBeGreaterThan(paragraphMetrics.fontSizePx);
+    // Latin-script headings match the PDF export: regular-weight capitals at
+    // 12pt (H2) and 14.5pt (H1) over an 11.5pt body.
     const heading2Metrics = await readEditorFieldMetrics(page, "fixture-row-0001", "vi");
-    expect(Number.parseInt(heading2Metrics.fontWeight, 10)).toBeGreaterThanOrEqual(700);
+    expect(heading2Metrics.fontSizePx / paragraphMetrics.fontSizePx).toBeCloseTo(12 / 11.5, 2);
+    expect(heading2Metrics.fontWeight).toBe("400");
+    expect(heading2Metrics.textTransform).toBe("uppercase");
 
     await heading1Button.click();
     await expect.poll(async () => {
       return (await readEditorFieldMetrics(page, "fixture-row-0001", "vi"))?.fontSizePx ?? 0;
     }).toBeGreaterThan(heading2Metrics.fontSizePx);
     const heading1Metrics = await readEditorFieldMetrics(page, "fixture-row-0001", "vi");
-    expect(Number.parseInt(heading1Metrics.fontWeight, 10)).toBeGreaterThanOrEqual(700);
+    expect(heading1Metrics.fontSizePx / paragraphMetrics.fontSizePx).toBeCloseTo(14.5 / 11.5, 2);
+    expect(heading1Metrics.fontWeight).toBe("400");
+    expect(heading1Metrics.textTransform).toBe("uppercase");
 
     await clickLocatorCenter(page, quoteButton);
     await expect.poll(async () => {

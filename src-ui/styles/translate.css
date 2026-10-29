@@ -490,20 +490,45 @@
   color: inherit;
 }
 
-/* Approximates the PDF headings: regular-weight capitals at 13pt and 12pt over
-   an 11.5pt body. */
+/* Headings in the editor and the preview follow the PDF export (the heading
+   rule in typst_preamble): Latin-script text gets regular-weight capitals at
+   14.5pt and 12pt over an 11.5pt body. Japanese, Korean, Chinese, Arabic and
+   Persian keep Typst's default bold headings at 1.4em and 1.2em; the lang
+   prefixes match latin_body in pdf_export.rs. */
+.translation-language-panel__field,
+.translation-language-panel__field-highlight,
+.translation-language-panel__field-static,
+.translate-preview__block {
+  --heading1-scale: calc(14.5 / 11.5);
+  --heading2-scale: calc(12 / 11.5);
+  --heading-weight: 400;
+  --heading-case: uppercase;
+}
+
+:is(
+  .translation-language-panel__field,
+  .translation-language-panel__field-highlight,
+  .translation-language-panel__field-static,
+  .translate-preview__block
+):is([lang^="ja" i], [lang^="ko" i], [lang^="zh" i], [lang^="ar" i], [lang^="fa" i]) {
+  --heading1-scale: 1.4;
+  --heading2-scale: 1.2;
+  --heading-weight: 700;
+  --heading-case: none;
+}
+
 .translate-preview__block--heading1 {
-  font-size: calc(var(--translation-editor-font-size, 14px) * 13 / 11.5);
-  font-weight: 400;
+  font-size: calc(var(--translation-editor-font-size, 14px) * var(--heading1-scale));
+  font-weight: var(--heading-weight);
   line-height: 1.3;
-  text-transform: uppercase;
+  text-transform: var(--heading-case);
 }
 
 .translate-preview__block--heading2 {
-  font-size: calc(var(--translation-editor-font-size, 14px) * 12 / 11.5);
-  font-weight: 400;
+  font-size: calc(var(--translation-editor-font-size, 14px) * var(--heading2-scale));
+  font-weight: var(--heading-weight);
   line-height: 1.35;
-  text-transform: uppercase;
+  text-transform: var(--heading-case);
 }
 
 /* Mirrors the PDF block quote: upright, 0.9 of body size, inset on both sides. */
@@ -1761,6 +1786,13 @@
   font-weight: var(--editor-non-latin-serif-weight);
 }
 
+/* Preview headings keep their heading weight over the heavier non-Latin body
+   weight above, so non-Latin headings stay bold as in the PDF. The book
+   preview's own heading rules load later and still win. */
+.translate-preview__block:is(.translate-preview__block--heading1, .translate-preview__block--heading2) {
+  font-weight: var(--heading-weight);
+}
+
 /* The footnote collection is a layout wrapper; only the individual note or
    attribution being edited gets a focus surface. */
 .translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote):focus-within,
@@ -1932,17 +1964,19 @@
 .translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style="heading1"] .translation-language-panel__field,
 .translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style="heading1"] .translation-language-panel__field-highlight,
 .translation-language-panel__field-static[data-row-text-style="heading1"] {
-  font-size: calc(var(--translation-editor-font-size, 14px) * 1.4);
-  font-weight: 700;
+  font-size: calc(var(--translation-editor-font-size, 14px) * var(--heading1-scale));
+  font-weight: var(--heading-weight);
   line-height: 1.3;
+  text-transform: var(--heading-case);
 }
 
 .translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style="heading2"] .translation-language-panel__field,
 .translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style="heading2"] .translation-language-panel__field-highlight,
 .translation-language-panel__field-static[data-row-text-style="heading2"] {
-  font-size: calc(var(--translation-editor-font-size, 14px) * 1.18);
-  font-weight: 700;
+  font-size: calc(var(--translation-editor-font-size, 14px) * var(--heading2-scale));
+  font-weight: var(--heading-weight);
   line-height: 1.35;
+  text-transform: var(--heading-case);
 }
 
 .translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style="quote"],
