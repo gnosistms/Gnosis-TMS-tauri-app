@@ -490,20 +490,45 @@
   color: inherit;
 }
 
-/* Approximates the PDF headings: regular-weight capitals at 13pt and 12pt over
-   an 11.5pt body. */
+/* Headings in the editor and the preview follow the PDF export (the heading
+   rule in typst_preamble): Latin-script text gets regular-weight capitals at
+   14.5pt and 12pt over an 11.5pt body. Japanese, Korean, Chinese, Arabic and
+   Persian keep Typst's default bold headings at 1.4em and 1.2em; the lang
+   prefixes match latin_body in pdf_export.rs. */
+.translation-language-panel__field,
+.translation-language-panel__field-highlight,
+.translation-language-panel__field-static,
+.translate-preview__block {
+  --heading1-scale: calc(14.5 / 11.5);
+  --heading2-scale: calc(12 / 11.5);
+  --heading-weight: 400;
+  --heading-case: uppercase;
+}
+
+:is(
+  .translation-language-panel__field,
+  .translation-language-panel__field-highlight,
+  .translation-language-panel__field-static,
+  .translate-preview__block
+):is([lang^="ja" i], [lang^="ko" i], [lang^="zh" i], [lang^="ar" i], [lang^="fa" i]) {
+  --heading1-scale: 1.4;
+  --heading2-scale: 1.2;
+  --heading-weight: 700;
+  --heading-case: none;
+}
+
 .translate-preview__block--heading1 {
-  font-size: calc(var(--translation-editor-font-size, 14px) * 13 / 11.5);
-  font-weight: 400;
+  font-size: calc(var(--translation-editor-font-size, 14px) * var(--heading1-scale));
+  font-weight: var(--heading-weight);
   line-height: 1.3;
-  text-transform: uppercase;
+  text-transform: var(--heading-case);
 }
 
 .translate-preview__block--heading2 {
-  font-size: calc(var(--translation-editor-font-size, 14px) * 12 / 11.5);
-  font-weight: 400;
+  font-size: calc(var(--translation-editor-font-size, 14px) * var(--heading2-scale));
+  font-weight: var(--heading-weight);
   line-height: 1.35;
-  text-transform: uppercase;
+  text-transform: var(--heading-case);
 }
 
 /* Mirrors the PDF block quote: upright, 0.9 of body size, inset on both sides. */
@@ -521,13 +546,31 @@
   text-align: center;
 }
 
-.translate-preview__separator {
+/* Lists indent like the editor's list rows: a marker gutter, then one indent a
+   level. */
+.translate-preview__block--list {
+  padding-left: 2.25em;
+}
+
+.translate-preview__block--list :is(ol, ul) {
+  margin: 0;
+  padding-left: 2em;
+}
+
+/* Separators show the flourish the PDF prints. As a mask it takes the text
+   colour, which an <hr> otherwise sets to grey. */
+.translate-preview__separator,
+.translation-language-panel__inline-separator,
+.history-inline-separator {
   display: block;
-  width: 100%;
-  height: 0;
-  margin: 0.35em 0;
+  width: 4em;
+  aspect-ratio: 1416 / 403;
+  margin: 0.6em auto;
   border: 0;
-  border-top: 1px solid rgba(164, 112, 41, 0.34);
+  color: inherit;
+  background: currentColor;
+  -webkit-mask: url("../../src-tauri/src/project_import/chapter_editor/chapter_flourish.svg") center / contain no-repeat;
+  mask: url("../../src-tauri/src/project_import/chapter_editor/chapter_flourish.svg") center / contain no-repeat;
 }
 
 .translate-preview__image-block {
@@ -548,7 +591,6 @@
 
 .translate-preview__image-caption {
   text-align: center;
-  font-style: italic;
 }
 
 /* A caption uses the shared tooltip itself; hide the surrounding figure's hint. */
@@ -1124,6 +1166,15 @@
   font-size: 11px;
 }
 
+.translation-row-text-style-button__icon {
+  display: inline-flex;
+}
+
+.translation-row-text-style-button__icon svg {
+  width: 14px;
+  height: 14px;
+}
+
 .translation-row-text-style-button--separator .translation-row-text-style-button__label {
   font-size: 11px;
   text-transform: lowercase;
@@ -1281,7 +1332,6 @@
   font-family: var(--font-serif);
   font-size: var(--translation-editor-font-size, 14px);
   line-height: 1.5;
-  font-style: italic;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   word-break: break-word;
@@ -1495,15 +1545,6 @@
 
 .translation-language-panel__paragraph + .translation-language-panel__paragraph {
   margin-top: 0.6em;
-}
-
-.translation-language-panel__inline-separator,
-.history-inline-separator {
-  display: block;
-  width: 100%;
-  height: 0;
-  margin: 0.55em 0;
-  border-top: 1px solid rgba(164, 112, 41, 0.36);
 }
 
 .translation-language-panel__field-static--editable {
@@ -1763,6 +1804,13 @@
   font-weight: var(--editor-non-latin-serif-weight);
 }
 
+/* Preview headings keep their heading weight over the heavier non-Latin body
+   weight above, so non-Latin headings stay bold as in the PDF. The book
+   preview's own heading rules load later and still win. */
+.translate-preview__block:is(.translate-preview__block--heading1, .translate-preview__block--heading2) {
+  font-weight: var(--heading-weight);
+}
+
 /* The footnote collection is a layout wrapper; only the individual note or
    attribution being edited gets a focus surface. */
 .translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote):focus-within,
@@ -1934,17 +1982,19 @@
 .translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style="heading1"] .translation-language-panel__field,
 .translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style="heading1"] .translation-language-panel__field-highlight,
 .translation-language-panel__field-static[data-row-text-style="heading1"] {
-  font-size: calc(var(--translation-editor-font-size, 14px) * 1.4);
-  font-weight: 700;
+  font-size: calc(var(--translation-editor-font-size, 14px) * var(--heading1-scale));
+  font-weight: var(--heading-weight);
   line-height: 1.3;
+  text-transform: var(--heading-case);
 }
 
 .translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style="heading2"] .translation-language-panel__field,
 .translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style="heading2"] .translation-language-panel__field-highlight,
 .translation-language-panel__field-static[data-row-text-style="heading2"] {
-  font-size: calc(var(--translation-editor-font-size, 14px) * 1.18);
-  font-weight: 700;
+  font-size: calc(var(--translation-editor-font-size, 14px) * var(--heading2-scale));
+  font-weight: var(--heading-weight);
   line-height: 1.35;
+  text-transform: var(--heading-case);
 }
 
 .translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style="quote"],
@@ -1984,6 +2034,130 @@
 .translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style="centered"] .translation-language-panel__field-highlight,
 .translation-language-panel__field-static[data-row-text-style="centered"] {
   text-align: center;
+}
+
+/* List rows: one item per line, its marker hanging in a gutter left of the
+   text. The textarea indents with tabs one level wide, and a marker overlay
+   mirrors its text so each marker sits where its item starts. */
+.translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style^="list_"] {
+  --list-gutter: 2.25em;
+  --list-indent: 2em;
+  --translation-field-padding-right: 32px;
+}
+
+.translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style^="list_"] .translation-language-panel__field,
+.translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style^="list_"] .translation-language-panel__field-highlight,
+.translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style^="list_"] .translation-language-panel__field-static {
+  padding-left: calc(var(--translation-field-padding-left) + var(--list-gutter));
+  tab-size: 8;
+  tab-size: 2em;
+}
+
+.translation-language-panel__list-item {
+  display: block;
+  position: relative;
+  padding-left: calc(var(--list-level, 0) * var(--list-indent, 2em));
+}
+
+.translation-language-panel__list-marker {
+  position: absolute;
+  top: 0;
+  left: calc(var(--list-level, 0) * var(--list-indent, 2em) - var(--list-gutter, 2.25em));
+  width: var(--list-gutter, 2.25em);
+  box-sizing: border-box;
+  padding-right: 0.5em;
+  color: var(--muted);
+  -webkit-text-fill-color: var(--muted);
+  text-align: right;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.translation-language-panel__list-markers {
+  display: block;
+  z-index: 3;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+
+.translation-language-panel__list-marker-anchor {
+  position: relative;
+}
+
+/* Right-aligned to where the item's text starts; the vertical position stays
+   on the item's first line. */
+.translation-language-panel__list-markers .translation-language-panel__list-marker {
+  top: auto;
+  left: auto;
+  right: 0;
+  width: auto;
+}
+
+.translation-language-panel__list-settings {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  z-index: 4;
+  display: none;
+}
+
+.translation-language-panel__editor:hover .translation-language-panel__list-settings,
+.translation-language-panel__editor:focus-within .translation-language-panel__list-settings,
+.translation-language-panel__list-settings:has([aria-expanded="true"]) {
+  display: inline-flex;
+}
+
+.translation-language-panel__list-settings-button {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid rgba(164, 112, 41, 0.18);
+  border-radius: 6px;
+  background: rgba(255, 251, 246, 0.92);
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    color 140ms ease;
+}
+
+.translation-language-panel__list-settings-button:hover,
+.translation-language-panel__list-settings-button:focus-visible,
+.translation-language-panel__list-settings-button[aria-expanded="true"] {
+  border-color: rgba(236, 134, 9, 0.42);
+  background: rgba(255, 247, 238, 0.98);
+  color: var(--link-hover);
+  outline: none;
+}
+
+.translation-language-panel__list-settings-button svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linejoin: round;
+}
+
+.editor-list-style-menu {
+  min-width: 170px;
+}
+
+.editor-list-style-menu__marker {
+  display: inline-block;
+  width: 2em;
+  color: var(--muted);
+}
+
+.editor-list-style-menu__item[aria-checked="true"] {
+  background: var(--control-hover-surface);
+  font-weight: 600;
 }
 
 /* Custom-HTML rows show raw HTML while editing (monospace, so tags read clearly)
@@ -2421,10 +2595,12 @@
   display: none;
 }
 
+.translation-row-text-style-button--change-insert .translation-row-text-style-button__icon,
 .translation-row-text-style-button--change-insert .translation-row-text-style-button__label {
   color: rgba(var(--reviewed-accent-rgb), 0.96);
 }
 
+.translation-row-text-style-button--change-delete .translation-row-text-style-button__icon,
 .translation-row-text-style-button--change-delete .translation-row-text-style-button__label {
   color: rgba(var(--please-check-accent-rgb), 0.92);
 }

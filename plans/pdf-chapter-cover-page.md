@@ -86,6 +86,22 @@ Not matched yet: the PDF gives each letter its own gap for its swash
 (`gnosis-dropcap-gap`, 1.74em for T). The preview has one gap, so the T's
 crossbar runs into the text beside it, as it did before.
 
+## Citations end with the quote text
+
+A general fix, most visible on covers. A quote is inset 1em on both sides, but its
+citation was pushed back out to the column's right margin (`outdent: 1em`), where a
+separate citation block used to sit. On a body page the surrounding paragraphs show
+that margin, but on a cover the quote is the only text, so the citation seemed to
+hang 1em past it. The centred one-line cover quote did the same: its citation ended
+at the quote's padded edge, not its text.
+
+Now every quote's citation ends where the quote text does. `gnosis-citation` drops
+`outdent`, so inside a quote it stays within the quote's padding, and the centred
+cover branch pads its stacked citation by the same 1em. The preview gives a
+citation that follows a quote the quote's `padding-inline`. Citations of
+paragraphs, and standalone citation blocks, keep the column margin, which is where
+that text ends.
+
 ## Validation
 
 - Rust unit tests for the rule; a Typst layout test that compiles quote and image

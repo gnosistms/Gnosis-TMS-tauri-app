@@ -76,11 +76,18 @@
 .book-page--chapter .translate-preview__block--quote:has(+ cite) { margin-bottom: 0; }
 .book-page--chapter .translate-preview__block--indented { padding-inline: 0; padding-left: 2em; }
 .book-page--chapter .translate-preview__block--centered { text-align: center; }
-.book-page--chapter .translate-preview__attribution { display: block; font-family: var(--book-body-font); font-size: calc(var(--book-paper-font) * .8); line-height: var(--book-line-height); text-align: right; font-style: normal; text-transform: uppercase; letter-spacing: .06em; word-spacing: var(--book-word-spacing); margin: 0 0 calc(var(--book-paper-font) * .72); }
-.book-page--chapter .translate-preview__separator { margin: .78em 0 .8em; border-top: calc(var(--book-paper-mm) * .176389) solid #000; }
+.book-page--chapter .translate-preview__block--list { margin: .78em 0; padding-inline-start: 1.5em; }
+.book-page--chapter .translate-preview__block--list :is(ol, ul) { margin: 0; padding-inline-start: 1.5em; }
+/* As in the PDF, a citation sits a quarter em further below its text than a new
+   paragraph would, so it does not read as one more line of the text. */
+.book-page--chapter .translate-preview__attribution { display: block; font-family: var(--book-body-font); font-size: calc(var(--book-paper-font) * .8); line-height: var(--book-line-height); text-align: right; font-style: normal; text-transform: uppercase; letter-spacing: .06em; word-spacing: var(--book-word-spacing); margin: 0 0 calc(var(--book-paper-font) * .72); padding-top: calc(var(--book-paper-font) * .25); }
+/* As in the PDF, a quote's citation keeps the quote's inset, so it ends where
+   the quote text does rather than at the margin. */
+.book-page--chapter .translate-preview__block--quote + .translate-preview__attribution { padding-inline: var(--book-paper-font); }
+.book-page--chapter .translate-preview__separator { width: calc(var(--book-paper-mm) * 16.764); height: calc(var(--book-paper-mm) * 4.771); margin: 1.25em auto; }
 .book-page--chapter .translate-preview__image-block { display: block; margin: .78em 0; text-indent: 0; break-inside: avoid; }
 .book-page--chapter .translate-preview__image { width: 100%; max-height: calc(var(--book-paper-height) - var(--book-paper-top) - var(--book-paper-bottom) - 5em); margin: 0 auto; object-fit: contain; }
-.book-page--chapter .translate-preview__image-caption { font-size: .75em; font-style: italic; text-align: center; margin-top: calc(var(--book-paper-font) * .85); word-spacing: var(--book-word-spacing); }
+.book-page--chapter .translate-preview__image-caption { font-size: .75em; text-align: center; margin-top: calc(var(--book-paper-font) * .85); word-spacing: var(--book-word-spacing); }
 /* As in the PDF, a chapter that opens with a quote or an image shows it alone
    under the title, and its text starts on the next sheet. A cover image shrinks
    to the space the header leaves, like the PDF's 1fr block. */
@@ -97,7 +104,7 @@
    Older webviews retain the untrimmed, continuous line-box approximation above. */
 @supports (text-box: trim-both cap alphabetic) {
   :is(.book-chapter__body, .book-chapter__epigraph) > :is(.translate-preview__block, cite) { text-box: trim-both cap alphabetic; }
-  .book-chapter__body > .translate-preview__block--paragraph, .book-chapter__body > .translate-preview__block--centered, .book-chapter__body > .translate-preview__block--indented { margin: .78em 0; }
+  .book-chapter__body > .translate-preview__block--paragraph, .book-chapter__body > .translate-preview__block--centered, .book-chapter__body > .translate-preview__block--indented, .book-chapter__body > .translate-preview__block--list { margin: .78em 0; }
   .book-chapter__body > .translate-preview__block--heading1, .book-chapter__body > .translate-preview__block--heading2 { margin-bottom: calc(var(--book-paper-font) * .78); }
   :is(.book-chapter__body, .book-chapter__epigraph) > .translate-preview__block--quote { margin: calc(var(--book-paper-font) * 1.5) 0; }
   :is(.book-chapter__body, .book-chapter__epigraph) > .translate-preview__block--quote:has(+ cite) { margin-bottom: calc(var(--book-paper-font) * .78); }
@@ -111,7 +118,10 @@
 .book-chapter__footnotes { margin-top: auto; padding-top: 1em; font-size: .85em; line-height: var(--book-footnote-line-height); word-spacing: var(--book-word-spacing); }
 .book-chapter__footnotes::before { content: ""; display: block; width: 30%; border-top: .05em solid #000; margin-bottom: .5em; }
 .book-chapter__footnotes .wp-block-footnotes { margin: 0; padding: 0; list-style: none; counter-reset: book-footnote; }
-.book-chapter__footnotes li { display: grid; grid-template-columns: calc(var(--book-paper-mm) * 4.233333) 1fr; column-gap: calc(var(--book-paper-mm) * 1.058333); margin: 0 0 .5em; text-align: justify; }
+/* As in the PDF, notes are a third of a line further apart than the lines
+   inside a note: the PDF's 0.73em gap (in body ems) less its 0.5em footnote
+   leading, in footnote ems. */
+.book-chapter__footnotes li { display: grid; grid-template-columns: calc(var(--book-paper-mm) * 4.233333) 1fr; column-gap: calc(var(--book-paper-mm) * 1.058333); margin: 0 0 .36em; text-align: justify; }
 .book-chapter__footnotes li::before { counter-increment: book-footnote; content: counter(book-footnote) "."; text-align: right; }
 .book-chapter__footnotes li:last-child { margin-bottom: 0; }
 .book-chapter__footnotes .translate-preview__footnote-backlink { display: none; }
@@ -157,7 +167,7 @@
 .book-image.is-drag-over { outline: 2px solid #c78f38; outline-offset: 5px; }
 .book-page--image { display: flex; flex-direction: column; justify-content: center; }
 .book-page--image .book-image { margin: 0 auto; }
-.book-page__caption { font-size: .75em; font-style: italic; margin-top: calc(var(--book-paper-font) * .85); }
+.book-page__caption { font-size: .75em; margin-top: calc(var(--book-paper-font) * .85); }
 .book-page__dedication { margin-top: 70px; min-height: 250px; width: 100%; resize: vertical; background: transparent; border: 0; font: italic 18px/1.7 "Noto Serif", serif; color: inherit; text-align: center; }
 .book-page--copyright { display: flex; flex-direction: column; }
 .book-copyright__toolbar { position: sticky; top: 0; z-index: 1; display: flex; flex: none; align-items: center; gap: 6px; padding: 6px 14px; border-bottom: 1px solid var(--surface-border); background: var(--panel-surface); }

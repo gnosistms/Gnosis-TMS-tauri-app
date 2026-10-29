@@ -33,6 +33,10 @@ use super::chapter_export::{
     inline_visible_text, load_export_chapters, ExportBlock, ExportChapterFileInput, ExportDocument,
     ExportImage, InlineStyleState,
 };
+use super::list_style::{
+    is_list_text_style, list_events, list_items, list_kind, ListEvent, ListItem, ListKind,
+    ListLevelFormat,
+};
 
 const PDF_EXPORT_EVENT: &str = "chapter-pdf-export-progress";
 const FONT_REVISION: &str =
@@ -1569,19 +1573,36 @@ fn render_typst_chapter(
         }
         match block {
             ExportBlock::Text { text_style, text } => {
-                let inline = render_inline_typst_with_footnotes(
-                    text,
-                    anchored_footnotes
-                        .get(&block_index)
-                        .map(Vec::as_slice)
-                        .unwrap_or_default(),
-                    options.footnote_links_as_plain_text,
-                );
+                let footnotes = anchored_footnotes
+                    .get(&block_index)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default();
+                let inline = match list_kind(text_style) {
+                    // A list row is set whole, as one native Typst list.
+                    Some(kind) => {
+                        let items = list_items(text);
+                        let texts = items
+                            .iter()
+                            .map(|item| item.text.as_str())
+                            .collect::<Vec<_>>();
+                        let items_inline = render_inline_typst_parts_with_footnotes(
+                            &texts,
+                            footnotes,
+                            options.footnote_links_as_plain_text,
+                        );
+                        render_typst_list(kind, &items, &items_inline)
+                    }
+                    None => render_inline_typst_with_footnotes(
+                        text,
+                        footnotes,
+                        options.footnote_links_as_plain_text,
+                    ),
+                };
                 let style = export_text_style(Some(text_style));
                 let plain = !matches!(
                     style.as_str(),
                     "heading1" | "heading2" | "quote" | "blockquote" | "centered" | "indented"
-                );
+                ) && !is_list_text_style(&style);
                 if latin_body(&document.language_code) {
                     let amount = if plain && indent_next && Some(block_index) != dropcap_index {
                         "1.5em"
@@ -1593,11 +1614,8 @@ fn render_typst_chapter(
                     ));
                 }
                 let dropcap = Some(block_index) == dropcap_index;
-                let citation = match document.blocks.get(block_index + 1) {
-                    Some(ExportBlock::Attribution { text }) => Some(text),
-                    _ => None,
-                };
-                let cited_block = citation.filter(|_| !dropcap).and_then(|citation| {
+                let citation = citation_after(&document.blocks, block_index);
+                let cited_block = citation.filter(|_| !dropcap).and_then(|(_, citation)| {
                     render_typst_cited_text_block(
                         text_style,
                         &inline,
@@ -1607,7 +1625,7 @@ fn render_typst_chapter(
                 });
                 if let Some(cited_block) = cited_block {
                     source.push_str(&cited_block);
-                    set_citation = Some(block_index + 1);
+                    set_citation = citation.map(|(index, _)| index);
                 } else {
                     let mut text_block =
                         render_typst_text_block(text_style, &inline, dropcap, cover_open);
@@ -1651,7 +1669,9 @@ fn render_typst_chapter(
             }
             ExportBlock::Separator => {
                 indent_next = false;
-                source.push_str("#line(length: 100%, stroke: 0.5pt)\n#v(0.8em)\n")
+                source.push_str(
+                    "#v(1em)\n#align(center, image(\"flourish.svg\", width: 0.66in))\n#v(1em)\n",
+                )
             }
             ExportBlock::Footnote { number, text, .. } if !anchored_numbers.contains(number) => {
                 source.push_str(&format!(
@@ -2071,10 +2091,11 @@ fn dropcap_block_index(
                 // Blank rows emit nothing visible — look past them, the way a
                 // reader would.
                 let Some(first) = first else { continue };
+                let style = export_text_style(Some(text_style));
                 let plain = !matches!(
-                    export_text_style(Some(text_style)).as_str(),
+                    style.as_str(),
                     "heading1" | "heading2" | "quote" | "blockquote" | "centered" | "indented"
-                );
+                ) && !is_list_text_style(&style);
                 return (plain && first.is_alphabetic()).then_some(index);
             }
             _ => return None,
@@ -2108,9 +2129,8 @@ fn chapter_cover_end(blocks: &[ExportBlock], title_promoted: bool) -> Option<usi
     let mut end = first;
     if quote(&blocks[first]) {
         for (index, block) in blocks.iter().enumerate().skip(first + 1) {
-            let citation = index == end + 1
-                && quote(&blocks[end])
-                && matches!(block, ExportBlock::Attribution { .. });
+            let citation = quote(&blocks[end])
+                && citation_after(blocks, end).is_some_and(|(cited, _)| cited == index);
             if quote(block) || citation {
                 end = index;
             } else if !blank(block) {
@@ -2223,8 +2243,24 @@ fn render_typst_text_block(style: &str, inline: &str, dropcap: bool, cover: bool
         "quote" | "blockquote" => format!("#gnosis-quote[{inline}]\n\n"),
         "centered" => format!("#align(center)[{inline}]\n\n"),
         "indented" => format!("#pad(left: 2em)[{inline}]\n\n"),
+        // `inline` is the whole list, from `render_typst_list`.
+        list if is_list_text_style(list) => format!("{inline}\n\n"),
         _ if dropcap => format!("#gnosis-dropcap[{inline}]\n\n"),
         _ => format!("{inline}\n\n"),
+    }
+}
+
+/// The attribution that cites the text block at `index`, with its block index: the
+/// next block, when it is one. Footnotes between are looked past (they are set at
+/// the page foot), so a citation-only row also cites a previous row's footnoted text.
+fn citation_after(blocks: &[ExportBlock], index: usize) -> Option<(usize, &str)> {
+    let (offset, block) = blocks[index + 1..]
+        .iter()
+        .enumerate()
+        .find(|(_, block)| !matches!(block, ExportBlock::Footnote { .. }))?;
+    match block {
+        ExportBlock::Attribution { text } => Some((index + 1 + offset, text.as_str())),
+        _ => None,
     }
 }
 
@@ -2248,6 +2284,8 @@ fn render_typst_cited_text_block(
     let cover_argument = if cover { ", cover: true" } else { "" };
     match export_text_style(Some(style)).as_str() {
         "heading1" | "heading2" => None,
+        // Only quotes have citations.
+        list if is_list_text_style(list) => None,
         "quote" | "blockquote" => Some(format!(
             "#gnosis-quote(citation: [{citation}]{cover_argument})[{inline}]\n\n"
         )),
@@ -2257,7 +2295,11 @@ fn render_typst_cited_text_block(
         "indented" => Some(format!(
             "#block(below: 1.5em)[#pad(left: 2em)[{inline}{citation_line}]]\n\n"
         )),
-        _ => Some(format!("#block(below: 1.5em)[{inline}{citation_line}]\n\n")),
+        // Inline content alone in a block is no paragraph, so it would lose the
+        // body text's first-line indent and justification without `par`.
+        _ => Some(format!(
+            "#block(below: 1.5em)[#par[{inline}{citation_line}]]\n\n"
+        )),
     }
 }
 
@@ -2896,7 +2938,7 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     let heading_rule = if latin {
-        format!("#show heading: set text(font: ({heading_family_list}), weight: \"regular\")\n#show heading: upper\n#show heading.where(level: 1): set text(size: 13pt)\n#show heading.where(level: 2): set text(size: 12pt)\n#show heading: set block(above: 1.3em, below: {size_pt}pt * {leading_em})\n")
+        format!("#show heading: set text(font: ({heading_family_list}), weight: \"regular\")\n#show heading: upper\n#show heading.where(level: 1): set text(size: 14.5pt)\n#show heading.where(level: 2): set text(size: 12pt)\n#show heading: set block(above: 1.3em, below: {size_pt}pt * {leading_em})\n")
     } else {
         String::new()
     };
@@ -2971,12 +3013,20 @@ const GREEK_RUN_RULE_PREFIX: &str =
 /// footnote callout remains untouched, so references in the body stay superscripted.
 /// The marker is rebuilt as a link to preserve navigation in exported PDFs.
 ///
+/// Like Knuth's manmac.tex, which opens every footnote with a `\smallskip` (3pt on
+/// 9pt baselines), consecutive notes are a third of a line further apart than the
+/// lines inside a note, so a note's indented second paragraph is not mistaken for
+/// the next note. The gap is measured like leading, from one note's last baseline
+/// to the next note's cap height, and its em is the body text's, not the 0.85em
+/// footnote text's: 0.73em is the footnotes' 0.5em leading (0.425em of body text)
+/// plus about a third of a Crimson Pro footnote line.
+///
 /// Widow prevention is off inside entries, so a footnote may run over with a single
 /// line rather than be kept whole. A three-line footnote has no split that keeps two
 /// lines on each page, so Typst moved its referencing line to the next page instead,
 /// leaving a gap above the footnotes and a widow in the body text. Orphan prevention
 /// stays: a footnote never starts with a lone line at the foot of a page.
-const GNOSIS_FOOTNOTE_RULE: &str = r#"#set footnote.entry(indent: 0em)
+const GNOSIS_FOOTNOTE_RULE: &str = r#"#set footnote.entry(indent: 0em, gap: 0.73em)
 #show footnote.entry: it => {
   let marker-width = 12pt
   let marker-gap = 3pt
@@ -3018,10 +3068,13 @@ const GNOSIS_IMAGE_RULE: &str = "#let gnosis-image(path, caption: none) = layout
 ///
 /// `gnosis-citation` is a citation set as the last line of the paragraph it cites
 /// (see `render_typst_cited_text_block`), drawn where a separate citation block
-/// would be: one paragraph space below the text instead of one line's leading (the
-/// box's top inset adds the difference) and flush with the right margin. Inside a
-/// quote the text is 0.9em, so `scale` keeps its lengths in body-text units, and
-/// `outdent` reaches past the quote's 1em right padding to that margin.
+/// would be: a paragraph space and a quarter em below the text instead of one
+/// line's leading (the box's top inset adds the difference; the quarter em keeps
+/// the citation from reading as one more line of the text) and flush with the
+/// right edge of the text it cites. In a quote that edge is inside the quote's 1em
+/// padding, not at the right margin: on a chapter cover, with no body text to show
+/// the margin, a citation out there seemed to hang past the quote. Inside a quote
+/// the text is 0.9em, so `scale` keeps its lengths in body-text units.
 ///
 /// `gnosis-quote` keeps a quotation of up to six lines on one page and lets a longer
 /// one split like any paragraph. Typst has no keep-together-if-short setting, so the
@@ -3032,21 +3085,21 @@ const GNOSIS_IMAGE_RULE: &str = "#let gnosis-image(path, caption: none) = layout
 ///
 /// On a chapter cover (`cover: true`) a quote that fits on one line is centred
 /// rather than left alone at the start of an empty page: the quote shrinks to its
-/// text in a centred box, and its citation is stacked under it, flush with the
-/// quote's right edge as on a full-width quote and one quote line below it. A
-/// citation line inside the paragraph cannot do this, because its `h(1fr)` would
-/// stretch the box back to the full width. The centring block is given the full
-/// width explicitly: the wrapping block otherwise shrinks to the box, leaving
-/// `align` nothing to centre in.
-const GNOSIS_QUOTE_RULE: &str = r#"#let gnosis-citation(body, scale: 1, outdent: 0em) = [#linebreak(justify: false)#h(1fr)#context box(inset: (top: par.spacing / scale - par.leading))[#text(size: 0.8em / scale, style: "normal", tracking: 0.06em)[#upper(body)]]#h(-outdent / scale)]
+/// text in a centred box, and its citation is stacked under it, one quote line and
+/// a quarter em below it and padded like the quote, so it ends with the quote text
+/// as on a full-width quote. A citation line inside the paragraph cannot do this,
+/// because its `h(1fr)` would stretch the box back to the full width. The centring
+/// block is given the full width explicitly: the wrapping block otherwise shrinks
+/// to the box, leaving `align` nothing to centre in.
+const GNOSIS_QUOTE_RULE: &str = r#"#let gnosis-citation(body, scale: 1) = [#linebreak(justify: false)#h(1fr)#context box(inset: (top: (par.spacing + 0.25em) / scale - par.leading))[#text(size: 0.8em / scale, style: "normal", tracking: 0.06em)[#upper(body)]]]
 #let gnosis-quote-body(body, citation) = quote(block: true)[#set par(first-line-indent: 0pt)
-#text(size: 0.9em, style: "normal")[#body#if citation != none { gnosis-citation(citation, scale: 0.9, outdent: 1em) }]]
+#text(size: 0.9em, style: "normal")[#body#if citation != none { gnosis-citation(citation, scale: 0.9) }]]
 #let gnosis-quote(body, citation: none, cover: false) = block(above: 1.5em, below: 1.5em, layout(region => {
   let height(content) = measure(block(width: region.width, content)).height
   let slack = (0.5em).to-absolute()
   if cover and height(gnosis-quote-body(body, none)) <= height(gnosis-quote-body([X], none)) + slack {
-    let cited = if citation == none { () } else { (align(right, text(size: 0.8em, style: "normal", tracking: 0.06em)[#upper(citation)]),) }
-    return block(width: region.width, align(center, box(stack(spacing: 0.9 * par.leading, gnosis-quote-body(body, none), ..cited))))
+    let cited = if citation == none { () } else { (align(right, pad(x: 1em, text(size: 0.8em, style: "normal", tracking: 0.06em)[#upper(citation)])),) }
+    return block(width: region.width, align(center, box(stack(spacing: 0.9 * par.leading + 0.25em, gnosis-quote-body(body, none), ..cited))))
   }
   let quoted = gnosis-quote-body(body, citation)
   let sample = gnosis-quote-body(range(6).map(_ => [X]).join(linebreak()), citation)
@@ -3112,7 +3165,7 @@ fn render_typst_image_caption(caption: &str) -> String {
     // Vellum's reference captions use approximately 75% of body size and
     // centered, non-justified lines.
     format!(
-        "#align(center)[#set par(justify: false, first-line-indent: 0pt)\n#text(size: 0.75em, style: \"italic\")[{}]]",
+        "#align(center)[#set par(justify: false, first-line-indent: 0pt)\n#text(size: 0.75em)[{}]]",
         render_inline_typst(caption, false)
     )
 }
@@ -3144,50 +3197,71 @@ fn render_inline_typst_with_footnotes(
     footnotes: &[(usize, String)],
     footnote_links_as_plain_text: bool,
 ) -> String {
+    render_inline_typst_parts_with_footnotes(&[text], footnotes, footnote_links_as_plain_text)
+        .pop()
+        .unwrap_or_default()
+}
+
+/// Renders the parts of one block (a paragraph, or the items of a list) that share
+/// the block's footnotes. Each footnote is set at its marker in the first part that
+/// has it.
+fn render_inline_typst_parts_with_footnotes(
+    texts: &[&str],
+    footnotes: &[(usize, String)],
+    footnote_links_as_plain_text: bool,
+) -> Vec<String> {
     if footnotes.is_empty() {
-        return render_inline_typst(text, false);
+        return texts
+            .iter()
+            .map(|text| render_inline_typst(text, false))
+            .collect();
     }
-    let normalized = text.nfc().collect::<String>();
     let notes = footnotes
         .iter()
         .map(|(marker, text)| (*marker, text.as_str()))
         .collect::<HashMap<_, _>>();
-    let mut rendered = String::new();
     let mut used = HashSet::new();
+    let mut parts = Vec::new();
     // Adjacent markers separate with a superscript comma (the footmisc/AMA
     // convention), so [1][2] renders as ¹,² rather than ¹² (which reads as
     // note 12). Typst has no automatic separator yet — if a future Typst
     // release groups adjacent footnotes itself (typst/typst#7627), drop this.
     let mut last_emitted_footnote = false;
-    for segment in inline_segments(&normalized) {
-        let mut cursor = 0usize;
-        while let Some((start, end, marker)) =
-            next_unescaped_footnote_marker(&segment.text, cursor, &notes, &used)
-        {
-            let leading =
-                render_styled_typst_text(&segment.text[cursor..start], &segment.style, false);
-            if !leading.is_empty() {
+    for text in texts {
+        let normalized = text.nfc().collect::<String>();
+        let mut rendered = String::new();
+        last_emitted_footnote = false;
+        for segment in inline_segments(&normalized) {
+            let mut cursor = 0usize;
+            while let Some((start, end, marker)) =
+                next_unescaped_footnote_marker(&segment.text, cursor, &notes, &used)
+            {
+                let leading =
+                    render_styled_typst_text(&segment.text[cursor..start], &segment.style, false);
+                if !leading.is_empty() {
+                    last_emitted_footnote = false;
+                }
+                rendered.push_str(&leading);
+                if let Some(note) = notes.get(&marker) {
+                    if last_emitted_footnote {
+                        rendered.push_str("#super[,]");
+                    }
+                    rendered.push_str(&format!(
+                        "#footnote[{}]",
+                        render_footnote_typst(note, footnote_links_as_plain_text)
+                    ));
+                    used.insert(marker);
+                    last_emitted_footnote = true;
+                }
+                cursor = end;
+            }
+            let trailing = render_styled_typst_text(&segment.text[cursor..], &segment.style, false);
+            if !trailing.is_empty() {
                 last_emitted_footnote = false;
             }
-            rendered.push_str(&leading);
-            if let Some(note) = notes.get(&marker) {
-                if last_emitted_footnote {
-                    rendered.push_str("#super[,]");
-                }
-                rendered.push_str(&format!(
-                    "#footnote[{}]",
-                    render_footnote_typst(note, footnote_links_as_plain_text)
-                ));
-                used.insert(marker);
-                last_emitted_footnote = true;
-            }
-            cursor = end;
+            rendered.push_str(&trailing);
         }
-        let trailing = render_styled_typst_text(&segment.text[cursor..], &segment.style, false);
-        if !trailing.is_empty() {
-            last_emitted_footnote = false;
-        }
-        rendered.push_str(&trailing);
+        parts.push(rendered);
     }
     // Footnotes anchored to this block whose markers never appeared inline are
     // row-level footnotes: attach their references to the end of the block, matching
@@ -3200,18 +3274,69 @@ fn render_inline_typst_with_footnotes(
         .filter(|(marker, _)| !used.contains(marker))
         .collect::<Vec<_>>();
     appended.sort_by_key(|(marker, _)| *marker);
-    for (marker, note) in appended {
-        if last_emitted_footnote {
-            rendered.push_str("#super[,]");
+    if let Some(rendered) = parts.last_mut() {
+        for (marker, note) in appended {
+            if last_emitted_footnote {
+                rendered.push_str("#super[,]");
+            }
+            rendered.push_str(&format!(
+                "#footnote[{}]",
+                render_footnote_typst(note, footnote_links_as_plain_text)
+            ));
+            used.insert(*marker);
+            last_emitted_footnote = true;
         }
-        rendered.push_str(&format!(
-            "#footnote[{}]",
-            render_footnote_typst(note, footnote_links_as_plain_text)
-        ));
-        used.insert(*marker);
-        last_emitted_footnote = true;
     }
-    rendered
+    parts
+}
+
+/// A list row as one native Typst list, with `items_inline` holding each item's
+/// rendered inline content. Each nested list sets its own level's marker or
+/// numbering, and Typst restarts the count of every list.
+fn render_typst_list(kind: ListKind, items: &[ListItem], items_inline: &[String]) -> String {
+    let mut source = String::new();
+    for event in list_events(kind, items) {
+        match event {
+            ListEvent::OpenList(format) => match typst_list_numbering(format) {
+                Some(numbering) => {
+                    source.push_str(&format!("#enum(numbering: {}, ", typst_string(numbering)))
+                }
+                None => source.push_str(&format!("#list(marker: {}, ", typst_list_marker(format))),
+            },
+            ListEvent::OpenItem(index) => {
+                source.push('[');
+                source.push_str(items_inline.get(index).map(String::as_str).unwrap_or(""));
+            }
+            ListEvent::CloseItem => source.push_str("], "),
+            ListEvent::CloseList(_) => source.push(')'),
+        }
+    }
+    source
+}
+
+/// Typst's own numbering patterns. Its letters continue past z as aa, ab, …
+fn typst_list_numbering(format: ListLevelFormat) -> Option<&'static str> {
+    match format {
+        ListLevelFormat::Decimal => Some("1."),
+        ListLevelFormat::LowerAlpha => Some("a."),
+        ListLevelFormat::LowerRoman => Some("i."),
+        ListLevelFormat::UpperAlpha => Some("A."),
+        ListLevelFormat::UpperRoman => Some("I."),
+        ListLevelFormat::Disc | ListLevelFormat::Circle | ListLevelFormat::Square => None,
+    }
+}
+
+/// Bullets are drawn rather than set as text: the body fonts may have no ◦ or ▪,
+/// and a fallback font's glyphs differ in size and weight. Each shape is centred
+/// near the x-height, where a bullet glyph sits.
+fn typst_list_marker(format: ListLevelFormat) -> &'static str {
+    match format {
+        ListLevelFormat::Circle => {
+            "box(baseline: -0.12em, circle(radius: 0.11em, stroke: 0.05em + black))"
+        }
+        ListLevelFormat::Square => "box(baseline: -0.12em, square(size: 0.22em, fill: black))",
+        _ => "box(baseline: -0.11em, circle(radius: 0.12em, fill: black))",
+    }
 }
 
 fn next_unescaped_footnote_marker(
@@ -4482,6 +4607,13 @@ mod tests {
         assert!(source.contains("#gnosis-title(\"Chapter Two\", number: 2)"));
         assert!(source.contains("title: \"Interlude\", numbering: \"1\", level: 0, chapter: none"));
         assert!(source.contains("title: \"Inside Interlude\", numbering: \"1\", level: 1"));
+        // Chapter separators use the same flourish as the copyright page's.
+        assert_eq!(
+            source
+                .matches("#align(center, image(\"flourish.svg\", width: 0.66in))")
+                .count(),
+            2
+        );
         let (Some(binary), Some(font_dir)) = (
             std::env::var_os("GNOSIS_TYPST_BIN"),
             std::env::var_os("GNOSIS_TYPST_SMOKE_FONT_DIR"),
@@ -4725,7 +4857,8 @@ mod tests {
 
         // The native in-text callout stays intact; only entries at the foot of the
         // page are rebuilt with a baseline number and a stable text column.
-        assert!(preamble.contains("#set footnote.entry(indent: 0em)"));
+        // A third of a footnote line separates consecutive notes.
+        assert!(preamble.contains("#set footnote.entry(indent: 0em, gap: 0.73em)"));
         assert!(preamble.contains("let marker-width = 12pt"));
         assert!(preamble.contains("let marker-gap = 3pt"));
         assert!(preamble.contains("number + [.]"));
@@ -4767,7 +4900,9 @@ mod tests {
         // Capitals and a size above the 11.5pt body set H2 apart from body text,
         // still below H1.
         assert!(vietnamese_preamble.contains("#show heading: upper\n"));
-        assert!(vietnamese_preamble.contains("#show heading.where(level: 1): set text(size: 13pt)"));
+        assert!(
+            vietnamese_preamble.contains("#show heading.where(level: 1): set text(size: 14.5pt)")
+        );
         assert!(vietnamese_preamble.contains("#show heading.where(level: 2): set text(size: 12pt)"));
         // One body line of space below each heading, whatever its size.
         assert!(vietnamese_preamble
@@ -5041,12 +5176,67 @@ mod tests {
         ));
         assert!(source.contains("#gnosis-quote[#text(\"An uncited quotation.\")]"));
         assert!(source.contains(
-            "#block(below: 1.5em)[#text(\"An epigraph-style paragraph.\")#gnosis-citation[#text(\"An Author\")]]"
+            "#block(below: 1.5em)[#par[#text(\"An epigraph-style paragraph.\")#gnosis-citation[#text(\"An Author\")]]]"
         ));
         // No citation is left as a separate block, and nothing has to move whole
         // to the next page to stay with one.
         assert!(!source.contains("#align(right)"));
         assert!(!source.contains("sticky: true, breakable: true"));
+    }
+
+    #[test]
+    fn a_citation_only_row_cites_the_text_before_it_past_its_footnotes() {
+        let workspace = pdf_workspace().unwrap();
+        let _cleanup = WorkspaceCleanup(workspace.clone());
+        let document = ExportDocument {
+            title: "Attributed".into(),
+            language_code: "vi".into(),
+            blocks: vec![
+                text_block("paragraph", "Before."),
+                text_block("paragraph", "Attributed body text [1]."),
+                ExportBlock::Footnote {
+                    number: 1,
+                    marker: 1,
+                    anchor_block: Some(1),
+                    text: "A note.".into(),
+                },
+                ExportBlock::Attribution {
+                    text: "An Author".into(),
+                },
+                text_block("paragraph", "After."),
+            ],
+            book_parts: Vec::new(),
+        };
+        let session = begin_pdf_image_cache(&test_image_cache_scope("body-citation"));
+        let options = PdfWorkspacePreparationOptions {
+            paper_size: "a5",
+            footnote_links_as_plain_text: true,
+            image_cache_session: &session,
+            layout: TypstLayout::Export,
+        };
+        prepare_typst_workspace(
+            None,
+            "",
+            &workspace,
+            &document,
+            &options,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let source = fs::read_to_string(workspace.join("chapter.typ")).unwrap();
+        // Set as the body text's last line, at the body margin, with no quote.
+        let cited = source
+            .find("#block(below: 1.5em)[#par[#text(\"Attributed body text \")")
+            .expect(&source);
+        let citation = source
+            .find("#gnosis-citation[#text(\"An Author\")]]]")
+            .expect(&source);
+        assert!(cited < citation && !source[cited..citation].contains("\n\n"));
+        assert!(!source.contains("#gnosis-quote"));
+        assert!(!source.contains("#align(right)"));
+        // The next paragraph is not indented, as after any citation.
+        assert!(source
+            .contains("#set par(first-line-indent: (amount: 0pt, all: true))\n#text(\"After.\")"));
     }
 
     #[test]
@@ -5178,6 +5368,11 @@ mod tests {
                 &[title(), blank(), quote(), citation(), footnote(2), body()],
                 true
             ),
+            Some(3)
+        );
+        // A citation-only row cites the quote before it, past that quote's footnote.
+        assert_eq!(
+            chapter_cover_end(&[title(), quote(), footnote(1), citation(), body()], true),
             Some(3)
         );
         // Consecutive quotes are one epigraph, even with a blank row between them.
@@ -5511,10 +5706,11 @@ mod tests {
     }
 
     #[test]
-    fn image_captions_are_wrapped_in_italic_text() {
+    fn image_captions_are_small_upright_text() {
         let caption = render_typst_image_caption("A <b>bold</b> caption");
         assert!(caption.starts_with("#align(center)"));
-        assert!(caption.contains("#text(size: 0.75em, style: \"italic\")["));
+        assert!(caption.contains("#text(size: 0.75em)["));
+        assert!(!caption.contains("italic"));
         assert!(caption.contains("#strong["));
     }
 
@@ -5910,5 +6106,166 @@ mod tests {
         let pdf = fs::read(workspace.join("chapter.pdf")).expect("compiled PDF");
         assert!(pdf.starts_with(b"%PDF-"));
         let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn list_rows_render_as_nested_native_typst_lists() {
+        let items = list_items("One\n\t<b>Two</b>\n\t\tThree\nFour");
+        let inline = items
+            .iter()
+            .map(|item| render_inline_typst(&item.text, false))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            render_typst_list(ListKind::Number, &items, &inline),
+            "#enum(numbering: \"1.\", [#text(\"One\")#enum(numbering: \"a.\", [#strong[#text(\"Two\")]#enum(numbering: \"i.\", [#text(\"Three\")], )], )], [#text(\"Four\")], )"
+        );
+        assert_eq!(
+            render_typst_list(ListKind::Roman, &items[..2], &inline),
+            "#enum(numbering: \"I.\", [#text(\"One\")#enum(numbering: \"A.\", [#strong[#text(\"Two\")]], )], )"
+        );
+        let bullets = render_typst_list(ListKind::Bullet, &items[..3], &inline);
+        assert!(bullets.starts_with(&format!(
+            "#list(marker: {}, [#text(\"One\")#list(marker: {}, [",
+            typst_list_marker(ListLevelFormat::Disc),
+            typst_list_marker(ListLevelFormat::Circle)
+        )));
+        assert!(bullets.contains(&format!(
+            "#list(marker: {}, [#text(\"Three\")], )",
+            typst_list_marker(ListLevelFormat::Square)
+        )));
+        assert_eq!(
+            typst_list_numbering(ListLevelFormat::LowerAlpha),
+            Some("a.")
+        );
+        assert_eq!(typst_list_numbering(ListLevelFormat::Disc), None);
+
+        let list = render_typst_list(ListKind::Letter, &items[..1], &inline);
+        assert_eq!(
+            render_typst_text_block("list_letter", &list, false, false),
+            format!("{list}\n\n")
+        );
+        assert_eq!(
+            render_typst_cited_text_block("list_letter", &list, "Citation", false),
+            None
+        );
+        // A list never opens with a drop cap.
+        assert_eq!(
+            dropcap_block_index(&[text_block("list_bullet", "Apples")], &[0], false),
+            None
+        );
+    }
+
+    #[test]
+    fn list_items_share_their_block_footnotes() {
+        let footnotes = vec![
+            (2, "Second".to_string()),
+            (1, "First".to_string()),
+            (3, "Unmarked".to_string()),
+        ];
+        let parts = render_inline_typst_parts_with_footnotes(
+            &["a [2]", "b [1] and [2] again", "c"],
+            &footnotes,
+            false,
+        );
+        assert_eq!(
+            parts,
+            vec![
+                "#text(\"a \")#footnote[#text(\"Second\")]".to_string(),
+                "#text(\"b \")#footnote[#text(\"First\")]#text(\" and [2] again\")".to_string(),
+                "#text(\"c\")#footnote[#text(\"Unmarked\")]".to_string(),
+            ]
+        );
+        assert_eq!(
+            render_inline_typst_with_footnotes("Text [1]", &footnotes, false),
+            "#text(\"Text \")#footnote[#text(\"First\")]#super[,]#footnote[#text(\"Second\")]#super[,]#footnote[#text(\"Unmarked\")]"
+        );
+    }
+
+    #[test]
+    fn list_rows_compile_in_the_pdf_export() {
+        let workspace = pdf_workspace().unwrap();
+        let _cleanup = WorkspaceCleanup(workspace.clone());
+        let document = ExportDocument {
+            title: "Lists".into(),
+            language_code: "en".into(),
+            blocks: vec![
+                text_block(
+                    "list_number",
+                    "Numbers [1]\n\tLetters\n\t\tNumerals\n\t\t\tNumbers again\nTwo",
+                ),
+                ExportBlock::Footnote {
+                    number: 1,
+                    marker: 1,
+                    anchor_block: Some(0),
+                    text: "A note in a list.".into(),
+                },
+                text_block("paragraph", "A paragraph after a list."),
+                text_block(
+                    "list_bullet",
+                    "Disc\n\tCircle\n\t\tSquare\n\t\t\tDisc again",
+                ),
+                text_block("list_letter", "a\n\ti\n\t\t1"),
+                text_block(
+                    "list_roman",
+                    "I\n\tA\n\t\t1\n\t\t\ta\n\t\t\t\ti\n\t\t\t\t\tI again",
+                ),
+                text_block("paragraph", "The end."),
+            ],
+            book_parts: Vec::new(),
+        };
+        let session = begin_pdf_image_cache(&test_image_cache_scope("list-rows"));
+        let options = PdfWorkspacePreparationOptions {
+            paper_size: "a5",
+            footnote_links_as_plain_text: true,
+            image_cache_session: &session,
+            layout: TypstLayout::Export,
+        };
+        prepare_typst_workspace(
+            None,
+            "",
+            &workspace,
+            &document,
+            &options,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let source = fs::read_to_string(workspace.join("chapter.typ")).unwrap();
+        assert!(source.contains(
+            "#set par(first-line-indent: (amount: 0pt, all: true))\n#enum(numbering: \"1.\", [#text(\"Numbers \")#footnote[#text(\"A note in a list.\")]#enum(numbering: \"a.\", "
+        ));
+        // A list is not a plain paragraph: it takes no drop cap, and the
+        // paragraph after it starts flush, as after a quote.
+        assert!(!source.contains("#gnosis-dropcap["));
+        assert!(source.contains(
+            "#set par(first-line-indent: (amount: 0pt, all: true))\n#text(\"A paragraph after a list.\")"
+        ));
+        assert!(source.contains("#enum(numbering: \"I.\", [#text(\"I\")#enum(numbering: \"A.\", "));
+        assert!(source.contains("#list(marker: box("));
+        let (Some(binary), Some(fonts)) = (
+            std::env::var_os("GNOSIS_TYPST_BIN"),
+            std::env::var_os("GNOSIS_TYPST_SMOKE_FONT_DIR"),
+        ) else {
+            return;
+        };
+        let pdf = workspace.join("lists.pdf");
+        let output = std::process::Command::new(&binary)
+            .args(["compile", "--ignore-system-fonts", "--font-path"])
+            .arg(&fonts)
+            .arg("--root")
+            .arg(&workspace)
+            .arg("--package-path")
+            .arg(workspace.join("packages"))
+            .arg(workspace.join("chapter.typ"))
+            .arg(&pdf)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        if let Some(destination) = std::env::var_os("GNOSIS_LIST_SMOKE_OUTPUT") {
+            fs::copy(&pdf, PathBuf::from(destination)).unwrap();
+        }
     }
 }

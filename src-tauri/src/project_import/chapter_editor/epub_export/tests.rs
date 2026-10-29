@@ -127,6 +127,51 @@ fn epub_packages_valid_xml_metadata_and_escaped_multilingual_content() {
 }
 
 #[test]
+fn epub_sets_an_attribution_only_citation_inside_the_text_before_it() {
+    let doc = document(
+        "Attributed",
+        vec![
+            paragraph("paragraph", "Body [1]."),
+            ExportBlock::Footnote {
+                number: 1,
+                marker: 1,
+                anchor_block: Some(0),
+                text: "A note.".into(),
+            },
+            ExportBlock::Attribution {
+                text: "Author".into(),
+            },
+            paragraph("heading2", "Heading"),
+            ExportBlock::Attribution {
+                text: "Other".into(),
+            },
+            paragraph("paragraph", "Lead."),
+            paragraph("list_bullet", "One\nTwo"),
+            ExportBlock::Attribution {
+                text: "Third".into(),
+            },
+        ],
+    );
+    let content = file(&unpack(&doc), "EPUB/section-1.xhtml");
+    // Nor can a list, and the text before the list keeps no citation.
+    assert!(content.contains("Lead.</p>"), "{content}");
+    assert!(
+        content.find("Third</cite>") > content.rfind("</ul>"),
+        "{content}"
+    );
+    // Past the body text's note, as its last line; a heading cannot carry one.
+    assert!(
+        content.contains("<cite class=\"quote-attribution\">Author</cite></p>"),
+        "{content}"
+    );
+    assert!(
+        content.contains("</h2><cite class=\"quote-attribution\">Other</cite>"),
+        "{content}"
+    );
+    assert!(!content.contains("<blockquote"), "{content}");
+}
+
+#[test]
 fn epub_links_footnotes_per_row_and_keeps_literal_and_unanchored_notes() {
     let doc = document(
         "Notes",
@@ -454,4 +499,35 @@ fn epub_custom_html_uses_the_existing_omission_policy_and_rtl_language() {
     let files = unpack(&flattened);
     assert!(file(&files, "EPUB/section-1.xhtml").contains("Custom &amp; text"));
     assert!(!file(&files, "EPUB/section-1.xhtml").contains("<div>"));
+}
+
+#[test]
+fn epub_list_rows_nest_lists_and_keep_their_note_references() {
+    let doc = document(
+        "Lists",
+        vec![
+            paragraph("list_number", "One [1]\n\t<b>Two\n\t\tThree</b> & more"),
+            ExportBlock::Footnote {
+                number: 1,
+                marker: 1,
+                anchor_block: Some(0),
+                text: "First note".into(),
+            },
+            ExportBlock::Footnote {
+                number: 2,
+                marker: 2,
+                anchor_block: Some(0),
+                text: "Unmarked note".into(),
+            },
+            paragraph("list_bullet", "Dot"),
+        ],
+    );
+    let content = file(&unpack(&doc), "EPUB/section-1.xhtml");
+    assert!(content
+        .contains("<ol id=\"block-0\" style=\"list-style-type:decimal\"><li>One <a id=\"ref-1\""));
+    assert!(content.contains("<ol style=\"list-style-type:lower-alpha\"><li><strong>Two</strong><ol style=\"list-style-type:lower-roman\"><li><strong>Three</strong> &amp; more<a id=\"ref-2\""));
+    // The note without a marker follows the last item, inside the list.
+    assert!(content.contains("href=\"#note-2\">[2]</a></li></ol></li></ol></li></ol>"));
+    assert!(content.contains("<ul id=\"block-3\" style=\"list-style-type:disc\"><li>Dot</li></ul>"));
+    assert_eq!(content.matches("id=\"ref-").count(), 2);
 }

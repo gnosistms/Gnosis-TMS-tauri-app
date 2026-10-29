@@ -23,8 +23,16 @@ import {
   EDITOR_ROW_TEXT_STYLE_PARAGRAPH,
   EDITOR_ROW_TEXT_STYLE_QUOTE,
   isCustomHtmlRowTextStyle,
+  isListRowTextStyle,
   normalizeEditorRowTextStyle,
 } from "./editor-row-text-style.js";
+import {
+  listFormatIsOrdered,
+  listItemsFromHtml,
+  listItemsFromPlainText,
+  listItemsWithMarkers,
+  renderNestedListHtml,
+} from "./editor-list.js";
 import {
   customHtmlToPlainText,
   sanitizeCustomHtmlForDisplay,
@@ -111,10 +119,10 @@ function previewRowIsSubtitleCue(row) {
 
 // Each paragraph of a row (text between blank lines) becomes a block of its
 // own, set exactly as a separate row of the same style would be. Custom HTML is
-// opaque and subtitle cues are not split. Empty paragraphs are dropped, as
-// empty rows are.
+// opaque, a list is one block of items, and subtitle cues are not split. Empty
+// paragraphs are dropped, as empty rows are.
 function previewRowParagraphs(row, text, textStyle) {
-  if (isCustomHtmlRowTextStyle(textStyle) || previewRowIsSubtitleCue(row)) {
+  if (isCustomHtmlRowTextStyle(textStyle) || isListRowTextStyle(textStyle) || previewRowIsSubtitleCue(row)) {
     return text.trim() ? [text] : [];
   }
   return splitInlineMarkupTextIntoParagraphs(text).filter((paragraph) => paragraph.trim());
@@ -137,14 +145,39 @@ function previewFootnotesByParagraph(paragraphs, footnotes) {
   return groups;
 }
 
+// The block a following attribution can cite, as the last line of its text: the
+// last block, footnote-only blocks aside (their notes print at the page foot), when
+// it is uncited text. Headings, lists, images, custom HTML and text that ends in
+// a separator cannot carry a citation, as in the PDF.
+function previewCitableBlockIndex(blocks) {
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    const block = blocks[index];
+    if (block.kind === "text" && !block.attribution && !previewTextHasVisibleContent(block.text)) {
+      continue;
+    }
+    const style = normalizeEditorRowTextStyle(block.textStyle);
+    const last = block.kind === "text" ? previewTextParts(block).at(-1) : null;
+    const citable = last?.kind === "text"
+      && previewTextHasVisibleContent(last.block.text)
+      && !block.attribution
+      && !isCustomHtmlRowTextStyle(style)
+      && !isListRowTextStyle(style)
+      && style !== EDITOR_ROW_TEXT_STYLE_HEADING1
+      && style !== EDITOR_ROW_TEXT_STYLE_HEADING2;
+    return citable ? index : -1;
+  }
+  return -1;
+}
+
 export function buildEditorPreviewDocument(rows, languageCode) {
   if (!languageCode) {
     return [];
   }
 
-  return (Array.isArray(rows) ? rows : []).flatMap((row) => {
+  const blocks = [];
+  for (const row of Array.isArray(rows) ? rows : []) {
     if (!row || row.lifecycleState === "deleted") {
-      return [];
+      continue;
     }
 
     const text = previewFieldValue(row, languageCode);
@@ -153,7 +186,6 @@ export function buildEditorPreviewDocument(rows, languageCode) {
     const caption = previewImageCaptionValue(row, languageCode);
     const textStyle = normalizeEditorRowTextStyle(row?.textStyle);
     const attribution = textStyle === "quote" ? previewTextValue(row?.attributions?.[languageCode]) : "";
-    const blocks = [];
     const paragraphs = previewRowParagraphs(row, text, textStyle);
     const paragraphFootnotes = previewFootnotesByParagraph(paragraphs, footnotes);
 
@@ -169,7 +201,15 @@ export function buildEditorPreviewDocument(rows, languageCode) {
       });
     });
 
-    if (paragraphs.length === 0 && attribution.trim()) {
+    // A quote with only an attribution attributes body text: it adds no empty
+    // quote, and cites the block before it. With nothing to cite, or with notes
+    // of its own to keep beside it, the attribution stands alone.
+    const citedIndex = paragraphs.length === 0 && attribution.trim() && footnotes.length === 0
+      ? previewCitableBlockIndex(blocks)
+      : -1;
+    if (citedIndex >= 0) {
+      blocks[citedIndex] = { ...blocks[citedIndex], attribution, attributionRowId: row.rowId ?? "" };
+    } else if (paragraphs.length === 0 && attribution.trim()) {
       blocks.push({
         kind: "text",
         rowId: row.rowId ?? "",
@@ -201,9 +241,8 @@ export function buildEditorPreviewDocument(rows, languageCode) {
         caption,
       });
     }
-
-    return blocks;
-  });
+  }
+  return blocks;
 }
 
 function countMatchesInText(text, searchQuery) {
@@ -514,10 +553,12 @@ function renderTextWithWordPressFootnoteRefs(block, footnoteState, options = {})
       block?.languageCode ?? "",
     );
 
+  // List items are lines, so a list keeps its returns for listItemsFromHtml.
+  const lineBreaks = (html) => options.keepNewlines ? html : html.replaceAll("\n", "<br>");
   if (footnotes.length === 0) {
     return options.serialize
-      ? serializePreviewText(text)
-      : renderSanitizedInlineMarkupWithRanges(renderText, ranges).replaceAll("\n", "<br>");
+      ? lineBreaks(renderSanitizedInlineMarkupHtml(renderText))
+      : lineBreaks(renderSanitizedInlineMarkupWithRanges(renderText, ranges));
   }
 
   const footnoteByMarker = new Map(footnotes.map((entry) => [entry.marker, entry]));
@@ -599,9 +640,7 @@ function renderTextWithWordPressFootnoteRefs(block, footnoteState, options = {})
     }
   }
 
-  const html = options.serialize
-    ? renderSanitizedInlineMarkupWithRanges(renderText, ranges).replaceAll("\n", "<br>")
-    : renderSanitizedInlineMarkupWithRanges(renderText, ranges).replaceAll("\n", "<br>");
+  const html = lineBreaks(renderSanitizedInlineMarkupWithRanges(renderText, ranges));
   // Auto-generated markers stick to the preceding text with no space. An
   // appended reference is just another adjacent marker: it takes the same
   // superscript-comma separator when it follows an inline marker, and appended
@@ -672,6 +711,25 @@ export function renderEditorPreviewDocumentHtml(blocks, options = {}) {
         return `<div class="translate-preview__block translate-preview__block--custom-html" data-preview-block="custom-html" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}" data-tooltip="Double-click to edit.">${customHtml}</div>`;
       }
 
+      if (isListRowTextStyle(block.textStyle)) {
+        const items = listItemsFromHtml(renderTextWithWordPressFootnoteRefs(block, footnoteState, {
+          searchState,
+          matchCounter,
+          usedMarkers: new Set(),
+          keepNewlines: true,
+        }));
+        const extra = options.blockClassName?.(block, "list") || "";
+        return renderNestedListHtml(items, block.textStyle, {
+          renderList(format, itemsHtml, level) {
+            const tagName = listFormatIsOrdered(format) ? "ol" : "ul";
+            const blockAttributes = level === 0
+              ? ` class="translate-preview__block translate-preview__block--list${extra ? ` ${escapeHtml(extra)}` : ""}" data-preview-block="list" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}" data-tooltip="Double-click to edit."`
+              : "";
+            return `<${tagName}${blockAttributes} style="list-style-type:${format}">${itemsHtml}</${tagName}>`;
+          },
+        });
+      }
+
       const tagName = previewTextTagForStyle(block.textStyle);
       const variant = previewTextVariantForStyle(block.textStyle);
       const parts = previewTextParts(block);
@@ -693,9 +751,17 @@ export function renderEditorPreviewDocumentHtml(blocks, options = {}) {
               appendRemaining: index === appendPartIndex,
             },
           );
-          const attributionHtml = block.attribution?.trim() && index === parts.length - 1
-            ? `<cite class="translate-preview__attribution" data-preview-block="attribution" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}" data-tooltip="Double-click to edit.">${renderPreviewHighlightedText(block.attribution, searchState, matchCounter, block.languageCode)}</cite>` : "";
-          if (!textHtml.trim() && !attributionHtml) return "";
+          const cited = Boolean(block.attribution?.trim()) && index === parts.length - 1;
+          if (!textHtml.trim() && !cited) return "";
+          // A citation of another row's text keeps its own row, for editing.
+          const citation = (notesHtml = "") => `<cite class="translate-preview__attribution" data-preview-block="attribution" data-row-id="${escapeHtml(block.attributionRowId ?? block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}" data-tooltip="Double-click to edit.">${renderPreviewHighlightedText(block.attribution, searchState, matchCounter, block.languageCode)}${notesHtml}</cite>`;
+          // An attribution with no text attributes body text: it stands alone at
+          // the body margin, with no empty block above it.
+          if (cited && !previewTextHasVisibleContent(part.block.text)) {
+            options.blockClassName?.(part.block, "attribution");
+            return citation(textHtml);
+          }
+          const attributionHtml = cited ? citation() : "";
           const extra = options.blockClassName?.(part.block, variant) || "";
           return `<${tagName} class="translate-preview__block translate-preview__block--${variant}${extra ? ` ${escapeHtml(extra)}` : ""}" data-preview-block="${escapeHtml(variant)}" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}" data-tooltip="Double-click to edit.">${textHtml}${options.attributionOutside ? "" : attributionHtml}</${tagName}>${options.attributionOutside ? attributionHtml : ""}`;
         })
@@ -743,7 +809,7 @@ function serializePreviewImageHtml(block) {
     '<figure class="wp-block-image aligncenter">',
     `<img src="${escapeHtml(exportSrc)}" alt=""/>`,
     caption
-      ? `<figcaption class="wp-element-caption"><em>${serializePreviewText(block.caption)}</em></figcaption>`
+      ? `<figcaption class="wp-element-caption">${serializePreviewText(block.caption)}</figcaption>`
       : "",
     "</figure>",
   ].join("");
@@ -782,7 +848,7 @@ function serializePreviewTextBlockHtml(block, footnoteState, options = {}) {
     const innerParagraph = wrapSerializedWordPressBlock("paragraph", `<p>${textHtml}</p>`);
     return {
       blockName: "quote",
-      html: `<blockquote class="wp-block-quote">${innerParagraph}${block.attribution?.trim() ? `<cite${options.localFormatting ? ' style="display:block;font-size:90%;text-align:right;font-style:normal"' : ""}>${serializePreviewText(block.attribution)}</cite>` : ""}</blockquote>`,
+      html: `<blockquote class="wp-block-quote">${innerParagraph}${block.attribution?.trim() ? serializePreviewCitation(block.attribution, options) : ""}</blockquote>`,
     };
   }
   if (normalizedStyle === EDITOR_ROW_TEXT_STYLE_INDENTED) {
@@ -806,6 +872,20 @@ function serializePreviewTextBlockHtml(block, footnoteState, options = {}) {
   };
 }
 
+function serializePreviewCitation(attribution, options = {}) {
+  return `<cite${options.localFormatting ? ' style="display:block;font-size:90%;text-align:right;font-style:normal"' : ""}>${serializePreviewText(attribution)}</cite>`;
+}
+
+// The citation of text that is not a quote, or of none: a paragraph of its own,
+// right-aligned at the body margin.
+function serializePreviewCitationParagraph(attribution, notesHtml, options = {}) {
+  return wrapSerializedWordPressBlock(
+    "paragraph",
+    `<p class="has-text-align-right">${serializePreviewCitation(attribution, options)}${notesHtml}</p>`,
+    { style: { typography: { textAlign: "right" } } },
+  );
+}
+
 function serializePreviewTextBlock(block, footnoteState, options = {}) {
   const serializedBlock = serializePreviewTextBlockHtml(block, footnoteState, options);
   return wrapSerializedWordPressBlock(
@@ -815,7 +895,36 @@ function serializePreviewTextBlock(block, footnoteState, options = {}) {
   );
 }
 
+// Core list blocks, nested the way the list and list-item blocks save them.
+// WordPress sets only ordered lists' style; copied HTML also styles bullets.
+function serializePreviewListBlock(block, footnoteState, options = {}) {
+  const textHtml = renderTextWithWordPressFootnoteRefs(block, footnoteState, {
+    serialize: true,
+    htmlFootnotes: options.htmlFootnotes ? new Map() : undefined,
+    usedMarkers: new Set(),
+    keepNewlines: true,
+  });
+  return renderNestedListHtml(listItemsFromHtml(textHtml), block.textStyle, {
+    renderList(format, itemsHtml) {
+      const ordered = listFormatIsOrdered(format);
+      const styled = ordered ? format !== "decimal" : options.localFormatting === true;
+      const tagName = ordered ? "ol" : "ul";
+      return wrapSerializedWordPressBlock(
+        "list",
+        `<${tagName} class="wp-block-list"${styled ? ` style="list-style-type:${format}"` : ""}>${itemsHtml}</${tagName}>`,
+        ordered ? { ordered: true, ...(format !== "decimal" ? { type: format } : {}) } : null,
+      );
+    },
+    renderItem(itemHtml, childListHtml) {
+      return wrapSerializedWordPressBlock("list-item", `<li>${itemHtml}${childListHtml}</li>`);
+    },
+  });
+}
+
 function serializePreviewTextBlockParts(block, footnoteState, options = {}) {
+  if (isListRowTextStyle(block.textStyle)) {
+    return serializePreviewListBlock(block, footnoteState, options);
+  }
   const parts = previewTextParts(block);
   const usedMarkers = new Set();
   const htmlFootnotes = options.htmlFootnotes ? new Map() : undefined;
@@ -825,7 +934,8 @@ function serializePreviewTextBlockParts(block, footnoteState, options = {}) {
       if (part.kind === "separator") {
         return WORDPRESS_SEPARATOR_BLOCK;
       }
-      if (!previewTextHasVisibleContent(part.block?.text) && index !== appendPartIndex && !block.attribution) {
+      const attribution = block.attribution?.trim() && index === parts.length - 1 ? block.attribution : "";
+      if (!previewTextHasVisibleContent(part.block?.text) && index !== appendPartIndex && !attribution) {
         return "";
       }
       const textHtml = renderTextWithWordPressFootnoteRefs(part.block, footnoteState, {
@@ -834,11 +944,18 @@ function serializePreviewTextBlockParts(block, footnoteState, options = {}) {
         usedMarkers,
         appendRemaining: index === appendPartIndex,
       });
-      if (!textHtml.trim() && !block.attribution) return "";
-      return serializePreviewTextBlock({ ...part.block, attribution: index === parts.length - 1 ? block.attribution : "" }, footnoteState, {
+      if (!textHtml.trim() && !attribution) return "";
+      if (attribution && !previewTextHasVisibleContent(part.block?.text)) {
+        return serializePreviewCitationParagraph(attribution, textHtml, options);
+      }
+      const quote = normalizeEditorRowTextStyle(block.textStyle) === EDITOR_ROW_TEXT_STYLE_QUOTE;
+      const textBlock = serializePreviewTextBlock({ ...part.block, attribution: quote ? attribution : "" }, footnoteState, {
         preRenderedTextHtml: textHtml,
         localFormatting: options.localFormatting,
       });
+      return attribution && !quote
+        ? `${textBlock}\n\n${serializePreviewCitationParagraph(attribution, "", options)}`
+        : textBlock;
     })
     .filter(Boolean)
     .join("\n\n");
@@ -1044,6 +1161,14 @@ export function serializeEditorPreviewPlainText(blocks, options = {}) {
       // them, otherwise fall back to their text content.
       if (isCustomHtmlRowTextStyle(block.textStyle)) {
         return omitCustomHtml ? "" : customHtmlToPlainText(block.text);
+      }
+      // Plain text has no lists: each item on its own line, indented four
+      // spaces a level, after its marker.
+      if (isListRowTextStyle(block.textStyle)) {
+        const text = plainTextWithFootnoteRefs(block, footnoteItems, { showFootnoteLinkUrls });
+        return listItemsWithMarkers(listItemsFromPlainText(text), block.textStyle)
+          .map((item) => `${"    ".repeat(item.level)}${item.marker} ${item.text}`)
+          .join("\n");
       }
       const parts = previewTextParts(block);
       const usedMarkers = new Set();

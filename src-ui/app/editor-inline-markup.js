@@ -13,6 +13,7 @@ export {
   renderSanitizedInlineMarkupHistoryHtml,
   serializeInlineMarkupRubyNotation,
   splitInlineMarkupTextBySeparators,
+  splitInlineMarkupTextIntoLines,
   splitInlineMarkupTextIntoParagraphs,
 } from "./editor-inline-markup/serialize.js";
 export {

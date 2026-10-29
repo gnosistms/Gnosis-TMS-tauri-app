@@ -2,7 +2,7 @@
 // at paragraph boundaries so formatting/highlights may safely span a return.
 // endsParagraph(tokens, index) says whether the newline token at index is a
 // paragraph break; other newlines stay in the paragraph as line breaks.
-function splitHtmlParagraphs(html, endsParagraph = () => true) {
+export function splitHtmlParagraphs(html, endsParagraph = () => true) {
   const stack = [];
   const paragraphs = [""];
   const tokens = String(html).replace(/\r\n?/g, "\n").split(/(<[^>]+>|\n)/g);

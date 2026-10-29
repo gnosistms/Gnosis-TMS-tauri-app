@@ -926,6 +926,8 @@ test("serializeEditorPreviewWordPress returns content plus matching footnote met
     /<\/figure>\n<!-- \/wp:image -->\n\n<!-- wp:footnotes \/-->/,
   );
   assert.match(content, /src="chapters\/ch-1\/images\/row-1\/image\.png"/);
+  // Captions are upright: no italics wrapped around the caption text.
+  assert.match(content, /<figcaption class="wp-element-caption">Caption<\/figcaption>/);
 
   assert.equal(footnotes.length, 1);
   assert.match(footnotes[0].id, /^[0-9a-f-]{36}$/);
@@ -1130,6 +1132,57 @@ test("an attribution-only quote and quotes with separators retain their source o
   }
 });
 
+test("an attribution-only quote cites the text before it, at that text's margin", () => {
+  const citing = { rowId: "a", textStyle: "quote", fields: { en: "" }, attributions: { en: "Author" } };
+  const body = buildEditorPreviewDocument([
+    { rowId: "p", fields: { en: "Body text [1]." }, footnotes: { en: "[1] A note." } },
+    { rowId: "n", fields: { en: "" }, footnotes: { en: "A row note." } },
+    citing,
+  ], "en");
+  // The citation joins the body text, past the footnote-only row, with no quote.
+  assert.equal(body.length, 2);
+  assert.equal(body[0].attribution, "Author");
+  assert.equal(body[0].attributionRowId, "a");
+  const preview = renderEditorPreviewDocumentHtml(body).html;
+  assert.match(preview, /<p [^>]*data-row-id="p"[^>]*>Body text <sup[^]*<\/sup>\.<cite class="translate-preview__attribution" data-preview-block="attribution" data-row-id="a"[^>]*>Author<\/cite><\/p>/);
+  assert.doesNotMatch(preview, /blockquote/);
+  const wp = serializeEditorPreviewWordPress(body).content;
+  assert.match(wp, /<!-- \/wp:paragraph -->\n\n<!-- wp:paragraph {"style":{"typography":{"textAlign":"right"}}} -->\n<p class="has-text-align-right"><cite>Author<\/cite><\/p>/);
+  assert.doesNotMatch(wp, /wp:quote/);
+  assert.match(serializeEditorPreviewHtml(body), /<p class="has-text-align-right"><cite style="display:block;font-size:90%;text-align:right;font-style:normal">Author<\/cite><\/p>/);
+  assert.match(serializeEditorPreviewPlainText(body), /^Body text \[1\]\.\n\nAuthor\n\n/);
+
+  // After a quote it is exactly that quote's own citation.
+  const quoted = buildEditorPreviewDocument([{ rowId: "q", textStyle: "quote", fields: { en: "A quote." } }, citing], "en");
+  assert.equal(quoted.length, 1);
+  assert.match(renderEditorPreviewDocumentHtml(quoted).html, /<blockquote [^>]*>A quote\.<cite [^>]*data-row-id="a"[^>]*>Author<\/cite><\/blockquote>/);
+  assert.match(serializeEditorPreviewWordPress(quoted).content, /<p>A quote\.<\/p>\n<!-- \/wp:paragraph --><cite>Author<\/cite><\/blockquote>/);
+
+  // With nothing to cite, or notes of its own, it stands alone: no empty quote.
+  const image = { kind: "upload", path: "chapters/c/images/i/image.png", filePath: "/tmp/image.png" };
+  for (const previous of [
+    [],
+    [{ rowId: "h", textStyle: "heading1", fields: { en: "A heading" } }],
+    [{ rowId: "l", textStyle: "list_bullet", fields: { en: "One\nTwo" } }],
+    [{ rowId: "i", fields: { en: "" }, images: { en: image } }],
+    [{ rowId: "s", fields: { en: "Text<hr>" } }],
+    [{ rowId: "c", textStyle: "quote", fields: { en: "Cited." }, attributions: { en: "Someone" } }],
+  ]) {
+    const blocks = buildEditorPreviewDocument([...previous, citing], "en");
+    assert.equal(blocks.at(-1).rowId, "a");
+    const html = renderEditorPreviewDocumentHtml(blocks).html;
+    assert.match(html, /<cite class="translate-preview__attribution" data-preview-block="attribution" data-row-id="a"[^>]*>Author<\/cite>$/);
+    assert.doesNotMatch(html, /<blockquote[^>]*data-row-id="a"/);
+    assert.match(serializeEditorPreviewWordPress(blocks).content, /<p class="has-text-align-right"><cite>Author<\/cite><\/p>\n<!-- \/wp:paragraph -->$/);
+  }
+  const noted = buildEditorPreviewDocument([
+    { rowId: "p", fields: { en: "Body text." } },
+    { ...citing, footnotes: { en: "A note on the source." } },
+  ], "en");
+  assert.equal(noted.length, 2);
+  assert.match(renderEditorPreviewDocumentHtml(noted).html, /<\/p><cite [^>]*data-row-id="a"[^>]*>Author<sup[^]*<\/sup><\/cite><ol/);
+});
+
 test("blank quote attribution is absent from preview and all clipboard formats", () => {
   for (const attribution of ["", " \n\t"]) {
     const blocks = buildEditorPreviewDocument([{ textStyle: "quote", fields: { en: "Body" }, attributions: { en: attribution } }], "en");
@@ -1142,4 +1195,55 @@ test("blank quote attribution is absent from preview and all clipboard formats",
     }
     assert.equal(serializeEditorPreviewPlainText(blocks), "Body");
   }
+});
+
+function listRowBlocks(textStyle = "list_number") {
+  return buildEditorPreviewDocument([
+    paragraphRow(
+      { vi: "First <strong>bold</strong>[1]\n\tSub one\n\n\tSub two\n\t\tDeep\nSecond" },
+      { rowId: "row-l", textStyle, footnotes: { vi: "[1] A note" } },
+    ),
+  ], "vi");
+}
+
+test("a list row stays one block, blank lines and all", () => {
+  const blocks = listRowBlocks();
+  assert.equal(blocks.length, 1);
+  assert.equal(blocks[0].textStyle, "list_number");
+  assert.equal(blocks[0].footnotes.length, 1);
+});
+
+test("preview draws a list row as nested lists with each level's style", () => {
+  const html = renderEditorPreviewDocumentHtml(listRowBlocks()).html;
+  assert.match(
+    html,
+    /^<ol class="translate-preview__block translate-preview__block--list" data-preview-block="list" data-row-id="row-l" lang="vi"[^>]*style="list-style-type:decimal"><li>First <strong>bold<\/strong><sup[^>]*>.*?<\/sup><ol style="list-style-type:lower-alpha"><li>Sub one<\/li><li>Sub two<ol style="list-style-type:lower-roman"><li>Deep<\/li><\/ol><\/li><\/ol><\/li><li>Second<\/li><\/ol>/,
+  );
+  const bullets = renderEditorPreviewDocumentHtml(listRowBlocks("list_bullet")).html;
+  assert.match(bullets, /^<ul class="translate-preview__block translate-preview__block--list"[^>]*style="list-style-type:disc"><li>/);
+  assert.match(bullets, /<ul style="list-style-type:circle"><li>Sub one/);
+  assert.match(bullets, /<ul style="list-style-type:square"><li>Deep/);
+});
+
+test("WordPress gets nested core list blocks with each ordered level's type", () => {
+  const { content } = serializeEditorPreviewWordPress(listRowBlocks("list_roman"));
+  assert.ok(content.startsWith(
+    '<!-- wp:list {"ordered":true,"type":"upper-roman"} -->\n<ol class="wp-block-list" style="list-style-type:upper-roman"><!-- wp:list-item -->\n<li>First <strong>bold</strong><sup data-fn=',
+  ));
+  assert.ok(content.includes(
+    '<!-- wp:list {"ordered":true,"type":"upper-alpha"} -->\n<ol class="wp-block-list" style="list-style-type:upper-alpha"><!-- wp:list-item -->\n<li>Sub one</li>\n<!-- /wp:list-item --><!-- wp:list-item -->\n<li>Sub two<!-- wp:list {"ordered":true} -->\n<ol class="wp-block-list"><!-- wp:list-item -->\n<li>Deep</li>\n<!-- /wp:list-item --></ol>\n<!-- /wp:list --></li>',
+  ));
+  assert.match(content, /<li>Second<\/li>\n<!-- \/wp:list-item --><\/ol>\n<!-- \/wp:list -->\n\n<!-- wp:footnotes \/-->/);
+
+  const bullets = serializeEditorPreviewWordPress(listRowBlocks("list_bullet")).content;
+  assert.ok(bullets.startsWith('<!-- wp:list -->\n<ul class="wp-block-list"><!-- wp:list-item -->'));
+  assert.doesNotMatch(bullets, /list-style-type/, "WordPress themes style bullets by level");
+  assert.match(serializeEditorPreviewHtml(listRowBlocks("list_bullet")), /<ul class="wp-block-list" style="list-style-type:circle">/);
+});
+
+test("plain text writes list markers and indents each level four spaces", () => {
+  assert.equal(
+    serializeEditorPreviewPlainText(listRowBlocks("list_letter")),
+    "a. First bold[1]\n    i. Sub one\n    ii. Sub two\n        1. Deep\nb. Second\n\n[1] A note",
+  );
 });

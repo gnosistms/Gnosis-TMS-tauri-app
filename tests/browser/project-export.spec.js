@@ -981,8 +981,9 @@ test("book preview uses print typography for body, headings, quotes, captions, a
       row("quote", "An upright quotation with <i>explicit italics</i>.", { attributions: { en: "— An Author" } }),
       row("centered", "Centered text"), row("indented", "Indented text"),
       row("paragraph", "A reference [1] in ordinary text.", { footnotes: { en: "A footnote with <i>italic</i> words. ".repeat(4) } }),
+      row("paragraph", "A second reference [1].", { footnotes: { en: "A second footnote." } }),
       row("paragraph", "<hr>"),
-      row("paragraph", "", { images: { en: { kind: "url", url: "https://example.com/book-proof.svg" } }, imageCaptions: { en: "An italic image caption" } }),
+      row("paragraph", "", { images: { en: { kind: "url", url: "https://example.com/book-proof.svg" } }, imageCaptions: { en: "An upright image caption" } }),
     ] };
   });
   await mountProjectExport(page);
@@ -997,10 +998,14 @@ test("book preview uses print typography for body, headings, quotes, captions, a
         weight: s.fontWeight, italic: s.fontStyle, caps: s.textTransform, tracking: parseFloat(s.letterSpacing) || 0,
         indent: parseFloat(s.textIndent), before: parseFloat(s.marginTop), after: parseFloat(s.marginBottom), align: s.textAlign };
     };
+    const contentEnd = (element) => element.getBoundingClientRect().right - parseFloat(getComputedStyle(element).paddingRight);
+    const contentTop = (element) => element.getBoundingClientRect().top + parseFloat(getComputedStyle(element).paddingTop);
     return { trimmed: CSS.supports("text-box", "trim-both cap alphabetic"), body: read(".translate-preview__block--paragraph"), indent: read(".book-print-indent"),
       title: read(".book-chapter__header h1"), h1: read(".translate-preview__block--heading1"), h2: read(".translate-preview__block--heading2"),
       quote: read("blockquote"), attribution: read("cite"), caption: read("figcaption"),
-      note: read(".book-footnote__text"), centered: read(".translate-preview__block--centered"),
+      note: read(".book-footnote__text"), noteItem: read(".book-chapter__footnotes li"), centered: read(".translate-preview__block--centered"),
+      quoteEnd: contentEnd(page.querySelector("blockquote")), attributionEnd: contentEnd(page.querySelector("cite")),
+      citationGap: contentTop(page.querySelector("cite")) - page.querySelector("blockquote").getBoundingClientRect().bottom,
     };
   });
   expect(styles.body.family).toContain("Crimson Pro");
@@ -1012,7 +1017,7 @@ test("book preview uses print typography for body, headings, quotes, captions, a
   expect(styles.title.caps).toBe("uppercase");
   expect(styles.title.tracking / styles.title.size).toBeCloseTo(.1, 3);
   expect(styles.h1.family).toContain("Alegreya");
-  expect(styles.h1.size / styles.body.size).toBeCloseTo(13 / 11.5, 3);
+  expect(styles.h1.size / styles.body.size).toBeCloseTo(14.5 / 11.5, 3);
   expect(styles.h2.size / styles.body.size).toBeCloseTo(12 / 11.5, 3);
   expect(styles.h1.caps).toBe("uppercase");
   expect(styles.h2.caps).toBe("uppercase");
@@ -1024,10 +1029,18 @@ test("book preview uses print typography for body, headings, quotes, captions, a
   expect(styles.quote.size / styles.body.size).toBeCloseTo(.9, 3);
   expect(styles.attribution.size / styles.body.size).toBeCloseTo(.8, 3);
   expect(styles.attribution.caps).toBe("uppercase");
+  // As in the PDF, a quote's citation ends where the quote text does, inside the
+  // quote's inset rather than at the margin.
+  expect(styles.attributionEnd).toBeCloseTo(styles.quoteEnd, 1);
+  // It sits a quarter em further below than a new paragraph would; untrimmed
+  // line boxes already hold the paragraph space.
+  expect(styles.citationGap / styles.body.size).toBeCloseTo(styles.trimmed ? 1.03 : .25, 2);
   expect(styles.caption.size / styles.body.size).toBeCloseTo(.75, 3);
-  expect(styles.caption.italic).toBe("italic");
+  expect(styles.caption.italic).toBe("normal");
   expect(styles.note.size / styles.body.size).toBeCloseTo(.85, 3);
   expect(styles.note.line).toBeCloseTo(1.0732421875, 3);
+  // As in the PDF, consecutive notes are a third of a footnote line further apart.
+  expect(styles.noteItem.after / styles.noteItem.size).toBeCloseTo(.36, 3);
   expect(styles.centered.align).toBe("center");
   await page.screenshot({ path: test.info().outputPath("book-print-elements.png") });
 });
@@ -1751,6 +1764,45 @@ test("accepted Git settings do not show a second notice when unchanged on reopen
   await releaseSettingsFetch(page, remote);
   await expect(settingsDialog(page)).toHaveCount(0);
   await expect(modal.locator('[data-book-chapter-title="fixture-chapter-0-0"]')).toHaveValue("GitHub title");
+});
+
+test("edits made while an unchanged Git fetch is pending stay quiet and are saved", async ({ page }) => {
+  const saved = settingsDoc(settingsLayout("Saved title"));
+  await mountProjectExport(page, false, false, 3, { local: saved, holdFetch: true });
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  const title = modal.locator('[data-book-chapter-title="fixture-chapter-0-0"]');
+  await expect(title).toHaveValue("Saved title");
+  await title.fill("Edited while loading");
+  await releaseSettingsFetch(page, saved);
+  await expect(settingsDialog(page)).toHaveCount(0);
+  await expect(title).toHaveValue("Edited while loading");
+  await modal.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.__bookSettingsRequests.filter((request) => request.settings).length)).toBe(1);
+  const save = await page.evaluate(() => window.__bookSettingsRequests.find((request) => request.settings));
+  expect(save.settings.layouts.en.items[0].title).toBe("Edited while loading");
+});
+
+test("edits made after reopening during a pending save stay quiet and are saved", async ({ page }) => {
+  await mountProjectExport(page, false, false, 3, { holdFetch: true });
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  const title = modal.locator('[data-book-chapter-title="fixture-chapter-0-0"]');
+  await releaseSettingsFetch(page, null);
+  await title.fill("First save");
+  await page.evaluate(() => { window.__holdSettingsSave = true; });
+  await modal.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.__heldSettingsRequests.length)).toBe(1);
+  await page.locator('[data-action="export-project:fixture-project-001"]').click();
+  await title.fill("Second edit");
+  const firstSave = await page.evaluate(() => {
+    const request = window.__heldSettingsRequests.shift();
+    window.__holdSettingsSave = false;
+    window.__pdfListeners["project-export-settings"]({ payload: { requestId: request.requestId, settings: request.settings, error: "" } });
+    return request.settings;
+  });
+  expect(firstSave.layouts.en.items[0].title).toBe("First save");
+  await releaseSettingsFetch(page, firstSave);
+  await expect(settingsDialog(page)).toHaveCount(0);
+  await expect(title).toHaveValue("Second edit");
 });
 
 

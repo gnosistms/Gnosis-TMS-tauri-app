@@ -5,6 +5,7 @@ use super::chapter_export::{
     download_public_image_bytes_detailed, export_text_style, inline_visible_text,
     numbered_book_documents, sanitize_inline_html, ExportBlock, ExportDocument, ExportImage,
 };
+use super::list_style::{list_items, list_kind, render_list_html};
 use scraper::{ElementRef, Html, Node};
 use std::{
     collections::BTreeSet,
@@ -24,7 +25,7 @@ const MAX_IMAGE_BYTES: u64 = 25 * 1024 * 1024;
 const MAX_IMAGE_PIXELS: u64 = 4_000_000;
 const JPEG_QUALITY: u8 = 90;
 const IMAGE_WORKERS: usize = 6;
-const STYLES: &str = "body{font-family:serif;line-height:1.5;margin:1em;}h1,h2{line-height:1.2;break-after:avoid;}blockquote{margin:1em 2em;}.quote-attribution{display:block;text-align:right;font-style:normal;}.indented{margin-inline-start:2em;}.centered,.title{text-align:center;}figure{text-align:center;break-inside:avoid;}img{max-width:100%;height:auto;}figcaption{font-style:italic;margin-top:.5em;}.missing-image{border:1px solid;padding:.5em;font-size:.9em;}.footnote{font-size:.9em;}hr{width:30%;margin:1.5em auto;}.noteref{vertical-align:super;font-size:.75em;}";
+const STYLES: &str = "body{font-family:serif;line-height:1.5;margin:1em;}h1,h2{line-height:1.2;break-after:avoid;}blockquote{margin:1em 2em;}.quote-attribution{display:block;text-align:right;font-style:normal;}.indented{margin-inline-start:2em;}.centered,.title{text-align:center;}figure{text-align:center;break-inside:avoid;}img{max-width:100%;height:auto;}figcaption{margin-top:.5em;}.missing-image{border:1px solid;padding:.5em;font-size:.9em;}.footnote{font-size:.9em;}hr{width:30%;margin:1.5em auto;}.noteref{vertical-align:super;font-size:.75em;}";
 
 struct Section {
     document: ExportDocument,
@@ -437,18 +438,39 @@ fn section_body(
         .collect();
     let mut referenced = BTreeSet::new();
     let mut body = format!("<section id=\"start\" class=\"{}\">", xml(&section.kind));
-    let mut quote_open = false;
+    // Where a citation joins the text block it follows: inside its closing tag, so
+    // the citation is the block's last line. Footnotes between are looked past.
+    let mut citation_slot = None;
     for (index, block) in section.document.blocks.iter().enumerate() {
-        if quote_open && !matches!(block, ExportBlock::Attribution { .. }) {
-            body.push_str("</blockquote>");
-            quote_open = false;
-        }
         let anchor_notes: Vec<_> = notes
             .iter()
             .filter(|note| note.anchor == Some(index))
             .collect();
         match block {
             ExportBlock::Text { text_style, text } => {
+                citation_slot = None;
+                if let Some(kind) = list_kind(text_style) {
+                    let items = list_items(text);
+                    let mut items_html = items
+                        .iter()
+                        .map(|item| inline(&item.text, &anchor_notes, &mut referenced))
+                        .collect::<Vec<_>>();
+                    // Notes whose markers are not in the list follow its last item.
+                    if let Some(last) = items_html.last_mut() {
+                        for note in &anchor_notes {
+                            if !referenced.contains(&note.index) {
+                                last.push_str(&noteref(note, &mut referenced));
+                            }
+                        }
+                    }
+                    body.push_str(&render_list_html(
+                        kind,
+                        &items,
+                        &items_html,
+                        &format!(" id=\"block-{index}\""),
+                    ));
+                    continue;
+                }
                 let mut text = inline(text, &anchor_notes, &mut referenced);
                 for note in &anchor_notes {
                     if !referenced.contains(&note.index) {
@@ -463,26 +485,33 @@ fn section_body(
                     "centered" => ("p", "centered"),
                     _ => ("p", ""),
                 };
-                let _ = write!(body, "<{tag} id=\"block-{index}\" class=\"{class}\">{text}");
-                if tag == "blockquote" {
-                    quote_open = true;
-                } else {
-                    let _ = write!(body, "</{tag}>");
-                }
-            }
-            ExportBlock::Attribution { text } => {
-                if !quote_open {
-                    body.push_str("<blockquote>");
-                }
                 let _ = write!(
                     body,
-                    "<cite class=\"quote-attribution\">{}</cite></blockquote>",
+                    "<{tag} id=\"block-{index}\" class=\"{class}\">{text}</{tag}>"
+                );
+                // A heading cannot carry a citation, as in the PDF.
+                citation_slot = (!tag.starts_with('h')).then(|| body.len() - tag.len() - 3);
+            }
+            ExportBlock::Attribution { text } => {
+                let cite = format!(
+                    "<cite class=\"quote-attribution\">{}</cite>",
                     inline(text, &[], &mut referenced)
                 );
-                quote_open = false;
+                if let Some(slot) = citation_slot.take() {
+                    body.insert_str(slot, &cite);
+                } else if body.ends_with("<hr/>") {
+                    // A trailing separator leaves no open quote for the citation.
+                    let _ = write!(body, "<blockquote>{cite}</blockquote>");
+                } else {
+                    body.push_str(&cite);
+                }
             }
-            ExportBlock::Separator => body.push_str("<hr/>"),
+            ExportBlock::Separator => {
+                citation_slot = None;
+                body.push_str("<hr/>");
+            }
             ExportBlock::Image { image, caption } => {
+                citation_slot = None;
                 // Every image in the document was loaded before rendering.
                 let Some((_, embedded)) = images.iter().find(|(source, _)| *source == image) else {
                     continue;
@@ -511,9 +540,6 @@ fn section_body(
             }
             ExportBlock::Footnote { .. } => {}
         }
-    }
-    if quote_open {
-        body.push_str("</blockquote>");
     }
     if section.kind == "contents" {
         body.push_str(contents);

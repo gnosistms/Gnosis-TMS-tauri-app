@@ -485,6 +485,29 @@ export function splitInlineMarkupTextIntoParagraphs(value) {
     .map((part) => serializeNodesAsInlineMarkupSource(part.nodes));
 }
 
+// Every line of a list row is an item. Formatting that crosses a return is
+// split with it, so each line is markup of its own; `<hr>` stays in its line.
+export function splitInlineMarkupTextIntoLines(value) {
+  const parsed = parseInlineMarkup(value);
+  const newlines = new Map();
+  const visit = (nodes) => {
+    for (const node of Array.isArray(nodes) ? nodes : []) {
+      if (node?.type === "text") {
+        const offsets = [...node.text.matchAll(/\n/g)].map((match) => match.index);
+        if (offsets.length > 0) {
+          newlines.set(node, new Set(offsets));
+        }
+      } else if (node) {
+        visit(node.children);
+      }
+    }
+  };
+  visit(parsed.nodes);
+  return splitNodesOnInlineSeparators(parsed.nodes, newlines)
+    .filter((part) => part.kind === "text")
+    .map((part) => serializeNodesAsInlineMarkupSource(part.nodes));
+}
+
 export function splitInlineMarkupTextBySeparators(value) {
   const parsed = parseInlineMarkup(value);
   return splitNodesOnInlineSeparators(parsed.nodes)

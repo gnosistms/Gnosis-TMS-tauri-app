@@ -577,3 +577,69 @@ for (const canEdit of [false, true]) {
     assert.doesNotMatch(cleared, /<mark class="translation-language-panel__search-match">/);
   });
 }
+
+test("renderTranslationContentRow offers an icon List button between C and <>", () => {
+  const html = renderTranslationContentRow({
+    ...rowWithSection({ canEdit: true }),
+    canEdit: true,
+  });
+
+  assert.match(html, /data-text-style="centered"[\s\S]*?data-text-style="list_bullet"[\s\S]*?data-text-style="custom_html"/);
+  assert.match(html, /translation-row-text-style-button--icon[^"]*"[^>]*data-text-style="list_bullet"[^>]*aria-label="List"[^>]*data-tooltip="List"/);
+  assert.match(html, /translation-row-text-style-button__icon"><svg/);
+});
+
+test("the List button stays selected and keeps the row's list style", () => {
+  const html = renderTranslationContentRow({
+    ...rowWithSection({ canEdit: true, textListStyle: "list_roman", text: "One\n\tTwo" }),
+    canEdit: true,
+    textStyle: "list_roman",
+  });
+
+  assert.match(html, /is-active"[^>]*data-text-style="list_roman"[^>]*aria-checked="true"/);
+  assert.doesNotMatch(html, /data-text-style="list_bullet"/);
+  assert.match(html, /data-row-text-style="list_roman"/);
+});
+
+test("a closed list field draws each item with its marker and level", () => {
+  const html = renderTranslationContentRow({
+    ...rowWithSection({ canEdit: true, textListStyle: "list_number", text: "One\n\tTwo\n\tThree\nFour" }),
+    canEdit: true,
+    textStyle: "list_number",
+  });
+
+  const items = [...html.matchAll(/--list-level:(\d)"><span class="translation-language-panel__list-marker" aria-hidden="true">([^<]+)<\/span>([^<]*)</g)]
+    .map(([, level, marker, text]) => `${level} ${marker} ${text}`);
+  assert.deepEqual(items, ["0 1. One", "1 a. Two", "1 b. Three", "0 2. Four"]);
+  assert.match(html, /data-editor-list-style-button[^>]*data-text-style="list_number"[^>]*aria-haspopup="menu"/);
+});
+
+test("an open list field overlays markers and flags its textarea as a list", () => {
+  const html = renderTranslationContentRow({
+    ...rowWithSection({
+      canEdit: true,
+      isTextEditorOpen: true,
+      textListStyle: "list_bullet",
+      text: "One\n\tTwo",
+    }),
+    canEdit: true,
+    textStyle: "list_bullet",
+  });
+
+  assert.match(html, /data-editor-list-markers[^>]*>[^]*?•<\/span><\/span>One\n\t<span class="translation-language-panel__list-marker-anchor"><span class="translation-language-panel__list-marker">◦<\/span><\/span>Two<\/div>/);
+  assert.match(html, /<textarea[^>]*data-text-is-list/);
+  assert.doesNotMatch(html, /<textarea[^>]*data-text-has-paragraphs/);
+  assert.match(html, /<\/textarea>\s*<span class="translation-language-panel__list-settings"/);
+});
+
+test("the list style button is only offered to editors", () => {
+  const section = { textListStyle: "list_bullet", text: "One" };
+  const readOnly = renderTranslationContentRow({ ...rowWithSection(section), textStyle: "list_bullet" });
+  assert.doesNotMatch(readOnly, /data-editor-list-style-button/);
+  const translating = renderTranslationContentRow({
+    ...rowWithSection({ ...section, canEdit: true, isAiTranslating: true }),
+    canEdit: true,
+    textStyle: "list_bullet",
+  });
+  assert.doesNotMatch(translating, /data-editor-list-style-button/);
+});

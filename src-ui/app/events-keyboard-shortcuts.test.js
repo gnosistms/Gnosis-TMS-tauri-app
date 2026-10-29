@@ -233,15 +233,19 @@ test("formatting shortcuts leave unavailable and non-editor fields alone", (t) =
   assert.equal(fixture.button.clickCount, 0);
 });
 
-function rowFieldFixture({ contentKind, paragraphs = false, value = "", caret = value.length } = {}) {
+function rowFieldFixture({ contentKind, paragraphs = false, list = false, value = "", caret = value.length } = {}) {
   const originalExecCommand = document.execCommand;
   const target = new HTMLTextAreaElement();
   target.dataset = contentKind ? { contentKind } : {};
   target.matches = (selector) => selector === "[data-editor-row-field]"
-    || (paragraphs && selector === "[data-editor-row-field][data-text-has-paragraphs]");
+    || (paragraphs && selector === "[data-editor-row-field][data-text-has-paragraphs]")
+    || (list && selector === "[data-editor-row-field][data-text-is-list]");
   target.closest = () => null;
   target.value = value;
   target.selectionStart = caret;
+  target.selectionEnd = caret;
+  target.selections = [];
+  target.setSelectionRange = (start, end) => { target.selections.push([start, end]); };
   target.blurCount = 0;
   target.blur = () => { target.blurCount += 1; };
   const commands = [];
@@ -296,6 +300,48 @@ test("Return keeps the native newline in footnotes, captions, attributions, subt
     assert.equal(fixture.run({ key: "Enter", shiftKey: true }).prevented, false);
     assert.deepEqual(fixture.commands, []);
     assert.equal(fixture.target.blurCount, 0);
+  }
+});
+
+test("Return and Shift+Return start a list item at the current level", (t) => {
+  navigator.platform = "MacIntel";
+  for (const modifiers of [{}, { shiftKey: true }]) {
+    const fixture = rowFieldFixture({ list: true, value: "One\n\tTwo" });
+    t.after(fixture.restore);
+    assert.equal(fixture.run({ key: "Enter", ...modifiers }).prevented, true);
+    assert.deepEqual(fixture.commands, [["insertText", false, "\n\t"]]);
+    assert.deepEqual(fixture.target.selections, [[8, 8], [10, 10]]);
+  }
+
+  // An empty indented item outdents; with nothing left to insert it deletes.
+  const fixture = rowFieldFixture({ list: true, value: "One\n\t" });
+  t.after(fixture.restore);
+  fixture.run({ key: "Enter" });
+  assert.deepEqual(fixture.commands, [["delete"]]);
+  assert.deepEqual(fixture.target.selections, [[4, 5], [4, 4]]);
+});
+
+test("Tab and Shift+Tab move list items and stay in the field", (t) => {
+  navigator.platform = "MacIntel";
+  const fixture = rowFieldFixture({ list: true, value: "One\nTwo" });
+  t.after(fixture.restore);
+  assert.equal(fixture.run({ key: "Tab" }).prevented, true);
+  assert.deepEqual(fixture.commands, [["insertText", false, "\tTwo"]]);
+  assert.deepEqual(fixture.target.selections, [[4, 7], [8, 8]]);
+
+  // The first item cannot move, but Tab still does not leave the field.
+  const top = rowFieldFixture({ list: true, value: "One", caret: 0 });
+  t.after(top.restore);
+  assert.equal(top.run({ key: "Tab" }).prevented, true);
+  assert.equal(top.run({ key: "Tab", shiftKey: true }).prevented, true);
+  assert.deepEqual(top.commands, []);
+
+  // Tab in other row fields and with modifiers is not a list key.
+  const paragraph = rowFieldFixture({ paragraphs: true, value: "One\nTwo" });
+  t.after(paragraph.restore);
+  assert.equal(paragraph.run({ key: "Tab" }).prevented, false);
+  for (const modifiers of [{ altKey: true }, { metaKey: true }, { ctrlKey: true }, { isComposing: true }]) {
+    assert.equal(fixture.run({ key: "Tab", ...modifiers }).prevented, false);
   }
 });
 

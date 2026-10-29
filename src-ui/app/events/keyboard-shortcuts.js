@@ -3,6 +3,7 @@ import { state } from "../state.js";
 import { chapterHasSrtSourceFormat } from "../editor-timing.js";
 import { activeGlossaryFootnoteInsertionRequest } from "./glossary-tooltip.js";
 import { registerEditorFieldUndoEvents, handleEditorFieldUndoShortcut } from "../editor-field-undo.js";
+import { listIndentEdit, listReturnEdit } from "../editor-list-keys.js";
 
 const PAGE_SEARCH_INPUT_SELECTOR = [
   "[data-project-search-input]",
@@ -85,6 +86,46 @@ function shouldInsertEditorParagraphBreak(event) {
 function insertEditorParagraphBreak(textarea) {
   const before = textarea.value.slice(0, textarea.selectionStart);
   document.execCommand("insertText", false, before === "" || before.endsWith("\n") ? "\n" : "\n\n");
+}
+
+// List rows: every line is an item and its leading tabs are its level. Return
+// (with or without Shift) starts an item at the same level, Tab and Shift+Tab
+// indent and outdent.
+function editorListKeyEdit(event) {
+  if (event.defaultPrevented || event.isComposing || event.metaKey || event.ctrlKey || event.altKey) {
+    return null;
+  }
+
+  const target = event.target;
+  if (
+    !(target instanceof HTMLTextAreaElement)
+    || !target.matches("[data-editor-row-field][data-text-is-list]")
+    || target.disabled
+    || target.readOnly
+  ) {
+    return null;
+  }
+
+  const key = typeof event.key === "string" ? event.key.toLowerCase() : "";
+  if (key === "enter" || key === "return") {
+    return { edit: listReturnEdit(target.value, target.selectionStart, target.selectionEnd) };
+  }
+  if (key === "tab") {
+    return { edit: listIndentEdit(target.value, target.selectionStart, target.selectionEnd, event.shiftKey) };
+  }
+  return null;
+}
+
+// Like the paragraph break, through execCommand for native undo and the
+// editor's beforeinput gate.
+function applyEditorListKeyEdit(textarea, edit) {
+  textarea.setSelectionRange(edit.start, edit.end);
+  if (edit.text) {
+    document.execCommand("insertText", false, edit.text);
+  } else {
+    document.execCommand("delete");
+  }
+  textarea.setSelectionRange(edit.selectionStart, edit.selectionEnd);
 }
 
 const EDITOR_INLINE_STYLE_SHORTCUTS = new Map([
@@ -212,6 +253,16 @@ export function registerKeyboardShortcutEvents(dispatchAction) {
     if (shouldFocusPageSearch(event)) {
       if (focusPageSearchInput(true)) {
         event.preventDefault();
+      }
+      return;
+    }
+
+    const listKeyEdit = editorListKeyEdit(event);
+    if (listKeyEdit) {
+      // Tab stays in a list field even when the item cannot move.
+      event.preventDefault();
+      if (listKeyEdit.edit) {
+        applyEditorListKeyEdit(event.target, listKeyEdit.edit);
       }
       return;
     }

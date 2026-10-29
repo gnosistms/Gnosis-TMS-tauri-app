@@ -79,11 +79,23 @@ pub(super) fn prepare(
                 } else {
                     format!("Paragraph {paragraph_number}")
                 };
-                let inline = paragraph_inline(document, index, text);
-                excerpts.push((
-                    label,
-                    render_typst_text_block(text_style, &inline, dropcap == Some(index), false),
-                ));
+                let body = match list_kind(text_style) {
+                    Some(kind) => {
+                        let items = list_items(text);
+                        let texts = items
+                            .iter()
+                            .map(|item| item.text.as_str())
+                            .collect::<Vec<_>>();
+                        let items_inline = paragraph_inline_parts(document, index, &texts);
+                        let list = render_typst_list(kind, &items, &items_inline);
+                        render_typst_text_block(text_style, &list, false, false)
+                    }
+                    None => {
+                        let inline = paragraph_inline(document, index, text);
+                        render_typst_text_block(text_style, &inline, dropcap == Some(index), false)
+                    }
+                };
+                excerpts.push((label, body));
             }
             ExportBlock::Image { caption, .. } => {
                 image_number += 1;
@@ -149,6 +161,19 @@ pub(super) fn prepare(
 // References in affected paragraphs retain their original global numbers, while
 // the footnote bodies are included separately only when those bodies need fonts.
 fn paragraph_inline(document: &ExportDocument, block_index: usize, text: &str) -> String {
+    paragraph_inline_parts(document, block_index, &[text])
+        .pop()
+        .unwrap_or_default()
+}
+
+/// The parts of one block (a paragraph, or the items of a list) share its notes:
+/// each reference is set at its marker in the first part that has it, and the rest
+/// follow the last part.
+fn paragraph_inline_parts(
+    document: &ExportDocument,
+    block_index: usize,
+    texts: &[&str],
+) -> Vec<String> {
     let notes: HashMap<_, _> = document
         .blocks
         .iter()
@@ -168,39 +193,45 @@ fn paragraph_inline(document: &ExportDocument, block_index: usize, text: &str) -
         .collect();
     let markers: HashMap<_, _> = notes.keys().map(|marker| (*marker, "")).collect();
     let mut used = HashSet::new();
-    let mut rendered = String::new();
-    for segment in inline_segments(&text.nfc().collect::<String>()) {
-        let mut cursor = 0;
-        while let Some((start, end, marker)) =
-            next_unescaped_footnote_marker(&segment.text, cursor, &markers, &used)
-        {
+    let mut parts = Vec::new();
+    for text in texts {
+        let mut rendered = String::new();
+        for segment in inline_segments(&text.nfc().collect::<String>()) {
+            let mut cursor = 0;
+            while let Some((start, end, marker)) =
+                next_unescaped_footnote_marker(&segment.text, cursor, &markers, &used)
+            {
+                rendered.push_str(&render_styled_typst_text(
+                    &segment.text[cursor..start],
+                    &segment.style,
+                    false,
+                ));
+                rendered.push_str(&format!(
+                    "#super[#text({})]",
+                    typst_string(&notes[&marker].to_string())
+                ));
+                used.insert(marker);
+                cursor = end;
+            }
             rendered.push_str(&render_styled_typst_text(
-                &segment.text[cursor..start],
+                &segment.text[cursor..],
                 &segment.style,
                 false,
             ));
-            rendered.push_str(&format!(
-                "#super[#text({})]",
-                typst_string(&notes[&marker].to_string())
-            ));
-            used.insert(marker);
-            cursor = end;
         }
-        rendered.push_str(&render_styled_typst_text(
-            &segment.text[cursor..],
-            &segment.style,
-            false,
-        ));
+        parts.push(rendered);
     }
-    for (marker, number) in notes.iter().collect::<BTreeMap<_, _>>() {
-        if !used.contains(marker) {
-            rendered.push_str(&format!(
-                "#super[#text({})]",
-                typst_string(&number.to_string())
-            ));
+    if let Some(rendered) = parts.last_mut() {
+        for (marker, number) in notes.iter().collect::<BTreeMap<_, _>>() {
+            if !used.contains(marker) {
+                rendered.push_str(&format!(
+                    "#super[#text({})]",
+                    typst_string(&number.to_string())
+                ));
+            }
         }
     }
-    rendered
+    parts
 }
 
 pub(super) fn read_review(
@@ -256,6 +287,36 @@ mod tests {
         let rendered = paragraph_inline(&document, 0, "Text [2]");
         assert!(rendered.contains("#super[#text(\"17\")]"));
         assert!(!rendered.contains("Not part"));
+    }
+
+    #[test]
+    fn review_list_items_share_their_block_notes() {
+        let note = |number, marker| ExportBlock::Footnote {
+            number,
+            marker,
+            anchor_block: Some(0),
+            text: "A note".into(),
+        };
+        let document = ExportDocument {
+            book_parts: Vec::new(),
+            title: "Title".into(),
+            language_code: "vi".into(),
+            blocks: vec![
+                ExportBlock::Text {
+                    text_style: "list_bullet".into(),
+                    text: "One [2]\n\tTwo".into(),
+                },
+                note(17, 2),
+                note(18, 3),
+            ],
+        };
+        assert_eq!(
+            paragraph_inline_parts(&document, 0, &["One [2]", "Two"]),
+            vec![
+                "#text(\"One \")#super[#text(\"17\")]".to_string(),
+                "#text(\"Two\")#super[#text(\"18\")]".to_string(),
+            ]
+        );
     }
 
     fn review_document() -> ExportDocument {
@@ -339,7 +400,7 @@ mod tests {
         assert!(!source.contains("example.invalid"));
         assert!(source.contains("size: 16pt"));
         assert!(source.contains("== #text(\"A heading"));
-        assert!(source.contains("#text(size: 0.75em, style: \"italic\")"));
+        assert!(source.contains("#text(size: 0.75em)["));
         assert!(source.contains("#super[#text(\"17\")]"));
         assert!(source.contains("#text(\"17.\")"));
         assert!(source.contains("margin: (x: 0.85in, y: 12pt)"));

@@ -1110,6 +1110,7 @@ async function readEditorFieldMetrics(page, rowId, languageCode, contentKind = "
       fontSizePx: Number.parseFloat(styles.fontSize),
       fontWeight: styles.fontWeight,
       fontStyle: styles.fontStyle,
+      textTransform: styles.textTransform,
       opacity: Number(styles.opacity),
       paddingLeftPx: Number.parseFloat(styles.paddingLeft),
     };
@@ -5272,6 +5273,66 @@ test.describe("editor regressions", () => {
     await expect(headingButton).toBeHidden();
   });
 
+  test("a List row nests items with Tab and takes its list style from the settings menu", async ({ page }) => {
+    const rowId = "fixture-row-0001";
+    await mountEditorFixture(page, { rowCount: 40, chapterStatus: "ready" }, { mockTauri: true });
+
+    const field = await activateMainEditorField(page, rowId, "vi");
+    await field.click();
+    await page.locator(
+      `[data-editor-row-text-style-button][data-row-id="${rowId}"][data-language-code="vi"][data-text-style="list_bullet"]`,
+    ).click();
+    await expect.poll(async () => (await readMockTauriState(page))?.textStyles?.["fixture-chapter"]?.[rowId] ?? null)
+      .toBe("list_bullet");
+
+    const listField = page.locator(`[data-editor-row-field][data-row-id="${rowId}"][data-language-code="vi"][data-text-is-list]`);
+    await expect(listField).toBeFocused();
+    await listField.evaluate((element) => {
+      element.selectionStart = element.value.length;
+      element.selectionEnd = element.value.length;
+    });
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Tab");
+    await page.keyboard.type("Nested");
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Shift+Tab");
+    await page.keyboard.type("Last");
+    await expect(listField).toHaveValue("alpha 0001 target text\n\tNested\nLast");
+    await expect(listField).toBeFocused();
+
+    const overlayMarkers = page.locator(
+      `[data-editor-glossary-field-stack][data-row-id="${rowId}"][data-language-code="vi"] [data-editor-list-markers] .translation-language-panel__list-marker`,
+    );
+    await expect(overlayMarkers).toHaveText(["•", "◦", "•"]);
+
+    const settingsButton = page.locator(`[data-editor-list-style-button][data-row-id="${rowId}"][data-language-code="vi"]`);
+    await settingsButton.click();
+    const menu = page.locator("[data-editor-list-style-menu]");
+    await expect(menu.getByRole("menuitemradio")).toHaveText(["•Bullets", "1.Numbers", "a.Letters", "I.Roman numerals"]);
+    await expect(menu.getByRole("menuitemradio", { checked: true })).toHaveText("•Bullets");
+    await expect(listField).toBeFocused();
+    await menu.getByRole("menuitemradio", { name: "Roman numerals" }).click();
+    await expect(menu).toHaveCount(0);
+    await expect.poll(async () => (await readMockTauriState(page))?.textStyles?.["fixture-chapter"]?.[rowId] ?? null)
+      .toBe("list_roman");
+    await expect.poll(async () => (await readMockTauriState(page))?.histories?.[`fixture-chapter::${rowId}::vi`]?.[0]?.plainText ?? null)
+      .toBe("alpha 0001 target text\n\tNested\nLast");
+    await expect(overlayMarkers).toHaveText(["I.", "A.", "II."]);
+
+    await page.locator("[data-editor-search-input]").click();
+    await expect(page.locator(
+      `[data-editor-display-field][data-row-id="${rowId}"][data-language-code="vi"] .translation-language-panel__list-marker`,
+    )).toHaveText(["I.", "A.", "II."]);
+
+    await page.locator('[data-action="set-editor-mode:preview"]').click();
+    await page.locator("[data-editor-preview-language-select]").selectOption("vi");
+    const previewList = page.locator(`[data-editor-preview-document] [data-preview-block="list"][data-row-id="${rowId}"]`);
+    await expect(previewList).toHaveCSS("list-style-type", "upper-roman");
+    await expect(previewList.locator(":scope > li")).toHaveCount(2);
+    await expect(previewList.locator(":scope > li > ol > li")).toHaveText(["Nested"]);
+    await expect(previewList.locator(":scope > li > ol")).toHaveCSS("list-style-type", "upper-alpha");
+  });
+
   test("changing row text style auto-saves pending text edits first", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 40 }, { mockTauri: true });
 
@@ -5448,15 +5509,21 @@ test.describe("editor regressions", () => {
     await expect.poll(async () => {
       return (await readEditorFieldMetrics(page, "fixture-row-0001", "vi"))?.fontSizePx ?? 0;
     }).toBeGreaterThan(paragraphMetrics.fontSizePx);
+    // Latin-script headings match the PDF export: regular-weight capitals at
+    // 12pt (H2) and 14.5pt (H1) over an 11.5pt body.
     const heading2Metrics = await readEditorFieldMetrics(page, "fixture-row-0001", "vi");
-    expect(Number.parseInt(heading2Metrics.fontWeight, 10)).toBeGreaterThanOrEqual(700);
+    expect(heading2Metrics.fontSizePx / paragraphMetrics.fontSizePx).toBeCloseTo(12 / 11.5, 2);
+    expect(heading2Metrics.fontWeight).toBe("400");
+    expect(heading2Metrics.textTransform).toBe("uppercase");
 
     await heading1Button.click();
     await expect.poll(async () => {
       return (await readEditorFieldMetrics(page, "fixture-row-0001", "vi"))?.fontSizePx ?? 0;
     }).toBeGreaterThan(heading2Metrics.fontSizePx);
     const heading1Metrics = await readEditorFieldMetrics(page, "fixture-row-0001", "vi");
-    expect(Number.parseInt(heading1Metrics.fontWeight, 10)).toBeGreaterThanOrEqual(700);
+    expect(heading1Metrics.fontSizePx / paragraphMetrics.fontSizePx).toBeCloseTo(14.5 / 11.5, 2);
+    expect(heading1Metrics.fontWeight).toBe("400");
+    expect(heading1Metrics.textTransform).toBe("uppercase");
 
     await clickLocatorCenter(page, quoteButton);
     await expect.poll(async () => {
@@ -5769,7 +5836,7 @@ test.describe("editor regressions", () => {
     expect(displayInnerHtml).not.toContain("&lt;");
   });
 
-  test("separator button inserts hr markup and renders a horizontal line after blur", async ({ page }) => {
+  test("separator button inserts hr markup and renders the flourish after blur", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 40 }, { mockTauri: true });
     const telemetrySaveButton = page.getByRole("button", { name: "Save" });
     if (await telemetrySaveButton.count()) {
@@ -6266,6 +6333,29 @@ test.describe("editor regressions", () => {
     await expect.poll(async () => {
       return Math.abs((await readTranslateScrollTop(page)) - beforeScrollTop);
     }).toBeLessThan(4);
+  });
+
+  test("image captions are upright in the editor and the preview, as in every export", async ({ page }) => {
+    const rowId = "fixture-row-0001";
+    await mountEditorFixture(page, {
+      rowCount: 2,
+      chapterStatus: "ready",
+      imagesByRowId: { [rowId]: { vi: { kind: "url", url: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80'%3E%3Crect width='80' height='80' fill='orange'/%3E%3C/svg%3E" } } },
+    }, { mockTauri: true });
+    const captionField = await activateImageCaptionEditor(page, rowId, "vi");
+    await captionField.fill("Upright caption");
+    await page.keyboard.press(await editorSaveShortcut(page));
+
+    const editorCaption = page.locator(
+      `[data-editor-image-caption-button][data-row-id="${rowId}"][data-language-code="vi"] .translation-language-panel__image-caption-text`,
+    );
+    await expect(editorCaption).toHaveText("Upright caption");
+    await expect(editorCaption).toHaveCSS("font-style", "normal");
+
+    await page.locator('[data-action="set-editor-mode:preview"]').click();
+    const previewCaption = page.locator(".translate-preview__image-caption").filter({ hasText: "Upright caption" });
+    await expect(previewCaption).toBeVisible();
+    await expect(previewCaption).toHaveCSS("font-style", "normal");
   });
 
   test("blank lines display as paragraphs; Return starts one and Shift+Return breaks a line", async ({ page }) => {

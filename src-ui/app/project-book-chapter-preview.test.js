@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { renderBookChapterPages } from "./project-book-chapter-preview.js";
+import { buildEditorPreviewDocument } from "./editor-preview.js";
 const text = (textStyle, value, extra = {}) => ({ kind: "text", rowId: "row", languageCode: "en", textStyle, text: value, ...extra });
 const pages = (blocks, languageCode = "en") => renderBookChapterPages(blocks, { languageCode }, () => "data:image/svg+xml,test");
 const render = (blocks, languageCode) => pages(blocks, languageCode).join("");
@@ -65,4 +66,19 @@ test("an opening quote or image stands alone on a cover page before the chapter 
     [text("quote", "Only an epigraph.", { attribution: "— One" }), text("paragraph", "")],
     [image],
   ]) assert.equal(pages(blocks).length, 1);
+});
+
+test("an attribution-only quote cites the text before it, on the cover and on the page", () => {
+  const attribution = (rowId, source) => ({ rowId, textStyle: "quote", fields: { en: "" }, attributions: { en: source } });
+  const [cover, body] = pages(buildEditorPreviewDocument([
+    { rowId: "q", textStyle: "quote", fields: { en: "An epigraph." } }, attribution("a", "— One"),
+    { rowId: "p", fields: { en: "Body text." } }, attribution("b", "— Two"),
+    { rowId: "n", fields: { en: "Not indented." } },
+  ], "en"));
+  // On the cover it is the epigraph's own citation, inside the epigraph.
+  assert.match(cover, /<div class="book-chapter__epigraph"><blockquote[^>]*>An epigraph\.<\/blockquote><cite[^>]*>— One<\/cite><\/div>/);
+  // On the page it follows the body text with no empty quote, and the next
+  // paragraph is not indented, as after any citation.
+  assert.match(body, /<p [^>]*>Body text\.<\/p><cite[^>]*>— Two<\/cite><p [^>]*>Not indented\./);
+  assert.doesNotMatch(body, /blockquote|book-print-indent/);
 });
