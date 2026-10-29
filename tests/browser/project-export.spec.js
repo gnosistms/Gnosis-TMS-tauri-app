@@ -983,7 +983,7 @@ test("book preview uses print typography for body, headings, quotes, captions, a
       row("paragraph", "A reference [1] in ordinary text.", { footnotes: { en: "A footnote with <i>italic</i> words. ".repeat(4) } }),
       row("paragraph", "A second reference [1].", { footnotes: { en: "A second footnote." } }),
       row("paragraph", "<hr>"),
-      row("paragraph", "", { images: { en: { kind: "url", url: "https://example.com/book-proof.svg" } }, imageCaptions: { en: "An italic image caption" } }),
+      row("paragraph", "", { images: { en: { kind: "url", url: "https://example.com/book-proof.svg" } }, imageCaptions: { en: "An upright image caption" } }),
     ] };
   });
   await mountProjectExport(page);
@@ -1036,7 +1036,7 @@ test("book preview uses print typography for body, headings, quotes, captions, a
   // line boxes already hold the paragraph space.
   expect(styles.citationGap / styles.body.size).toBeCloseTo(styles.trimmed ? 1.03 : .25, 2);
   expect(styles.caption.size / styles.body.size).toBeCloseTo(.75, 3);
-  expect(styles.caption.italic).toBe("italic");
+  expect(styles.caption.italic).toBe("normal");
   expect(styles.note.size / styles.body.size).toBeCloseTo(.85, 3);
   expect(styles.note.line).toBeCloseTo(1.0732421875, 3);
   // As in the PDF, consecutive notes are a third of a footnote line further apart.

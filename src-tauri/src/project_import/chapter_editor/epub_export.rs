@@ -24,7 +24,7 @@ const MAX_IMAGE_BYTES: u64 = 25 * 1024 * 1024;
 const MAX_IMAGE_PIXELS: u64 = 4_000_000;
 const JPEG_QUALITY: u8 = 90;
 const IMAGE_WORKERS: usize = 6;
-const STYLES: &str = "body{font-family:serif;line-height:1.5;margin:1em;}h1,h2{line-height:1.2;break-after:avoid;}blockquote{margin:1em 2em;}.quote-attribution{display:block;text-align:right;font-style:normal;}.indented{margin-inline-start:2em;}.centered,.title{text-align:center;}figure{text-align:center;break-inside:avoid;}img{max-width:100%;height:auto;}figcaption{font-style:italic;margin-top:.5em;}.missing-image{border:1px solid;padding:.5em;font-size:.9em;}.footnote{font-size:.9em;}hr{width:30%;margin:1.5em auto;}.noteref{vertical-align:super;font-size:.75em;}";
+const STYLES: &str = "body{font-family:serif;line-height:1.5;margin:1em;}h1,h2{line-height:1.2;break-after:avoid;}blockquote{margin:1em 2em;}.quote-attribution{display:block;text-align:right;font-style:normal;}.indented{margin-inline-start:2em;}.centered,.title{text-align:center;}figure{text-align:center;break-inside:avoid;}img{max-width:100%;height:auto;}figcaption{margin-top:.5em;}.missing-image{border:1px solid;padding:.5em;font-size:.9em;}.footnote{font-size:.9em;}hr{width:30%;margin:1.5em auto;}.noteref{vertical-align:super;font-size:.75em;}";
 
 struct Section {
     document: ExportDocument,

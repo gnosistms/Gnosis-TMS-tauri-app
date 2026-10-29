@@ -339,7 +339,7 @@ mod tests {
         assert!(!source.contains("example.invalid"));
         assert!(source.contains("size: 16pt"));
         assert!(source.contains("== #text(\"A heading"));
-        assert!(source.contains("#text(size: 0.75em, style: \"italic\")"));
+        assert!(source.contains("#text(size: 0.75em)["));
         assert!(source.contains("#super[#text(\"17\")]"));
         assert!(source.contains("#text(\"17.\")"));
         assert!(source.contains("margin: (x: 0.85in, y: 12pt)"));

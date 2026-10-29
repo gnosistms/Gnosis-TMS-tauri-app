@@ -6275,6 +6275,29 @@ test.describe("editor regressions", () => {
     }).toBeLessThan(4);
   });
 
+  test("image captions are upright in the editor and the preview, as in every export", async ({ page }) => {
+    const rowId = "fixture-row-0001";
+    await mountEditorFixture(page, {
+      rowCount: 2,
+      chapterStatus: "ready",
+      imagesByRowId: { [rowId]: { vi: { kind: "url", url: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80'%3E%3Crect width='80' height='80' fill='orange'/%3E%3C/svg%3E" } } },
+    }, { mockTauri: true });
+    const captionField = await activateImageCaptionEditor(page, rowId, "vi");
+    await captionField.fill("Upright caption");
+    await page.keyboard.press(await editorSaveShortcut(page));
+
+    const editorCaption = page.locator(
+      `[data-editor-image-caption-button][data-row-id="${rowId}"][data-language-code="vi"] .translation-language-panel__image-caption-text`,
+    );
+    await expect(editorCaption).toHaveText("Upright caption");
+    await expect(editorCaption).toHaveCSS("font-style", "normal");
+
+    await page.locator('[data-action="set-editor-mode:preview"]').click();
+    const previewCaption = page.locator(".translate-preview__image-caption").filter({ hasText: "Upright caption" });
+    await expect(previewCaption).toBeVisible();
+    await expect(previewCaption).toHaveCSS("font-style", "normal");
+  });
+
   test("blank lines display as paragraphs; Return starts one and Shift+Return breaks a line", async ({ page }) => {
     const rowId = "fixture-row-0001";
     const text = "First paragraph with a\nline break\n\nSecond paragraph";

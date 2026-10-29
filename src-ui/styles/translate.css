@@ -580,7 +580,6 @@
 
 .translate-preview__image-caption {
   text-align: center;
-  font-style: italic;
 }
 
 /* A caption uses the shared tooltip itself; hide the surrounding figure's hint. */
@@ -1313,7 +1312,6 @@
   font-family: var(--font-serif);
   font-size: var(--translation-editor-font-size, 14px);
   line-height: 1.5;
-  font-style: italic;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   word-break: break-word;

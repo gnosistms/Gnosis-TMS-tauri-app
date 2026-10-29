@@ -743,7 +743,7 @@ function serializePreviewImageHtml(block) {
     '<figure class="wp-block-image aligncenter">',
     `<img src="${escapeHtml(exportSrc)}" alt=""/>`,
     caption
-      ? `<figcaption class="wp-element-caption"><em>${serializePreviewText(block.caption)}</em></figcaption>`
+      ? `<figcaption class="wp-element-caption">${serializePreviewText(block.caption)}</figcaption>`
       : "",
     "</figure>",
   ].join("");

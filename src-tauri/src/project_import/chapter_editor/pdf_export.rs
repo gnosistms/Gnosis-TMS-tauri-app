@@ -3125,7 +3125,7 @@ fn render_typst_image_caption(caption: &str) -> String {
     // Vellum's reference captions use approximately 75% of body size and
     // centered, non-justified lines.
     format!(
-        "#align(center)[#set par(justify: false, first-line-indent: 0pt)\n#text(size: 0.75em, style: \"italic\")[{}]]",
+        "#align(center)[#set par(justify: false, first-line-indent: 0pt)\n#text(size: 0.75em)[{}]]",
         render_inline_typst(caption, false)
     )
 }
@@ -5534,10 +5534,11 @@ mod tests {
     }
 
     #[test]
-    fn image_captions_are_wrapped_in_italic_text() {
+    fn image_captions_are_small_upright_text() {
         let caption = render_typst_image_caption("A <b>bold</b> caption");
         assert!(caption.starts_with("#align(center)"));
-        assert!(caption.contains("#text(size: 0.75em, style: \"italic\")["));
+        assert!(caption.contains("#text(size: 0.75em)["));
+        assert!(!caption.contains("italic"));
         assert!(caption.contains("#strong["));
     }
 

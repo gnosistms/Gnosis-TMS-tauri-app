@@ -926,6 +926,8 @@ test("serializeEditorPreviewWordPress returns content plus matching footnote met
     /<\/figure>\n<!-- \/wp:image -->\n\n<!-- wp:footnotes \/-->/,
   );
   assert.match(content, /src="chapters\/ch-1\/images\/row-1\/image\.png"/);
+  // Captions are upright: no italics wrapped around the caption text.
+  assert.match(content, /<figcaption class="wp-element-caption">Caption<\/figcaption>/);
 
   assert.equal(footnotes.length, 1);
   assert.match(footnotes[0].id, /^[0-9a-f-]{36}$/);

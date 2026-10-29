@@ -1516,10 +1516,7 @@ fn render_html_document(document: &ExportDocument) -> Result<String, String> {
                     let caption_html = if caption.trim().is_empty() {
                         String::new()
                     } else {
-                        format!(
-                            "<figcaption><em>{}</em></figcaption>",
-                            sanitize_inline_html(caption)
-                        )
+                        format!("<figcaption>{}</figcaption>", sanitize_inline_html(caption))
                     };
                     let _ = writeln!(
                         body,
@@ -1803,7 +1800,7 @@ fn render_md_document(document: &ExportDocument) -> String {
                 ));
                 let caption = md_single_line(&md_inline_text(caption));
                 if !caption.trim().is_empty() {
-                    fragments.push(format!("*{}*", caption.trim()));
+                    fragments.push(caption.trim().to_string());
                 }
             }
             ExportBlock::Footnote { number, text, .. } => {
@@ -2278,7 +2275,7 @@ fn render_docx_document(
                             body.push_str(&docx_text_paragraph_xml(
                                 Some("centered"),
                                 caption,
-                                true,
+                                false,
                             ));
                         }
                     }
@@ -2935,7 +2932,7 @@ fn render_rtf_document(document: &ExportDocument, footnote_links_as_plain_text: 
             ExportBlock::Image { image, caption } => {
                 body.push_str(&rtf_image_paragraph(image));
                 if !caption.trim().is_empty() {
-                    body.push_str(&rtf_text_paragraph(Some("centered"), caption, true));
+                    body.push_str(&rtf_text_paragraph(Some("centered"), caption, false));
                 }
             }
         }
@@ -4142,7 +4139,8 @@ mod tests {
 
         assert!(output.contains("<h1><strong>Hello</strong> <ruby>字<rt>zi</rt></ruby></h1>"));
         assert!(output.contains("<figure><img src=\"https://example.com/image.png\""));
-        assert!(output.contains("<figcaption><em><em>Caption</em></em></figcaption>"));
+        // Captions are upright; only explicit inline italics are kept.
+        assert!(output.contains("<figcaption><em>Caption</em></figcaption>"));
         assert!(output.contains("<p class=\"footnote\"><em>[1] <u>Note</u></em></p>"));
     }
 
@@ -4694,7 +4692,8 @@ mod tests {
             .read_to_string(&mut docx_text)
             .expect("document xml reads");
         assert!(docx_text.contains(">Text<"));
-        assert!(docx_text.contains(">Active caption<"));
+        // The caption run is upright: no italic run properties.
+        assert!(docx_text.contains(r#"<w:r><w:t xml:space="preserve">Active caption</w:t></w:r>"#));
         assert!(docx_text.contains("Note"));
         assert!(!docx_text.contains("Deleted"));
         assert!(!docx_text.contains("Deleted note"));
@@ -5033,7 +5032,8 @@ mod tests {
         // The footnote reference lands at the end of its row's paragraph.
         assert!(output.contains("**Bold** and *italic* and <u>under</u>[^1]"));
         assert!(output.contains("![](<https://example.com/image.png>)"));
-        assert!(output.contains("*Caption*"));
+        // Captions are upright: a plain paragraph under the image.
+        assert!(output.contains("![](<https://example.com/image.png>)\n\nCaption\n\n"));
         assert!(output.contains("> Line one\n> Line two"));
         assert!(output.contains("## Sub"));
         assert!(output.contains("Stars \\* and \\[brackets\\]"));
@@ -5127,7 +5127,8 @@ mod tests {
                 .map(|byte| format!("{byte:02x}"))
                 .collect::<String>()
         ));
-        assert!(output.contains("{\\i Caption}"));
+        // Captions are centered and upright.
+        assert!(output.contains("\\sa200\\qc Caption\\par"));
     }
 
     #[test]
