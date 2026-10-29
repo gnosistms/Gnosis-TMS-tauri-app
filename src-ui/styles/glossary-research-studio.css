@@ -135,6 +135,14 @@
   -webkit-line-clamp: unset;
 }
 .studio-check { display: inline-flex; margin: 8px 0; }
+/* Step 10a: the usage count sits under its translation, aligned past the
+   18px checkbox and 12px gap of .field__checkbox. The browser's own checkbox
+   margin differs between engines, so it is removed here, and a long
+   translation must not squeeze the checkbox. */
+.studio-usage { display: grid; row-gap: 2px; }
+.studio-usage .studio-check { margin: 0; }
+.studio-usage .studio-check input { margin: 0; flex-shrink: 0; }
+.studio-usage-count { padding-left: 30px; color: var(--muted); font-size: .875rem; }
 .studio-candidate { border: 1px solid var(--surface-border); border-radius: var(--radius-card); padding: 16px; margin: 14px 0; background: var(--surface-strong); }
 .studio-progress { display: flex; align-items: center; gap: 10px; padding: 12px 16px; background: var(--control-selected-surface); border-radius: var(--radius-card); }
 .studio-progress .button__spinner { display: inline-block; flex: 0 0 16px; border-color: currentColor; border-top-color: transparent; }

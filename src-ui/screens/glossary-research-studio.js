@@ -298,7 +298,7 @@ function stepContent(s, state) {
       ${uniqueTexts(s.candidates.filter((c) => c.confirmed && c.selected !== false && c.meaningIds.some((id) => activeMeanings(s).some((m) => m.id === id))).map((c) => c.text)).map((text) => {
         const index = s.candidates.findIndex((c) => c.confirmed && c.text === text); const c = s.candidates[index];
         const count = s.usageByText?.[text] ?? s.usage?.[c.id] ?? { occurrences: 0, paragraphs: 0 };
-        return `<div class="studio-entry">${check(text, `candidates.${index}.retained`, c.retained !== false, false, `data-studio-retain-text="${e(text)}"`)}<span>${quantity(count.occurrences, "occurrence")} across ${quantity(count.paragraphs, "paragraph")}</span></div>`;
+        return `<div class="studio-entry studio-usage">${check(text, `candidates.${index}.retained`, c.retained !== false, false, `data-studio-retain-text="${e(text)}"`)}<span class="studio-usage-count">${quantity(count.occurrences, "occurrence")} across ${quantity(count.paragraphs, "paragraph")}</span></div>`;
       }).join("")}`;
     case "10b": {
       const collisions = sourceCollisions(s, studioGlossaryEntries(s.scope));
