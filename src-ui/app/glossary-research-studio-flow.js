@@ -437,6 +437,17 @@ async function recommendCurrentStep(refresh = false) {
   }
 }
 
+// Choosing Run or Skip answers the question the pending recommendation asks, so
+// the request is cancelled and its late answer discarded.
+async function abandonRecommendation() {
+  const view = studioView();
+  if (!view.recommendationRequest) return;
+  view.recommendationRequest = null; view.recommendingStep = null;
+  operationGeneration += 1;
+  currentTiming?.finish("paused"); await currentTools?.cancel();
+  view.busy = false; view.message = "";
+}
+
 async function moveTo(s, step) {
   const generation = operationGeneration;
   const isCurrent = () => contextMatches(s) && generation === operationGeneration && state.screen === "glossaryResearchStudio";
@@ -987,8 +998,9 @@ export async function studioAction(action, render) {
       const next = STUDIO_STEPS[STUDIO_STEPS.findIndex((item) => item.id === s.step) + 1];
       if (next && studioCanVisitStep(s, next.id)) { await visitStudioStep(next.id); return; }
     }
-    if (s && changesResearch && !studioView().busy && requestStudioRedo(() => studioAction(action, render))) return;
+    if (s && changesResearch && (!studioView().busy || studioView().recommendationRequest) && requestStudioRedo(() => studioAction(action, render))) return;
     if (s && changesResearch && !["run", "redo"].includes(name)) markStudioEdited(s);
+    if (s && ["run", "skip"].includes(name)) await abandonRecommendation();
     if (name === "new") await newStudy();
     else if (name.startsWith("visit:")) await visitStudioStep(name.slice(6));
     else if (name.startsWith("resume:")) await resumeStudy(name.slice(7));

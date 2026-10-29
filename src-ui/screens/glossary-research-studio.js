@@ -492,8 +492,13 @@ export function renderGlossaryResearchStudio(state) {
     const browsingCheckpoint = view.revisiting && (s.steps[s.step]?.approved || ["complete", "skipped"].includes(s.steps[s.step]?.status));
     const continueDisabled = Boolean(view.saving) || !browsingCheckpoint && (Boolean(s.pendingDecision) || entryNeedsRetest || meaningNeedsRetest || (s.step === "9" && s.assignmentReviewPending) || unfinished || Boolean(staleDictionary) || Boolean(staleForms) || (needsResult && !s.steps[s.step]?.value) || (s.step === "2a" && (s.formDiscovery && s.formDiscovery.phase !== "complete")));
     const needsRun = needsResult && (!s.steps[s.step]?.value || (unfinished && !s.pendingDecision) || view.error || staleDictionary || staleForms);
-    const emphasizeRun = !view.busy && !s.pendingDecision && needsRun && continueDisabled && currentStudioRecommendation(s)?.recommendation === "Run";
-    const runButton = emphasizeRun ? (label, action, options) => primaryButton(label, `studio:${action}`, options) : button;
+    // Run and Skip stay available while advice is requested. Run is the orange
+    // default until the AI recommends Skip, while no other primary action shows.
+    const recommending = view.busy && view.recommendingStep === s.step;
+    const recommended = (!view.busy || recommending) && !s.pendingDecision && needsRun && continueDisabled && studioCanRecommendSkip(s.step)
+      ? !recommending && currentStudioRecommendation(s)?.recommendation === "Skip" ? "Skip" : "Run" : null;
+    const runButton = recommended === "Run" ? (label, action, options) => primaryButton(label, `studio:${action}`, options) : button;
+    const skipButton = recommended === "Skip" ? primaryButton("Skip this step", "studio:skip") : button("Skip this step", "skip");
     const content = stepContent(s, state);
     const formsReview = s.step === "2a" && s.formDiscovery?.phase === "complete" && Boolean(content);
     const contentHtml = content ? `<div class="studio-step"${formsReview ? ' data-studio-forms-review' : ""}>${content}</div>` : "";
@@ -514,7 +519,7 @@ export function renderGlossaryResearchStudio(state) {
       ${budgetComparisons(s)}</div>
       <footer class="studio-actions studio-footer" data-studio-step="${e(s.step)}">${s.pendingDecision && view.hideDecision ? button("Review paused research", "review-decision") : ""}
       ${canExport ? button("Export research", "export", { disabled: view.exporting, tooltip: "export a summary of the data uncovered during the research process in a JSON format appropriate for sending it to an AI for further discussion.", tooltipOptions: { align: "start" } }) : ""}
-      ${view.busy ? button("Pause research", "pause") : `${(step.optional || s.step === "4.4.4") && !stepComplete ? button("Skip this step", "skip") : ""}
+      ${view.busy && !recommending ? button("Pause research", "pause") : `${(step.optional || s.step === "4.4.4") && !stepComplete ? skipButton : ""}
       ${view.revisiting && s.steps[s.step]?.value && !s.steps[s.step].value.pending && !["1", "10a", "10b", "11", "12"].includes(s.step) ? button("Redo this step", "redo") : ""}
       ${s.step === "9" && s.assignmentReviewPending ? button("Retest meanings", "retest-meanings")
         : ["8", "9"].includes(s.step) && !s.pendingDecision ? runButton(s.steps[s.step]?.value?.complete ? s.step === "8" ? "Retest meanings" : "Retest entry" : view.error ? "Retry this step" : unfinished ? "Resume this step" : "Run this step", "run", { disabled: !entryNeedsRetest && !meaningNeedsRetest })

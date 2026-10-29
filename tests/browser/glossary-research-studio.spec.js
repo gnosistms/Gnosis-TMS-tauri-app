@@ -521,6 +521,29 @@ test("Skip recommendation waits for the human, who can run the step anyway", asy
   await expect(page.getByLabel("Source form", { exact: true })).toHaveCount(3);
 });
 
+for (const choice of ["Run", "Skip"]) test(`${choice} works before the recommendation arrives, which is then discarded`, async ({ page }) => {
+  await mountStudio(page);
+  await page.evaluate(() => { window.studioHold = "recommendation"; });
+  await page.getByRole("button", { name: "New research", exact: true }).click();
+  await page.getByLabel("Term to research").fill("walk");
+  await page.getByRole("listbox", { name: "Projects", exact: true }).selectOption("p1");
+  await page.getByRole("button", { name: "Begin research", exact: true }).click();
+  await expect(page.locator(".studio-recommendation")).toContainText("Considering whether this research step would help");
+  const footer = page.locator('.studio-footer[data-studio-step="2a"]');
+  await expect(footer.locator('[data-action="studio:run"]')).toHaveClass(/button--primary/u);
+  await expect(footer.locator('[data-action="studio:skip"]')).not.toHaveClass(/button--primary/u);
+  await expect(footer.getByRole("button", { name: "Pause research", exact: true })).toHaveCount(0);
+  await footer.getByRole("button", { name: `${choice} this step`, exact: true }).click();
+  if (choice === "Run") await expect(page.getByLabel("Source form", { exact: true })).toHaveCount(3);
+  else await expect(page.getByRole("heading", { name: "4.1 · Dictionary", exact: true })).toBeVisible();
+  const saved = await page.evaluate(async () => {
+    const s = (await import(`/${"app"}/state.js`)).state.glossaryResearchStudio.study;
+    return { status: s.steps["2a"]?.status, advice: s.skipRecommendations?.["2a"] ?? null,
+      cancellations: window.studioCalls.filter((c) => c.command === "glossary_studio_job" && c.args.cancel).length };
+  });
+  expect(saved).toEqual({ status: choice === "Run" ? "awaiting-review" : "skipped", advice: null, cancellations: 1 });
+});
+
 test("uncertainty recommends Run, while a human Skip preserves only the entered forms", async ({ page }) => {
   await mountStudio(page);
   await page.evaluate(() => { window.studioRecommendationAnswer = { recommendation: "Not sure", reason: "Unknown." }; });
@@ -686,25 +709,6 @@ test("step 1 edits after completed forms automatically produce new advice withou
       researchRuns: s.timing.steps["2a"].runs.length, discovery: s.formDiscovery };
   });
   expect(result).toEqual({ adviceCalls: 2, researchRuns: 1, discovery: null });
-});
-
-test("pausing a recommendation cancels its job without starting research or applying a late decision", async ({ page }) => {
-  await mountStudio(page);
-  await page.evaluate(() => { window.studioHold = "recommendation"; });
-  await page.getByRole("button", { name: "New research", exact: true }).click();
-  await page.getByLabel("Term to research").fill("walk");
-  await page.getByRole("listbox", { name: "Projects", exact: true }).selectOption("p1");
-  await page.getByRole("button", { name: "Begin research", exact: true }).click();
-  await expect(page.locator(".studio-recommendation")).toContainText("Considering whether");
-  await page.getByRole("button", { name: "Pause research", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Run this step", exact: true })).toBeEnabled();
-  const result = await page.evaluate(async () => {
-    const s = (await import(`/${"app"}/state.js`)).state.glossaryResearchStudio.study;
-    return { step: s.step, recommendation: s.skipRecommendations?.["2a"] ?? null,
-      stages: window.studioCalls.filter((c) => c.command === "start_glossary_studio_tool").map((c) => c.args.input.step),
-      cancellations: window.studioCalls.filter((c) => c.command === "glossary_studio_job" && c.args.cancel).length };
-  });
-  expect(result).toEqual({ step: "2a", recommendation: null, stages: ["recommendation:2a"], cancellations: 1 });
 });
 
 test("source summary is shown as 4.4.3, waits for a choice and warns before discarding source research", async ({ page }) => {

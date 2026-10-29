@@ -151,6 +151,34 @@ test("skip advice is escaped and advisory, stale advice is hidden, and the summa
   } finally { state.glossaryResearchStudio = previous; }
 });
 
+test("Run is the orange default until the AI recommends Skip, and both stay available while advice loads", () => {
+  const previous = state.glossaryResearchStudio;
+  const primary = (html, action) => new RegExp(`class="button button--primary" data-action="studio:${action}"`, "u").test(html);
+  const orange = (html, emphasized, plain, message) => {
+    assert(primary(html, emphasized), `${message}: ${emphasized} is orange`);
+    assert(!primary(html, plain) && html.includes(`data-action="studio:${plain}"`), `${message}: ${plain} stays plain`);
+  };
+  try {
+    for (const step of Object.keys(STUDIO_SKIP_PROMPTS)) {
+      const s = newStudioStudy({ term: "mundo", sourceLanguage: { code: "es", name: "Spanish" },
+        targetLanguage: { code: "en", name: "English" } }, "recommendation-emphasis");
+      s.step = step; const view = { study: s, busy: false }; state.glossaryResearchStudio = view;
+      orange(renderGlossaryResearchStudio(state), "run", "skip", `${step}: no recommendation`);
+      for (const [choice, emphasized, plain] of [["Skip", "skip", "run"], ["Run", "run", "skip"]]) {
+        s.skipRecommendations = { [step]: { contextKey: studioRecommendationKey(s), recommendation: choice, reason: "Because." } };
+        orange(renderGlossaryResearchStudio(state), emphasized, plain, `${step}: ${choice} recommended`);
+      }
+      // A refresh hides the earlier Skip advice, so Run is the default again.
+      Object.assign(view, { busy: true, recommendingStep: step });
+      const html = renderGlossaryResearchStudio(state);
+      orange(html, "run", "skip", `${step}: getting advice`);
+      assert(!html.includes('data-action="studio:pause"'), `${step}: no Pause while getting advice`);
+      view.recommendingStep = null;
+      assert(renderGlossaryResearchStudio(state).includes('data-action="studio:pause"'), `${step}: research keeps Pause`);
+    }
+  } finally { state.glossaryResearchStudio = previous; }
+});
+
 test("all run-or-skip recommendations disappear after a choice, including paused and revisited research", () => {
   const previous = state.glossaryResearchStudio;
   try {
