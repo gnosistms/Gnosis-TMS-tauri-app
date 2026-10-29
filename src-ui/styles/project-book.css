@@ -114,7 +114,10 @@
 .book-chapter__footnotes { margin-top: auto; padding-top: 1em; font-size: .85em; line-height: var(--book-footnote-line-height); word-spacing: var(--book-word-spacing); }
 .book-chapter__footnotes::before { content: ""; display: block; width: 30%; border-top: .05em solid #000; margin-bottom: .5em; }
 .book-chapter__footnotes .wp-block-footnotes { margin: 0; padding: 0; list-style: none; counter-reset: book-footnote; }
-.book-chapter__footnotes li { display: grid; grid-template-columns: calc(var(--book-paper-mm) * 4.233333) 1fr; column-gap: calc(var(--book-paper-mm) * 1.058333); margin: 0 0 .5em; text-align: justify; }
+/* As in the PDF, notes are a third of a line further apart than the lines
+   inside a note: the PDF's 0.73em gap (in body ems) less its 0.5em footnote
+   leading, in footnote ems. */
+.book-chapter__footnotes li { display: grid; grid-template-columns: calc(var(--book-paper-mm) * 4.233333) 1fr; column-gap: calc(var(--book-paper-mm) * 1.058333); margin: 0 0 .36em; text-align: justify; }
 .book-chapter__footnotes li::before { counter-increment: book-footnote; content: counter(book-footnote) "."; text-align: right; }
 .book-chapter__footnotes li:last-child { margin-bottom: 0; }
 .book-chapter__footnotes .translate-preview__footnote-backlink { display: none; }

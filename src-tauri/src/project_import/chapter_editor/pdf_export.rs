@@ -2973,12 +2973,20 @@ const GREEK_RUN_RULE_PREFIX: &str =
 /// footnote callout remains untouched, so references in the body stay superscripted.
 /// The marker is rebuilt as a link to preserve navigation in exported PDFs.
 ///
+/// Like Knuth's manmac.tex, which opens every footnote with a `\smallskip` (3pt on
+/// 9pt baselines), consecutive notes are a third of a line further apart than the
+/// lines inside a note, so a note's indented second paragraph is not mistaken for
+/// the next note. The gap is measured like leading, from one note's last baseline
+/// to the next note's cap height, and its em is the body text's, not the 0.85em
+/// footnote text's: 0.73em is the footnotes' 0.5em leading (0.425em of body text)
+/// plus about a third of a Crimson Pro footnote line.
+///
 /// Widow prevention is off inside entries, so a footnote may run over with a single
 /// line rather than be kept whole. A three-line footnote has no split that keeps two
 /// lines on each page, so Typst moved its referencing line to the next page instead,
 /// leaving a gap above the footnotes and a widow in the body text. Orphan prevention
 /// stays: a footnote never starts with a lone line at the foot of a page.
-const GNOSIS_FOOTNOTE_RULE: &str = r#"#set footnote.entry(indent: 0em)
+const GNOSIS_FOOTNOTE_RULE: &str = r#"#set footnote.entry(indent: 0em, gap: 0.73em)
 #show footnote.entry: it => {
   let marker-width = 12pt
   let marker-gap = 3pt
@@ -4737,7 +4745,8 @@ mod tests {
 
         // The native in-text callout stays intact; only entries at the foot of the
         // page are rebuilt with a baseline number and a stable text column.
-        assert!(preamble.contains("#set footnote.entry(indent: 0em)"));
+        // A third of a footnote line separates consecutive notes.
+        assert!(preamble.contains("#set footnote.entry(indent: 0em, gap: 0.73em)"));
         assert!(preamble.contains("let marker-width = 12pt"));
         assert!(preamble.contains("let marker-gap = 3pt"));
         assert!(preamble.contains("number + [.]"));

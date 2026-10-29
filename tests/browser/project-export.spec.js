@@ -981,6 +981,7 @@ test("book preview uses print typography for body, headings, quotes, captions, a
       row("quote", "An upright quotation with <i>explicit italics</i>.", { attributions: { en: "— An Author" } }),
       row("centered", "Centered text"), row("indented", "Indented text"),
       row("paragraph", "A reference [1] in ordinary text.", { footnotes: { en: "A footnote with <i>italic</i> words. ".repeat(4) } }),
+      row("paragraph", "A second reference [1].", { footnotes: { en: "A second footnote." } }),
       row("paragraph", "<hr>"),
       row("paragraph", "", { images: { en: { kind: "url", url: "https://example.com/book-proof.svg" } }, imageCaptions: { en: "An italic image caption" } }),
     ] };
@@ -1001,7 +1002,7 @@ test("book preview uses print typography for body, headings, quotes, captions, a
     return { trimmed: CSS.supports("text-box", "trim-both cap alphabetic"), body: read(".translate-preview__block--paragraph"), indent: read(".book-print-indent"),
       title: read(".book-chapter__header h1"), h1: read(".translate-preview__block--heading1"), h2: read(".translate-preview__block--heading2"),
       quote: read("blockquote"), attribution: read("cite"), caption: read("figcaption"),
-      note: read(".book-footnote__text"), centered: read(".translate-preview__block--centered"),
+      note: read(".book-footnote__text"), noteItem: read(".book-chapter__footnotes li"), centered: read(".translate-preview__block--centered"),
       quoteEnd: contentEnd(page.querySelector("blockquote")), attributionEnd: contentEnd(page.querySelector("cite")),
     };
   });
@@ -1033,6 +1034,8 @@ test("book preview uses print typography for body, headings, quotes, captions, a
   expect(styles.caption.italic).toBe("italic");
   expect(styles.note.size / styles.body.size).toBeCloseTo(.85, 3);
   expect(styles.note.line).toBeCloseTo(1.0732421875, 3);
+  // As in the PDF, consecutive notes are a third of a footnote line further apart.
+  expect(styles.noteItem.after / styles.noteItem.size).toBeCloseTo(.36, 3);
   expect(styles.centered.align).toBe("center");
   await page.screenshot({ path: test.info().outputPath("book-print-elements.png") });
 });
