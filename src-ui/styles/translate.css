@@ -1087,6 +1087,7 @@
 }
 
 .translation-row-text-style-actions__hint,
+.translation-language-panel__save-hint,
 .translation-row__last-update,
 .translation-deleted-group .section-separator__label {
   color: var(--placeholder-text);
@@ -1839,6 +1840,20 @@
 
 .translation-language-panel__editor--show-actions .translation-row-text-style-actions {
   display: flex;
+}
+
+/* The save shortcut lives in the header but follows the editing toolbar: it
+   shows beside the language name while this language's editor has focus. */
+.translation-language-panel__save-hint {
+  display: none;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.translation-language-panel:has(> .translation-language-panel__editor:focus-within) .translation-language-panel__save-hint,
+.translation-language-panel:has(> .translation-language-panel__editor--show-actions) .translation-language-panel__save-hint {
+  display: block;
 }
 
 .translation-language-panel__field:focus {

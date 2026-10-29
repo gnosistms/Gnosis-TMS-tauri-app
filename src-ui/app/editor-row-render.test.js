@@ -196,6 +196,19 @@ test("renderTranslationContentRow places separator button after image upload whe
   assert.match(html, /class="translation-row-text-style-button__flourish"/);
 });
 
+test("renderTranslationContentRow puts the save hint in the language header, not the toolbar", () => {
+  const html = renderTranslationContentRow({
+    ...rowWithSection({
+      canEdit: true,
+      isTextEditorOpen: true,
+    }),
+    canEdit: true,
+  });
+
+  assert.match(html, /translation-language-panel__save-hint">(Command|Ctrl) \+ S to save<\/span>\s*<div class="translation-language-panel__actions">/);
+  assert.doesNotMatch(html, /translation-row-text-style-actions__hint/);
+});
+
 test("renderTranslationContentRow renders static separator markup as a line span", () => {
   const html = renderTranslationContentRow({
     ...rowWithSection({

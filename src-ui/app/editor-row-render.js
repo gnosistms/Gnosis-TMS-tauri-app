@@ -453,9 +453,17 @@ function renderRowTextStyleButtons(row, language) {
           `
           : ""
       }
-      <span class="translation-row-text-style-actions__hint">${isMacPlatform() ? "Command" : "Ctrl"} + S to save</span>
     </div>
   `;
+}
+
+// The save shortcut sits in the language header, beside the language name, and
+// shows only while this language's editor has focus (see translate.css).
+function renderEditorSaveHint(row, language) {
+  if (row?.canEdit !== true || language?.canEdit !== true || language?.showTiming === true || row.hasConflict) {
+    return "";
+  }
+  return `<span class="translation-language-panel__save-hint">${isMacPlatform() ? "Command" : "Ctrl"} + S to save</span>`;
 }
 
 function renderStaticEditorFieldTextHtml(language, options = {}) {
@@ -1349,6 +1357,7 @@ export function renderTranslationContentRow(
                         ${renderCollapseChevron(!isCollapsed, "translation-language-panel__chevron")}
                         <span class="translation-language-panel__label${language.hasConflict ? " translation-language-panel__label--conflict" : ""}">${escapeHtml(language.name)}</span>
                       </button>
+                      ${isCollapsed ? "" : renderEditorSaveHint(row, language)}
                       <div class="translation-language-panel__actions">
                         ${renderResearchMarkerButton(row.id, language)}
                         ${renderCommentsMarkerButton(row.id, language)}

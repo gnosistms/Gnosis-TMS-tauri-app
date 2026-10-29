@@ -6376,8 +6376,11 @@ test.describe("editor regressions", () => {
     const field = await activateMainEditorField(page, rowId, "vi");
     await expect(field).toHaveValue(text);
     const saveShortcut = await editorSaveShortcut(page);
-    await expect(page.locator(".translation-row-text-style-actions__hint").first())
-      .toHaveText(saveShortcut === "Meta+s" ? "Command + S to save" : "Ctrl + S to save");
+    const saveHint = page.locator(
+      `[data-editor-language-panel][data-row-id="${rowId}"][data-language-code="vi"] .translation-language-panel__save-hint`,
+    );
+    await expect(saveHint).toBeVisible();
+    await expect(saveHint).toHaveText(saveShortcut === "Meta+s" ? "Command + S to save" : "Ctrl + S to save");
     await field.evaluate((element) => element.setSelectionRange(element.value.length, element.value.length));
     await page.keyboard.press("Enter");
     await page.keyboard.type("Third paragraph");
