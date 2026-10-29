@@ -3028,12 +3028,13 @@ const GNOSIS_IMAGE_RULE: &str = "#let gnosis-image(path, caption: none) = layout
 ///
 /// `gnosis-citation` is a citation set as the last line of the paragraph it cites
 /// (see `render_typst_cited_text_block`), drawn where a separate citation block
-/// would be: one paragraph space below the text instead of one line's leading (the
-/// box's top inset adds the difference) and flush with the right edge of the text
-/// it cites. In a quote that edge is inside the quote's 1em padding, not at the
-/// right margin: on a chapter cover, with no body text to show the margin, a
-/// citation out there seemed to hang past the quote. Inside a quote the text is
-/// 0.9em, so `scale` keeps its lengths in body-text units.
+/// would be: a paragraph space and a quarter em below the text instead of one
+/// line's leading (the box's top inset adds the difference; the quarter em keeps
+/// the citation from reading as one more line of the text) and flush with the
+/// right edge of the text it cites. In a quote that edge is inside the quote's 1em
+/// padding, not at the right margin: on a chapter cover, with no body text to show
+/// the margin, a citation out there seemed to hang past the quote. Inside a quote
+/// the text is 0.9em, so `scale` keeps its lengths in body-text units.
 ///
 /// `gnosis-quote` keeps a quotation of up to six lines on one page and lets a longer
 /// one split like any paragraph. Typst has no keep-together-if-short setting, so the
@@ -3044,14 +3045,13 @@ const GNOSIS_IMAGE_RULE: &str = "#let gnosis-image(path, caption: none) = layout
 ///
 /// On a chapter cover (`cover: true`) a quote that fits on one line is centred
 /// rather than left alone at the start of an empty page: the quote shrinks to its
-/// text in a centred box, and its citation is stacked under it, one quote line
-/// below it and padded like the quote, so it ends with the quote text as on a
-/// full-width quote. A
-/// citation line inside the paragraph cannot do this, because its `h(1fr)` would
-/// stretch the box back to the full width. The centring block is given the full
-/// width explicitly: the wrapping block otherwise shrinks to the box, leaving
-/// `align` nothing to centre in.
-const GNOSIS_QUOTE_RULE: &str = r#"#let gnosis-citation(body, scale: 1) = [#linebreak(justify: false)#h(1fr)#context box(inset: (top: par.spacing / scale - par.leading))[#text(size: 0.8em / scale, style: "normal", tracking: 0.06em)[#upper(body)]]]
+/// text in a centred box, and its citation is stacked under it, one quote line and
+/// a quarter em below it and padded like the quote, so it ends with the quote text
+/// as on a full-width quote. A citation line inside the paragraph cannot do this,
+/// because its `h(1fr)` would stretch the box back to the full width. The centring
+/// block is given the full width explicitly: the wrapping block otherwise shrinks
+/// to the box, leaving `align` nothing to centre in.
+const GNOSIS_QUOTE_RULE: &str = r#"#let gnosis-citation(body, scale: 1) = [#linebreak(justify: false)#h(1fr)#context box(inset: (top: (par.spacing + 0.25em) / scale - par.leading))[#text(size: 0.8em / scale, style: "normal", tracking: 0.06em)[#upper(body)]]]
 #let gnosis-quote-body(body, citation) = quote(block: true)[#set par(first-line-indent: 0pt)
 #text(size: 0.9em, style: "normal")[#body#if citation != none { gnosis-citation(citation, scale: 0.9) }]]
 #let gnosis-quote(body, citation: none, cover: false) = block(above: 1.5em, below: 1.5em, layout(region => {
@@ -3059,7 +3059,7 @@ const GNOSIS_QUOTE_RULE: &str = r#"#let gnosis-citation(body, scale: 1) = [#line
   let slack = (0.5em).to-absolute()
   if cover and height(gnosis-quote-body(body, none)) <= height(gnosis-quote-body([X], none)) + slack {
     let cited = if citation == none { () } else { (align(right, pad(x: 1em, text(size: 0.8em, style: "normal", tracking: 0.06em)[#upper(citation)])),) }
-    return block(width: region.width, align(center, box(stack(spacing: 0.9 * par.leading, gnosis-quote-body(body, none), ..cited))))
+    return block(width: region.width, align(center, box(stack(spacing: 0.9 * par.leading + 0.25em, gnosis-quote-body(body, none), ..cited))))
   }
   let quoted = gnosis-quote-body(body, citation)
   let sample = gnosis-quote-body(range(6).map(_ => [X]).join(linebreak()), citation)

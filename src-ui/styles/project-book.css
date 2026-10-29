@@ -76,7 +76,9 @@
 .book-page--chapter .translate-preview__block--quote:has(+ cite) { margin-bottom: 0; }
 .book-page--chapter .translate-preview__block--indented { padding-inline: 0; padding-left: 2em; }
 .book-page--chapter .translate-preview__block--centered { text-align: center; }
-.book-page--chapter .translate-preview__attribution { display: block; font-family: var(--book-body-font); font-size: calc(var(--book-paper-font) * .8); line-height: var(--book-line-height); text-align: right; font-style: normal; text-transform: uppercase; letter-spacing: .06em; word-spacing: var(--book-word-spacing); margin: 0 0 calc(var(--book-paper-font) * .72); }
+/* As in the PDF, a citation sits a quarter em further below its text than a new
+   paragraph would, so it does not read as one more line of the text. */
+.book-page--chapter .translate-preview__attribution { display: block; font-family: var(--book-body-font); font-size: calc(var(--book-paper-font) * .8); line-height: var(--book-line-height); text-align: right; font-style: normal; text-transform: uppercase; letter-spacing: .06em; word-spacing: var(--book-word-spacing); margin: 0 0 calc(var(--book-paper-font) * .72); padding-top: calc(var(--book-paper-font) * .25); }
 /* As in the PDF, a quote's citation keeps the quote's inset, so it ends where
    the quote text does rather than at the margin. */
 .book-page--chapter .translate-preview__block--quote + .translate-preview__attribution { padding-inline: var(--book-paper-font); }
