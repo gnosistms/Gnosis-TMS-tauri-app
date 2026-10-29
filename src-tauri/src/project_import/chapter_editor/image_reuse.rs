@@ -159,14 +159,33 @@ enum RowImageMatcher {
 }
 
 impl RowImageMatcher {
+    fn upload(identities: BTreeSet<String>) -> Self {
+        let needles = identities
+            .iter()
+            .filter_map(|identity| identity.rsplit('/').next())
+            .map(|file_name| json_string_body(file_name).to_lowercase())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        Self::Upload {
+            identities,
+            needles,
+        }
+    }
+
     // A substring test on the raw row JSON is enough to skip parsing almost
     // every row; only rows that mention the image are decoded and checked.
+    // Upload names are compared case-insensitively because Windows path
+    // identities are, and a stored path's case may differ from the file's.
     fn may_match(&self, row_text: &str) -> bool {
         match self {
             Self::Url { needle, .. } => row_text.contains(needle.as_str()),
-            Self::Upload { needles, .. } => needles
-                .iter()
-                .any(|needle| row_text.contains(needle.as_str())),
+            Self::Upload { needles, .. } => {
+                let row_text = row_text.to_lowercase();
+                needles
+                    .iter()
+                    .any(|needle| row_text.contains(needle.as_str()))
+            }
         }
     }
 
@@ -217,17 +236,7 @@ fn find_image_reuse_chapters(
             if identities.is_empty() {
                 return Ok(Vec::new());
             }
-            let needles = identities
-                .iter()
-                .filter_map(|identity| identity.rsplit('/').next())
-                .map(json_string_body)
-                .collect::<BTreeSet<_>>()
-                .into_iter()
-                .collect();
-            RowImageMatcher::Upload {
-                identities,
-                needles,
-            }
+            RowImageMatcher::upload(identities)
         }
     };
 
@@ -686,6 +695,16 @@ mod tests {
                 upload_candidate("renamed.png", PNG_BYTES)
             )
             .is_empty());
+    }
+
+    #[test]
+    fn upload_prefilter_ignores_letter_case_in_stored_paths() {
+        let matcher = RowImageMatcher::upload(BTreeSet::from([
+            "chapters/one/images/separator.png".to_string(),
+        ]));
+
+        assert!(matcher.may_match(r#"{"path": "chapters/one/images/Separator.PNG"}"#));
+        assert!(!matcher.may_match(r#"{"path": "chapters/one/images/other.png"}"#));
     }
 
     #[test]
