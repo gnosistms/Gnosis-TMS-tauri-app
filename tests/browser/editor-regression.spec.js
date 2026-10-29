@@ -5769,7 +5769,7 @@ test.describe("editor regressions", () => {
     expect(displayInnerHtml).not.toContain("&lt;");
   });
 
-  test("separator button inserts hr markup and renders a horizontal line after blur", async ({ page }) => {
+  test("separator button inserts hr markup and renders the flourish after blur", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 40 }, { mockTauri: true });
     const telemetrySaveButton = page.getByRole("button", { name: "Save" });
     if (await telemetrySaveButton.count()) {

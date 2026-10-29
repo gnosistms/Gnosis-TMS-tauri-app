@@ -1651,7 +1651,9 @@ fn render_typst_chapter(
             }
             ExportBlock::Separator => {
                 indent_next = false;
-                source.push_str("#line(length: 100%, stroke: 0.5pt)\n#v(0.8em)\n")
+                source.push_str(
+                    "#v(1em)\n#align(center, image(\"flourish.svg\", width: 0.66in))\n#v(1em)\n",
+                )
             }
             ExportBlock::Footnote { number, text, .. } if !anchored_numbers.contains(number) => {
                 source.push_str(&format!(
@@ -4485,6 +4487,13 @@ mod tests {
         assert!(source.contains("#gnosis-title(\"Chapter Two\", number: 2)"));
         assert!(source.contains("title: \"Interlude\", numbering: \"1\", level: 0, chapter: none"));
         assert!(source.contains("title: \"Inside Interlude\", numbering: \"1\", level: 1"));
+        // Chapter separators use the same flourish as the copyright page's.
+        assert_eq!(
+            source
+                .matches("#align(center, image(\"flourish.svg\", width: 0.66in))")
+                .count(),
+            2
+        );
         let (Some(binary), Some(font_dir)) = (
             std::env::var_os("GNOSIS_TYPST_BIN"),
             std::env::var_os("GNOSIS_TYPST_SMOKE_FONT_DIR"),
