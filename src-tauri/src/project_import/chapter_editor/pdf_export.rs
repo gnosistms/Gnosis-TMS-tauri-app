@@ -1,4 +1,4 @@
-use super::book_export::BookItemInput;
+use super::book_export::{book_title, single_line_title, BookItemInput};
 use super::*;
 use crate::util::atomic_replace;
 use reqwest::blocking::Client as BlockingClient;
@@ -1807,12 +1807,7 @@ fn render_typst_book(
     let book_author = title_page
         .map(|part| part.item.author.as_str())
         .unwrap_or("");
-    let book_title = title_page
-        .map(|part| part.item.title.as_str())
-        .filter(|title| !title.trim().is_empty())
-        .unwrap_or(&document.title);
-    // Title-page line breaks are layout choices; running headers use a single line.
-    let header_title = book_title.split_whitespace().collect::<Vec<_>>().join(" ");
+    let header_title = single_line_title(book_title(document));
     let heading_fonts = heading_font_families(document)
         .into_iter()
         .map(typst_string)

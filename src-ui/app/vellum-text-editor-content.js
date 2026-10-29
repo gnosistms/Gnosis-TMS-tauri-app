@@ -84,6 +84,11 @@ function normalizeText(value) {
   return typeof value === "string" ? value.trim() : String(value ?? "").trim();
 }
 
+// Title-page line breaks are layout choices; element titles are one line.
+function singleLineTitle(value) {
+  return normalizeText(value).split(/\s*[\r\n\u2028\u2029]+\s*/).join(" ");
+}
+
 function softenBodyLineBreaks(value) {
   return String(value ?? "").replaceAll("\n", VELLUM_LINE_SEPARATOR);
 }
@@ -1634,7 +1639,7 @@ function addVellumContentsElement(builder, element) {
     ["parent", uidXml(builder.addString("$null"))],
     ["explicitOwningBook", uidXml(0)],
     ["uniqueID", uidXml(builder.addString(createVellumElementUniqueId(element.id || element.title)))],
-    ["title", uidXml(builder.addString(normalizeText(element.title) || "Contents"))],
+    ["title", uidXml(builder.addString(singleLineTitle(element.title) || "Contents"))],
     ["isExpanded", "<true/>"],
     ["includeInEBook", "<true/>"],
     ["includeInPrint", "<true/>"],
@@ -1664,7 +1669,7 @@ export function buildVellumOgElementPrivateDecodedXml(blocks, options = {}) {
     // Keep this book's title and contributors together in a formatted text page.
     const titleEntry = element.kind === "title" ? null : leadingChapterTitleBlock(allBlocks);
     const bodyBlocks = titleEntry ? allBlocks.slice(1) : allBlocks;
-    const title = titleEntry?.title || normalizeText(element.title) || "Untitled Chapter";
+    const title = titleEntry?.title || singleLineTitle(element.title) || "Untitled Chapter";
     const body = buildVellumTextRuns(bodyBlocks, {
       showFootnoteLinkUrls: options.showFootnoteLinkUrls === true,
     });
