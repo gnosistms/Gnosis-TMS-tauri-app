@@ -255,6 +255,32 @@ fn epub_book_preserves_order_numbering_metadata_and_live_contents() {
 }
 
 #[test]
+fn epub_titles_outside_the_title_page_are_single_line() {
+    let mut doc = document("Project name", vec![]);
+    doc.book_parts = vec![
+        part(
+            "title",
+            "The Long\nRoad Home",
+            vec![paragraph("heading1", "The Long\nRoad Home")],
+        ),
+        part(
+            "chapter",
+            "Chapter One",
+            vec![paragraph("paragraph", "Body")],
+        ),
+    ];
+    let files = unpack(&doc);
+    assert!(file(&files, "EPUB/package.opf").contains("<dc:title>The Long Road Home</dc:title>"));
+    assert!(file(&files, "EPUB/nav.xhtml").contains(">The Long Road Home</a>"));
+    let title_page = file(&files, "EPUB/section-1.xhtml");
+    assert!(title_page.contains("<title>The Long Road Home</title>"));
+    assert!(title_page.contains("The Long<br/>Road Home"));
+    // Without a title-page title, the ebook keeps the project's name.
+    doc.book_parts[0].item.title.clear();
+    assert!(file(&unpack(&doc), "EPUB/package.opf").contains("<dc:title>Project name</dc:title>"));
+}
+
+#[test]
 fn epub_embeds_uploaded_images_once_and_converts_webp() {
     let path = std::env::temp_dir().join(format!("gnosis-epub-{}.webp", uuid::Uuid::now_v7()));
     let image = image::DynamicImage::new_rgba8(2, 2);

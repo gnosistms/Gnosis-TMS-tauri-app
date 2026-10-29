@@ -1,5 +1,6 @@
 //! Reflowable EPUB 3 export. All resources are packaged locally for offline reading.
 //! Container/package requirements: https://www.w3.org/TR/epub-33/
+use super::book_export::{book_title, single_line_title};
 use super::chapter_export::{
     download_public_image_bytes_detailed, export_text_style, inline_visible_text,
     numbered_book_documents, sanitize_inline_html, ExportBlock, ExportDocument, ExportImage,
@@ -68,8 +69,8 @@ fn xml(value: &str) -> String {
 }
 
 fn title(value: &str) -> String {
-    let value = inline_visible_text(value);
-    if value.trim().is_empty() {
+    let value = single_line_title(&inline_visible_text(value));
+    if value.is_empty() {
         "Untitled".into()
     } else {
         value
@@ -729,7 +730,7 @@ pub(super) fn render_epub_document(
             let _ = write!(metadata, "<dc:contributor id=\"translator\">{}</dc:contributor><meta refines=\"#translator\" property=\"role\" scheme=\"marc:relators\">trl</meta>", xml(&part.item.translator));
         }
     }
-    let package = format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?><package xmlns=\"http://www.idpf.org/2007/opf\" version=\"3.0\" unique-identifier=\"book-id\" xml:lang=\"{}\"><metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:identifier id=\"book-id\">urn:uuid:{}</dc:identifier><dc:title>{}</dc:title><dc:language>{}</dc:language><meta property=\"dcterms:modified\">{}</meta>{metadata}</metadata><manifest>{manifest}</manifest><spine page-progression-direction=\"{}\">{spine}</spine></package>", xml(language), uuid::Uuid::now_v7(), xml(&title(&document.title)), xml(language), chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ"), if rtl(language) { "rtl" } else { "ltr" });
+    let package = format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?><package xmlns=\"http://www.idpf.org/2007/opf\" version=\"3.0\" unique-identifier=\"book-id\" xml:lang=\"{}\"><metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:identifier id=\"book-id\">urn:uuid:{}</dc:identifier><dc:title>{}</dc:title><dc:language>{}</dc:language><meta property=\"dcterms:modified\">{}</meta>{metadata}</metadata><manifest>{manifest}</manifest><spine page-progression-direction=\"{}\">{spine}</spine></package>", xml(language), uuid::Uuid::now_v7(), xml(&title(book_title(document))), xml(language), chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ"), if rtl(language) { "rtl" } else { "ltr" });
     let nav = xhtml(
         "Contents",
         language,

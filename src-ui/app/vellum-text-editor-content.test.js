@@ -589,3 +589,16 @@ test("book contents use Vellum's native generator and title pages retain their h
   assert.match(xml, /<string>OGSubheadAttachmentCell<\/string>/);
   assert.match(xml, /Exported Author/);
 });
+
+test("a title page names its Vellum element on one line and keeps its line breaks in the body", () => {
+  const xml = buildVellumOgElementPrivateDecodedXml([], { elements: [
+    { id: "title", title: "The Long\nRoad Home", kind: "title", blocks: [
+      { kind: "text", textStyle: "heading1", text: "The Long\nRoad Home" },
+    ] },
+  ] });
+  const root = archiveObjectAtUid(xml, 1);
+  const elementsArray = archiveObjectAtUid(xml, uidsForArrayKey(root, "NS.objects")[0]);
+  const element = archiveObjectAtUid(xml, uidsForArrayKey(elementsArray, "NS.objects")[0]);
+  assert.match(archiveObjectAtUid(xml, uidForKey(element, "title")), /<string>The Long Road Home<\/string>/);
+  assert.match(xml, /<string>The Long\nRoad Home<\/string>/);
+});

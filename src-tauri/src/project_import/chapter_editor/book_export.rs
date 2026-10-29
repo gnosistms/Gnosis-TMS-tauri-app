@@ -63,6 +63,27 @@ pub(super) struct BookPart {
     pub(super) document: ExportDocument,
 }
 
+/// The book's name: its title-page title, or the project title without one.
+pub(super) fn book_title(document: &ExportDocument) -> &str {
+    document
+        .book_parts
+        .iter()
+        .find(|part| part.item.kind == "title")
+        .map(|part| part.item.title.as_str())
+        .filter(|title| !title.trim().is_empty())
+        .unwrap_or(&document.title)
+}
+
+// Title-page line breaks are layout choices; everywhere else a title is one line.
+pub(super) fn single_line_title(title: &str) -> String {
+    title
+        .split(['\r', '\n', '\u{2028}', '\u{2029}'])
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 // Front-matter LF is a paragraph boundary; U+2028 is an in-paragraph soft break.
 // Balance italics at each boundary so separate export paragraphs retain styling.
 pub(super) fn book_text_blocks(text: &str, text_style: &str) -> Vec<ExportBlock> {
@@ -382,6 +403,14 @@ mod tests {
             ]
         );
         assert_eq!(book_text_blocks("First\n", "paragraph").len(), 2);
+    }
+    #[test]
+    fn titles_outside_the_title_page_join_their_lines() {
+        assert_eq!(
+            single_line_title(" The Long \r\nRoad\u{2028}\n Home "),
+            "The Long Road Home"
+        );
+        assert_eq!(single_line_title("Nº\u{a0}1"), "Nº\u{a0}1");
     }
     #[test]
     fn book_svg_accepts_vectors_and_rejects_active_or_external_content() {
