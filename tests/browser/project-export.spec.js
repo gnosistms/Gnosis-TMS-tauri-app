@@ -997,10 +997,12 @@ test("book preview uses print typography for body, headings, quotes, captions, a
         weight: s.fontWeight, italic: s.fontStyle, caps: s.textTransform, tracking: parseFloat(s.letterSpacing) || 0,
         indent: parseFloat(s.textIndent), before: parseFloat(s.marginTop), after: parseFloat(s.marginBottom), align: s.textAlign };
     };
+    const contentEnd = (element) => element.getBoundingClientRect().right - parseFloat(getComputedStyle(element).paddingRight);
     return { trimmed: CSS.supports("text-box", "trim-both cap alphabetic"), body: read(".translate-preview__block--paragraph"), indent: read(".book-print-indent"),
       title: read(".book-chapter__header h1"), h1: read(".translate-preview__block--heading1"), h2: read(".translate-preview__block--heading2"),
       quote: read("blockquote"), attribution: read("cite"), caption: read("figcaption"),
       note: read(".book-footnote__text"), centered: read(".translate-preview__block--centered"),
+      quoteEnd: contentEnd(page.querySelector("blockquote")), attributionEnd: contentEnd(page.querySelector("cite")),
     };
   });
   expect(styles.body.family).toContain("Crimson Pro");
@@ -1024,6 +1026,9 @@ test("book preview uses print typography for body, headings, quotes, captions, a
   expect(styles.quote.size / styles.body.size).toBeCloseTo(.9, 3);
   expect(styles.attribution.size / styles.body.size).toBeCloseTo(.8, 3);
   expect(styles.attribution.caps).toBe("uppercase");
+  // As in the PDF, a quote's citation ends where the quote text does, inside the
+  // quote's inset rather than at the margin.
+  expect(styles.attributionEnd).toBeCloseTo(styles.quoteEnd, 1);
   expect(styles.caption.size / styles.body.size).toBeCloseTo(.75, 3);
   expect(styles.caption.italic).toBe("italic");
   expect(styles.note.size / styles.body.size).toBeCloseTo(.85, 3);
