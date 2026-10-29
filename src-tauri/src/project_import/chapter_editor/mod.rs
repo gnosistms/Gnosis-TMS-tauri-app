@@ -50,6 +50,7 @@ mod chapter_selection;
 mod epub_export;
 mod git_conflicts;
 mod history;
+mod image_reuse;
 mod images;
 mod pdf_export;
 mod project_transfer;
@@ -102,6 +103,10 @@ pub(super) use self::history::{
 use self::history::{
     load_latest_row_version_metadata, load_latest_row_version_metadata_by_path,
     status_note_for_field_flag,
+};
+pub(crate) use self::image_reuse::{
+    allow_gtms_editor_image_reuse_sync, find_gtms_editor_image_reuse_sync,
+    AllowEditorImageReuseInput, EditorImageReuseResponse, FindEditorImageReuseInput,
 };
 use self::images::{
     apply_editor_field_image_update, editor_field_image_from_stored,

@@ -6051,6 +6051,97 @@ test.describe("editor regressions", () => {
     }).toBe(false);
   });
 
+  test("inserting an image URL already used in the project asks first and saves on Insert image", async ({ page }) => {
+    const rowId = "fixture-row-0008";
+    const languageCode = "vi";
+    const url = "https://example.com/separator.png";
+    await mountEditorFixture(page, { rowCount: 18 }, { mockTauri: true });
+    await page.evaluate(() => {
+      globalThis.__gnosisMockTauriHandlers = {
+        async find_gtms_editor_image_reuse() {
+          return {
+            imageKey: "url:https://example.com/separator.png",
+            chapters: [
+              { chapterId: "fixture-epilogue", title: "Epilogue" },
+              { chapterId: "fixture-appendix", title: "Appendix" },
+            ],
+          };
+        },
+      };
+    });
+    const commandWasInvoked = async (command) => {
+      const mockState = await readMockTauriState(page);
+      return mockState?.invocations?.some((entry) => entry.command === command) ?? false;
+    };
+
+    await bringRowNearTop(page, rowId, 120);
+    await activateMainEditorField(page, rowId, languageCode);
+    await page.locator(
+      `[data-action="open-editor-image-url"][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+    ).click();
+    const urlInput = page.locator(
+      `[data-editor-image-url-input][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+    );
+    await urlInput.fill(url);
+    await urlInput.press("Shift+Enter");
+
+    const dialog = page.locator('[data-modal-dialog="editor-image-reuse"]');
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("heading")).toHaveText("Duplicate image");
+    await expect(dialog).toContainText(
+      "This same image was also used in Appendix and Epilogue. Are you sure you want to use it again here?",
+    );
+    await expect(dialog.getByRole("button", { name: "Insert image" })).toBeFocused();
+    expect(await commandWasInvoked("save_gtms_editor_language_image_url")).toBe(false);
+
+    await dialog.getByLabel("Don't show this warning again for this image.").check();
+    await dialog.getByRole("button", { name: "Insert image" }).click();
+
+    await expect(dialog).toHaveCount(0);
+    await expect.poll(() => commandWasInvoked("save_gtms_editor_language_image_url")).toBe(true);
+    const allow = (await readMockTauriState(page)).invocations.find(
+      (entry) => entry.command === "allow_gtms_editor_image_reuse",
+    );
+    expect(allow?.payload?.input?.imageKey).toBe(`url:${url}`);
+  });
+
+  test("cancelling the duplicate image warning with Escape inserts nothing", async ({ page }) => {
+    const rowId = "fixture-row-0008";
+    const languageCode = "vi";
+    await mountEditorFixture(page, { rowCount: 18 }, { mockTauri: true });
+    await page.evaluate(() => {
+      globalThis.__gnosisMockTauriHandlers = {
+        async find_gtms_editor_image_reuse() {
+          return {
+            imageKey: "url:https://example.com/separator.png",
+            chapters: [{ chapterId: "fixture-appendix", title: "Appendix" }],
+          };
+        },
+      };
+    });
+
+    await bringRowNearTop(page, rowId, 120);
+    await activateMainEditorField(page, rowId, languageCode);
+    await page.locator(
+      `[data-action="open-editor-image-url"][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+    ).click();
+    const urlInput = page.locator(
+      `[data-editor-image-url-input][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+    );
+    await urlInput.fill("https://example.com/separator.png");
+    await urlInput.press("Shift+Enter");
+
+    const dialog = page.locator('[data-modal-dialog="editor-image-reuse"]');
+    await expect(dialog).toBeVisible();
+    await page.keyboard.press("Escape");
+
+    await expect(dialog).toHaveCount(0);
+    await expect(urlInput).toHaveCount(0);
+    await page.waitForTimeout(200);
+    const invocations = (await readMockTauriState(page)).invocations.map((entry) => entry.command);
+    expect(invocations).not.toContain("save_gtms_editor_language_image_url");
+  });
+
   test("opening the image upload editor keeps the scroll position stable", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 18 }, { mockTauri: true });
 

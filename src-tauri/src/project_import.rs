@@ -821,6 +821,30 @@ pub(crate) async fn save_gtms_editor_language_image_url(
 }
 
 #[tauri::command]
+pub(crate) async fn find_gtms_editor_image_reuse(
+    app: AppHandle,
+    input: chapter_editor::FindEditorImageReuseInput,
+) -> Result<chapter_editor::EditorImageReuseResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        chapter_editor::find_gtms_editor_image_reuse_sync(&app, input)
+    })
+    .await
+    .map_err(|error| format!("The image reuse check worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn allow_gtms_editor_image_reuse(
+    app: AppHandle,
+    input: chapter_editor::AllowEditorImageReuseInput,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        chapter_editor::allow_gtms_editor_image_reuse_sync(&app, input)
+    })
+    .await
+    .map_err(|error| format!("The image reuse setting worker failed: {error}"))?
+}
+
+#[tauri::command]
 pub(crate) async fn upload_gtms_editor_language_image(
     app: AppHandle,
     input: UploadEditorLanguageImageInput,

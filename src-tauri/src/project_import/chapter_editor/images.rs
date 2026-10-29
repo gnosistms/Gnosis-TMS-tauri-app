@@ -1593,7 +1593,7 @@ pub(super) fn row_uploaded_image_relative_paths(row: &StoredRowFile) -> Vec<Stri
         .collect()
 }
 
-fn normalize_uploaded_image_extension(extension: &str) -> Option<&'static str> {
+pub(super) fn normalize_uploaded_image_extension(extension: &str) -> Option<&'static str> {
     match extension
         .trim()
         .trim_start_matches('.')
