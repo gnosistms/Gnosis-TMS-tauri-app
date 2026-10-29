@@ -2,9 +2,7 @@ import { startBookRedundancy, cancelBookRedundancy, flushBookRedundancyChoices, 
 import { requestBookPreviewFonts } from "./project-book-preview-fonts.js";
 import { beginBookSettingsSync, leaveBookSettingsPage1, acceptRemoteBookSettings } from "./project-book-settings-sync.js";
 import { portableBookOptions } from "./project-book-settings-document.js";
-import { extractInlineMarkupVisibleText } from "./editor-inline-markup/serialize.js";
-import { extractVellumLeadingHeadingTitle } from "./vellum-text-editor-content.js";
-import { cancelBookTitlePreview, requestBookTitlePreview } from "./project-book-title-preview.js";
+import { cancelBookPagePreview, requestBookPagePreview } from "./project-book-page-preview.js";
 import { bookEditorText } from "./project-book-text.js";
 import { state } from "./state.js";
 import { invoke, convertLocalFileSrc } from "./runtime.js";
@@ -15,7 +13,7 @@ import { normalizeEditorRows } from "./editor-state-flow.js";
 import { openLocalFilePicker } from "./local-file-picker.js";
 import { enforceImportFileSizeLimit } from "./import-file-limit.js";
 import { formatErrorForDisplay } from "./error-display.js";
-import { addBookSection, bookChapterDefaultTitle, bookItemIncluded, bookSectionLabel, bookContentsItems, bookLanguages, includeBookItem, reconcileBookLayout, reorderBookItems } from "./project-book-model.js";
+import { addBookSection, bookChapterDefaultTitle, bookItemIncluded, bookSectionLabel, bookLanguages, includeBookItem, reconcileBookLayout, reorderBookItems } from "./project-book-model.js";
 import { loadBookSettings, loadContentsTitle, saveBookSettings, saveContentsTitle } from "./project-book-settings.js";
 
 const modal = () => state.editorChapter?.exportModal;
@@ -85,10 +83,9 @@ export async function loadSelectedBookPreview(render, operations = {}) {
   const current = modal();
   const item = current?.book?.items.find((entry) => entry.id === current.book.selectedItemId);
   if (!current?.isOpen || !current.book) return;
-  requestBookTitlePreview(render);
+  requestBookPagePreview(render);
   requestBookPreviewFonts(render);
   const repaint = () => render?.({ scope: "project-book-preview" });
-  if (item?.kind === "contents" && item.includeH1Headings) return loadContentsHeadings(repaint, current, operations);
   const team = selectedProjectsTeam();
   const cache = current.book.previewCache;
   const isCurrent = () => modal()?.isOpen && modal()?.book?.previewCache === cache && state.selectedTeamId === team?.id;
@@ -132,37 +129,6 @@ export async function loadSelectedBookPreview(render, operations = {}) {
   update({ book: { ...modal().book, previewStatus: result.error ? "error" : "ready", previewError: result.error || "", previewBlocks: result.blocks || [], previewChapterId: item.chapterId } }, repaint);
 }
 
-let previewGeneration = 0;
-
-async function loadContentsHeadings(render, current, operations) {
-  const team = selectedProjectsTeam();
-  const record = project();
-  const request = `contents:${++previewGeneration}:${current.projectId}:${current.languageCode}`;
-  const isCurrent = () => modal()?.isOpen && modal()?.book?.previewRequest === request;
-  update({ book: { ...current.book, previewRequest: request } });
-  try {
-    await (operations.waitForRepoQueue ?? waitForRepoWriteQueueIdle)(projectRepoScope({ team, project: record }));
-    const headings = {};
-    const defaultTitles = new Map();
-    for (const item of bookContentsItems(current.book.items)) {
-      const payload = await (operations.invoke ?? invoke)("load_gtms_chapter_editor_data", { input: {
-        installationId: team.installationId, projectId: current.projectId, repoName: record.name, chapterId: item.chapterId,
-      } });
-      if (!isCurrent()) return;
-      const blocks = buildEditorPreviewDocument(normalizeEditorRows(payload?.rows), current.languageCode);
-      defaultTitles.set(item.id, bookChapterDefaultTitle(blocks, item.name));
-      const body = extractVellumLeadingHeadingTitle(blocks) ? blocks.slice(1) : blocks;
-      headings[item.chapterId] = body.filter((block) => block.kind === "text" && block.textStyle === "heading1")
-        .map((block) => extractInlineMarkupVisibleText(block.text));
-    }
-    if (isCurrent()) update({ book: { ...modal().book, contentsHeadings: headings,
-      items: modal().book.items.map((entry) => defaultTitles.has(entry.id) ? { ...entry, defaultTitle: defaultTitles.get(entry.id) } : entry),
-    }, error: "" }, render);
-  } catch (error) {
-    if (isCurrent()) update({ error: formatErrorForDisplay(error) }, render);
-  }
-}
-
 export function updateBookField(element, render) {
   const current = modal();
   const item = current?.book?.items.find((entry) => entry.id === (element.dataset.bookChapterTitle || current.book.selectedItemId));
@@ -176,10 +142,9 @@ export function updateBookField(element, render) {
     if (measure) measure.textContent = value || item.defaultTitle || item.name;
   }
   const items = current.book.items.map((entry) => entry.id === item.id ? { ...entry, [field]: value } : entry);
-  update({ book: { ...current.book, items, ...(field === "includeH1Headings" ? { previewRequest: "" } : {}) }, pdfFontStatus: "idle", pdfFontInspectionKey: "" }, field === "includeH1Headings" || item.kind === "chapter" ? render : undefined);
+  update({ book: { ...current.book, items }, pdfFontStatus: "idle", pdfFontInspectionKey: "" }, field === "includeH1Headings" || item.kind === "chapter" ? render : undefined);
   requestBookPreviewFonts(render);
-  if (item.kind === "title") requestBookTitlePreview(render);
-  if (field === "includeH1Headings" && value) void loadSelectedBookPreview(render);
+  requestBookPagePreview(render);
   if (item.kind === "contents" && field === "title") saveContentsTitle(current.languageCode, value);
   if (field === "title" && item.kind !== "chapter") document.querySelector(`[data-book-item-label="${CSS.escape(item.id)}"]`)?.replaceChildren(document.createTextNode(item.kind === "title" ? bookSectionLabel("title") : value || bookSectionLabel(item.kind)));
 }
@@ -218,7 +183,7 @@ export async function importBookImage(render, file, operations = {}) {
     }
     if (modal()?.projectId !== current.projectId || modal()?.languageCode !== current.languageCode) return;
     update({ book: { ...modal().book, items: modal().book.items.map((entry) => entry.id === id ? { ...entry, image } : entry) }, error: "", pdfFontStatus: "idle" }, render);
-    requestBookTitlePreview(render);
+    requestBookPagePreview(render);
   } catch (error) {
     if (modal()?.projectId === current.projectId && modal()?.languageCode === current.languageCode) update({ error: formatErrorForDisplay(error) }, render);
   }
@@ -228,6 +193,7 @@ export function moveProjectBookItem(render, id, targetId, after) {
   const current = modal();
   if (!current?.book || current.status !== "idle") return;
   update({ book: { ...current.book, items: reorderBookItems(current.book.items, id, targetId, after) }, pdfFontStatus: "idle", pdfFontInspectionKey: "" }, render);
+  requestBookPagePreview(render);
 }
 
 export async function handleProjectBookAction(action, render) {
@@ -259,7 +225,7 @@ export async function handleProjectBookAction(action, render) {
   else if (action === "book-redundancy-save-retry") retryBookRedundancyChoiceSave();
   else if (action === "book-redundancy-retry") void startBookRedundancy(render);
   else if (action === "book-fonts-retry") requestBookPreviewFonts(render, { force: true });
-  else if (action === "book-title-preview-retry") cancelBookTitlePreview();
+  else if (action === "book-page-preview-retry") cancelBookPagePreview();
   else if (action === "book-add-menu") update({ book: { ...book, addMenuOpen: !book.addMenuOpen } }, render);
   else if (action.startsWith("book-add:")) {
     const items = addBookSection(book.items, action.slice(9), current.projectTitle, loadContentsTitle(current.languageCode));
@@ -280,7 +246,6 @@ export async function handleProjectBookAction(action, render) {
     const id = action.slice(13);
     update({ book: { ...book, items: includeBookItem(book.items, id, include) }, pdfFontStatus: "idle", pdfFontInspectionKey: "" });
     render?.({ scope: "project-book-preview" });
-    if (book.items.find((item) => item.id === book.selectedItemId)?.kind === "contents") void loadSelectedBookPreview(render);
   } else if (action === "book-image-pick") await importBookImage(render, await openLocalFilePicker({ accept: BOOK_IMAGE_ACCEPT }));
   else if (action === "book-image-remove") update({ book: { ...book, items: book.items.map((item) => item.id === book.selectedItemId ? { ...item, image: null } : item) }, pdfFontStatus: "idle" }, render);
   else if (action.startsWith("book-copyright:")) {
@@ -293,6 +258,6 @@ export async function handleProjectBookAction(action, render) {
       updateBookField(editor);
     }
   }
-  requestBookTitlePreview(render);
+  requestBookPagePreview(render);
   return true;
 }

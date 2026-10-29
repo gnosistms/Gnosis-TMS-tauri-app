@@ -20,12 +20,12 @@ use uuid::Uuid;
 mod font_fallback;
 mod font_preferences;
 mod font_review;
+mod page_preview;
 mod preview_fonts;
-mod title_preview;
 
 pub(crate) use preview_fonts::{start_project_book_preview_fonts, BookPreviewFontsInput};
 
-pub(crate) use title_preview::{start_project_book_title_preview, TitlePagePreviewInput};
+pub(crate) use page_preview::{start_project_book_page_preview, BookPagePreviewInput};
 
 use super::chapter_export::{
     apply_print_custom_html_policy, build_scoped_export_document,
@@ -41,6 +41,7 @@ const MAX_FONT_BYTES: u64 = 30 * 1024 * 1024;
 const TYPST_COMPILE_TIMEOUT: Duration = Duration::from_secs(120);
 const CANCELLED: &str = "__GNOSIS_PDF_EXPORT_CANCELLED__";
 const MAX_TYPST_DIAGNOSTIC_BYTES: usize = 128 * 1024;
+const MAX_TYPST_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 const PDF_IMAGE_PREPARATION_REVISION: &str = "pdf-images-v1";
 const PDF_IMAGE_DOWNLOAD_WORKERS: usize = 12;
 const PDF_IMAGE_PROCESSING_WORKERS: usize = 4;
@@ -118,6 +119,20 @@ struct PdfWorkspacePreparationOptions<'a> {
     footnote_links_as_plain_text: bool,
     paper_size: &'a str,
     image_cache_session: &'a PdfImageCacheSession,
+    layout: TypstLayout<'a>,
+}
+
+/// What a workspace is typeset for. Book page previews reuse the export
+/// renderer so their layout cannot drift from the PDF.
+#[derive(Clone, Copy)]
+enum TypstLayout<'a> {
+    Export,
+    /// Pagination only: the book's text, with every image a placeholder that is
+    /// never downloaded or decoded and no drop caps, so a whole book typesets in
+    /// about a second. Page numbers are read back with `typst eval`.
+    TextOnly,
+    /// A contents section drawn from an earlier `TextOnly` pass's page numbers.
+    ContentsProof(&'a page_preview::ContentsProof),
 }
 
 impl PdfImagePreparationCache {
@@ -800,6 +815,7 @@ async fn run_pdf_export(
             footnote_links_as_plain_text,
             paper_size,
             image_cache_session: &image_cache_session,
+            layout: TypstLayout::Export,
         };
         prepare_pdf_workspace(
             &prep_app,
@@ -887,11 +903,42 @@ async fn compile_typst(
     rendered_name: &str,
     cancelled: &AtomicBool,
 ) -> Result<(), String> {
-    check_cancelled(cancelled)?;
-    let source_path = workspace.join(source_name);
-    let rendered_path = workspace.join(rendered_name);
+    let mut arguments: Vec<std::ffi::OsString> = vec!["compile".into()];
+    arguments.extend(typst_world_arguments(workspace, font_dir, fallback_fonts)?);
+    arguments.extend([
+        workspace.join(source_name).into_os_string(),
+        workspace.join(rendered_name).into_os_string(),
+    ]);
+    run_typst(app, arguments, cancelled).await.map(|_| ())
+}
+
+/// Typesets `source_name` and returns `expression` evaluated against the laid-out
+/// document, serialized as JSON.
+async fn eval_typst(
+    app: &AppHandle,
+    workspace: &Path,
+    font_dir: &Path,
+    fallback_fonts: &[PathBuf],
+    source_name: &str,
+    expression: &str,
+    cancelled: &AtomicBool,
+) -> Result<Vec<u8>, String> {
     let mut arguments: Vec<std::ffi::OsString> = vec![
-        "compile".into(),
+        "eval".into(),
+        expression.into(),
+        "--in".into(),
+        workspace.join(source_name).into_os_string(),
+    ];
+    arguments.extend(typst_world_arguments(workspace, font_dir, fallback_fonts)?);
+    run_typst(app, arguments, cancelled).await
+}
+
+fn typst_world_arguments(
+    workspace: &Path,
+    font_dir: &Path,
+    fallback_fonts: &[PathBuf],
+) -> Result<Vec<std::ffi::OsString>, String> {
+    let mut arguments: Vec<std::ffi::OsString> = vec![
         "--root".into(),
         workspace.as_os_str().to_owned(),
         "--font-path".into(),
@@ -914,7 +961,16 @@ async fn compile_typst(
     for directory in font_directories {
         arguments.extend(["--font-path".into(), directory.into_os_string()]);
     }
-    arguments.extend([source_path.into_os_string(), rendered_path.into_os_string()]);
+    Ok(arguments)
+}
+
+/// Runs the bundled Typst CLI and returns its standard output.
+async fn run_typst(
+    app: &AppHandle,
+    arguments: Vec<std::ffi::OsString>,
+    cancelled: &AtomicBool,
+) -> Result<Vec<u8>, String> {
+    check_cancelled(cancelled)?;
     let command =
         if cfg!(debug_assertions) {
             std::env::var_os("GNOSIS_TYPST_BIN")
@@ -934,6 +990,7 @@ async fn compile_typst(
     let mut child = Some(child);
     let started = std::time::Instant::now();
     let mut stderr = Vec::new();
+    let mut stdout = Vec::new();
     let exit_code = loop {
         if cancelled.load(Ordering::Acquire) {
             if let Some(child) = child.take() {
@@ -951,6 +1008,15 @@ async fn compile_typst(
             Ok(Some(CommandEvent::Stderr(bytes))) => {
                 let remaining = MAX_TYPST_DIAGNOSTIC_BYTES.saturating_sub(stderr.len());
                 stderr.extend_from_slice(&bytes[..bytes.len().min(remaining)]);
+            }
+            Ok(Some(CommandEvent::Stdout(bytes))) => {
+                if stdout.len() + bytes.len() > MAX_TYPST_OUTPUT_BYTES {
+                    if let Some(child) = child.take() {
+                        let _ = child.kill();
+                    }
+                    return Err("The PDF renderer returned too much data.".to_string());
+                }
+                stdout.extend_from_slice(&bytes);
             }
             Ok(Some(CommandEvent::Terminated(payload))) => break payload.code,
             Ok(Some(CommandEvent::Error(error))) => {
@@ -970,7 +1036,7 @@ async fn compile_typst(
         return Err("A selected font could not be loaded by the PDF renderer. Try another installed font, or export as DOCX or HTML.".to_string());
     }
 
-    Ok(())
+    Ok(stdout)
 }
 
 async fn await_font_review(
@@ -1377,14 +1443,29 @@ fn prepare_typst_workspace(
     cancelled: &AtomicBool,
 ) -> Result<(), String> {
     check_cancelled(cancelled)?;
-    let image_paths = prepare_typst_images(
-        app,
-        job_id,
-        workspace,
-        document,
-        options.image_cache_session,
-        cancelled,
-    )?;
+    let image_paths = if matches!(options.layout, TypstLayout::TextOnly) {
+        // Book section images (logo, full-page images) are simply left out.
+        document
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                ExportBlock::Image { image, .. } => Some((
+                    export_image_key(image),
+                    PreparedTypstImage::Placeholder(String::new()),
+                )),
+                _ => None,
+            })
+            .collect()
+    } else {
+        prepare_typst_images(
+            app,
+            job_id,
+            workspace,
+            document,
+            options.image_cache_session,
+            cancelled,
+        )?
+    };
     fs::write(workspace.join("flourish.svg"), CHAPTER_FLOURISH_SVG)
         .map_err(|error| format!("Could not prepare the title ornament for the PDF: {error}"))?;
     write_droplet_package(workspace)?;
@@ -1405,6 +1486,9 @@ fn prepare_typst_workspace(
             options,
             cancelled,
         )?);
+    }
+    if matches!(options.layout, TypstLayout::TextOnly) {
+        source.push_str(BOOK_PAGINATION_RULE);
     }
     fs::write(workspace.join("chapter.typ"), source)
         .map_err(|error| format!("Could not write the temporary Typst document: {error}"))
@@ -1459,7 +1543,9 @@ fn render_typst_chapter(
         image_paths,
         cover_end.map_or(0, |end| end + 1),
     );
-    let dropcap_index = if latin_body(&document.language_code) {
+    let dropcap_index = if latin_body(&document.language_code)
+        && !matches!(options.layout, TypstLayout::TextOnly)
+    {
         dropcap_block_index(&document.blocks, &emission_order, leading_title.is_some())
     } else {
         None
@@ -1650,26 +1736,40 @@ const BOOK_LAYOUT_RULES: &str = r#"
     }
   }
 })
-#let gnosis-contents(t, include-h1: false) = {
+#let gnosis-book-entries() = query(<gnosis-book-entry>).map(entry => (..entry.value, page: numbering(entry.value.numbering, ..counter(page).at(entry.location())), location: entry.location()))
+#let gnosis-contents-link(entry, body) = if "location" in entry { link(entry.location, body) } else { body }
+// `entries` is called in context. A page preview passes page numbers from an
+// earlier pagination pass instead of the live book's entries.
+#let gnosis-contents-entries(t, entries, include-h1: false) = {
   set par(justify: false, first-line-indent: 0pt)
   show link: set text(fill: black)
   align(center, text(font: gnosis-book-heading-font, size: 20pt, tracking: 0.08em)[#upper(t)])
   v(2em)
   context {
-    for entry in query(<gnosis-book-entry>) {
-      if entry.value.level == 0 or include-h1 {
-        block(width: 100%, above: if entry.value.level == 0 { 1em } else { 0.78em }, below: 0.78em)[
-          #pad(left: if entry.value.level == 0 { 0em } else { 1.5em })[
-            #link(entry.location())[#grid(columns: (1fr, auto), column-gutter: 1em,
-              if entry.value.level == 0 { text(font: gnosis-book-heading-font)[#if entry.value.chapter != none { str(entry.value.chapter) + ". " }#upper(entry.value.title)] } else { entry.value.title },
-              numbering(entry.value.numbering, ..counter(page).at(entry.location())),
-            )]
+    for entry in entries() {
+      if entry.level == 0 or include-h1 {
+        block(width: 100%, above: if entry.level == 0 { 1em } else { 0.78em }, below: 0.78em)[
+          #pad(left: if entry.level == 0 { 0em } else { 1.5em })[
+            #gnosis-contents-link(entry, grid(columns: (1fr, auto), column-gutter: 1em,
+              if entry.level == 0 { text(font: gnosis-book-heading-font)[#if entry.chapter != none { str(entry.chapter) + ". " }#upper(entry.title)] } else { entry.title },
+              entry.page,
+            ))
           ]
         ]
       }
     }
   }
 }
+#let gnosis-contents(t, include-h1: false) = gnosis-contents-entries(t, gnosis-book-entries, include-h1: include-h1)
+"#;
+
+// Appended to a `TextOnly` book: every contents entry's page and where each
+// contents section starts, read back with `typst eval`.
+const BOOK_PAGINATION_RULE: &str = r#"
+#context [#metadata((
+  entries: gnosis-book-entries().map(entry => { let _ = entry.remove("location"); entry }),
+  contents: query(<gnosis-contents-start>).map(start => (..start.value, page: counter(page).at(start.location()).first())),
+)) <gnosis-book-pagination>]
 "#;
 
 // Fit unusually long unbreakable words, but let ordinary titles wrap naturally
@@ -1726,6 +1826,7 @@ fn render_typst_book(
         check_cancelled(cancelled)?;
         let item = &part.item;
         if !item.image_asset_id.is_empty()
+            && !matches!(options.layout, TypstLayout::TextOnly)
             && section_prepared_image(&part.document, image_paths).is_none()
         {
             return Err(
@@ -1747,7 +1848,11 @@ fn render_typst_book(
             source.push_str("#counter(page).update(1)\n");
             body_started = true;
         }
-        let numbering = if body_started { "1" } else { "i" };
+        let numbering = match options.layout {
+            TypstLayout::ContentsProof(proof) => proof.numbering.as_str(),
+            _ if body_started => "1",
+            _ => "i",
+        };
         let number = if item.kind == "chapter" && item.numbered != Some(false) {
             chapter_number += 1;
             Some(chapter_number)
@@ -1766,6 +1871,19 @@ fn render_typst_book(
             ));
         }
         let has_page_numbers = matches!(item.kind.as_str(), "chapter" | "contents");
+        if item.kind == "contents" {
+            match options.layout {
+                TypstLayout::TextOnly => source.push_str(&format!(
+                    "#metadata((id: {}, numbering: \"{numbering}\")) <gnosis-contents-start>\n",
+                    typst_string(&item.id)
+                )),
+                // The proof holds only this section: number its pages as the book does.
+                TypstLayout::ContentsProof(proof) => {
+                    source.push_str(&format!("#counter(page).update({})\n", proof.page));
+                }
+                TypstLayout::Export => {}
+            }
+        }
         if has_page_numbers {
             source.push_str(&format!(
                 "#metadata(\"{numbering}\") <gnosis-print-start>\n"
@@ -1783,11 +1901,15 @@ fn render_typst_book(
             )?);
             source.push_str("#metadata(none) <gnosis-chapter-end>\n");
         } else if item.kind == "contents" {
-            source.push_str(&format!(
-                "#gnosis-contents({}, include-h1: {})\n",
-                typst_string(&item.title),
-                item.include_h1_headings
-            ));
+            let title = typst_string(&item.title);
+            let include_h1 = item.include_h1_headings;
+            source.push_str(&match options.layout {
+                TypstLayout::ContentsProof(proof) => format!(
+                    "#gnosis-contents-entries({title}, {}, include-h1: {include_h1})\n",
+                    proof.typst_entries()
+                ),
+                _ => format!("#gnosis-contents({title}, include-h1: {include_h1})\n"),
+            });
         } else if item.kind == "title" {
             let title_words = inline_visible_text(&item.title)
                 .split_whitespace()
@@ -4120,6 +4242,7 @@ mod tests {
             paper_size: "a5",
             footnote_links_as_plain_text: true,
             image_cache_session: &session,
+            layout: TypstLayout::Export,
         };
         prepare_typst_workspace(
             None,
@@ -4330,6 +4453,7 @@ mod tests {
             footnote_links_as_plain_text: true,
             paper_size: "a5",
             image_cache_session: &cache_session,
+            layout: TypstLayout::Export,
         };
         prepare_typst_workspace(
             None,
@@ -4492,6 +4616,7 @@ mod tests {
             footnote_links_as_plain_text: true,
             paper_size: "us-letter",
             image_cache_session: &cache_session,
+            layout: TypstLayout::Export,
         };
         prepare_typst_workspace(
             None,
@@ -4798,6 +4923,7 @@ mod tests {
             paper_size: "a5",
             footnote_links_as_plain_text: true,
             image_cache_session: &session,
+            layout: TypstLayout::Export,
         };
         prepare_typst_workspace(
             None,
@@ -4903,6 +5029,7 @@ mod tests {
             paper_size: "a5",
             footnote_links_as_plain_text: true,
             image_cache_session: &session,
+            layout: TypstLayout::Export,
         };
         prepare_typst_workspace(
             None,
@@ -4942,6 +5069,7 @@ mod tests {
             paper_size: "a5",
             footnote_links_as_plain_text: true,
             image_cache_session: &session,
+            layout: TypstLayout::Export,
         };
         prepare_typst_workspace(
             None,
@@ -5138,6 +5266,7 @@ mod tests {
             paper_size: "a5",
             footnote_links_as_plain_text: true,
             image_cache_session: &session,
+            layout: TypstLayout::Export,
         };
         let typst = std::env::var_os("GNOSIS_TYPST_BIN")
             .zip(std::env::var_os("GNOSIS_TYPST_SMOKE_FONT_DIR"));
@@ -5723,6 +5852,7 @@ mod tests {
             footnote_links_as_plain_text: true,
             paper_size: "a4",
             image_cache_session: &image_cache_session,
+            layout: TypstLayout::Export,
         };
         prepare_typst_workspace(
             None,

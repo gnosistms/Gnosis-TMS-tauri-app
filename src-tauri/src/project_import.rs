@@ -118,8 +118,8 @@ use self::{
         remove_gtms_editor_language_image_sync, restore_gtms_editor_field_from_history_sync,
         reverse_gtms_editor_batch_replace_commit_sync, save_gtms_editor_language_image_url_sync,
         start_gtms_chapter_pdf_export as start_gtms_chapter_pdf_export_task,
+        start_project_book_page_preview as start_project_book_page_preview_task,
         start_project_book_preview_fonts as start_project_book_preview_fonts_task,
-        start_project_book_title_preview as start_project_book_title_preview_task,
         start_project_transfer, start_team_chapter_copy, start_wordpress_caption_enrichment,
         update_gtms_chapter_glossary_links_sync, update_gtms_chapter_language_selection_sync,
         update_gtms_chapter_languages_sync, update_gtms_chapter_workflow_status_sync,
@@ -130,31 +130,30 @@ use self::{
         AlignedTranslationPreflightInput, AlignedTranslationPreflightResponse,
         ApplyEditorAiReviewResultInput, ApplyEditorAiReviewResultResponse,
         ApplyEditorAiReviewResultsBatchInput, ApplyEditorAiReviewResultsBatchResponse,
-        BookPreviewFontsInput, ClearEditorReviewedMarkersInput, ClearEditorReviewedMarkersResponse,
-        ClearImportedEditorConflictInput, DuplicateEditorLanguageImageInput,
-        ExportChapterFileInput, ExportChapterFileResponse, ImportBookImageInput, ImportedBookImage,
-        InitializeProjectRepoInput, InitializeProjectRepoResponse, InsertEditorRowInput,
-        InsertEditorRowResponse, ListLocalProjectFilesInput, LoadChapterEditorInput,
-        LoadChapterEditorResponse, LoadEditorChangedAfterMyEditInput,
-        LoadEditorChangedAfterMyEditResponse, LoadEditorFieldHistoryInput,
-        LoadEditorFieldHistoryResponse, LoadEditorRowInput, LoadEditorRowResponse,
-        LocalProjectFilesResponse, MergeEditorRowsInput, MergeEditorRowsResponse,
-        PdfChapterExportInput, PdfFontInspection, PdfFontInspectionInput, ProjectTransferInput,
-        ProjectTransferStatus, ProjectTransferStatusInput, PurgeLocalProjectRepoInput,
-        RemoveEditorLanguageImageInput, RestoreEditorFieldHistoryInput,
+        BookPagePreviewInput, BookPreviewFontsInput, ClearEditorReviewedMarkersInput,
+        ClearEditorReviewedMarkersResponse, ClearImportedEditorConflictInput,
+        DuplicateEditorLanguageImageInput, ExportChapterFileInput, ExportChapterFileResponse,
+        ImportBookImageInput, ImportedBookImage, InitializeProjectRepoInput,
+        InitializeProjectRepoResponse, InsertEditorRowInput, InsertEditorRowResponse,
+        ListLocalProjectFilesInput, LoadChapterEditorInput, LoadChapterEditorResponse,
+        LoadEditorChangedAfterMyEditInput, LoadEditorChangedAfterMyEditResponse,
+        LoadEditorFieldHistoryInput, LoadEditorFieldHistoryResponse, LoadEditorRowInput,
+        LoadEditorRowResponse, LocalProjectFilesResponse, MergeEditorRowsInput,
+        MergeEditorRowsResponse, PdfChapterExportInput, PdfFontInspection, PdfFontInspectionInput,
+        ProjectTransferInput, ProjectTransferStatus, ProjectTransferStatusInput,
+        PurgeLocalProjectRepoInput, RemoveEditorLanguageImageInput, RestoreEditorFieldHistoryInput,
         RestoreEditorFieldHistoryResponse, ReverseEditorBatchReplaceCommitInput,
         ReverseEditorBatchReplaceCommitResponse, SaveEditorLanguageImageResponse,
         SaveEditorLanguageImageUrlInput, SaveEditorRowWithConcurrencyResponse,
-        TeamChapterCopyInput, TitlePagePreviewInput, UpdateChapterGlossaryLinksInput,
-        UpdateChapterGlossaryLinksResponse, UpdateChapterLanguageSelectionInput,
-        UpdateChapterLanguageSelectionResponse, UpdateChapterLanguagesInput,
-        UpdateChapterLanguagesResponse, UpdateChapterWorkflowStatusInput,
-        UpdateChapterWorkflowStatusResponse, UpdateEditorRowFieldFlagInput,
-        UpdateEditorRowFieldFlagResponse, UpdateEditorRowFieldsBatchInput,
-        UpdateEditorRowFieldsBatchResponse, UpdateEditorRowFieldsInput,
-        UpdateEditorRowLifecycleInput, UpdateEditorRowLifecycleResponse,
-        UpdateEditorRowTextStyleInput, UpdateEditorRowTextStyleResponse,
-        UploadEditorLanguageImageInput,
+        TeamChapterCopyInput, UpdateChapterGlossaryLinksInput, UpdateChapterGlossaryLinksResponse,
+        UpdateChapterLanguageSelectionInput, UpdateChapterLanguageSelectionResponse,
+        UpdateChapterLanguagesInput, UpdateChapterLanguagesResponse,
+        UpdateChapterWorkflowStatusInput, UpdateChapterWorkflowStatusResponse,
+        UpdateEditorRowFieldFlagInput, UpdateEditorRowFieldFlagResponse,
+        UpdateEditorRowFieldsBatchInput, UpdateEditorRowFieldsBatchResponse,
+        UpdateEditorRowFieldsInput, UpdateEditorRowLifecycleInput,
+        UpdateEditorRowLifecycleResponse, UpdateEditorRowTextStyleInput,
+        UpdateEditorRowTextStyleResponse, UploadEditorLanguageImageInput,
     },
     chapter_editor_comments::{
         delete_gtms_editor_row_comment_sync, load_gtms_editor_row_comments_sync,
@@ -377,14 +376,14 @@ pub(crate) fn start_project_book_preview_fonts(
     start_project_book_preview_fonts_task(app, input)
 }
 
-/// Starts immediately; `book-title-preview` reports rendered SVG pages or errors
+/// Starts immediately; `book-page-preview` reports rendered SVG pages or errors
 /// keyed by the caller's requestId, without blocking the IPC path.
 #[tauri::command]
-pub(crate) fn start_project_book_title_preview(
+pub(crate) fn start_project_book_page_preview(
     app: AppHandle,
-    input: TitlePagePreviewInput,
+    input: BookPagePreviewInput,
 ) -> Result<(), String> {
-    start_project_book_title_preview_task(app, input)
+    start_project_book_page_preview_task(app, input)
 }
 
 #[tauri::command]

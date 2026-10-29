@@ -37,37 +37,58 @@ test("front matter uses per-language editing controls, and copyright has the lim
       assert.match(html, /book-copyright:symbol/);
       assert.match(html, /book-copyright:flourish/);
     }
-    if (kind === "contents") { assert.match(html, /Mục lục/); assert.match(html, /final layout at export/); }
+    if (kind === "contents") { assert.match(html, /value="Mục lục"/); assert.match(html, /estimated from the text without images/); }
     if (kind === "image") { assert.match(html, /data-book-image-dropzone/); assert.match(html, /Enter image caption\./); }
   }
 });
 
-test("contents expose an off-page H1 checkbox and render optional subentries", () => {
+test("contents put the title and H1 choice beside the typeset proof", () => {
   const current = modal();
   current.book.items = addBookSection(current.book.items, "contents", "Book", "Contents");
   const contents = current.book.items.find((item) => item.kind === "contents");
   current.book.selectedItemId = contents.id;
   let html = renderProjectBookComposer(current);
+  assert.match(html, /<input class="field__input" type="text" data-book-field="title"[^>]*value="Contents"/);
   assert.match(html, /type="checkbox" data-book-field="includeH1Headings" > Include H1 headings/);
-  assert.ok(html.indexOf("includeH1Headings") < html.indexOf('<article class="book-page'));
+  assert.match(html, /aria-label="Table of contents PDF preview"/);
+  assert.doesNotMatch(html, /book-contents|contenteditable/);
   contents.includeH1Headings = true;
-  current.book.contentsHeadings = { a: ["Inside the chapter"] };
+  current.book.pagePreview = { itemId: contents.id, status: "ready", pages: ["data:image/svg+xml;base64,PHN2Zy8+"] };
   html = renderProjectBookComposer(current);
   assert.match(html, /data-book-field="includeH1Headings" checked/);
-  assert.match(html, /book-contents__subheading"><span>Inside the chapter/);
+  assert.match(html, /alt="Table of contents PDF preview"/);
+});
+
+test("pages waiting for Typst show Rendering with a spinner", () => {
+  const current = modal();
+  current.pdfPaperSize = "a5";
+  current.book.items = [{ id: "title", kind: "title", title: "Book" }];
+  current.book.selectedItemId = "title";
+  let html = renderProjectBookComposer(current);
+  assert.match(html, /data-book-page-proof aria-busy="true"/);
+  assert.match(html, /<div class="book-proof__pending" style="aspect-ratio: 148 \/ 210"><span class="button__spinner"[^>]*aria-label="Rendering"><\/span><span>Rendering…<\/span>/);
+  // A stale page stays visible, dimmed, while its replacement is typeset.
+  current.book.pagePreview = { itemId: "title", status: "loading", pages: ["data:image/svg+xml;base64,PHN2Zy8+"] };
+  html = renderProjectBookComposer(current);
+  assert.doesNotMatch(html, /book-proof__pending/);
+  assert.match(html, /book-proof__status " role="status"><span class="button__spinner"[^>]*><\/span><span>Rendering…/);
+  current.book.pagePreview = { itemId: "title", status: "error", pages: [], error: "Font not ready" };
+  html = renderProjectBookComposer(current);
+  assert.doesNotMatch(html, /Rendering…/);
+  assert.match(html, /data-action="book-page-preview-retry"/);
 });
 
 test("title pages put every editing field beside the typeset proof", () => {
   const current = modal();
   current.book.items = [{ id: "title", kind: "title", title: "First\nSecond", subtitle: "Subtitle", author: "Author", translator: "Translator" }];
   current.book.selectedItemId = "title";
-  current.book.titlePreview = { itemId: "title", status: "ready", pages: ["data:image/svg+xml;base64,PHN2Zy8+"] };
+  current.book.pagePreview = { itemId: "title", status: "ready", pages: ["data:image/svg+xml;base64,PHN2Zy8+"] };
   const html = renderProjectBookComposer(current);
   assert.match(html, /<textarea[^>]*data-book-field="title"[^>]*>First\nSecond<\/textarea>/);
   for (const field of ["subtitle", "author", "translator"]) assert.match(html, new RegExp(`data-book-field="${field}"`));
   assert.match(html, /Publisher logo/);
   assert.match(html, /data-editor-export-paper-size-select/);
-  assert.match(html, /data-book-title-proof aria-busy="false"/);
+  assert.match(html, /data-book-page-proof aria-busy="false"/);
   assert.match(html, /src="data:image\/svg\+xml;base64,PHN2Zy8\+"/);
   assert.doesNotMatch(html, /contenteditable|Edit Title Info/);
 });
@@ -82,6 +103,7 @@ test("one shared paper selector follows language for every selected section", ()
     assert.equal(html.match(/data-editor-export-paper-size-select/g).length, 1);
     assert.ok(html.indexOf('id="editor-export-language-trigger"') < html.indexOf('id="editor-export-paper-size-trigger"'));
     assert.ok(html.indexOf('id="editor-export-paper-size-trigger"') < html.indexOf('data-action="book-add-menu"'));
-    if (kind !== "title") assert.match(html, /class="book-paper"/);
+    if (["title", "contents"].includes(kind)) assert.match(html, /aspect-ratio: 148 \/ 210/);
+    else assert.match(html, /class="book-paper"/);
   }
 });

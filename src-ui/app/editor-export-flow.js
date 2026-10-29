@@ -1,4 +1,4 @@
-import { cancelBookTitlePreview, requestBookTitlePreview } from "./project-book-title-preview.js";
+import { cancelBookPagePreview, requestBookPagePreview } from "./project-book-page-preview.js";
 import { initializeProjectBook, selectProjectBookLanguage, loadSelectedBookPreview } from "./project-book-flow.js";
 import { bookChapterDefaultTitle, bookItemIncluded, bookExportItems } from "./project-book-model.js";
 import { saveBookSettings } from "./project-book-settings.js";
@@ -441,11 +441,11 @@ export function selectEditorExportPaperSize(render, paperSize) {
   saveStoredEditorExportPaperSize(normalized);
   if (modal.book) saveBookSettings(currentExportModal());
   render();
-  requestBookTitlePreview(render);
+  requestBookPagePreview(render);
 }
 
 export function closeEditorExportOptions(render, operations = {}) {
-  cancelBookTitlePreview();
+  cancelBookPagePreview();
   const modal = currentExportModal();
   if (!modal?.isOpen || modal.status === "cancelling") {
     return;
