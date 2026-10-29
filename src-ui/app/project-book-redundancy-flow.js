@@ -88,11 +88,12 @@ function fail(request, error) {
   publish(request, { status: "error", imagesStatus: imagesReady ? "ready" : "error", footnotesStatus: "error", error,
     result: imagesReady ? { ...review.result, footnotes: [] } : null });
 }
+/** Returns whether the choice was recorded. */
 export function setBookRedundancyChoice(id, included, operations = {}) {
   const current = modal(), request = active;
-  if (!request || !matches(request)) return;
+  if (!request || !matches(request)) return false;
   const review = current.book.redundancy;
-  if (review?.status !== "ready" && !(id.startsWith("image:") && review?.imagesStatus === "ready")) return;
+  if (review?.status !== "ready" && !(id.startsWith("image:") && review?.imagesStatus === "ready")) return false;
   const choices = { ...current.book.redundancy.choices, [id]: included };
   request.saveError = null;
   // Leave the checkbox, focus and scrolling list mounted.
@@ -100,6 +101,7 @@ export function setBookRedundancyChoice(id, included, operations = {}) {
     book: { ...current.book, redundancy: { ...current.book.redundancy, choices } },
   } };
   queueChoiceSave(request, choices, operations.invoke || request.invoke);
+  return true;
 }
 
 function publishResult(request, result, choices, patch) {

@@ -386,6 +386,74 @@ test("same-project summary refresh retains a scrolled chapter preview after scop
   await expect(modal).toContainText("Preview unavailable");
 });
 
+test("background project refresh retains the redundancy page after review choices change", async ({ page }) => {
+  await mountProjectExport(page);
+  await page.evaluate(() => {
+    const occurrence = (id, itemId, kind = "footnote") => ({ id, itemId, rowId: `${itemId}-row`, kind, marker: kind === "footnote" ? 1 : 0, signature: `sig-${id}`, chapterName: itemId, text: "An explanation of dependent origination.", context: "dependent origination", imageSrc: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='120'/%3E" });
+    window.__redundancyResult = {
+      images: [{ id: "image", occurrences: [occurrence("i1", "fixture-chapter-0-0", "image"), occurrence("i2", "fixture-chapter-0-1", "image")] }],
+      footnotes: [{ id: "note", anchor: "dependent origination", occurrences: [occurrence("n1", "fixture-chapter-0-0"), occurrence("n2", "fixture-chapter-0-1")] }], warnings: [], cached: true,
+    };
+  });
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  await modal.getByRole("button", { name: "Next", exact: true }).click();
+  await expect(modal.getByRole("heading", { name: "Redundancy checks", exact: true })).toBeVisible();
+  await expect(modal.getByRole("button", { name: "Next", exact: true })).toBeEnabled();
+  const checks = modal.locator("[data-book-redundancy-choice]");
+  await checks.nth(1).check();
+  await checks.nth(2).uncheck();
+  await expect.poll(() => page.evaluate(() => window.__redundancyChoices.n1)).toBe(false);
+  await page.evaluate(async () => {
+    const { state } = await import("/app/state.js");
+    const { createProjectsQuerySnapshot, applyProjectsQuerySnapshotToState } = await import("/app/project-query.js");
+    const scroll = document.querySelector(".book-redundancy__scroll");
+    scroll.style.maxHeight = "120px";
+    scroll.scrollTop = 60;
+    window.__redundancyRefresh = {
+      page: document.querySelector("#app").firstElementChild,
+      modal: document.querySelector('[data-modal-dialog="editor-export"]'),
+      image: document.querySelector(".book-redundancy__thumbnail"),
+      control: document.querySelectorAll("[data-book-redundancy-choice]")[2],
+      top: scroll.scrollTop,
+    };
+    window.__redundancyRefresh.control.focus();
+    const projects = structuredClone(state.projects);
+    window.__publishRedundancyRefresh = (fetching, change = "") => {
+      const next = structuredClone(projects);
+      next[0].chapters[0].wordCounts = { en: Math.random() };
+      if (change === "title") next[0].title = "Refreshed project title";
+      applyProjectsQuerySnapshotToState(createProjectsQuerySnapshot({ items: next, discovery: { status: "ready" } }), {
+        teamId: state.selectedTeamId, isFetching: fetching,
+      });
+      window.__gnosisDebug.renderProjectsBackground();
+    };
+    for (let i = 0; i < 4; i++) window.__publishRedundancyRefresh(true);
+    window.__publishRedundancyRefresh(false, "title");
+    window.__publishRedundancyRefresh(false, "title");
+  });
+  expect(await page.evaluate(() => {
+    const before = window.__redundancyRefresh;
+    return {
+      pageUpdated: document.querySelector("#app").firstElementChild !== before.page,
+      sameModal: document.querySelector('[data-modal-dialog="editor-export"]') === before.modal,
+      sameImage: document.querySelector(".book-redundancy__thumbnail") === before.image,
+      focused: document.activeElement === before.control,
+      top: document.querySelector(".book-redundancy__scroll").scrollTop === before.top,
+      checked: [...document.querySelectorAll("[data-book-redundancy-choice]")].map((input) => input.checked),
+    };
+  })).toEqual({ pageUpdated: true, sameModal: true, sameImage: true, focused: true, top: true, checked: [true, true, false, false] });
+  await expect(page.locator('[data-screen="projects"]')).toContainText("Refreshed project title");
+
+  // A genuine change to the dialog still renders on background completion.
+  await page.evaluate(async () => {
+    const { state } = await import("/app/state.js");
+    state.editorChapter.exportModal.book.redundancy.error = "Review unavailable";
+    window.__gnosisDebug.renderProjectsBackground();
+  });
+  await expect(modal).toContainText("Review unavailable");
+  await expect(checks.nth(1)).toBeChecked();await expect(checks.nth(2)).not.toBeChecked();
+});
+
 test("background migration progress updates without rebuilding the projects page or export", async ({ page }) => {
   await mountProjectExport(page);
   await expect(page.locator(".book-page--chapter")).toBeVisible();

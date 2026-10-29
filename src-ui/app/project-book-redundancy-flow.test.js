@@ -174,8 +174,9 @@ test("images publish and save independently before footnotes finish or fail", as
   assert.equal(review.status, "loading");
   assert.equal(review.imagesStatus, "ready");
   assert.equal(review.footnotesStatus, "loading");
-  setBookRedundancyChoice("image:picture:b", true);
-  setBookRedundancyChoice("unverified-note", false);
+  // The return value tells the change handler whether to record the choice on screen.
+  assert.equal(setBookRedundancyChoice("image:picture:b", true), true);
+  assert.equal(setBookRedundancyChoice("unverified-note", false), false);
   await flushBookRedundancyChoices();
   assert.equal(calls.at(-1).args.input.choices["image:picture:b"], true);
   assert.equal(calls.at(-1).args.input.choices["unverified-note"], undefined);
