@@ -14,7 +14,8 @@ import {
   renderSanitizedInlineMarkupWithGlossaryHighlightHtml,
 } from "./editor-inline-markup.js";
 import { buildStaticInlineFootnoteMarkerRanges } from "./editor-static-footnote-markers.js";
-import { isCustomHtmlRowTextStyle } from "./editor-row-text-style.js";
+import { isCustomHtmlRowTextStyle, isListRowTextStyle } from "./editor-row-text-style.js";
+import { renderEditorListFieldHtml } from "./editor-list.js";
 import { editorLanguageFootnotes, findEditorRowById } from "./editor-utils.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
 import { invoke } from "./runtime.js";
@@ -339,7 +340,10 @@ function applyEditorTextHighlightLayersToRowCard(
               : [],
           });
         setElementInnerHtmlIfChanged(displayText, contentKind === "footnote"
-          ? footnoteParagraphsHtml(displayHtml) : displayHtml);
+          ? footnoteParagraphsHtml(displayHtml)
+          : contentKind === "field" && isListRowTextStyle(stack.dataset.rowTextStyle)
+            ? renderEditorListFieldHtml(displayHtml, stack.dataset.rowTextStyle)
+            : displayHtml);
       }
     }
 

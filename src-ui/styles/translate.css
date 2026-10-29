@@ -546,6 +546,17 @@
   text-align: center;
 }
 
+/* Lists indent like the editor's list rows: a marker gutter, then one indent a
+   level. */
+.translate-preview__block--list {
+  padding-left: 2.25em;
+}
+
+.translate-preview__block--list :is(ol, ul) {
+  margin: 0;
+  padding-left: 2em;
+}
+
 /* Separators show the flourish the PDF prints. As a mask it takes the text
    colour, which an <hr> otherwise sets to grey. */
 .translate-preview__separator,
@@ -1153,6 +1164,15 @@
 
 .translation-row-text-style-button--image .translation-row-text-style-button__label {
   font-size: 11px;
+}
+
+.translation-row-text-style-button__icon {
+  display: inline-flex;
+}
+
+.translation-row-text-style-button__icon svg {
+  width: 14px;
+  height: 14px;
 }
 
 .translation-row-text-style-button--separator .translation-row-text-style-button__label {
@@ -2016,6 +2036,130 @@
   text-align: center;
 }
 
+/* List rows: one item per line, its marker hanging in a gutter left of the
+   text. The textarea indents with tabs one level wide, and a marker overlay
+   mirrors its text so each marker sits where its item starts. */
+.translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style^="list_"] {
+  --list-gutter: 2.25em;
+  --list-indent: 2em;
+  --translation-field-padding-right: 32px;
+}
+
+.translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style^="list_"] .translation-language-panel__field,
+.translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style^="list_"] .translation-language-panel__field-highlight,
+.translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style^="list_"] .translation-language-panel__field-static {
+  padding-left: calc(var(--translation-field-padding-left) + var(--list-gutter));
+  tab-size: 8;
+  tab-size: 2em;
+}
+
+.translation-language-panel__list-item {
+  display: block;
+  position: relative;
+  padding-left: calc(var(--list-level, 0) * var(--list-indent, 2em));
+}
+
+.translation-language-panel__list-marker {
+  position: absolute;
+  top: 0;
+  left: calc(var(--list-level, 0) * var(--list-indent, 2em) - var(--list-gutter, 2.25em));
+  width: var(--list-gutter, 2.25em);
+  box-sizing: border-box;
+  padding-right: 0.5em;
+  color: var(--muted);
+  -webkit-text-fill-color: var(--muted);
+  text-align: right;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.translation-language-panel__list-markers {
+  display: block;
+  z-index: 3;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+
+.translation-language-panel__list-marker-anchor {
+  position: relative;
+}
+
+/* Right-aligned to where the item's text starts; the vertical position stays
+   on the item's first line. */
+.translation-language-panel__list-markers .translation-language-panel__list-marker {
+  top: auto;
+  left: auto;
+  right: 0;
+  width: auto;
+}
+
+.translation-language-panel__list-settings {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  z-index: 4;
+  display: none;
+}
+
+.translation-language-panel__editor:hover .translation-language-panel__list-settings,
+.translation-language-panel__editor:focus-within .translation-language-panel__list-settings,
+.translation-language-panel__list-settings:has([aria-expanded="true"]) {
+  display: inline-flex;
+}
+
+.translation-language-panel__list-settings-button {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid rgba(164, 112, 41, 0.18);
+  border-radius: 6px;
+  background: rgba(255, 251, 246, 0.92);
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    color 140ms ease;
+}
+
+.translation-language-panel__list-settings-button:hover,
+.translation-language-panel__list-settings-button:focus-visible,
+.translation-language-panel__list-settings-button[aria-expanded="true"] {
+  border-color: rgba(236, 134, 9, 0.42);
+  background: rgba(255, 247, 238, 0.98);
+  color: var(--link-hover);
+  outline: none;
+}
+
+.translation-language-panel__list-settings-button svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linejoin: round;
+}
+
+.editor-list-style-menu {
+  min-width: 170px;
+}
+
+.editor-list-style-menu__marker {
+  display: inline-block;
+  width: 2em;
+  color: var(--muted);
+}
+
+.editor-list-style-menu__item[aria-checked="true"] {
+  background: var(--control-hover-surface);
+  font-weight: 600;
+}
+
 /* Custom-HTML rows show raw HTML while editing (monospace, so tags read clearly)
    and the rendered, sanitized HTML when not editing. */
 .translation-language-panel__field--custom-html {
@@ -2451,10 +2595,12 @@
   display: none;
 }
 
+.translation-row-text-style-button--change-insert .translation-row-text-style-button__icon,
 .translation-row-text-style-button--change-insert .translation-row-text-style-button__label {
   color: rgba(var(--reviewed-accent-rgb), 0.96);
 }
 
+.translation-row-text-style-button--change-delete .translation-row-text-style-button__icon,
 .translation-row-text-style-button--change-delete .translation-row-text-style-button__label {
   color: rgba(var(--please-check-accent-rgb), 0.92);
 }

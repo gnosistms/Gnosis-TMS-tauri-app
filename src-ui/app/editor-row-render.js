@@ -19,9 +19,12 @@ import {
 } from "./editor-virtualization-shared.js";
 import {
   EDITOR_ROW_TEXT_STYLE_OPTIONS,
+  editorRowTextStyleOptionValue,
   isCustomHtmlRowTextStyle,
+  isListRowTextStyle,
   normalizeEditorRowTextStyle,
 } from "./editor-row-text-style.js";
+import { renderEditorListFieldHtml, renderEditorListMarkerOverlayHtml } from "./editor-list.js";
 import { sanitizeCustomHtmlForDisplay } from "./editor-custom-html.js";
 import { formatTimingMs as formatEditorTimingMs } from "./editor-timing.js";
 import { renderSrtStaticText } from "./editor-srt-group-render.js";
@@ -234,10 +237,39 @@ function textStyleChangeClass(language, textStyle) {
   if (!change) {
     return "";
   }
-  if (change.current === textStyle) {
+  if (editorRowTextStyleOptionValue(change.current) === textStyle) {
     return " translation-row-text-style-button--change-insert";
   }
-  return change.previous === textStyle ? " translation-row-text-style-button--change-delete" : "";
+  return editorRowTextStyleOptionValue(change.previous) === textStyle
+    ? " translation-row-text-style-button--change-delete"
+    : "";
+}
+
+// The list style button floats in the field's top-right corner on list rows.
+function renderListStyleSettingsButton(row, language, textStyle) {
+  if (
+    !isListRowTextStyle(textStyle)
+    || row?.canEdit !== true
+    || language?.canEdit !== true
+    || language?.isAiTranslating === true
+  ) {
+    return "";
+  }
+  return `
+    <span class="translation-language-panel__list-settings" ${tooltipAttributes("List style", { side: "top", align: "end" })}>
+      <button
+        class="translation-language-panel__list-settings-button"
+        type="button"
+        data-editor-list-style-button
+        data-row-id="${escapeHtml(row.id)}"
+        data-language-code="${escapeHtml(language.code)}"
+        data-text-style="${escapeHtml(textStyle)}"
+        aria-label="List style"
+        aria-haspopup="menu"
+        aria-expanded="false"
+      ><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9.5 3 .5-2h4l.5 2 2 .8 1.8-1 2.8 2.8-1 1.8.9 2.1 2 .5v4l-2 .5-.8 2 1 1.8-2.8 2.8-1.8-1-2.1.9-.5 2h-4l-.5-2-2-.8-1.8 1-2.8-2.8 1-1.8-.9-2.1-2-.5v-4l2-.5.8-2-1-1.8 2.8-2.8 1.8 1z"/><circle cx="12" cy="12" r="3"/></svg></button>
+    </span>
+  `;
 }
 
 function renderRowTextStyleButtons(row, language) {
@@ -361,22 +393,30 @@ function renderRowTextStyleButtons(row, language) {
   return `
     <div class="translation-row-text-style-actions">
       <div class="translation-row-text-style-actions__group" role="radiogroup" aria-label="Text style">
-        ${EDITOR_ROW_TEXT_STYLE_OPTIONS.map((option) => `
+        ${EDITOR_ROW_TEXT_STYLE_OPTIONS.map((option) => {
+          const isSelected = editorRowTextStyleOptionValue(selectedTextStyle) === option.value;
+          // The List button keeps the row's list style (bullets, numbers, …).
+          const textStyle = isSelected ? selectedTextStyle : option.value;
+          return `
           <button
-            class="translation-row-text-style-button${selectedTextStyle === option.value ? " is-active" : ""}${textStyleChangeClass(language, option.value)}"
+            class="translation-row-text-style-button${option.iconSvg ? " translation-row-text-style-button--icon" : ""}${isSelected ? " is-active" : ""}${textStyleChangeClass(language, option.value)}"
             type="button"
             role="radio"
             data-action="set-editor-row-text-style"
             data-editor-row-text-style-button
             data-row-id="${escapeHtml(row.id)}"
             data-language-code="${escapeHtml(language.code)}"
-            data-text-style="${escapeHtml(option.value)}"
-            aria-checked="${selectedTextStyle === option.value ? "true" : "false"}"
+            data-text-style="${escapeHtml(textStyle)}"
+            aria-checked="${isSelected ? "true" : "false"}"
+            ${option.iconSvg ? `aria-label="${escapeHtml(option.label)}"` : ""}
             ${tooltipAttributes(option.tooltip, { side: "top" })}
           >
-            <span class="translation-row-text-style-button__label">${escapeHtml(option.label)}</span>
+            ${option.iconSvg
+              ? `<span class="translation-row-text-style-button__icon">${option.iconSvg}</span>`
+              : `<span class="translation-row-text-style-button__label">${escapeHtml(option.label)}</span>`}
           </button>
-        `).join("")}
+        `;
+        }).join("")}
       </div>
       ${
         inlineButtons.length > 0
@@ -428,6 +468,9 @@ function renderStaticEditorFieldTextHtml(language, options = {}) {
       language?.footnotes ?? language?.footnote,
     ),
   });
+  if (language?.textListStyle) {
+    return renderEditorListFieldHtml(html, language.textListStyle);
+  }
   return language?.textHasParagraphs === true ? rowTextParagraphsHtml(html) : html;
 }
 
@@ -1059,6 +1102,7 @@ function renderEditorLanguageField(row, language) {
         ${language.changeView?.textDiff ? 'data-editor-change-diff="true"' : ""}
       >
           ${staticFieldMarkup}
+          ${renderListStyleSettingsButton(row, language, textStyle)}
         </div>
         ${renderQuoteAttribution(row, language)}
         ${renderLanguageAttachments(row, language)}
@@ -1104,17 +1148,27 @@ function renderEditorLanguageField(row, language) {
           lang="${escapeHtml(language.baseCode || language.code)}"
           aria-hidden="true"
         ></div>
+        ${language.textListStyle ? `
+          <div
+            class="translation-language-panel__field-highlight translation-language-panel__list-markers"
+            data-editor-list-markers
+            lang="${escapeHtml(language.baseCode || language.code)}"
+            aria-hidden="true"
+          >${renderEditorListMarkerOverlayHtml(language.text, language.textListStyle)}</div>
+        ` : ""}
         <textarea
           class="${fieldClassName}"
           data-editor-row-field
           data-row-id="${escapeHtml(row.id)}"
           data-language-code="${escapeHtml(language.code)}"
           ${language.textHasParagraphs === true ? "data-text-has-paragraphs" : ""}
+          ${language.textListStyle ? "data-text-is-list" : ""}
           lang="${escapeHtml(language.baseCode || language.code)}"
           rows="1"
           spellcheck="false"
           ${loadingAttributes}
         >${escapeHtml(language.text)}</textarea>
+        ${renderListStyleSettingsButton(row, language, textStyle)}
       </div>
       ${language.srtError ? `<p class="translation-srt-error" role="alert">${escapeHtml(language.srtError)}</p>` : ""}
       ${language.srtNeedsMarkerReview ? `<div class="translation-srt-draft-review"><p>Review the corrected text, then save.</p>${primaryButton("Save sentence draft", "save-editor-srt-drafts")}</div>` : ""}

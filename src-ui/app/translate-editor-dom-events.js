@@ -30,6 +30,13 @@ import {
   handleEditorImageContextMenuKeydown,
   openEditorImageContextMenu,
 } from "./editor-image-context-menu.js";
+import {
+  dismissEditorListStyleMenu,
+  editorListStyleMenuContains,
+  handleEditorListStyleMenuKeydown,
+  toggleEditorListStyleMenu,
+} from "./editor-list-style-menu.js";
+import { renderEditorListMarkerOverlayHtml } from "./editor-list.js";
 
 const PREVIEW_EDITABLE_BLOCK_SELECTOR = "[data-editor-preview-document] [data-preview-block][data-row-id]";
 
@@ -288,6 +295,25 @@ function registerTranslateScrollIntentEvents(app) {
   }, { passive: true, capture: true });
 }
 
+// The list field's marker overlay follows its text and the line holding the caret.
+function syncEditorListMarkerOverlay(field) {
+  if (!(field instanceof HTMLTextAreaElement)) {
+    return;
+  }
+  const stack = field.closest("[data-editor-glossary-field-stack]");
+  const markers = stack?.querySelector("[data-editor-list-markers]");
+  if (!(markers instanceof HTMLElement)) {
+    return;
+  }
+  const caretLine = field.selectionStart === field.selectionEnd && document.activeElement === field
+    ? field.value.slice(0, field.selectionStart).split("\n").length - 1
+    : -1;
+  const html = renderEditorListMarkerOverlayHtml(field.value, stack.dataset.rowTextStyle, caretLine);
+  if (markers.innerHTML !== html) {
+    markers.innerHTML = html;
+  }
+}
+
 export function registerTranslateEditorDomEvents(app, render) {
   app.addEventListener("contextmenu", (event) => {
     const image = closestEventTarget(event.target, "[data-editor-image-context-menu-target]");
@@ -301,14 +327,25 @@ export function registerTranslateEditorDomEvents(app, render) {
   });
 
   app.addEventListener("pointerdown", (event) => {
+    if (!editorListStyleMenuContains(event.target)) {
+      dismissEditorListStyleMenu(app);
+    }
     if (closestEventTarget(event.target, "[data-editor-image-context-menu-popover]")) {
       return;
     }
     dismissEditorImageContextMenu(app);
   });
 
-  window.addEventListener("blur", () => dismissEditorImageContextMenu(app));
-  window.addEventListener("resize", () => dismissEditorImageContextMenu(app));
+  window.addEventListener("blur", () => {
+    dismissEditorImageContextMenu(app);
+    dismissEditorListStyleMenu(app);
+  });
+  window.addEventListener("resize", () => {
+    dismissEditorImageContextMenu(app);
+    dismissEditorListStyleMenu(app);
+  });
+  // The menu is fixed to the viewport, so it cannot follow its button.
+  app.addEventListener("scroll", () => dismissEditorListStyleMenu(app), { passive: true, capture: true });
 
   let pendingImageUrlCloseRequest = null;
 
@@ -376,7 +413,7 @@ export function registerTranslateEditorDomEvents(app, render) {
     // before mouseup can dispatch their click action.
     const button = closestEventTarget(
       event.target,
-      "[data-editor-row-text-style-button], [data-editor-inline-style-button], [data-editor-separator-button], [data-editor-link-button], [data-editor-footnote-button], [data-editor-footnote-display], [data-editor-image-button], [data-editor-image-caption-button], [data-editor-image-upload-dropzone], [data-editor-image-upload-close-button], [data-editor-image-url-close-button], [data-editor-image-url-status-button], [data-editor-language-image-remove-button], [data-editor-row-connection], [data-action^=\"switch-editor-sidebar-tab:\"], [data-action^=\"restore-editor-history:\"], [data-action^=\"run-editor-ai-translate:\"], [data-action^=\"apply-editor-assistant-draft:\"], [data-action^=\"review-editor-text-now:\"], [data-action=\"review-editor-text-now\"], [data-action=\"apply-editor-ai-review\"], [data-preview-search-nav-button]",
+      "[data-editor-row-text-style-button], [data-editor-list-style-button], [data-editor-list-style-option], [data-editor-inline-style-button], [data-editor-separator-button], [data-editor-link-button], [data-editor-footnote-button], [data-editor-footnote-display], [data-editor-image-button], [data-editor-image-caption-button], [data-editor-image-upload-dropzone], [data-editor-image-upload-close-button], [data-editor-image-url-close-button], [data-editor-image-url-status-button], [data-editor-language-image-remove-button], [data-editor-row-connection], [data-action^=\"switch-editor-sidebar-tab:\"], [data-action^=\"restore-editor-history:\"], [data-action^=\"run-editor-ai-translate:\"], [data-action^=\"apply-editor-assistant-draft:\"], [data-action^=\"review-editor-text-now:\"], [data-action=\"review-editor-text-now\"], [data-action=\"apply-editor-ai-review\"], [data-preview-search-nav-button]",
     );
     if (!button) {
       return;
@@ -522,6 +559,15 @@ export function registerTranslateEditorDomEvents(app, render) {
   app.addEventListener("click", (event) => {
     if (closestEventTarget(event.target, ".editor-image-context-menu__item")) {
       dismissEditorImageContextMenu(app);
+    }
+    if (closestEventTarget(event.target, "[data-editor-list-style-option]")) {
+      dismissEditorListStyleMenu(app);
+    }
+    const listStyleButton = closestEventTarget(event.target, "[data-editor-list-style-button]");
+    if (listStyleButton instanceof HTMLButtonElement) {
+      // A keyboard press reports no click count; it moves focus into the menu.
+      toggleEditorListStyleMenu(app, listStyleButton, { focusMenu: event.detail === 0 });
+      return;
     }
     const externalLink = closestEventTarget(event.target, "a[href]");
     if (
@@ -672,6 +718,9 @@ export function registerTranslateEditorDomEvents(app, render) {
   });
 
   app.addEventListener("keydown", (event) => {
+    if (handleEditorListStyleMenuKeydown(app, event)) {
+      return;
+    }
     if (handleEditorImageContextMenuInvocationKeydown(app, event)) {
       return;
     }
@@ -816,12 +865,16 @@ export function registerTranslateEditorDomEvents(app, render) {
   }
 
   app.addEventListener("input", (event) => {
+    syncEditorListMarkerOverlay(closestEventTarget(event.target, "[data-editor-row-field][data-text-is-list]"));
     const input = closestEventTarget(event.target, "[data-editor-srt-recovery]");
     if (input instanceof HTMLTextAreaElement) updateSrtGroupDraft(input.dataset.rowId, input.dataset.languageCode, input.value);
   });
 
   document.addEventListener("selectionchange", () => {
     syncActiveEditorInlineStyleButtons(document);
+    if (document.activeElement?.matches?.("[data-editor-row-field][data-text-is-list]")) {
+      syncEditorListMarkerOverlay(document.activeElement);
+    }
   });
 }
 import { updateSrtGroupDraft } from "./editor-srt-group-edit-flow.js";

@@ -16,6 +16,7 @@ import {
   renderSanitizedInlineMarkupWithGlossaryHighlightHtml,
   rubyButtonConfig,
   splitInlineMarkupTextBySeparators,
+  splitInlineMarkupTextIntoLines,
   splitInlineMarkupTextIntoParagraphs,
   toggleInlineMarkupSelection,
 } from "./editor-inline-markup.js";
@@ -563,4 +564,15 @@ test("style toggle splitting a link keeps the href on both halves", () => {
     result.value,
     '<strong><a href="https://example.com">linked</a></strong><a href="https://example.com"> text</a>',
   );
+});
+
+test("splitting into lines closes and reopens formatting at each newline", () => {
+  assert.deepEqual(
+    splitInlineMarkupTextIntoLines("One <em>two\n\tthree</em> four"),
+    ["One <em>two</em>", "<em>\tthree</em> four"],
+  );
+  // Blank lines stay, as empty lines; separators stay inside their line.
+  assert.deepEqual(splitInlineMarkupTextIntoLines("A\n\nB"), ["A", "", "B"]);
+  assert.deepEqual(splitInlineMarkupTextIntoLines("A<hr>B\nC"), ["A<hr>B", "C"]);
+  assert.deepEqual(splitInlineMarkupTextIntoLines("A\r\nB"), ["A", "B"]);
 });
