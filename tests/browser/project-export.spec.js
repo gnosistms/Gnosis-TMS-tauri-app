@@ -24,7 +24,7 @@ async function mountProjectExport(page, multilingual = false, chapterTitles = fa
     window.__heldSettingsRequests = [];
 
     window.__pdfListeners = {};
-    window.__titlePreviewRequests = [];
+    window.__pagePreviewRequests = [];
     window.__TAURI__ = {
       core: { invoke: async (command, args) => {
         if (["export_gtms_chapter_file", "inspect_gtms_chapter_pdf_fonts", "start_gtms_chapter_pdf_export", "cancel_gtms_chapter_pdf_export"].includes(command)) {
@@ -60,11 +60,11 @@ async function mountProjectExport(page, multilingual = false, chapterTitles = fa
           }
           return null;
         }
-        if (command === "start_project_book_title_preview") {
-          window.__titlePreviewRequests.push(args.input);
+        if (command === "start_project_book_page_preview") {
+          window.__pagePreviewRequests.push(args.input);
           const escaped = args.input.item.title.replaceAll("&", "&amp;").replaceAll("<", "&lt;");
-          const pages = [window.__titlePreviewSvg || `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="420" height="595"><rect width="100%" height="100%" fill="white"/><text x="60" y="120">${escaped}</text></svg>`)}`];
-          if (!window.__holdTitlePreview) setTimeout(() => window.__pdfListeners["book-title-preview"]?.({ payload: { requestId: args.input.requestId, pages, error: "" } }), 0);
+          const pages = [window.__pagePreviewSvg || `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="420" height="595"><rect width="100%" height="100%" fill="white"/><text x="60" y="120">${escaped}</text></svg>`)}`];
+          if (!window.__holdPagePreview) setTimeout(() => window.__pdfListeners["book-page-preview"]?.({ payload: { requestId: args.input.requestId, pages, error: "" } }), 0);
           return null;
         }
         if (command === "start_project_book_preview_fonts") {
@@ -220,6 +220,10 @@ test("WordPress forget tooltips stay visible at both ends of the scrolling site 
     expect(bounds.tooltip.right).toBeLessThanOrEqual(bounds.list.right);
   }
 });
+
+const lastContentsPreview = (page) => page.evaluate(() => window.__pagePreviewRequests.findLast((entry) => entry.item.kind === "contents"));
+const previewedChapters = async (page) => (await lastContentsPreview(page))?.book.bookItems
+  .filter((item) => item.kind === "chapter").map((item) => [item.chapterId, item.title, item.numbered]);
 
 async function addSection(modal, kind) {
   await modal.locator('[data-action="book-add-menu"]').click();
@@ -410,35 +414,21 @@ test("background migration progress updates without rebuilding the projects page
 test("book contents include H1 headings only when the saved checkbox is selected", async ({ page }) => {
   await mountProjectExport(page);
   const modal = page.getByRole("dialog", { name: "Export project", exact: true });
-  await page.evaluate(() => {
-    window.__bookHeadingRows = Object.fromEntries([0, 1, 2].map((index) => [
-      `fixture-chapter-0-${index}`, [
-        { rowId: `title-${index}`, textStyle: "heading1", fields: { en: `Promoted title ${index}` } },
-        { rowId: `body-${index}`, textStyle: "paragraph", fields: { en: "Opening paragraph." } },
-        { rowId: `h1-${index}`, textStyle: "heading1", fields: { en: `Inside chapter ${index}` } },
-        { rowId: `h2-${index}`, textStyle: "heading2", fields: { en: `Second-level heading ${index}` } },
-      ],
-    ]));
-  });
   await addSection(modal, "contents");
   const checkbox = modal.getByRole("checkbox", { name: "Include H1 headings", exact: true });
   await expect(checkbox).not.toBeChecked();
-  await expect(modal.locator(".book-contents__subheading")).toHaveCount(0);
+  await expect.poll(async () => (await lastContentsPreview(page))?.item.includeH1Headings).toBe(false);
   await checkbox.check();
-  await expect(modal.locator(".book-contents__subheading")).toHaveCount(3);
-  await expect(modal.locator(".book-contents")).toContainText("Inside chapter 0");
-  await expect(modal.locator(".book-contents__subheading")).toHaveText(["Inside chapter 0", "Inside chapter 1", "Inside chapter 2"]);
-  await expect(modal.locator(".book-contents")).toContainText("1. Promoted title 0");
-  await expect(modal.locator(".book-contents")).not.toContainText("Second-level heading");
+  await expect.poll(async () => (await lastContentsPreview(page))?.item.includeH1Headings).toBe(true);
+  await expect(modal.getByRole("img", { name: "Table of contents PDF preview", exact: true })).toBeVisible();
+  // Typst reads the entries from the book itself, so excluded chapters drop out.
   await modal.locator('[data-action="book-exclude:fixture-chapter-0-2"]').click();
-  await expect(modal.locator(".book-contents__subheading")).toHaveCount(2);
-  await page.evaluate(() => { window.__bookHeadingRows["fixture-chapter-0-2"][2].fields.en = "Updated inside chapter 2"; });
+  await expect.poll(async () => (await previewedChapters(page))?.map(([id]) => id)).toEqual(["fixture-chapter-0-0", "fixture-chapter-0-1"]);
   await modal.locator('[data-action="book-include:fixture-chapter-0-2"]').click();
-  await expect(modal.locator(".book-contents")).toContainText("Updated inside chapter 2");
+  await expect.poll(async () => (await previewedChapters(page))?.length).toBe(3);
   await modal.getByRole("button", { name: "Cancel", exact: true }).click();
   await page.locator('[data-action="export-project:fixture-project-001"]').click();
   await expect(checkbox).toBeChecked();
-  await expect(modal.locator(".book-contents__subheading")).toHaveCount(3);
   await page.screenshot({ path: test.info().outputPath("book-contents-headings.png") });
   await advanceToExport(modal);
   await modal.locator('[data-action="select-editor-export-option:file:pdf"]').click();
@@ -586,7 +576,7 @@ test("chapter numbers are read-only, optional, consecutive, and saved in the exp
   await expect.poll(numbers).toEqual(["1.", "2.", ""]);
   await addSection(modal, "contents");
   await expect(modal.getByRole("checkbox", { name: "Numbered", exact: true })).toHaveCount(0);
-  await expect(modal.locator(".book-contents li > span:first-child")).toHaveText(["1. File 003", "2. File 001", "File 002"]);
+  await expect.poll(async () => (await previewedChapters(page))?.map(([, title, numbered]) => [title, numbered])).toEqual([["File 003", true], ["File 001", true], ["File 002", false]]);
   await modal.getByRole("button", { name: "Cancel", exact: true }).click();
   await page.locator('[data-action="export-project:fixture-project-001"]').click();
   await row(1).getByRole("button", { name: "Preview chapter: File 002", exact: true }).click();
@@ -718,11 +708,11 @@ test("inclusion updates empty groups, Next, and chapter numbers without rebuildi
   await expect(modal.locator(".book-chapter__number")).toHaveText("2");
   await expect(modal.locator(".book-excluded-heading")).toBeHidden();
   await addSection(modal, "contents");
-  await expect(modal.locator(".book-contents li")).toHaveCount(2);
+  await expect.poll(async () => (await previewedChapters(page))?.length).toBe(2);
   await modal.locator('[data-action="book-exclude:fixture-chapter-0-0"]').click();
-  await expect(modal.locator(".book-contents li")).toHaveCount(1);
+  await expect.poll(async () => (await previewedChapters(page))?.length).toBe(1);
   await modal.locator('[data-action="book-include:fixture-chapter-0-0"]').click();
-  await expect(modal.locator(".book-contents li")).toHaveCount(2);
+  await expect.poll(async () => (await previewedChapters(page))?.length).toBe(2);
 });
 
 test("title form keeps edits and Enter breaks beside a live PDF preview", async ({ page }) => {
@@ -738,14 +728,14 @@ test("title form keeps edits and Enter breaks beside a live PDF preview", async 
   await title.press("Enter");
   await expect(title).toHaveValue("Hôn Nhân\nHoàn Hảo");
   await expect(modal).toContainText("1 of 2");
-  await expect.poll(() => page.evaluate(() => window.__titlePreviewRequests.at(-1)?.item.title)).toBe("Hôn Nhân\nHoàn Hảo");
-  await expect(modal.locator("[data-book-title-proof]")).toHaveAttribute("aria-busy", "false");
+  await expect.poll(() => page.evaluate(() => window.__pagePreviewRequests.at(-1)?.item.title)).toBe("Hôn Nhân\nHoàn Hảo");
+  await expect(modal.locator("[data-book-page-proof]")).toHaveAttribute("aria-busy", "false");
   expect(await title.evaluate((element) => ({ same: element === window.__titleEditor, focused: document.activeElement === element, caret: element.selectionStart }))).toEqual({ same: true, focused: true, caret: 9 });
   const formBox = await modal.getByRole("region", { name: "Title page details", exact: true }).boundingBox();
   const proofBox = await modal.getByRole("region", { name: "Title page PDF preview", exact: true }).boundingBox();
   expect(formBox.x + formBox.width).toBeLessThanOrEqual(proofBox.x + 1);
   await chooseBookOption(modal, "editor-export-paper-size", "A5 (148 × 210 mm)");
-  await expect.poll(() => page.evaluate(() => window.__titlePreviewRequests.at(-1)?.paperSize)).toBe("a5");
+  await expect.poll(() => page.evaluate(() => window.__pagePreviewRequests.at(-1)?.paperSize)).toBe("a5");
   await page.screenshot({ path: test.info().outputPath("title-form-live-preview.png") });
   await modal.getByRole("button", { name: "Cancel", exact: true }).click();
   await page.locator('[data-action="export-project:fixture-project-001"]').click();
@@ -759,25 +749,25 @@ test("title form keeps edits and Enter breaks beside a live PDF preview", async 
 test("late title previews do not overwrite new edits and failed previews can retry", async ({ page }) => {
   await mountProjectExport(page);
   const modal = page.getByRole("dialog", { name: "Export project", exact: true });
-  await page.evaluate(() => { window.__holdTitlePreview = true; });
+  await page.evaluate(() => { window.__holdPagePreview = true; });
   await addSection(modal, "title");
   const title = modal.getByRole("textbox", { name: "Title", exact: true });
   await title.fill("Old title");
-  await expect.poll(() => page.evaluate(() => window.__titlePreviewRequests.at(-1)?.item.title)).toBe("Old title");
+  await expect.poll(() => page.evaluate(() => window.__pagePreviewRequests.at(-1)?.item.title)).toBe("Old title");
   await title.fill("New title");
-  await expect.poll(() => page.evaluate(() => window.__titlePreviewRequests.at(-1)?.item.title)).toBe("New title");
+  await expect.poll(() => page.evaluate(() => window.__pagePreviewRequests.at(-1)?.item.title)).toBe("New title");
   await page.evaluate(() => {
-    const old = window.__titlePreviewRequests.find((entry) => entry.item.title === "Old title");
-    window.__pdfListeners["book-title-preview"]({ payload: { requestId: old.requestId, error: "Old failure", pages: [] } });
+    const old = window.__pagePreviewRequests.find((entry) => entry.item.title === "Old title");
+    window.__pdfListeners["book-page-preview"]({ payload: { requestId: old.requestId, error: "Old failure", pages: [] } });
   });
   await expect(modal).not.toContainText("Old failure");
   await expect(title).toBeFocused();
   await page.evaluate(() => {
-    const latest = window.__titlePreviewRequests.at(-1);
-    window.__pdfListeners["book-title-preview"]({ payload: { requestId: latest.requestId, error: "Font not ready", pages: [] } });
+    const latest = window.__pagePreviewRequests.at(-1);
+    window.__pdfListeners["book-page-preview"]({ payload: { requestId: latest.requestId, error: "Font not ready", pages: [] } });
   });
   await expect(modal).toContainText("Font not ready");
-  await page.evaluate(() => { window.__holdTitlePreview = false; });
+  await page.evaluate(() => { window.__holdPagePreview = false; });
   await modal.getByRole("button", { name: "Retry preview", exact: true }).click();
   await expect(modal.getByRole("img", { name: "Title page PDF preview", exact: true })).toBeVisible();
   await expect(title).toHaveValue("New title");
@@ -838,8 +828,7 @@ test("chapter export titles use opening H1s, edit inline, and persist independen
   await expect(first).toHaveValue("Custom English Title");
   await expect(second).toHaveValue("A renamed chapter");
   await addSection(modal, "contents");
-  await expect(modal.locator(".book-contents")).toContainText("1. Custom English Title");
-  await expect(modal.locator(".book-contents")).toContainText("2. A renamed chapter");
+  await expect.poll(async () => (await previewedChapters(page))?.map(([, title]) => title)).toEqual(["Custom English Title", "A renamed chapter"]);
   await modal.getByRole("button", { name: "Cancel", exact: true }).click();
   await page.locator('[data-action="export-project:fixture-project-001"]').click();
   await expect(first).toHaveValue("Custom English Title");
@@ -1163,7 +1152,7 @@ test("full-page captions wrap below a centered image and contents titles retain 
   await page.keyboard.insertText("A second line");
   const imageId = await modal.locator(".book-item.is-selected").getAttribute("data-book-item");
   await addSection(modal, "contents");
-  await modal.getByRole("textbox", { name: "Table of Contents", exact: true }).fill("My mixed-case contents title");
+  await modal.getByRole("region", { name: "Table of contents details", exact: true }).getByRole("textbox", { name: "Title", exact: true }).fill("My mixed-case contents title");
   const saved = await page.evaluate(async (imageId) => {
     const { state } = await import("/app/state.js");
     const book = state.editorChapter.exportModal.book;
@@ -1194,7 +1183,7 @@ test("book composer saves independent language layouts, sections, and format set
   await expect(included).toHaveCount(2);
   await expect(modal.locator('[data-action="book-include:fixture-chapter-0-1"]')).toBeDisabled();
   await addSection(modal, "contents");
-  await modal.getByRole("textbox", { name: "Table of Contents", exact: true }).fill("Mục lục");
+  await modal.getByRole("region", { name: "Table of contents details", exact: true }).getByRole("textbox", { name: "Title", exact: true }).fill("Mục lục");
   await addSection(modal, "copyright");
   const copyright = modal.getByRole("textbox", { name: "Copyright text", exact: true });
   await copyright.fill("All rights reserved.");
@@ -1476,66 +1465,40 @@ test("chapter gear menus reuse app controls and stay accessible at list edges", 
   await expect(modal.locator('[data-book-item="fixture-chapter-0-0"]')).toHaveClass(/is-selected/);
 });
 
-test("contents preview follows PDF entry gaps and leading for wrapped chapters and H1s", async ({ page }) => {
-  await page.addInitScript(() => {
-    const row = (textStyle, text) => ({ rowId: crypto.randomUUID(), textStyle, fields: { en: text } });
-    window.__bookHeadingRows = {
-      "fixture-chapter-0-0": [row("paragraph", "Opening"), row("heading1", "A short subheading")],
-      "fixture-chapter-0-1": [row("paragraph", "Opening"), row("heading1", "A long subheading with enough words to wrap onto another line while checking the contents spacing")],
-    };
-  });
+test("contents form shows Rendering until Typst returns and keeps typing in place", async ({ page }) => {
   await mountProjectExport(page);
   const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  await page.evaluate(() => { window.__holdPagePreview = true; });
   await addSection(modal, "contents");
-  const long = "Hạnh phúc, âm nhạc, vũ điệu và nụ hôn trong cuộc sống của chúng ta";
-  await modal.locator('[data-book-chapter-title="fixture-chapter-0-1"]').fill(long);
-  const measure = () => modal.locator(".book-page--contents").evaluate((paper) => {
-    const baseline = (element, last = false) => {
-      const probe = document.createElement("i");
-      probe.style.cssText = "display:inline-block;width:0;height:0;vertical-align:baseline";
-      if (last) element.append(probe); else element.prepend(probe);
-      const y = probe.getBoundingClientRect().top;
-      probe.remove(); return y;
-    };
-    const rows = [...paper.querySelectorAll(".book-contents li")].map((item) => {
-      const style = getComputedStyle(item), text = item.firstElementChild;
-      const first = baseline(text), last = baseline(text, true);
-      const cap = text.getBoundingClientRect().height - (last - first);
-      return { first, last,
-        cap, size: parseFloat(style.fontSize), line: parseFloat(style.lineHeight),
-        subheading: item.classList.contains("book-contents__subheading"), caps: style.textTransform };
-    });
-    return { trimmed: CSS.supports("text-box", "trim-both cap alphabetic"),
-      title: baseline(paper.querySelector(".book-page__contents-title")), rows };
+  const proof = modal.locator("[data-book-page-proof]");
+  await expect(proof).toHaveAttribute("aria-busy", "true");
+  await expect(proof.locator(".book-proof__pending")).toContainText("Rendering…");
+  await expect(proof.getByRole("status", { name: "Rendering", exact: true })).toBeVisible();
+  const deliver = () => page.evaluate(() => {
+    const latest = window.__pagePreviewRequests.at(-1);
+    window.__pdfListeners["book-page-preview"]({ payload: { requestId: latest.requestId, error: "",
+      pages: [`data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="420" height="595"><rect width="100%" height="100%" fill="white"/><text x="60" y="120">${latest.item.title}</text></svg>`)}`] } });
   });
-  const check = async (withHeadings) => {
-    await expect(modal.locator(".book-contents li")).toHaveCount(withHeadings ? 5 : 3);
-    const result = await measure();
-    for (let index = 0; index < result.rows.length; index++) {
-      const row = result.rows[index];
-      expect(row.caps).toBe(row.subheading ? "none" : "uppercase");
-      expect(row.line / row.size).toBeCloseTo(row.subheading ? 1.3532421875 : 1.417, 2);
-      const lines = (row.last - row.first) / row.line;
-      expect(lines).toBeCloseTo(Math.round(lines), 2);
-      if (result.trimmed) {
-        // The PDF places trimmed text in blocks with weak 1em/.78em gaps.
-        const gap = row.first - (index ? result.rows[index - 1].last : result.title);
-        const expected = row.cap + row.size * (index ? (row.subheading ? .78 : 1) : 3);
-        expect(Math.abs(gap - expected) / row.size).toBeLessThan(.03);
-      }
-    }
-    return result;
-  };
-  await chooseBookOption(modal, "editor-export-paper-size", "A5 (148 × 210 mm)");
-  const chapters = await check(false);
-  expect(chapters.rows[1].last).toBeGreaterThan(chapters.rows[1].first);
-  await modal.getByRole("checkbox", { name: "Include H1 headings", exact: true }).check();
-  await check(true);
-  await page.screenshot({ path: test.info().outputPath("contents-print-spacing-a5.png") });
-  await chooseBookOption(modal, "editor-export-paper-size", "A4 (210 × 297 mm)");
-  await check(true);
+  await expect.poll(async () => (await lastContentsPreview(page))?.item.title).toBe("Table of Contents");
+  await deliver();
+  await expect(modal.getByRole("img", { name: "Table of contents PDF preview", exact: true })).toBeVisible();
+  await expect(proof).toHaveAttribute("aria-busy", "false");
+  const title = modal.getByRole("region", { name: "Table of contents details", exact: true }).getByRole("textbox", { name: "Title", exact: true });
+  await title.focus();
+  await title.evaluate((element) => { window.__contentsTitle = element; element.setSelectionRange(element.value.length, element.value.length); });
+  await page.keyboard.type(" of the book");
+  await expect.poll(async () => (await lastContentsPreview(page))?.item.title).toBe("Table of Contents of the book");
+  // The previous page stays, dimmed, beside a Rendering status until it is replaced.
+  await expect(proof).toHaveAttribute("aria-busy", "true");
+  await expect(proof.locator(".book-proof__status")).toContainText("Rendering…");
+  await expect(modal.getByRole("img", { name: "Table of contents PDF preview", exact: true })).toBeVisible();
+  await deliver();
+  await expect(proof).toHaveAttribute("aria-busy", "false");
+  expect(await title.evaluate((element) => ({ same: element === window.__contentsTitle, focused: document.activeElement === element, caret: element.selectionStart })))
+    .toEqual({ same: true, focused: true, caret: "Table of Contents of the book".length });
+  await expect(modal.locator('[data-book-item-label]').filter({ hasText: "Table of Contents of the book" })).toHaveCount(1);
+  await page.screenshot({ path: test.info().outputPath("contents-typst-preview.png") });
 });
-
 
 test("redundancy page keeps local decisions through page 3 and reopening, and exports the exclusions", async ({ page }) => {
   await mountProjectExport(page);

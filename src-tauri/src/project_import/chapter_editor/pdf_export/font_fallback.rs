@@ -1016,6 +1016,7 @@ mod tests {
             footnote_links_as_plain_text: false,
             paper_size: "a4",
             image_cache_session: &session,
+            layout: TypstLayout::Export,
         };
         let prepared =
             font_review::prepare(&workspace, &document, &options, &plan, &review).unwrap();

@@ -1,7 +1,8 @@
 import { bookPaperStyle } from "./project-book-paper.js";
 import { BOOK_DROPCAP_LINES_ATTRIBUTE, sizeBookDropcaps } from "./project-book-dropcap.js";
 import { bookChapterNumbers, bookItemIncluded, bookItemTitle } from "./project-book-model.js";
-import { renderBookTitleProof, renderBookPreviewFontStatus, renderProjectBookItems, renderSelectedBookPage } from "../screens/project-book-composer.js";
+import { BOOK_PROOF_KINDS } from "./project-book-page-preview.js";
+import { renderBookPageProof, renderBookPreviewFontStatus, renderProjectBookItems, renderSelectedBookPage } from "../screens/project-book-composer.js";
 
 function reconcileInclusion(list, modal) {
   const rows = new Map([...list.querySelectorAll("[data-book-item]")].map((row) => [row.dataset.bookItem, row]));
@@ -93,23 +94,16 @@ export function renderProjectBookPreview(root, state) {
     const mounted = scroll.innerHTML.replaceAll(new RegExp(` ${BOOK_DROPCAP_LINES_ATTRIBUTE}="\\d"`, "g"), "");
     if (mounted !== template.innerHTML) scroll.replaceChildren(template.content);
     sizeBookDropcaps(scroll);
-    root.querySelector(".book-copyright__toolbar, .book-contents__options")?.remove();
-  } else if (selected?.kind === "title") {
-    const current = scroll.querySelector("[data-book-title-proof]");
+    root.querySelector(".book-copyright__toolbar")?.remove();
+  } else if (BOOK_PROOF_KINDS.includes(selected?.kind)) {
+    // Only the typeset page is replaced, never the fields being edited beside it.
+    const current = scroll.querySelector("[data-book-page-proof]");
     if (current) {
       const template = root.ownerDocument.createElement("template");
-      template.innerHTML = renderBookTitleProof(modal);
+      template.innerHTML = renderBookPageProof(modal);
       const next = template.content.firstElementChild;
       if (current.outerHTML !== next.outerHTML) current.replaceWith(next);
     }
-  } else if (selected?.kind === "contents") {
-    // Background default-title discovery updates the contents without replacing
-    // the title field the user may currently be editing above it.
-    const template = root.ownerDocument.createElement("template");
-    template.innerHTML = renderSelectedBookPage(modal);
-    const contents = template.content.querySelector(".book-contents");
-    const current = scroll.querySelector(".book-contents");
-    if (current && contents && current.innerHTML !== contents.innerHTML) current.replaceWith(contents);
   }
   return true;
 }

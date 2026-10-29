@@ -321,6 +321,7 @@ mod tests {
             paper_size: "a4",
             footnote_links_as_plain_text: true,
             image_cache_session: &scope,
+            layout: TypstLayout::Export,
         };
         let prepared = prepare(&workspace, &document, &options, &plan, &plan).unwrap();
         assert_eq!(
@@ -424,6 +425,7 @@ mod tests {
             paper_size: "a4",
             footnote_links_as_plain_text: false,
             image_cache_session: &scope,
+            layout: TypstLayout::Export,
         };
         prepare_typst_workspace(None, "test", &workspace, &document, &options, &cancelled).unwrap();
         let full = fs::read_to_string(workspace.join("chapter.typ")).unwrap();
@@ -595,6 +597,7 @@ mod tests {
             paper_size: "a4",
             footnote_links_as_plain_text: true,
             image_cache_session: &scope,
+            layout: TypstLayout::Export,
         };
         let prepared = prepare(&workspace, &document, &options, &plan, &plan).unwrap();
         // A local figure in the final document avoids any network during the test.

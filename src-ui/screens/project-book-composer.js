@@ -1,7 +1,7 @@
 import { extractVellumLeadingHeadingTitle } from "../app/vellum-text-editor-content.js";
-import { escapeHtml, primaryButton, secondaryButton, tooltipAttributes, renderChevronIcon } from "../lib/ui.js";
+import { escapeHtml, loadingSpinner, primaryButton, secondaryButton, tooltipAttributes, renderChevronIcon } from "../lib/ui.js";
 import { renderExportSelect } from "./export-fields.js";
-import { BOOK_SECTION_TYPES, bookChapterPreviewBlocks, bookChapterNumbers, bookContentsEntries, bookItemIncluded, bookItemTitle, bookSectionLabel } from "../app/project-book-model.js";
+import { BOOK_SECTION_TYPES, bookChapterPreviewBlocks, bookChapterNumbers, bookItemIncluded, bookItemTitle, bookSectionLabel } from "../app/project-book-model.js";
 import { bookPaperStyle } from "../app/project-book-paper.js";
 import { bookImageSrc } from "../app/project-book-flow.js";
 import { renderBookChapterPages } from "../app/project-book-chapter-preview.js";
@@ -48,39 +48,57 @@ function field(name, value, placeholder, className = "") {
 }
 function titleInfoField(name, value, label, multiline = false) {
   const attributes = `data-book-field="${name}" aria-label="${label}" placeholder="Enter ${label.toLowerCase()}"`;
-  return `<label class="field book-title-editor__field"><span class="field__label">${label}</span>${multiline
+  return `<label class="field book-proof-editor__field"><span class="field__label">${label}</span>${multiline
     ? `<textarea class="field__textarea" rows="3" ${attributes}>${escapeHtml(value || "")}</textarea>`
     : `<input class="field__input" type="text" ${attributes} value="${escapeHtml(value || "")}" data-modal-enter-ignores-default />`}</label>`;
 }
 
-export function renderBookTitleProof(modal) {
-  const preview = modal.book.titlePreview;
-  const selected = modal.book.selectedItemId;
-  const pages = preview?.itemId === selected ? preview.pages || [] : [];
-  const error = preview?.itemId === selected ? preview.error : "";
-  const ready = preview?.itemId === selected && preview.status === "ready";
-  return `<div data-book-title-proof aria-busy="${!ready && !error}">
-    <p class="book-title-proof__status ${error ? "modal__error" : ""}" role="status">${escapeHtml(error || (ready ? "PDF preview" : "Updating PDF preview…"))}</p>
-    ${error ? '<button type="button" class="button button--secondary" data-action="book-title-preview-retry">Retry preview</button>' : ""}
-    ${pages.map((src, index) => `<img class="book-title-proof__page" src="${escapeHtml(src)}" alt="Title page PDF preview${pages.length > 1 ? ` · page ${index + 1}` : ""}" />`).join("")}
-    ${pages.length > 1 ? '<p class="modal__supporting">This title page spans multiple pages. Shorten the text if you want it to fit on one page.</p>' : ""}
+// Title and contents pages preview the actual typeset PDF page.
+export function renderBookPageProof(modal) {
+  const preview = modal.book.pagePreview;
+  const item = modal.book.items.find((entry) => entry.id === modal.book.selectedItemId);
+  const current = Boolean(item) && preview?.itemId === item.id;
+  const pages = current ? preview.pages || [] : [];
+  const error = current ? preview.error : "";
+  const ready = current && preview.status === "ready";
+  const name = item?.kind === "contents" ? "Table of contents" : "Title page";
+  const paper = PDF_PAPER_SIZES.find((entry) => entry.value === modal.pdfPaperSize)
+    || PDF_PAPER_SIZES.find((entry) => entry.value === DEFAULT_PDF_PAPER_SIZE);
+  const rendering = `${loadingSpinner({ key: "book-page-proof", label: "Rendering" })}<span>Rendering…</span>`;
+  const status = error ? escapeHtml(error) : ready ? "PDF preview" : pages.length ? rendering : "";
+  return `<div class="book-proof" data-book-page-proof aria-busy="${!ready && !error}">
+    <p class="book-proof__status ${error ? "modal__error" : ""}" role="status">${status}</p>
+    ${error ? '<button type="button" class="button button--secondary" data-action="book-page-preview-retry">Retry preview</button>' : ""}
+    ${!error && !pages.length ? `<div class="book-proof__pending" style="aspect-ratio: ${paper.widthMm} / ${paper.heightMm}">${rendering}</div>` : ""}
+    ${pages.map((src, index) => `<img class="book-proof__page" src="${escapeHtml(src)}" alt="${name} PDF preview${pages.length > 1 ? ` · page ${index + 1}` : ""}" />`).join("")}
+    ${pages.length > 1 && item?.kind === "title" ? '<p class="modal__supporting">This title page spans multiple pages. Shorten the text if you want it to fit on one page.</p>' : ""}
+  </div>`;
+}
+
+function proofLayout(modal, kind, name, fields) {
+  return `<div class="book-proof-layout book-page--${kind}">
+    <section class="book-proof-editor" aria-label="${name} details">
+      <h3>${name}</h3>
+      ${fields}
+    </section>
+    <section class="book-proof-preview" aria-label="${name} PDF preview">
+      <div class="book-proof-preview__output">${renderBookPageProof(modal)}</div>
+    </section>
   </div>`;
 }
 
 function titlePageEditor(modal, item) {
-  return `<div class="book-title-layout book-page--title">
-    <section class="book-title-editor" aria-label="Title page details">
-      <h3>Title page</h3>
-      ${titleInfoField("title", item.title, "Title", true)}
+  return proofLayout(modal, "title", "Title page", `${titleInfoField("title", item.title, "Title", true)}
       ${titleInfoField("subtitle", item.subtitle, "Subtitle")}
       ${titleInfoField("author", item.author, "Author")}
       ${titleInfoField("translator", item.translator, "Translator")}
-      <div class="book-title-editor__logo"><span class="field__label">Publisher logo</span>${imageEditor(item, true)}</div>
-    </section>
-    <section class="book-title-preview" aria-label="Title page PDF preview">
-      <div class="book-title-preview__output">${renderBookTitleProof(modal)}</div>
-    </section>
-  </div>`;
+      <div class="book-proof-editor__logo"><span class="field__label">Publisher logo</span>${imageEditor(item, true)}</div>`);
+}
+
+function contentsPageEditor(modal, item) {
+  return proofLayout(modal, "contents", "Table of contents", `${titleInfoField("title", item.title, "Title")}
+      <label class="book-proof-editor__check"><input type="checkbox" data-book-field="includeH1Headings" ${item.includeH1Headings ? "checked" : ""}> Include H1 headings</label>
+      <p class="modal__supporting">Page numbers are estimated from the text without images. The exported PDF has the exact numbers.</p>`);
 }
 function imageEditor(item, logo = false) {
   const src = bookImageSrc(item.image);
@@ -108,17 +126,16 @@ export function renderSelectedBookPage(modal) {
     return pages.map((html, index) => paper("chapter", `<article class="book-page book-page--chapter translate-preview" aria-label="${index ? "Chapter preview, continued" : "Chapter preview"}" lang="${escapeHtml(modal.languageCode || "en")}">${index ? "" : header}${html}</article>`)).join("");
   }
   if (item.kind === "title") return titlePageEditor(modal, item);
+  if (item.kind === "contents") return contentsPageEditor(modal, item);
   let body = "";
 
   if (item.kind === "image") body = `${imageEditor(item)}${field("caption", item.caption, "Enter image caption.", "book-page__caption")}`;
-  if (item.kind === "contents") body = `${field("title", item.title, "Table of Contents", "book-page__contents-title")}<ol class="book-contents">${bookContentsEntries(book.items, book.contentsHeadings, item.includeH1Headings).map((entry) => `<li class="${entry.level ? "book-contents__subheading" : ""}"><span>${escapeHtml(entry.title)}</span><span class="book-contents__leader"></span></li>`).join("")}</ol><p class="book-contents__hint">Page numbers are calculated from the final layout at export.</p>`;
   if (["copyright", "dedication"].includes(item.kind)) body = `<div class="book-copyright__editor" contenteditable="true" role="textbox" aria-multiline="true" aria-label="${item.kind === "copyright" ? "Copyright text" : "Dedication text"}" data-book-copyright-editor data-book-empty="${!item.text}" data-book-field="text" data-placeholder="${item.kind === "copyright" ? "Enter copyright text." : "Enter dedication here."}">${renderBookTextHtml(item.text)}</div>`;
   return paper(item.kind, `<article class="book-page book-page--${item.kind}" aria-label="${escapeHtml(bookSectionLabel(item.kind))}" style="--book-flourish: url('data:image/svg+xml,${encodeURIComponent(flourish)}')">${body}</article>`);
 }
 
 function formattingToolbar(modal) {
   const item = modal.book.items.find((entry) => entry.id === modal.book.selectedItemId);
-  if (item?.kind === "contents") return `<label class="book-contents__options"><input type="checkbox" data-book-field="includeH1Headings" ${item.includeH1Headings ? "checked" : ""}> Include H1 headings</label>`;
   if (!["copyright", "dedication"].includes(item?.kind)) return "";
   return `<div class="book-copyright__toolbar" role="toolbar" aria-label="${item.kind === "copyright" ? "Copyright" : "Dedication"} formatting"><button type="button" class="text-action" data-action="book-copyright:italic" aria-label="Italicise selected text" ${tooltipAttributes("Italicise selected text")}><svg class="book-copyright__icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4h9M5 20h9M15 4 9 20"/></svg></button><button type="button" class="text-action" data-action="book-copyright:symbol" aria-label="Insert copyright symbol" ${tooltipAttributes("Insert copyright symbol")}><svg class="book-copyright__icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M15 9a4.25 4.25 0 1 0 0 6"/></svg></button><button type="button" class="text-action book-copyright__flourish" data-action="book-copyright:flourish" aria-label="Insert separator" ${tooltipAttributes("Insert separator")}>${flourish}</button></div>`;
 }
