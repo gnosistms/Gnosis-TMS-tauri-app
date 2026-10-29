@@ -2898,7 +2898,7 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     let heading_rule = if latin {
-        format!("#show heading: set text(font: ({heading_family_list}), weight: \"regular\")\n#show heading: upper\n#show heading.where(level: 1): set text(size: 13pt)\n#show heading.where(level: 2): set text(size: 12pt)\n#show heading: set block(above: 1.3em, below: {size_pt}pt * {leading_em})\n")
+        format!("#show heading: set text(font: ({heading_family_list}), weight: \"regular\")\n#show heading: upper\n#show heading.where(level: 1): set text(size: 14.5pt)\n#show heading.where(level: 2): set text(size: 12pt)\n#show heading: set block(above: 1.3em, below: {size_pt}pt * {leading_em})\n")
     } else {
         String::new()
     };
@@ -4788,7 +4788,9 @@ mod tests {
         // Capitals and a size above the 11.5pt body set H2 apart from body text,
         // still below H1.
         assert!(vietnamese_preamble.contains("#show heading: upper\n"));
-        assert!(vietnamese_preamble.contains("#show heading.where(level: 1): set text(size: 13pt)"));
+        assert!(
+            vietnamese_preamble.contains("#show heading.where(level: 1): set text(size: 14.5pt)")
+        );
         assert!(vietnamese_preamble.contains("#show heading.where(level: 2): set text(size: 12pt)"));
         // One body line of space below each heading, whatever its size.
         assert!(vietnamese_preamble
