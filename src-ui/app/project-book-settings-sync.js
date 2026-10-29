@@ -80,14 +80,16 @@ function receive(scope, settings, { saved } = {}) {
   if (!settings || state.selectedTeamId !== scope.teamId || getActiveStorageLogin() !== scope.login) return;
   const local = loadBookSettings(scope.projectId);
   const code = matches(scope) ? modal().languageCode : scope.languageCode;
-  const differs = !bookSettingsEqual(comparable(scope, local, code), comparable(scope, settings, code));
-  // A completion of our own older save must not replace edits made afterward.
-  const remoteChanged = !saved || !bookSettingsEqual(comparable(scope, saved, code), comparable(scope, settings, code));
+  const remote = comparable(scope, settings, code);
+  const differs = !bookSettingsEqual(comparable(scope, local, code), remote);
+  // GitHub changed only if it differs from what this entry last knew: our own
+  // save, or the settings the entry opened with. Edits made since are newer.
+  const remoteChanged = !bookSettingsEqual(comparable(scope, saved || scope.base, code), remote);
   const notify = matches(scope, !saved) && modal().status === "idle" && differs && remoteChanged;
   // A new page-1 entry will fetch again after pending saves settle. An older
   // completion must not silently replace that entry's draft before its notice.
   const newerEntry = saved && modal()?.isOpen && modal().projectId === scope.projectId && !matches(scope);
-  replaceBookSettings(scope.projectId, mergeRemoteBookSettings(local, settings, code, newerEntry || (saved && differs && !remoteChanged)));
+  replaceBookSettings(scope.projectId, mergeRemoteBookSettings(local, settings, code, newerEntry || (differs && !remoteChanged)));
   if (notify) {
     pendingNotice = { scope };
     scope.base = portableBookSettings(settings);

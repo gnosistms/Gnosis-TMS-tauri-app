@@ -1753,6 +1753,45 @@ test("accepted Git settings do not show a second notice when unchanged on reopen
   await expect(modal.locator('[data-book-chapter-title="fixture-chapter-0-0"]')).toHaveValue("GitHub title");
 });
 
+test("edits made while an unchanged Git fetch is pending stay quiet and are saved", async ({ page }) => {
+  const saved = settingsDoc(settingsLayout("Saved title"));
+  await mountProjectExport(page, false, false, 3, { local: saved, holdFetch: true });
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  const title = modal.locator('[data-book-chapter-title="fixture-chapter-0-0"]');
+  await expect(title).toHaveValue("Saved title");
+  await title.fill("Edited while loading");
+  await releaseSettingsFetch(page, saved);
+  await expect(settingsDialog(page)).toHaveCount(0);
+  await expect(title).toHaveValue("Edited while loading");
+  await modal.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.__bookSettingsRequests.filter((request) => request.settings).length)).toBe(1);
+  const save = await page.evaluate(() => window.__bookSettingsRequests.find((request) => request.settings));
+  expect(save.settings.layouts.en.items[0].title).toBe("Edited while loading");
+});
+
+test("edits made after reopening during a pending save stay quiet and are saved", async ({ page }) => {
+  await mountProjectExport(page, false, false, 3, { holdFetch: true });
+  const modal = page.getByRole("dialog", { name: "Export project", exact: true });
+  const title = modal.locator('[data-book-chapter-title="fixture-chapter-0-0"]');
+  await releaseSettingsFetch(page, null);
+  await title.fill("First save");
+  await page.evaluate(() => { window.__holdSettingsSave = true; });
+  await modal.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.__heldSettingsRequests.length)).toBe(1);
+  await page.locator('[data-action="export-project:fixture-project-001"]').click();
+  await title.fill("Second edit");
+  const firstSave = await page.evaluate(() => {
+    const request = window.__heldSettingsRequests.shift();
+    window.__holdSettingsSave = false;
+    window.__pdfListeners["project-export-settings"]({ payload: { requestId: request.requestId, settings: request.settings, error: "" } });
+    return request.settings;
+  });
+  expect(firstSave.layouts.en.items[0].title).toBe("First save");
+  await releaseSettingsFetch(page, firstSave);
+  await expect(settingsDialog(page)).toHaveCount(0);
+  await expect(title).toHaveValue("Second edit");
+});
+
 
 test("redundancy reports use page-one chapter titles and optional numbers", async ({ page }) => {
   await mountProjectExport(page, false, false, 5);
