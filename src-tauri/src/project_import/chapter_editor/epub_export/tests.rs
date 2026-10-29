@@ -127,6 +127,51 @@ fn epub_packages_valid_xml_metadata_and_escaped_multilingual_content() {
 }
 
 #[test]
+fn epub_sets_an_attribution_only_citation_inside_the_text_before_it() {
+    let doc = document(
+        "Attributed",
+        vec![
+            paragraph("paragraph", "Body [1]."),
+            ExportBlock::Footnote {
+                number: 1,
+                marker: 1,
+                anchor_block: Some(0),
+                text: "A note.".into(),
+            },
+            ExportBlock::Attribution {
+                text: "Author".into(),
+            },
+            paragraph("heading2", "Heading"),
+            ExportBlock::Attribution {
+                text: "Other".into(),
+            },
+            paragraph("paragraph", "Lead."),
+            paragraph("list_bullet", "One\nTwo"),
+            ExportBlock::Attribution {
+                text: "Third".into(),
+            },
+        ],
+    );
+    let content = file(&unpack(&doc), "EPUB/section-1.xhtml");
+    // Nor can a list, and the text before the list keeps no citation.
+    assert!(content.contains("Lead.</p>"), "{content}");
+    assert!(
+        content.find("Third</cite>") > content.rfind("</ul>"),
+        "{content}"
+    );
+    // Past the body text's note, as its last line; a heading cannot carry one.
+    assert!(
+        content.contains("<cite class=\"quote-attribution\">Author</cite></p>"),
+        "{content}"
+    );
+    assert!(
+        content.contains("</h2><cite class=\"quote-attribution\">Other</cite>"),
+        "{content}"
+    );
+    assert!(!content.contains("<blockquote"), "{content}");
+}
+
+#[test]
 fn epub_links_footnotes_per_row_and_keeps_literal_and_unanchored_notes() {
     let doc = document(
         "Notes",

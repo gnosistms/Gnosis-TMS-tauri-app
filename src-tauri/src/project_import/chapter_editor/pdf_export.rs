@@ -1614,11 +1614,8 @@ fn render_typst_chapter(
                     ));
                 }
                 let dropcap = Some(block_index) == dropcap_index;
-                let citation = match document.blocks.get(block_index + 1) {
-                    Some(ExportBlock::Attribution { text }) => Some(text),
-                    _ => None,
-                };
-                let cited_block = citation.filter(|_| !dropcap).and_then(|citation| {
+                let citation = citation_after(&document.blocks, block_index);
+                let cited_block = citation.filter(|_| !dropcap).and_then(|(_, citation)| {
                     render_typst_cited_text_block(
                         text_style,
                         &inline,
@@ -1628,7 +1625,7 @@ fn render_typst_chapter(
                 });
                 if let Some(cited_block) = cited_block {
                     source.push_str(&cited_block);
-                    set_citation = Some(block_index + 1);
+                    set_citation = citation.map(|(index, _)| index);
                 } else {
                     let mut text_block =
                         render_typst_text_block(text_style, &inline, dropcap, cover_open);
@@ -2132,9 +2129,8 @@ fn chapter_cover_end(blocks: &[ExportBlock], title_promoted: bool) -> Option<usi
     let mut end = first;
     if quote(&blocks[first]) {
         for (index, block) in blocks.iter().enumerate().skip(first + 1) {
-            let citation = index == end + 1
-                && quote(&blocks[end])
-                && matches!(block, ExportBlock::Attribution { .. });
+            let citation = quote(&blocks[end])
+                && citation_after(blocks, end).is_some_and(|(cited, _)| cited == index);
             if quote(block) || citation {
                 end = index;
             } else if !blank(block) {
@@ -2254,6 +2250,20 @@ fn render_typst_text_block(style: &str, inline: &str, dropcap: bool, cover: bool
     }
 }
 
+/// The attribution that cites the text block at `index`, with its block index: the
+/// next block, when it is one. Footnotes between are looked past (they are set at
+/// the page foot), so a citation-only row also cites a previous row's footnoted text.
+fn citation_after(blocks: &[ExportBlock], index: usize) -> Option<(usize, &str)> {
+    let (offset, block) = blocks[index + 1..]
+        .iter()
+        .enumerate()
+        .find(|(_, block)| !matches!(block, ExportBlock::Footnote { .. }))?;
+    match block {
+        ExportBlock::Attribution { text } => Some((index + 1 + offset, text.as_str())),
+        _ => None,
+    }
+}
+
 /// A block followed by a citation, with the citation set as the block's own last
 /// line. Typst never leaves a paragraph's last line alone at the top of a page, so
 /// the citation always crosses a page break together with at least one line of the
@@ -2285,7 +2295,11 @@ fn render_typst_cited_text_block(
         "indented" => Some(format!(
             "#block(below: 1.5em)[#pad(left: 2em)[{inline}{citation_line}]]\n\n"
         )),
-        _ => Some(format!("#block(below: 1.5em)[{inline}{citation_line}]\n\n")),
+        // Inline content alone in a block is no paragraph, so it would lose the
+        // body text's first-line indent and justification without `par`.
+        _ => Some(format!(
+            "#block(below: 1.5em)[#par[{inline}{citation_line}]]\n\n"
+        )),
     }
 }
 
@@ -5162,12 +5176,67 @@ mod tests {
         ));
         assert!(source.contains("#gnosis-quote[#text(\"An uncited quotation.\")]"));
         assert!(source.contains(
-            "#block(below: 1.5em)[#text(\"An epigraph-style paragraph.\")#gnosis-citation[#text(\"An Author\")]]"
+            "#block(below: 1.5em)[#par[#text(\"An epigraph-style paragraph.\")#gnosis-citation[#text(\"An Author\")]]]"
         ));
         // No citation is left as a separate block, and nothing has to move whole
         // to the next page to stay with one.
         assert!(!source.contains("#align(right)"));
         assert!(!source.contains("sticky: true, breakable: true"));
+    }
+
+    #[test]
+    fn a_citation_only_row_cites_the_text_before_it_past_its_footnotes() {
+        let workspace = pdf_workspace().unwrap();
+        let _cleanup = WorkspaceCleanup(workspace.clone());
+        let document = ExportDocument {
+            title: "Attributed".into(),
+            language_code: "vi".into(),
+            blocks: vec![
+                text_block("paragraph", "Before."),
+                text_block("paragraph", "Attributed body text [1]."),
+                ExportBlock::Footnote {
+                    number: 1,
+                    marker: 1,
+                    anchor_block: Some(1),
+                    text: "A note.".into(),
+                },
+                ExportBlock::Attribution {
+                    text: "An Author".into(),
+                },
+                text_block("paragraph", "After."),
+            ],
+            book_parts: Vec::new(),
+        };
+        let session = begin_pdf_image_cache(&test_image_cache_scope("body-citation"));
+        let options = PdfWorkspacePreparationOptions {
+            paper_size: "a5",
+            footnote_links_as_plain_text: true,
+            image_cache_session: &session,
+            layout: TypstLayout::Export,
+        };
+        prepare_typst_workspace(
+            None,
+            "",
+            &workspace,
+            &document,
+            &options,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let source = fs::read_to_string(workspace.join("chapter.typ")).unwrap();
+        // Set as the body text's last line, at the body margin, with no quote.
+        let cited = source
+            .find("#block(below: 1.5em)[#par[#text(\"Attributed body text \")")
+            .expect(&source);
+        let citation = source
+            .find("#gnosis-citation[#text(\"An Author\")]]]")
+            .expect(&source);
+        assert!(cited < citation && !source[cited..citation].contains("\n\n"));
+        assert!(!source.contains("#gnosis-quote"));
+        assert!(!source.contains("#align(right)"));
+        // The next paragraph is not indented, as after any citation.
+        assert!(source
+            .contains("#set par(first-line-indent: (amount: 0pt, all: true))\n#text(\"After.\")"));
     }
 
     #[test]
@@ -5299,6 +5368,11 @@ mod tests {
                 &[title(), blank(), quote(), citation(), footnote(2), body()],
                 true
             ),
+            Some(3)
+        );
+        // A citation-only row cites the quote before it, past that quote's footnote.
+        assert_eq!(
+            chapter_cover_end(&[title(), quote(), footnote(1), citation(), body()], true),
             Some(3)
         );
         // Consecutive quotes are one epigraph, even with a blank row between them.

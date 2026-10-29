@@ -900,13 +900,8 @@ pub(super) fn build_export_document(
                 .map(|value| value.attribution.trim())
                 .filter(|text| !text.is_empty())
             {
-                // A quote with only an attribution still needs an owning block.
-                if blocks.len() == row_block_start {
-                    blocks.push(ExportBlock::Text {
-                        text_style: "quote".into(),
-                        text: String::new(),
-                    });
-                }
+                // A quote with only an attribution attributes body text: it adds no
+                // empty quote, and its citation goes to the block before it.
                 blocks.push(ExportBlock::Attribution {
                     text: attribution.to_string(),
                 });
@@ -1454,9 +1449,13 @@ fn print_footnote_text(text: &str, footnote_links_as_plain_text: bool) -> String
 
 fn render_html_document(document: &ExportDocument) -> Result<String, String> {
     let mut body = String::new();
+    // Where a citation joins the text block it follows: inside its closing tag, so
+    // the citation is the block's last line. Footnotes between are looked past.
+    let mut citation_slot = None;
     for block in &document.blocks {
         match block {
             ExportBlock::Text { text_style, text } => {
+                citation_slot = None;
                 if export_text_style(Some(text_style)) == "custom_html" {
                     // Custom HTML rows carry the author's raw HTML — emit it verbatim.
                     let _ = writeln!(body, "{text}");
@@ -1472,41 +1471,36 @@ fn render_html_document(document: &ExportDocument) -> Result<String, String> {
                     continue;
                 }
                 let text = sanitize_inline_html(text).replace('\n', "<br>");
-                match export_text_style(Some(text_style)).as_str() {
-                    "heading1" => {
-                        let _ = writeln!(body, "<h1>{text}</h1>");
-                    }
-                    "heading2" => {
-                        let _ = writeln!(body, "<h2>{text}</h2>");
-                    }
-                    "quote" => {
-                        let _ = writeln!(body, "<blockquote>{text}</blockquote>");
-                    }
-                    "indented" => {
-                        let _ = writeln!(body, "<p class=\"indented\">{text}</p>");
-                    }
-                    "centered" => {
-                        let _ = writeln!(body, "<p class=\"centered\">{text}</p>");
-                    }
-                    _ => {
-                        let _ = writeln!(body, "<p>{text}</p>");
-                    }
+                let (open, close) = match export_text_style(Some(text_style)).as_str() {
+                    "heading1" => ("<h1>", "</h1>"),
+                    "heading2" => ("<h2>", "</h2>"),
+                    "quote" => ("<blockquote>", "</blockquote>"),
+                    "indented" => ("<p class=\"indented\">", "</p>"),
+                    "centered" => ("<p class=\"centered\">", "</p>"),
+                    _ => ("<p>", "</p>"),
+                };
+                let _ = writeln!(body, "{open}{text}{close}");
+                // A heading cannot carry a citation, as in the PDF.
+                if !open.starts_with("<h") {
+                    citation_slot = Some(body.len() - close.len() - 1);
                 }
             }
             ExportBlock::Attribution { text } => {
-                let attribution = sanitize_inline_html(text).replace('\n', "<br>");
-                if body.ends_with("</blockquote>\n") {
-                    body.truncate(body.len() - "</blockquote>\n".len());
-                } else {
-                    // A trailing separator leaves no open quote for the citation.
-                    body.push_str("<blockquote>");
-                }
-                let _ = writeln!(
-                    body,
-                    "<cite class=\"quote-attribution\">{attribution}</cite></blockquote>"
+                let cite = format!(
+                    "<cite class=\"quote-attribution\">{}</cite>",
+                    sanitize_inline_html(text).replace('\n', "<br>")
                 );
+                if let Some(slot) = citation_slot.take() {
+                    body.insert_str(slot, &cite);
+                } else if body.ends_with("<hr>\n") {
+                    // A trailing separator leaves no open quote for the citation.
+                    let _ = writeln!(body, "<blockquote>{cite}</blockquote>");
+                } else {
+                    let _ = writeln!(body, "{cite}");
+                }
             }
             ExportBlock::Separator => {
+                citation_slot = None;
                 let _ = writeln!(body, "<hr>");
             }
             ExportBlock::Footnote { number, text, .. } => {
@@ -1537,6 +1531,7 @@ fn render_html_document(document: &ExportDocument) -> Result<String, String> {
                 );
             }
             ExportBlock::Image { image, caption } => {
+                citation_slot = None;
                 let src = html_image_src(image)?;
                 if let Some(src) = src {
                     let caption_html = if caption.trim().is_empty() {
@@ -1842,12 +1837,18 @@ fn render_md_document(document: &ExportDocument) -> String {
                 last_text_fragment = Some(fragments.len() - 1);
             }
             ExportBlock::Attribution { text } => {
+                let inline = md_inline_text(text);
+                // A citation of body text keeps the body margin.
                 fragments.push(
-                    md_inline_text(text)
-                        .lines()
-                        .map(|line| format!("> {line}"))
-                        .collect::<Vec<_>>()
-                        .join("\n"),
+                    if fragments.last().is_some_and(|last| last.starts_with("> ")) {
+                        inline
+                            .lines()
+                            .map(|line| format!("> {line}"))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    } else {
+                        inline.replace('\n', "\\\n")
+                    },
                 );
             }
             ExportBlock::Separator => {
@@ -3664,6 +3665,74 @@ mod tests {
             assert!(html.contains("<hr>\n<blockquote><cite class=\"quote-attribution\">Author &amp; <strong>Work</strong></cite></blockquote>"), "Quote body: {text}");
             assert_eq!(html.matches("<cite ").count(), 1, "Quote body: {text}");
         }
+    }
+
+    #[test]
+    fn an_attribution_only_quote_cites_the_text_before_it() {
+        let chapter = StoredChapterFile {
+            chapter_id: "chapter-1".into(),
+            title: "Chapter".into(),
+            lifecycle: active_lifecycle_state(),
+            source_files: Vec::new(),
+            languages: vec![export_language("en", "target", None)],
+            settings: None,
+            source_word_count: None,
+        };
+        let mut body = row("p", "a", "Body [1].", "paragraph");
+        body.fields.get_mut("en").unwrap().footnote = "[1] A note.".into();
+        let mut citation = row("c", "b", "", "quote");
+        citation.fields.get_mut("en").unwrap().attribution = "Author".into();
+        let built = build_export_document(
+            Path::new("/repo"),
+            &chapter,
+            &[body, citation],
+            "en",
+            None,
+            "",
+        )
+        .unwrap();
+        // No empty quote: the attribution follows the body text and its note.
+        assert!(matches!(
+            built.blocks.as_slice(),
+            [
+                ExportBlock::Text { text_style, .. },
+                ExportBlock::Footnote { anchor_block: Some(0), .. },
+                ExportBlock::Attribution { text },
+            ] if text_style == "paragraph" && text == "Author"
+        ));
+        let html = render_html_document(&built).unwrap();
+        assert!(html.contains("<p>Body [1].<cite class=\"quote-attribution\">Author</cite></p>"));
+        assert!(!html.contains("<blockquote"));
+        let md = render_md_document(&built);
+        assert!(md.contains("\n\nAuthor\n") && !md.contains("> "), "{md}");
+
+        // After a quote, it is that quote's own citation; with nothing to cite,
+        // it stands alone at the body margin.
+        let quoted = document(vec![
+            ExportBlock::Text {
+                text_style: "quote".into(),
+                text: "Quoted".into(),
+            },
+            ExportBlock::Attribution {
+                text: "Author".into(),
+            },
+            ExportBlock::Text {
+                text_style: "heading1".into(),
+                text: "Heading".into(),
+            },
+            ExportBlock::Attribution {
+                text: "Other".into(),
+            },
+        ]);
+        let html = render_html_document(&quoted).unwrap();
+        assert!(html.contains(
+            "<blockquote>Quoted<cite class=\"quote-attribution\">Author</cite></blockquote>\n<h1>Heading</h1>\n<cite class=\"quote-attribution\">Other</cite>\n"
+        ));
+        let md = render_md_document(&quoted);
+        assert!(
+            md.contains("> Quoted\n\n> Author\n\n# Heading\n\nOther\n"),
+            "{md}"
+        );
     }
 
     #[test]

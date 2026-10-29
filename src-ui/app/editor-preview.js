@@ -145,14 +145,39 @@ function previewFootnotesByParagraph(paragraphs, footnotes) {
   return groups;
 }
 
+// The block a following attribution can cite, as the last line of its text: the
+// last block, footnote-only blocks aside (their notes print at the page foot), when
+// it is uncited text. Headings, lists, images, custom HTML and text that ends in
+// a separator cannot carry a citation, as in the PDF.
+function previewCitableBlockIndex(blocks) {
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    const block = blocks[index];
+    if (block.kind === "text" && !block.attribution && !previewTextHasVisibleContent(block.text)) {
+      continue;
+    }
+    const style = normalizeEditorRowTextStyle(block.textStyle);
+    const last = block.kind === "text" ? previewTextParts(block).at(-1) : null;
+    const citable = last?.kind === "text"
+      && previewTextHasVisibleContent(last.block.text)
+      && !block.attribution
+      && !isCustomHtmlRowTextStyle(style)
+      && !isListRowTextStyle(style)
+      && style !== EDITOR_ROW_TEXT_STYLE_HEADING1
+      && style !== EDITOR_ROW_TEXT_STYLE_HEADING2;
+    return citable ? index : -1;
+  }
+  return -1;
+}
+
 export function buildEditorPreviewDocument(rows, languageCode) {
   if (!languageCode) {
     return [];
   }
 
-  return (Array.isArray(rows) ? rows : []).flatMap((row) => {
+  const blocks = [];
+  for (const row of Array.isArray(rows) ? rows : []) {
     if (!row || row.lifecycleState === "deleted") {
-      return [];
+      continue;
     }
 
     const text = previewFieldValue(row, languageCode);
@@ -161,7 +186,6 @@ export function buildEditorPreviewDocument(rows, languageCode) {
     const caption = previewImageCaptionValue(row, languageCode);
     const textStyle = normalizeEditorRowTextStyle(row?.textStyle);
     const attribution = textStyle === "quote" ? previewTextValue(row?.attributions?.[languageCode]) : "";
-    const blocks = [];
     const paragraphs = previewRowParagraphs(row, text, textStyle);
     const paragraphFootnotes = previewFootnotesByParagraph(paragraphs, footnotes);
 
@@ -177,7 +201,15 @@ export function buildEditorPreviewDocument(rows, languageCode) {
       });
     });
 
-    if (paragraphs.length === 0 && attribution.trim()) {
+    // A quote with only an attribution attributes body text: it adds no empty
+    // quote, and cites the block before it. With nothing to cite, or with notes
+    // of its own to keep beside it, the attribution stands alone.
+    const citedIndex = paragraphs.length === 0 && attribution.trim() && footnotes.length === 0
+      ? previewCitableBlockIndex(blocks)
+      : -1;
+    if (citedIndex >= 0) {
+      blocks[citedIndex] = { ...blocks[citedIndex], attribution, attributionRowId: row.rowId ?? "" };
+    } else if (paragraphs.length === 0 && attribution.trim()) {
       blocks.push({
         kind: "text",
         rowId: row.rowId ?? "",
@@ -209,9 +241,8 @@ export function buildEditorPreviewDocument(rows, languageCode) {
         caption,
       });
     }
-
-    return blocks;
-  });
+  }
+  return blocks;
 }
 
 function countMatchesInText(text, searchQuery) {
@@ -720,9 +751,17 @@ export function renderEditorPreviewDocumentHtml(blocks, options = {}) {
               appendRemaining: index === appendPartIndex,
             },
           );
-          const attributionHtml = block.attribution?.trim() && index === parts.length - 1
-            ? `<cite class="translate-preview__attribution" data-preview-block="attribution" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}" data-tooltip="Double-click to edit.">${renderPreviewHighlightedText(block.attribution, searchState, matchCounter, block.languageCode)}</cite>` : "";
-          if (!textHtml.trim() && !attributionHtml) return "";
+          const cited = Boolean(block.attribution?.trim()) && index === parts.length - 1;
+          if (!textHtml.trim() && !cited) return "";
+          // A citation of another row's text keeps its own row, for editing.
+          const citation = (notesHtml = "") => `<cite class="translate-preview__attribution" data-preview-block="attribution" data-row-id="${escapeHtml(block.attributionRowId ?? block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}" data-tooltip="Double-click to edit.">${renderPreviewHighlightedText(block.attribution, searchState, matchCounter, block.languageCode)}${notesHtml}</cite>`;
+          // An attribution with no text attributes body text: it stands alone at
+          // the body margin, with no empty block above it.
+          if (cited && !previewTextHasVisibleContent(part.block.text)) {
+            options.blockClassName?.(part.block, "attribution");
+            return citation(textHtml);
+          }
+          const attributionHtml = cited ? citation() : "";
           const extra = options.blockClassName?.(part.block, variant) || "";
           return `<${tagName} class="translate-preview__block translate-preview__block--${variant}${extra ? ` ${escapeHtml(extra)}` : ""}" data-preview-block="${escapeHtml(variant)}" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}" data-tooltip="Double-click to edit.">${textHtml}${options.attributionOutside ? "" : attributionHtml}</${tagName}>${options.attributionOutside ? attributionHtml : ""}`;
         })
@@ -809,7 +848,7 @@ function serializePreviewTextBlockHtml(block, footnoteState, options = {}) {
     const innerParagraph = wrapSerializedWordPressBlock("paragraph", `<p>${textHtml}</p>`);
     return {
       blockName: "quote",
-      html: `<blockquote class="wp-block-quote">${innerParagraph}${block.attribution?.trim() ? `<cite${options.localFormatting ? ' style="display:block;font-size:90%;text-align:right;font-style:normal"' : ""}>${serializePreviewText(block.attribution)}</cite>` : ""}</blockquote>`,
+      html: `<blockquote class="wp-block-quote">${innerParagraph}${block.attribution?.trim() ? serializePreviewCitation(block.attribution, options) : ""}</blockquote>`,
     };
   }
   if (normalizedStyle === EDITOR_ROW_TEXT_STYLE_INDENTED) {
@@ -831,6 +870,20 @@ function serializePreviewTextBlockHtml(block, footnoteState, options = {}) {
     blockName: "paragraph",
     html: `<p>${textHtml}</p>`,
   };
+}
+
+function serializePreviewCitation(attribution, options = {}) {
+  return `<cite${options.localFormatting ? ' style="display:block;font-size:90%;text-align:right;font-style:normal"' : ""}>${serializePreviewText(attribution)}</cite>`;
+}
+
+// The citation of text that is not a quote, or of none: a paragraph of its own,
+// right-aligned at the body margin.
+function serializePreviewCitationParagraph(attribution, notesHtml, options = {}) {
+  return wrapSerializedWordPressBlock(
+    "paragraph",
+    `<p class="has-text-align-right">${serializePreviewCitation(attribution, options)}${notesHtml}</p>`,
+    { style: { typography: { textAlign: "right" } } },
+  );
 }
 
 function serializePreviewTextBlock(block, footnoteState, options = {}) {
@@ -881,7 +934,8 @@ function serializePreviewTextBlockParts(block, footnoteState, options = {}) {
       if (part.kind === "separator") {
         return WORDPRESS_SEPARATOR_BLOCK;
       }
-      if (!previewTextHasVisibleContent(part.block?.text) && index !== appendPartIndex && !block.attribution) {
+      const attribution = block.attribution?.trim() && index === parts.length - 1 ? block.attribution : "";
+      if (!previewTextHasVisibleContent(part.block?.text) && index !== appendPartIndex && !attribution) {
         return "";
       }
       const textHtml = renderTextWithWordPressFootnoteRefs(part.block, footnoteState, {
@@ -890,11 +944,18 @@ function serializePreviewTextBlockParts(block, footnoteState, options = {}) {
         usedMarkers,
         appendRemaining: index === appendPartIndex,
       });
-      if (!textHtml.trim() && !block.attribution) return "";
-      return serializePreviewTextBlock({ ...part.block, attribution: index === parts.length - 1 ? block.attribution : "" }, footnoteState, {
+      if (!textHtml.trim() && !attribution) return "";
+      if (attribution && !previewTextHasVisibleContent(part.block?.text)) {
+        return serializePreviewCitationParagraph(attribution, textHtml, options);
+      }
+      const quote = normalizeEditorRowTextStyle(block.textStyle) === EDITOR_ROW_TEXT_STYLE_QUOTE;
+      const textBlock = serializePreviewTextBlock({ ...part.block, attribution: quote ? attribution : "" }, footnoteState, {
         preRenderedTextHtml: textHtml,
         localFormatting: options.localFormatting,
       });
+      return attribution && !quote
+        ? `${textBlock}\n\n${serializePreviewCitationParagraph(attribution, "", options)}`
+        : textBlock;
     })
     .filter(Boolean)
     .join("\n\n");
