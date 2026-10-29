@@ -80,7 +80,7 @@ export function createStudioActivity(study, changed, isCurrent) {
 export function studioStageActivities(s) {
   const nodes = (rows) => rows.map(([id, label]) => ({ id, label }));
   const plans = {
-    "2a": [["discover", "Find additional forms and spellings"], ["forms", "Check forms against the corpus"], ["origin", "Verify original spelling"], ["identity", "Review which forms belong to this word"], ["accepted", "Verify accepted alternatives"]],
+    "2a": [["discover", "Find additional forms and spellings"], ["forms", "Check forms against the corpus"], ["origin", "Verify original spelling"], ["identity", "Verify which forms are the same word"], ["accepted", "Verify accepted alternatives"]],
     "3": [["population", "Find matching corpus paragraphs"], ["sample", "Select research examples"]],
     "4.1": [["dictionary", "Look up the source word"], ["origin", "Check its original-language form"], ["analysis", "Review dictionary meanings"]],
     "4.2": [["examples", "Read usage examples for each form"], ["analysis", "Identify meanings in the corpus"]],
