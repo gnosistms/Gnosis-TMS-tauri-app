@@ -3,6 +3,8 @@ import { buildEditorGlossaryModel, findLongestGlossaryMatches } from "./editor-g
 
 export const STUDIO_TRANSLATION_CONTRACT_VERSION = 3;
 export const STUDIO_DICTIONARY_REVIEW_VERSION = 3;
+// Step 2b preselects researching the term together with the related entries.
+export const STUDIO_DEFAULT_BRANCH = "research";
 
 export function studioSourceContext(paragraph) {
   const texts = (camel, snake) => (Array.isArray(camel) ? camel : Array.isArray(snake) ? snake : [])
@@ -106,7 +108,7 @@ export function clearStudioDependents(study, step) {
   }
   const reset = (owner, values) => { if (later.has(owner)) Object.assign(study, values); };
   reset("2a", { forms: [], formDiscovery: null, origin: null });
-  reset("2b", { relatedEntries: [], carriedTargets: [], branch: "separate", mergeDestinations: {}, reResearchStarted: false });
+  reset("2b", { relatedEntries: [], carriedTargets: [], branch: STUDIO_DEFAULT_BRANCH, mergeDestinations: {}, reResearchStarted: false });
   reset("3", { population: [], populationCount: null, populationFingerprint: null, passages: [], sampling: null });
   reset("4.5", { meanings: [] });
   reset("4.6", { assignments: [], displayTranslations: {}, recoveryScanned: [], recoveryConsidered: 0,

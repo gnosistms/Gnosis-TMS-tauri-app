@@ -16,7 +16,7 @@ import { studioStepNeedsReview } from "./glossary-research-studio-review.js";
 import { currentStudioRecommendation, recommendStudioStep, sourceSummaryMustBeSkipped, studioCanRecommendSkip, studioResearchStarted } from "./glossary-research-studio-recommendations.js";
 import { prepareReadingTranslations, runResearchStage } from "./glossary-research-studio-stages.js";
 import { testMeanings, testCompleteEntry } from "./glossary-research-studio-testing.js";
-import { reviewCompoundReport, STUDIO_STEPS, STUDIO_DICTIONARY_REVIEW_VERSION, newStudioStudy, uniqueTexts, selectedForms, activeMeanings,
+import { reviewCompoundReport, STUDIO_STEPS, STUDIO_DICTIONARY_REVIEW_VERSION, STUDIO_DEFAULT_BRANCH, newStudioStudy, uniqueTexts, selectedForms, activeMeanings,
   approveStep, stableSignature, stepSignature, stepSignatureMatches, stepIsReusable, buildStudioDraft, finalUsage, studioDependentSteps, clearStudioDependents, startStudioReResearch,
   collisionChanges, sourceCollisions, temporaryGlossaryTerms, uniqueSourceTexts, deduplicateSourceForms, applySplitReview, preferCandidate, reviseAssignment, studioContextRequest, applyStudioContext, entryTrialsAreCurrent, meaningTrialsAreCurrent, studioStepNumber } from "./glossary-research-studio-workflow.js";
 import { requestGlossaryTermWriteIntent, glossaryTermWriteScope, clearFailedGlossaryTermWrite } from "./glossary-term-write-coordinator.js";
@@ -80,7 +80,7 @@ async function visitStudioStep(step) {
 }
 export function studioView() {
   return state.glossaryResearchStudio ??= { study: null, history: [], busy: false,
-    message: "", error: "", modal: null, branch: "separate", mergeDestinations: {} };
+    message: "", error: "", modal: null, branch: STUDIO_DEFAULT_BRANCH, mergeDestinations: {} };
 }
 function currentScope() {
   const team = selectedTeam(); const editor = state.glossaryEditor;
@@ -228,7 +228,7 @@ export async function newStudy({ term = "", projectId = null } = {}) {
   s.model = resolveAiActionProviderAndModel("research");
   s.translationRuntimeVersion = await translatorRuntimeVersion();
   if (generation !== operationGeneration) return;
-  studioView().openingStudyId = null; studioView().study = s; studioView().branch = "separate";
+  studioView().openingStudyId = null; studioView().study = s; studioView().branch = STUDIO_DEFAULT_BRANCH;
   studioView().reviewFrontier = null; studioView().revisiting = false; studioView().decisionStep = null;
   studioView().mergeDestinations = {}; studioView().hideDecision = false; studioView().modal = null;
   await persist(s); renderStudio();
@@ -255,7 +255,7 @@ export async function resumeStudy(id) {
     if (study.step === "4.7" && !study.splitProposals) study.splitProposals = study.queue.map((q) => ({
       id: q.id, forms: uniqueSourceTexts(q.forms, study.scope.sourceLanguage.code),
       meaningId: q.meaningId, targetTerms: q.targetTerms, selected: true }));
-    view.branch = study.branch ?? study.steps["2b"]?.approved?.branch ?? "separate";
+    view.branch = study.branch ?? study.steps["2b"]?.approved?.branch ?? STUDIO_DEFAULT_BRANCH;
     view.mergeDestinations = study.mergeDestinations ?? {};
     view.hideDecision = Boolean(study.pendingDecision && view.decisionStep && view.decisionStep !== study.step);
     view.modal = null; view.openingStudyId = null; renderStudio();
@@ -973,7 +973,7 @@ export async function studioAction(action, render) {
       delete s.reviewNavigation;
       studioView().reviewFrontier = STUDIO_STEPS.findIndex((item) => item.id === modal.step);
       studioView().revisiting = false; studioView().decisionStep = null; studioView().hideDecision = false;
-      studioView().branch = s.branch ?? "separate"; studioView().mergeDestinations = s.mergeDestinations ?? {};
+      studioView().branch = s.branch ?? STUDIO_DEFAULT_BRANCH; studioView().mergeDestinations = s.mergeDestinations ?? {};
       studioView().modal = modal.previousModal;
       await persist(s);
       await modal.operation(); render(); return;

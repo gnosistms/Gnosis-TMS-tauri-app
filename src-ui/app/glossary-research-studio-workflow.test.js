@@ -375,9 +375,11 @@ test("revising source forms clears discovery outputs including skipped checkpoin
   s.meanings = [{ id: "old-meaning" }]; s.assignments = [{ meaningId: "old-meaning" }];
   s.candidates = [{ text: "old-translation" }]; s.queue = [{ studyId: "separate-child" }];
   s.forms = [{ text: "walk", selected: true }]; s.skipRecommendations = { "4.1": { recommendation: "Skip" } };
+  s.branch = "separate";
   const scopeBefore = structuredClone(s.scope);
   clearStudioDependents(s, "2a");
   assert.deepEqual(s.scope, scopeBefore); assert.deepEqual(s.forms, [{ text: "walk", selected: true }]);
+  assert.equal(s.branch, "research", "2b defaults to researching with the related entries");
   for (const key of ["population", "passages", "meanings", "assignments", "candidates", "queue"]) assert.deepEqual(s[key], []);
   assert.deepEqual(s.skipRecommendations, {}); assert.deepEqual(s.steps["4.1"], { status: "undone" });
   assert.equal(s.steps["1"].status, "complete");

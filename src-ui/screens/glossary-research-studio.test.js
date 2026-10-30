@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { state } from "../app/state.js";
-import { newStudioStudy, STUDIO_STEPS, buildStudioDraft, stableSignature, entryBatchSignature, studioStepNumber } from "../app/glossary-research-studio-workflow.js";
+import { newStudioStudy, STUDIO_STEPS, STUDIO_DEFAULT_BRANCH, buildStudioDraft, stableSignature, entryBatchSignature, studioStepNumber } from "../app/glossary-research-studio-workflow.js";
 import { STUDIO_SKIP_PROMPTS, studioRecommendationKey } from "../app/glossary-research-studio-recommendations.js";
 import { renderGlossaryResearchStudio } from "./glossary-research-studio.js";
 
@@ -118,8 +118,9 @@ test("related entries ask what to do about the research term", () => {
       targetLanguage: { code: "en", name: "English" }, term: "<b>Mundo</b>" }, "related");
     study.step = "2b";
     study.relatedEntries = [{ termId: "t", sourceTerms: ["mundo"], targetTerms: ["world"], notesToTranslators: "" }];
-    state.glossaryResearchStudio = { study, busy: false, branch: "separate", mergeDestinations: {} };
+    state.glossaryResearchStudio = { study, busy: false, branch: STUDIO_DEFAULT_BRANCH, mergeDestinations: {} };
     const html = renderGlossaryResearchStudio(state);
+    assert(html.includes('<option value="research" selected>'), "researching with the existing entries is preselected");
     assert(html.includes("The glossary entries below look like the same or similar to the one you are researching."));
     assert(html.includes("What do you want to do about this?"));
     assert(html.includes("Research &lt;b&gt;Mundo&lt;/b&gt; without looking at the existing glossary entries."));
