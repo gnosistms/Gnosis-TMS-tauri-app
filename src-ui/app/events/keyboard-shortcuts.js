@@ -35,11 +35,21 @@ function shouldTriggerSyncShortcut(event) {
   return event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && key === "r";
 }
 
-function shouldBlurActiveEditorField(event) {
+// Cmd+S / Ctrl+S is the one save shortcut: row fields, the image URL field and
+// the glossary and QA term editors. Handled in a field, it also keeps the native
+// "Sync with Server" menu item (Cmd+S on macOS) from firing.
+export function isSaveShortcut(event) {
   if (event.defaultPrevented || event.repeat || event.isComposing) {
     return false;
   }
+  const key = typeof event.key === "string" ? event.key.toLowerCase() : "";
+  const hasModifier = isMacPlatform()
+    ? event.metaKey && !event.ctrlKey
+    : event.ctrlKey && !event.metaKey;
+  return key === "s" && hasModifier && !event.altKey && !event.shiftKey;
+}
 
+function shouldBlurActiveEditorField(event) {
   const target = event.target;
   if (!(target instanceof HTMLTextAreaElement) || !target.matches("[data-editor-row-field]")) {
     return false;
@@ -50,11 +60,18 @@ function shouldBlurActiveEditorField(event) {
   }
 
   // Cmd+S / Ctrl+S saves and leaves the field (Shift+Return now breaks a line).
-  const key = typeof event.key === "string" ? event.key.toLowerCase() : "";
-  const hasModifier = isMacPlatform()
-    ? event.metaKey && !event.ctrlKey
-    : event.ctrlKey && !event.metaKey;
-  return key === "s" && hasModifier && !event.altKey && !event.shiftKey;
+  return isSaveShortcut(event);
+}
+
+const TERM_EDITOR_SAVE_ACTIONS = new Map([
+  ["glossary-term-editor", "submit-glossary-term-editor"],
+  ["qa-term-editor", "submit-qa-term-editor"],
+]);
+
+function termEditorSaveAction(event) {
+  const dialog = event.target instanceof Element ? event.target.closest("[data-modal-dialog]") : null;
+  const action = TERM_EDITOR_SAVE_ACTIONS.get(dialog?.getAttribute("data-modal-dialog") ?? "");
+  return action && isSaveShortcut(event) ? action : null;
 }
 
 // Row text splits into paragraphs at blank lines, so Return inserts one: two
@@ -202,24 +219,11 @@ function focusPageSearchInput(selectContents = false) {
 export function registerKeyboardShortcutEvents(dispatchAction) {
   registerEditorFieldUndoEvents(document);
   document.addEventListener("keydown", (event) => {
-    const glossaryTermModalField = event.target instanceof Element
-      ? event.target.closest(
-        "[data-glossary-term-variant-input], [data-glossary-term-variant-note-input], [data-glossary-term-notes-input], [data-glossary-term-footnote-input]",
-      )
-      : null;
-    if (glossaryTermModalField instanceof HTMLTextAreaElement) {
-      const key = typeof event.key === "string" ? event.key.toLowerCase() : "";
-      if (
-        (key === "enter" || key === "return")
-        && event.shiftKey
-        && !event.metaKey
-        && !event.ctrlKey
-        && !event.altKey
-      ) {
-        event.preventDefault();
-        void dispatchAction("submit-glossary-term-editor", event);
-        return;
-      }
+    const termEditorAction = termEditorSaveAction(event);
+    if (termEditorAction) {
+      event.preventDefault();
+      void dispatchAction(termEditorAction, event);
+      return;
     }
 
     // Dialog-local keyboard behavior is delegated to the modal controller.
