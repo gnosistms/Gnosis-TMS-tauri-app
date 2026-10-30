@@ -265,7 +265,7 @@ function stepContent(s, state) {
     }
     case "5": {
       const report = reviewCompoundReport(s, value);
-      return `${!report.compounds.length ? "<p>No qualifying recurring compounds or phrases were found in the research sample.</p>" : `<p>These expressions have verified examples in this research sample and will be saved for further consideration.</p>
+      return `${!report.compounds.length ? "<p>No qualifying recurring compounds or phrases were found in the research sample.</p>" : `<p>These expressions have verified examples in this research sample. They will be used as context when translations are suggested in step 6.</p>
         ${report.compounds.map((c) => `<details class="studio-entry"><summary>${e((c.forms ?? [c.phrase]).join(", "))} · ${quantity(c.paragraphIds.length, "paragraph")}</summary><p>${narrative(c.explanation)}</p>${s.passages.filter((p) => c.paragraphIds.includes(p.id)).map((p) => paragraph(p, s)).join("")}</details>`).join("")}`}
         ${report.unverifiedCompounds.length ? `<details class="studio-entry"><summary>Unverified suggestions (${report.unverifiedCompounds.length})</summary><p>These suggestions do not meet the research-witness requirement and will not be used for translation candidates.</p>${report.unverifiedCompounds.map((c) => `<p><strong>${e(c.phrase)}</strong> · ${narrative(c.reason)}</p>`).join("")}</details>` : ""}`;
     }

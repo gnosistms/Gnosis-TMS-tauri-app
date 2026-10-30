@@ -619,6 +619,7 @@ test("legacy compound findings show verified research counts and separate unsupp
     state.glossaryResearchStudio = { study: s, busy: false };
     const html = renderGlossaryResearchStudio(state);
     assert(html.includes("sensibles mallas · 2 paragraphs"));
+    assert(html.includes("They will be used as context when translations are suggested in step 6."));
     assert(html.includes("Unverified suggestions (1)"));
     assert(!html.includes("<summary>nervios sensibles"));
     assert(html.includes("No exact occurrence with this meaning"));
