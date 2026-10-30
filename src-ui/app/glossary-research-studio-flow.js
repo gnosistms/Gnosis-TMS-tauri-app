@@ -778,18 +778,23 @@ async function saveEditedEntry(origin, edit) {
 // passes, the question no longer applies; current results then complete step 9
 // without new translations.
 async function reviewFinding(s, name) {
-  if (studioView().busy || s.step !== "9") throw new Error("Pause research before reviewing a finding.");
+  if (studioView().busy || !["8", "9"].includes(s.step)) throw new Error("Pause research before reviewing a finding.");
   const action = name.slice("review-".length, name.indexOf(":"));
   const [paragraphId, occurrenceId] = name.slice(name.indexOf(":") + 1).split(":").map(decodeURIComponent);
   reviewStudioFinding(s, action, paragraphId, occurrenceId);
   const d = s.pendingDecision;
-  if (d?.kind === "selection" && (d.keys ?? [d.key]).every((key) => s.tests[key]?.passed)) {
+  if ((d?.kind === "selection" && (d.keys ?? [d.key]).every((key) => s.tests[key]?.passed))
+    || (d?.kind === "progress" && s.step === "8" && s.tests[`8:${progressMeaningId(d)}`]?.passed)) {
     s.pendingDecision = null; s.status = "active"; studioView().hideDecision = false;
   }
   await persist(s);
-  if (!s.pendingDecision && entryTrialsAreCurrent(s) && !s.steps["9"]?.value?.complete) await runCurrentStage();
+  const current = s.step === "8" ? meaningTrialsAreCurrent(s) : entryTrialsAreCurrent(s);
+  if (!s.pendingDecision && current && !s.steps[s.step]?.value?.complete) await runCurrentStage();
   else renderStudio();
 }
+
+// Step 8's progress question is about one meaning; its report key starts with the meaning ID.
+const progressMeaningId = (decision) => String(decision.reportKey ?? "").split(":")[0];
 
 // Reviewing a stuck question yourself opens the first stuck batch's findings.
 function revealStudioFindings(keys) {
@@ -996,7 +1001,11 @@ export async function resolveStudioDecision(action) {
   const s = studioView().study; const d = s.pendingDecision;
   if (!d) return;
   if (d.kind === "progress") {
-    if (action === "stop") { studioView().hideDecision = true; s.status = "paused"; await persist(s); return; }
+    if (action === "stop") {
+      studioView().hideDecision = true; s.status = "paused"; await persist(s);
+      if (s.step === "8") { renderStudio(); revealStudioFindings([`8:${progressMeaningId(d)}`]); }
+      return;
+    }
     s.reports[d.reportKey].continued = true;
   } else if (d.kind === "selection") {
     if (action === "stop") {

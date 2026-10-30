@@ -727,12 +727,18 @@ export function applyStudioReviewOverrides(study, trial) {
   return trial;
 }
 
-export function currentStudioFinding(study, paragraphId, occurrenceId, translation, signature = stableSignature(buildStudioDraft(study))) {
+// A finding in the current step's latest trial. In step 8 that is the meaning's trial for its
+// current inputs and repair round; in step 9, a batch tested with the current entry.
+export function currentStudioFinding(study, paragraphId, occurrenceId, translation, signature) {
+  const phase = study.step === "8" ? "8" : "9";
+  const entry = phase === "9" ? signature ?? stableSignature(buildStudioDraft(study)) : null;
   for (const [key, trial] of Object.entries(study.tests ?? {})) {
-    if (!/^9:\d+$/u.test(key) || trial.signature !== signature) continue;
+    if (phase === "9" ? !/^9:\d+$/u.test(key) || trial.signature !== entry : !key.startsWith("8:")) continue;
     const paragraph = trial.translations?.find((t) => t.paragraphId === paragraphId);
     const choice = trial.choices?.find((c) => c.paragraphId === paragraphId && c.occurrenceId === occurrenceId);
-    if (paragraph && choice && (translation === undefined || paragraph.translation === translation)) return { key, trial, choice, translation: paragraph.translation };
+    if (!paragraph || !choice || (translation !== undefined && paragraph.translation !== translation)) continue;
+    if (phase === "8" && (trial.rounds !== (study.rounds?.[key] ?? 0) || trial.signature !== meaningTrialSignature(study, key.slice(2)))) continue;
+    return { key, trial, choice, translation: paragraph.translation };
   }
   return null;
 }

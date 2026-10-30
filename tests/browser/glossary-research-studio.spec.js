@@ -1006,7 +1006,7 @@ test("five-round Stop checkpoints survive reload and reopen for an explicit deci
     s.pendingDecision = { kind: "progress", reportKey: "m1:5", rounds: 5, report: s.reports["m1:5"].report };
     document.querySelector("#app").innerHTML = renderGlossaryResearchStudio(state);
   });
-  await page.getByRole("dialog").getByRole("button", { name: "Stop", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Review the errors yourself", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Review paused research", exact: true })).toBeVisible();
   await mountStudio(page);
@@ -2048,7 +2048,7 @@ test("research progress renders preserve independently opened trial details with
   await expect(first.locator("details")).toHaveAttribute("open", "");
   await expect(second).toHaveAttribute("open", "");
   await expect(second.locator("details")).not.toHaveAttribute("open", "");
-  await page.getByRole("button", { name: "Stop", exact: true }).click();
+  await page.getByRole("button", { name: "Review the errors yourself", exact: true }).click();
   await first.locator("details > summary").click();
   await first.locator(":scope > summary").click();
   // A later render with changed counts/status must retain the user's closed choice too.

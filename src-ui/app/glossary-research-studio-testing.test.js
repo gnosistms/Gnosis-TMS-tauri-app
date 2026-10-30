@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { testMeanings, testCompleteEntry, assessTrial, translateTrial, trialGlossary } from "./glossary-research-studio-testing.js";
-import { newStudioStudy, deduplicatePassages, finalUsage, reviseAssignment, buildStudioDraft, stableSignature, meaningTrialsAreCurrent, entryTrialsAreCurrent, studioGlossaryContext, studyAssignments, entryBatchSignature } from "./glossary-research-studio-workflow.js";
+import { newStudioStudy, deduplicatePassages, finalUsage, reviseAssignment, buildStudioDraft, stableSignature, meaningTrialsAreCurrent, entryTrialsAreCurrent, studioGlossaryContext, studyAssignments, entryBatchSignature, currentStudioFinding, reviewStudioFinding } from "./glossary-research-studio-workflow.js";
 function fixture(size = 1) {
   const s = newStudioStudy({ term: "caminar", sourceLanguage: { code: "es", name: "Spanish" },
     targetLanguage: { code: "en", name: "English" } }, "test");
@@ -227,6 +227,25 @@ test("a step 9 repair that needs an unconfirmed translation stops with a decisio
     offers: [{ candidateId: "s", text: "stroll", meaningId: "m", occurrences: 1 }] });
   assert.equal(s.candidates[0].note, undefined);
   assert.equal(s.candidates[1].confirmed, false);
+});
+
+test("the human can accept or ignore step 8 findings when repairs cannot make them pass", async () => {
+  const s = fixture(2); s.step = "8";
+  const reports = [];
+  const tools = { run: translations, ask: async (question, data) => {
+    if (question.startsWith("Report progress")) { reports.push(question); return { report: "Still failing." }; }
+    if (question.startsWith("Repair failed translations")) return {};
+    return choices(data, "Wrong sense");
+  } };
+  assert.deepEqual(await testMeanings(s, tools), { pending: true });
+  assert.equal(s.pendingDecision.kind, "progress");
+  assert.match(reports[0], /Write the report in English\. Refer to the meaning by its number/);
+  assert.equal(currentStudioFinding({ ...s, rounds: { "8:m": 6 } }, "p0", "o0"), null, "a finding from an earlier round is not current");
+  reviewStudioFinding(s, "accept", "p0", "o0");
+  assert.equal(s.tests["8:m"].passed, false);
+  reviewStudioFinding(s, "ignore", "p1", "o0");
+  assert.equal(s.tests["8:m"].passed, true);
+  assert.equal(meaningTrialsAreCurrent(s), true);
 });
 
 function splitFixture() {

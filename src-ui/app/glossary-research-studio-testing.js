@@ -191,8 +191,8 @@ function repairEvidence(trial) {
 
 async function progressDecision(s, tools, meaning, rounds, trial) {
   const reportKey = `${meaning.id}:${rounds}`;
-  if (!s.reports[reportKey]) s.reports[reportKey] = await tools.ask("Report progress to the human researcher: completed repair rounds (excluding the initial test), candidates added or revised, improvements, and remaining problems. Use only the saved trial evidence. Be concise.",
-    { meaning: decisionMeaning(meaning), rounds, candidates: decisionCandidates(s.candidates.filter((c) => c.meaningIds.includes(meaning.id))), trial: repairEvidence(trial) }, '{"report":"progress report"}');
+  if (!s.reports[reportKey]) s.reports[reportKey] = await tools.ask("Report progress to the human researcher: completed repair rounds (excluding the initial test), candidates added or revised, improvements, and remaining problems. Use only the saved trial evidence. Be concise. Write the report in English. Refer to the meaning by its number and to candidates by their target text; never mention internal meaning, candidate, occurrence or paragraph IDs.",
+    { meaning: { number: meaningNumber(s, meaning.id), ...decisionMeaning(meaning) }, rounds, candidates: decisionCandidates(s.candidates.filter((c) => c.meaningIds.includes(meaning.id))), trial: repairEvidence(trial) }, '{"report":"progress report"}');
   if (!s.reports[reportKey].continued) {
     s.pendingDecision = { kind: "progress", reportKey, rounds, report: s.reports[reportKey].report };
     return true;

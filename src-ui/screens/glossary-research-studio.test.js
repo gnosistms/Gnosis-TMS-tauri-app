@@ -194,7 +194,7 @@ test("current step 9 findings offer accept, ignore and edit; overrides show thei
   } finally { state.glossaryResearchStudio = previous; }
 });
 
-test("a stuck selection offers human review or three more AI rounds; progress questions keep Stop and Continue", () => {
+test("a stuck selection offers human review or three more AI rounds; step 8 progress offers review or five more", () => {
   const previous = state.glossaryResearchStudio;
   try {
     const study = newStudioStudy({ sourceLanguage: { code: "es", name: "Spanish" }, targetLanguage: { code: "en", name: "English" }, term: "gloria" }, "stuck");
@@ -206,7 +206,8 @@ test("a stuck selection offers human review or three more AI rounds; progress qu
     assert.match(html, /data-action="studio:decision:continue"[^>]*>\s*Continue 3 more rounds with AI/u);
     study.step = "8"; study.pendingDecision = { kind: "progress", rounds: 5, reportKey: "m:5", report: "Progress." };
     html = renderGlossaryResearchStudio(state);
-    assert.match(html, /data-action="studio:decision:stop"[^>]*>\s*Stop\s*</u);
+    assert.match(html, /data-action="studio:decision:stop"[^>]*>\s*Review the errors yourself/u);
+    assert.match(html, /data-action="studio:decision:continue"[^>]*>\s*Continue 5 more rounds with AI/u);
     assert(!html.includes("Continue 3 more rounds with AI"));
   } finally { state.glossaryResearchStudio = previous; }
 });

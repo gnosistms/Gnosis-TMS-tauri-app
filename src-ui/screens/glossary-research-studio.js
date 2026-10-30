@@ -132,12 +132,13 @@ function meaningsReport(s) {
 // Below a finding from the current step 9 test the human can overrule the reviewer,
 // stop testing with that paragraph, or edit the entry under test. Older rounds are history.
 function findingActions(s, view, choice, translation, signature) {
-  if (s.step !== "9" || !currentStudioFinding(s, choice.paragraphId, choice.occurrenceId, translation, signature)) return "";
+  if (!["8", "9"].includes(s.step) || !currentStudioFinding(s, choice.paragraphId, choice.occurrenceId, translation, signature)) return "";
   const id = `${encodeURIComponent(choice.paragraphId)}:${encodeURIComponent(choice.occurrenceId)}`;
   const override = studioReviewOverride(s, choice.paragraphId, choice.occurrenceId, translation);
   const disabled = view.busy;
   if (override) return `<div class="studio-finding-actions"><p>${override === "accepted" ? "You marked this translation as acceptable." : "Ignored. This paragraph is no longer used for testing."}</p>${button("Undo", `review-undo:${id}`, { disabled })}</div>`;
-  return `<div class="studio-finding-actions">${button("Mark this translation as acceptable", `review-accept:${id}`, { disabled })}${button("Ignore this error", `review-ignore:${id}`, { disabled })}${button("Edit glossary entry", `edit-entry:${id}`, { disabled })}</div>`;
+  // The entry editor changes the complete entry, which only step 9 tests.
+  return `<div class="studio-finding-actions">${button("Mark this translation as acceptable", `review-accept:${id}`, { disabled })}${button("Ignore this error", `review-ignore:${id}`, { disabled })}${s.step === "9" ? button("Edit glossary entry", `edit-entry:${id}`, { disabled }) : ""}</div>`;
 }
 
 function trialFindings(trial, s, view, key, signature) {
@@ -424,7 +425,8 @@ function modal(s, view) {
     body = `<p>${e(decision?.report ?? "The batch still has failures after three repair rounds. You can stop and resume later, edit the research using Back, or continue testing.")}</p>`;
     actions = decision?.kind === "selection"
       ? button("Review the errors yourself", "decision:stop") + primaryButton("Continue 3 more rounds with AI", "studio:decision:continue")
-      : button("Stop", "decision:stop") + primaryButton("Continue", "studio:decision:continue");
+      : s.step === "8" ? button("Review the errors yourself", "decision:stop") + primaryButton("Continue 5 more rounds with AI", "studio:decision:continue")
+        : button("Stop", "decision:stop") + primaryButton("Continue", "studio:decision:continue");
   }
   return `<div class="modal-backdrop"><section class="card modal-card studio-modal" role="dialog" aria-modal="true" aria-labelledby="studio-question" data-modal-dialog="studio-question" tabindex="-1"><div class="card__body stack"><h2 id="studio-question">${e(title)}</h2>${body}<div class="modal__actions">${actions}</div>${view.error ? `<p role="alert">${e(view.error)}</p>` : ""}</div></section></div>`;
 }
