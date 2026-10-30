@@ -173,7 +173,7 @@ test("current step 9 findings offer accept, ignore and edit; overrides show thei
     for (const action of ["review-accept", "review-ignore", "edit-entry"]) {
       assert.equal(html.match(new RegExp(`data-action="studio:${action}:a:o0"`, "gu"))?.length, 2, `${action} in the work list and the findings report`);
     }
-    for (const label of ["Mark this translation as acceptable.", "Ignore this error.", "Edit glossary entry."]) assert(html.includes(label));
+    for (const label of ["Mark this translation as acceptable", "Ignore this error", "Edit glossary entry"]) assert(html.includes(`>${label}<`), label);
     const older = html.slice(html.indexOf("An older rendering"), html.indexOf("The fame"));
     assert(older.includes("Used the wrong meaning") && !older.includes("studio:review-accept"), "an older round stays history");
 

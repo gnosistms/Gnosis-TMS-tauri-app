@@ -2367,11 +2367,11 @@ test("reviewing stuck findings yourself can accept or ignore them and finish ste
   await page.getByRole("dialog").getByRole("button", { name: "Review the errors yourself", exact: true }).click();
   const second = page.locator('details[data-studio-disclosure="9:15"]');
   await expect(second).toHaveAttribute("open", "");
-  await second.getByRole("button", { name: "Mark this translation as acceptable.", exact: true }).click();
+  await second.getByRole("button", { name: "Mark this translation as acceptable", exact: true }).click();
   await expect(second.getByText("You marked this translation as acceptable.", { exact: true })).toBeVisible();
   const third = page.locator('details[data-studio-disclosure="9:30"]');
   await third.locator(":scope > summary").click();
-  await third.getByRole("button", { name: "Ignore this error.", exact: true }).click();
+  await third.getByRole("button", { name: "Ignore this error", exact: true }).click();
   await expect(page.getByRole("button", { name: "Save and continue", exact: true })).toBeEnabled();
   const result = await page.evaluate(async () => {
     const { state } = await import(`/${"app"}/state.js`); const s = state.glossaryResearchStudio.study;
@@ -2384,7 +2384,7 @@ test("reviewing stuck findings yourself can accept or ignore them and finish ste
 test("editing the entry from a finding changes only the study and replaces the stuck question", async ({ page }) => {
   await mountReviewedEntryStudy(page);
   await page.getByRole("dialog").getByRole("button", { name: "Review the errors yourself", exact: true }).click();
-  await page.locator('details[data-studio-disclosure="9:15"]').getByRole("button", { name: "Edit glossary entry.", exact: true }).click();
+  await page.locator('details[data-studio-disclosure="9:15"]').getByRole("button", { name: "Edit glossary entry", exact: true }).click();
   const editor = page.locator('[data-modal-dialog="glossary-term-editor"]');
   await expect(editor).toContainText("Edit Term");
   await expect(editor).toContainText("This edits the entry tested in step 9.");

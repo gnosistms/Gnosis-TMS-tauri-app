@@ -136,7 +136,7 @@ function findingActions(s, view, choice, translation, signature) {
   const override = studioReviewOverride(s, choice.paragraphId, choice.occurrenceId, translation);
   const disabled = view.busy;
   if (override) return `<div class="studio-finding-actions"><p>${override === "accepted" ? "You marked this translation as acceptable." : "Ignored. This paragraph is no longer used for testing."}</p>${button("Undo", `review-undo:${id}`, { disabled })}</div>`;
-  return `<div class="studio-finding-actions">${button("Mark this translation as acceptable.", `review-accept:${id}`, { disabled })}${button("Ignore this error.", `review-ignore:${id}`, { disabled })}${button("Edit glossary entry.", `edit-entry:${id}`, { disabled })}</div>`;
+  return `<div class="studio-finding-actions">${button("Mark this translation as acceptable", `review-accept:${id}`, { disabled })}${button("Ignore this error", `review-ignore:${id}`, { disabled })}${button("Edit glossary entry", `edit-entry:${id}`, { disabled })}</div>`;
 }
 
 function trialFindings(trial, s, view, key, signature) {
