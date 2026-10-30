@@ -171,6 +171,55 @@ test("Vietnamese lexical phrase spans allow surrounding quantifiers and choose t
   assert.equal(strict.choices[1].passed, true);
 });
 
+function splitFixture() {
+  const s = fixture(); s.scope.targetLanguage = { code: "vi", name: "Vietnamese" };
+  s.candidates = [{ id: "c", text: "sự giằng co giữa các mặt đối lập", meaningIds: ["m"], selected: true, retained: true, confirmed: true }];
+  return s;
+}
+const splitRendering = "sự giằng co dữ dội giữa các mặt đối lập";
+
+test("a confirmed form split by words that target grammar places inside it passes only when the reviewer passes it", async () => {
+  const s = splitFixture();
+  const assess = (translation, problem = "") => assessTrial(s, { ask: async (question, data) => {
+    assert.match(question, /split rendering is correct, not an error/);
+    return { choices: data.assignments.map((a) => ({ ...a, candidateId: "c", rendered: translation, problem })) };
+  } }, [{ paragraphId: "p0", source: s.passages[0].text, translation }], s.assignments, s.candidates, "9:0");
+  const passed = await assess(splitRendering);
+  assert.equal(passed.passed, true);
+  assert.equal(passed.choices[0].splitForm, "sự giằng co … giữa các mặt đối lập");
+  assert.deepEqual([passed.choices[0].targetStart, passed.choices[0].targetEnd], [0, splitRendering.length]);
+  assert.equal((await assess(splitRendering, "The source has no adjective here.")).passed, false);
+  for (const translation of ["sự giằng co một hai ba bốn năm giữa các mặt đối lập", "sự giằng co dữ dội; giữa các mặt đối lập", "sự giằng co dữ dội giữa các mặt khác"]) {
+    const result = await assess(translation);
+    assert.equal(result.passed, false, translation);
+    assert.equal(result.choices[0].splitForm, undefined, translation);
+  }
+});
+
+test("a passing split rendering puts a gap in the candidate and retests it in steps 8 and 9", async () => {
+  const s = splitFixture();
+  const run = async (_kind, payload) => ({ rows: payload.rows.map((r) => ({ rowId: r.rowId, translatedText: splitRendering })) });
+  const assessed = [];
+  const tools = { run, ask: async (_question, data) => {
+    assessed.push(data.candidates.map((c) => c.text));
+    return { choices: data.assignments.map((a) => ({ ...a, candidateId: "c", rendered: splitRendering, problem: "" })) };
+  } };
+  await testMeanings(s, tools);
+  assert.equal(s.candidates[0].text, "sự giằng co … giữa các mặt đối lập");
+  assert.deepEqual(assessed, [["sự giằng co giữa các mặt đối lập"], ["sự giằng co … giữa các mặt đối lập"]]);
+  assert.equal(s.tests["8:m"].passed, true);
+  assert.equal(s.tests["8:m"].choices[0].splitForm, undefined);
+  const report = (step) => Object.values(s.reports).find((r) => r.kind === "usage-notes" && r.step === step)?.summary;
+  assert.match(report("8"), /Changed "sự giằng co giữa các mặt đối lập" to "sự giằng co … giữa các mặt đối lập"/);
+
+  s.candidates[0].text = "sự giằng co giữa các mặt đối lập";
+  assert.deepEqual(await testCompleteEntry(s, tools), { complete: true, paragraphs: 1, occurrences: 1 });
+  assert.equal(s.candidates[0].text, "sự giằng co … giữa các mặt đối lập");
+  assert.deepEqual(buildStudioDraft(s).targetTerms, ["sự giằng co … giữa các mặt đối lập"]);
+  assert.match(report("9"), /Changed/);
+  assert.equal(entryTrialsAreCurrent(s), true);
+});
+
 test("human selection defaults reach assessment and repair in both phases and invalidate focused trials", async () => {
   const s = fixture(); s.generalNote = "Prefer planet whenever plausible.";
   let fail = true; let translated = 0; const questions = [];

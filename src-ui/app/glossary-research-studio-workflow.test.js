@@ -1,5 +1,5 @@
 import test from "node:test";
-import { studioDependentSteps, clearStudioDependents, startStudioReResearch } from "./glossary-research-studio-workflow.js";
+import { studioDependentSteps, clearStudioDependents, startStudioReResearch, exactTargetOccurrences, studioSplitForms, mergeStudioGapForms } from "./glossary-research-studio-workflow.js";
 import assert from "node:assert/strict";
 
 import { newStudioStudy, exactOccurrences, deduplicatePassages, researchSample,
@@ -491,4 +491,16 @@ test("step 8 has nothing to choose only with one meaning and one candidate word"
   assert.equal(studioSingleWordCandidates(s), null, "two words leave a choice");
   s.candidates = [{ id: "a", text: "walk", meaningIds: ["m", "n"] }]; s.meanings.push({ id: "n" });
   assert.equal(studioSingleWordCandidates(s), null, "two meanings are tested separately");
+});
+
+test("split forms open one more gap between words and merge into one gapped form", () => {
+  assert.deepEqual(studioSplitForms("a b c"), ["a … b c", "a b … c"]);
+  assert.deepEqual(studioSplitForms("a … b c"), ["a … b … c"]);
+  assert.deepEqual(studioSplitForms("word"), []);
+  assert.equal(mergeStudioGapForms("a b c", "a … b c"), "a … b c");
+  assert.equal(mergeStudioGapForms("a … b c", "a b … c"), "a … b … c");
+  assert.equal(mergeStudioGapForms("a b c", "x … y"), "a b c");
+  const text = "Có sự giằng co dữ dội giữa các mặt đối lập.";
+  assert.deepEqual(exactTargetOccurrences(text, ["sự giằng co … giữa các mặt đối lập"], "vi").map((o) => o.surface), ["sự giằng co dữ dội giữa các mặt đối lập"]);
+  assert.deepEqual(exactTargetOccurrences(text, ["sự giằng co giữa các mặt đối lập"], "vi"), []);
 });

@@ -1,5 +1,5 @@
 import { focusedSample } from "./glossary-research-studio-sampling.js";
-import { buildEditorGlossaryModel, findLongestGlossaryMatches } from "./editor-glossary-highlighting.js";
+import { buildEditorGlossaryModel, findGlossaryTargetFormOccurrences, findLongestGlossaryMatches, glossaryTermWithoutGaps } from "./editor-glossary-highlighting.js";
 
 export const STUDIO_TRANSLATION_CONTRACT_VERSION = 3;
 export const STUDIO_DICTIONARY_REVIEW_VERSION = 3;
@@ -349,6 +349,57 @@ export function exactOccurrences(text, forms, languageCode = "es") {
     id: `o${index}`, start: match.start, end: match.end,
     surface: text.slice(match.start, match.end),
   }));
+}
+
+// Target forms may contain the editor's "…" gap, which allows words that target
+// grammar places inside the form. Pieces keep the exact spelling check.
+export function exactTargetOccurrences(text, forms, languageCode) {
+  const normal = (value) => value.normalize("NFC").toLocaleLowerCase().replace(/\s+/gu, " ").trim();
+  return findGlossaryTargetFormOccurrences(text, forms, languageCode).filter((match) => match.formIndexes.some((index) =>
+    normal(glossaryTermWithoutGaps(forms[index])) === normal(match.pieces.map((piece) => text.slice(piece.start, piece.end)).join(" "))))
+    .map((match, index) => ({ id: `o${index}`, start: match.start, end: match.end, pieces: match.pieces,
+      surface: text.slice(match.start, match.end) }));
+}
+
+const isGapWord = (word) => word === "…" || word === "...";
+function gapLayout(form) {
+  const words = []; const gaps = new Set();
+  for (const word of String(form).trim().split(/\s+/u)) isGapWord(word) ? gaps.add(words.length) : words.push(word);
+  return { words, gaps };
+}
+const gapLayoutText = (words, gaps) => words.flatMap((word, i) => gaps.has(i) ? ["…", word] : [word]).join(" ");
+
+// Each way to open one more gap between two words of a target form.
+export function studioSplitForms(form) {
+  const { words, gaps } = gapLayout(form);
+  return words.slice(1).map((_, i) => i + 1).filter((i) => !gaps.has(i)).map((i) => gapLayoutText(words, new Set([...gaps, i])));
+}
+
+// A candidate rendered with words inside it keeps one form with every observed gap.
+export function mergeStudioGapForms(form, split) {
+  const base = gapLayout(form); const added = gapLayout(split);
+  if (base.words.join(" ") !== added.words.join(" ")) return form;
+  return gapLayoutText(base.words, new Set([...base.gaps, ...added.gaps]));
+}
+
+// Steps 8 and 9 pass a rendering split by words that target grammar requires.
+// The candidate then gets the gap, so the editor matches such renderings too.
+export function applyStudioSplitForms(study, choices) {
+  const changes = [];
+  for (const choice of choices) {
+    if (!choice.passed || !choice.splitForm) continue;
+    const candidate = study.candidates.find((c) => c.id === choice.candidateId);
+    if (!candidate) continue;
+    const from = candidate.text; const to = mergeStudioGapForms(from, choice.splitForm);
+    if (to === from) continue;
+    for (const c of study.candidates) if (c.text === from) c.text = to;
+    changes.push({ from, to, rendered: choice.rendered });
+  }
+  return changes;
+}
+
+export function studioSplitFormReport(changes) {
+  return changes.map(({ from, to, rendered }) => `Changed "${from}" to "${to}": target grammar placed words inside it ("${rendered}"), and "…" lets the glossary match them.`).join(" ");
 }
 
 export function deduplicatePassages(passages, forms, languageCode = "es") {
