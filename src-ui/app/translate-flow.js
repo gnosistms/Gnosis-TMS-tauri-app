@@ -176,7 +176,10 @@ import {
 } from "./editor-state-flow.js";
 import { applyStructuralEditorChange } from "./editor-structural-change-flow.js";
 import { syncEditorRowTextareaHeight } from "./autosize.js";
-import { saveStoredEditorFontSizePx } from "./editor-preferences.js";
+import {
+  saveStoredEditorCollapsedLanguageCodes,
+  saveStoredEditorFontSizePx,
+} from "./editor-preferences.js";
 import { ensureEditorRowReadyForActivation } from "./editor-row-sync-flow.js";
 import {
   noteEditorBackgroundSyncScrollActivity as noteEditorBackgroundSyncScrollActivityFlow,
@@ -1465,6 +1468,7 @@ export function toggleEditorLanguageCollapsed(languageCode) {
     ...state.editorChapter,
     collapsedLanguageCodes,
   };
+  saveStoredEditorCollapsedLanguageCodes(state.editorChapter.chapterId, collapsedLanguageCodes);
 }
 
 export async function persistEditorRowOnBlur(render, rowId, options = {}) {
