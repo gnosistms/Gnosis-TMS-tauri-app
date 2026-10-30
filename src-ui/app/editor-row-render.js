@@ -391,8 +391,8 @@ function renderRowTextStyleButtons(row, language) {
   `);
   }
 
-  // Two rows: the formatting styles on top, then the inserts with the save
-  // shortcut in the lower right.
+  // Two rows: the formatting styles on top with the save shortcut at the right,
+  // close to the text, then the inserts below.
   return `
     <div class="translation-row-text-style-actions">
       <div class="translation-row-text-style-actions__row translation-row-text-style-actions__row--styles">
@@ -446,6 +446,7 @@ function renderRowTextStyleButtons(row, language) {
             `
             : ""
         }
+        <span class="translation-row-text-style-actions__hint">${isMacPlatform() ? "Command" : "Ctrl"} + S to save</span>
       </div>
       <div class="translation-row-text-style-actions__row translation-row-text-style-actions__row--inserts">
         ${
@@ -457,7 +458,6 @@ function renderRowTextStyleButtons(row, language) {
             `
             : ""
         }
-        <span class="translation-row-text-style-actions__hint">${isMacPlatform() ? "Command" : "Ctrl"} + S to save</span>
       </div>
     </div>
   `;
