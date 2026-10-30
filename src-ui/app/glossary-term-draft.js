@@ -490,6 +490,26 @@ export async function openGlossaryTermEditor(render, termId = null, options = {}
   render();
 }
 
+// The research studio edits its entry under test in this same modal. Saving hands the
+// fields back to the study; the glossary itself is written only in research step 11.
+export function openStudioEntryEditor(render, entry, studioEntry) {
+  state.glossaryTermEditor = { ...createGlossaryTermEditorModalState(entry, { notice: studioEntry.notice ?? "" }), studioEntry };
+  render();
+}
+
+async function submitStudioEntryEditor(render, draft) {
+  const { targetTerms, targetVariantNotes } = sanitizeEditableTargetTermPairs(draft.targetTerms, draft.targetVariantNotes);
+  draft.status = "loading"; draft.error = ""; render();
+  try {
+    await notifyStudioEditor("entry", draft.studioEntry, { targetTerms, targetVariantNotes,
+      notesToTranslators: draft.notesToTranslators, footnote: draft.footnote });
+    if (state.glossaryTermEditor === draft) resetGlossaryTermEditor();
+  } catch (error) {
+    if (state.glossaryTermEditor === draft) Object.assign(draft, { status: "idle", error: error?.message ?? String(error) });
+  }
+  render();
+}
+
 export function cancelGlossaryTermEditor(render) {
   const researchOrigin = state.glossaryTermEditor?.researchOrigin;
   const researchDraft = researchOrigin ? structuredClone(state.glossaryTermEditor) : null;
@@ -731,6 +751,7 @@ export async function submitGlossaryTermEditor(render, { awaitCompletion = false
   const team = selectedTeam();
   const repoName = selectedGlossaryRepoName();
   const draft = state.glossaryTermEditor;
+  if (draft?.isOpen && draft.studioEntry) return submitStudioEntryEditor(render, draft);
   if (!draft?.isOpen || !Number.isFinite(team?.installationId) || !repoName
     || draft.glossaryId !== state.glossaryEditor?.glossaryId
     || (draft.teamId != null && draft.teamId !== team.id)

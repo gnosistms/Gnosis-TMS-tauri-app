@@ -746,3 +746,16 @@ test("focused shortening sees and preserves other meanings that share the same v
   }), /Stop after checking repair input/);
   assert(s.candidates.every((c) => c.note === "Movement on foot; also the established figurative sense."));
 });
+
+test("accepted translations and ignored paragraphs settle an entry batch without a repair round", async () => {
+  const s = fixture(2);
+  s.acceptedTranslations = { "p0:o0": ["walk"] };
+  s.ignoredTestParagraphIds = ["p1"];
+  let asks = 0;
+  const result = await testCompleteEntry(s, { run: translations, ask: async (_q, data) => { asks += 1; return choices(data, "The reviewer disagrees"); } });
+  assert.equal(result.complete, true);
+  assert.equal(asks, 1, "only the assessment ran");
+  assert.deepEqual(s.tests["9:0"].choices.map((c) => [c.override, c.reviewerPassed, c.problem]),
+    [["accepted", false, "The reviewer disagrees"], ["ignored", false, "The reviewer disagrees"]]);
+  assert.deepEqual(finalUsage(s), { c: { occurrences: 1, paragraphs: 1 } });
+});

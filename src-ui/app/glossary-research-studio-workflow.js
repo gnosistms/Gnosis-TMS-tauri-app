@@ -536,6 +536,57 @@ export function buildStudioDraft(study, candidates = draftCandidates(study)) {
   };
 }
 
+// Term editor changes to the entry under test, mapped onto the study's candidates.
+// Order and notes follow the visible text; changing a text in place renames it; a new
+// translation joins the meaning the editor was opened for. Removed translations stay
+// in the study unconfirmed, so earlier research still shows them.
+export function applyStudioEntryEdit(study, edit, meaningId) {
+  const before = buildStudioDraft(study);
+  const targets = (edit.targetTerms ?? []).map((text) => String(text ?? "").trim());
+  const notes = targets.map((_, index) => String(edit.targetVariantNotes?.[index] ?? "").trim());
+  if (!targets.length || targets.some((text) => !text)) throw new Error("Enter at least one translation. An empty translation cannot be tested.");
+  const active = new Set(activeMeanings(study).map((m) => m.id));
+  const inDraft = (c) => c.confirmed && c.retained !== false && c.meaningIds.some((id) => active.has(id));
+  const candidates = structuredClone(study.candidates);
+  const drafted = candidates.filter(inDraft);
+  const removed = before.targetTerms.filter((text) => !targets.includes(text));
+  const renamed = new Map();
+  targets.forEach((text, index) => {
+    const old = before.targetTerms[index];
+    if (!before.targetTerms.includes(text) && removed.includes(old) && ![...renamed.values()].includes(old)) renamed.set(text, old);
+  });
+  const renamedFrom = new Map([...renamed].map(([text, old]) => [old, text]));
+  for (const c of drafted) {
+    if (renamedFrom.has(c.text)) c.text = renamedFrom.get(c.text);
+    else if (removed.includes(c.text)) c.confirmed = false;
+  }
+  for (const [index, text] of targets.entries()) {
+    const previous = renamed.has(text) ? renamed.get(text) : text;
+    const known = before.targetTerms.indexOf(previous);
+    if (known < 0) {
+      if (!active.has(meaningId)) throw new Error("Choose a finding for an active meaning before adding a translation.");
+      const reused = candidates.find((c) => c.text === text && c.meaningIds.includes(meaningId));
+      if (reused) Object.assign(reused, { confirmed: true, retained: true, selected: true, note: notes[index] });
+      else candidates.push({ id: `human-entry-${globalThis.crypto.randomUUID()}`, text, note: notes[index], meaningIds: [meaningId],
+        confirmed: true, selected: true, retained: true });
+    } else if (notes[index] !== before.targetVariantNotes[known]) {
+      for (const c of candidates) if (inDraft(c) && c.text === text) c.note = notes[index];
+    }
+  }
+  const rank = (c) => targets.indexOf(c.text);
+  const ordered = candidates.filter((c) => rank(c) >= 0).sort((a, b) => rank(a) - rank(b));
+  let next = 0;
+  const reordered = candidates.map((c) => rank(c) >= 0 ? ordered[next++] : c);
+  for (const meaning of activeMeanings(study)) {
+    if (!reordered.some((c) => inDraft(c) && c.meaningIds.includes(meaning.id))) {
+      throw new Error(`Meaning ${meaningNumber(study, meaning.id)} would have no translation. Keep at least one translation for each meaning.`);
+    }
+  }
+  study.candidates = reordered;
+  study.generalNote = edit.notesToTranslators ?? "";
+  study.footnote = edit.footnote ?? "";
+}
+
 function currentEntryBatches(study) {
   const assignments = studyAssignments(study);
   const paragraphs = study.passages.filter((p) => assignments.some((a) => a.paragraphId === p.id));
@@ -560,6 +611,54 @@ export function entryTrialsAreCurrent(study) {
   return batches.length > 0 && batches.every((input) => currentEntryTrial(study, input, signature));
 }
 
+// The human may overrule the reviewer for one exact translation, or stop using a
+// paragraph as test evidence. Overrides change verdicts only, never test inputs,
+// so saved trials stay current and nothing is translated again.
+export function studioReviewOverride(study, paragraphId, occurrenceId, translation) {
+  if ((study.ignoredTestParagraphIds ?? []).includes(paragraphId)) return "ignored";
+  return (study.acceptedTranslations?.[`${paragraphId}:${occurrenceId}`] ?? []).includes(translation) ? "accepted" : null;
+}
+
+export function applyStudioReviewOverrides(study, trial) {
+  if (!Array.isArray(trial?.choices)) return trial;
+  trial.choices = trial.choices.map(({ override: _override, reviewerPassed, ...choice }) => {
+    const passed = reviewerPassed ?? choice.passed;
+    const translation = trial.translations?.find((t) => t.paragraphId === choice.paragraphId)?.translation;
+    const override = studioReviewOverride(study, choice.paragraphId, choice.occurrenceId, translation);
+    return override === "ignored" || (override === "accepted" && !passed)
+      ? { ...choice, passed: true, reviewerPassed: passed, override } : { ...choice, passed };
+  });
+  trial.passed = trial.choices.every((choice) => choice.passed);
+  return trial;
+}
+
+export function currentStudioFinding(study, paragraphId, occurrenceId, translation, signature = stableSignature(buildStudioDraft(study))) {
+  for (const [key, trial] of Object.entries(study.tests ?? {})) {
+    if (!/^9:\d+$/u.test(key) || trial.signature !== signature) continue;
+    const paragraph = trial.translations?.find((t) => t.paragraphId === paragraphId);
+    const choice = trial.choices?.find((c) => c.paragraphId === paragraphId && c.occurrenceId === occurrenceId);
+    if (paragraph && choice && (translation === undefined || paragraph.translation === translation)) return { key, trial, choice, translation: paragraph.translation };
+  }
+  return null;
+}
+
+export function reviewStudioFinding(study, action, paragraphId, occurrenceId) {
+  const finding = currentStudioFinding(study, paragraphId, occurrenceId);
+  if (!finding) throw new Error("This finding is no longer part of the current test.");
+  const key = `${paragraphId}:${occurrenceId}`;
+  const ignored = study.ignoredTestParagraphIds ?? [];
+  const accepted = study.acceptedTranslations?.[key] ?? [];
+  if (action === "accept") study.acceptedTranslations = { ...study.acceptedTranslations, [key]: [...new Set([...accepted, finding.translation])] };
+  else if (action === "ignore") study.ignoredTestParagraphIds = [...new Set([...ignored, paragraphId])];
+  else if (action === "undo" && ignored.includes(paragraphId)) study.ignoredTestParagraphIds = ignored.filter((id) => id !== paragraphId);
+  else if (action === "undo") {
+    study.acceptedTranslations = { ...study.acceptedTranslations, [key]: accepted.filter((text) => text !== finding.translation) };
+    if (!study.acceptedTranslations[key].length) delete study.acceptedTranslations[key];
+  } else throw new Error("Unknown review action.");
+  for (const trial of [...Object.values(study.tests ?? {}), ...Object.values(study.entryValidation?.best?.tests ?? {})]) applyStudioReviewOverrides(study, trial);
+  return finding.key;
+}
+
 export function finalUsage(study, { groupByText = false } = {}) {
   const signature = stableSignature(buildStudioDraft(study));
   const keys = new Map(study.candidates.map((c) => [c.id, groupByText ? c.text : c.id]));
@@ -573,6 +672,8 @@ export function finalUsage(study, { groupByText = false } = {}) {
       if (seen.has(key)) throw new Error("A research occurrence was counted twice.");
       if (choice.preservedSourceSpelling && input.assignments.some((a) => a.paragraphId === choice.paragraphId
         && a.occurrenceId === choice.occurrenceId && a.preserveSourceSpelling)) { seen.add(key); continue; }
+      // Ignored paragraphs are not evidence; an accepted rendering may use no listed candidate.
+      if (choice.override === "ignored" || (choice.override === "accepted" && !keys.has(choice.candidateId))) { seen.add(key); continue; }
       if (!keys.has(choice.candidateId)) throw new Error("A test selected an unknown candidate.");
       seen.add(key);
       const count = counts[keys.get(choice.candidateId)];

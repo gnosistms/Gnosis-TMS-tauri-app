@@ -2339,6 +2339,69 @@ test("Continue extends only the failed batches presented in a grouped three-roun
   expect(allowances).toEqual({ "9:15": 6, "9:30": 6 });
 });
 
+// The paused study with saved trials: batch 1 passed; batches 2 and 3 each fail one occurrence.
+async function mountReviewedEntryStudy(page) {
+  await mountEntryPassStudy(page, true);
+  await page.evaluate(async () => {
+    const { state } = await import(`/${"app"}/state.js`);
+    const { buildStudioDraft, stableSignature, entryBatchSignature, studyAssignments } = await import(`/${"app"}/glossary-research-studio-workflow.js`);
+    const { renderGlossaryResearchStudio } = await import(`/${"screens"}/glossary-research-studio.js`);
+    const s = state.glossaryResearchStudio.study;
+    const assignments = studyAssignments(s);
+    const signature = stableSignature(buildStudioDraft(s));
+    for (const index of [0, 15, 30]) {
+      const batch = s.passages.slice(index, index + 15);
+      const members = assignments.filter((a) => batch.some((p) => p.id === a.paragraphId));
+      const fails = (id) => index > 0 && id === `p${index}`;
+      s.tests[`9:${index}`] = { phase: "9", signature, batchSignature: entryBatchSignature(s, batch, members), rounds: index ? 3 : 0, passed: index === 0,
+        translations: batch.map((p) => ({ paragraphId: p.id, source: p.text, translation: `Tôi đi bộ ${p.id}.` })),
+        choices: members.map((a) => ({ paragraphId: a.paragraphId, occurrenceId: a.occurrenceId, candidateId: "c1", rendered: "đi bộ",
+          passed: !fails(a.paragraphId), problem: fails(a.paragraphId) ? "The reviewer disagrees" : "" })) };
+    }
+    document.querySelector("#app").innerHTML = renderGlossaryResearchStudio(state);
+  });
+}
+
+test("reviewing stuck findings yourself can accept or ignore them and finish step9 without new translations", async ({ page }) => {
+  await mountReviewedEntryStudy(page);
+  await page.getByRole("dialog").getByRole("button", { name: "Review the errors yourself", exact: true }).click();
+  const second = page.locator('details[data-studio-disclosure="9:15"]');
+  await expect(second).toHaveAttribute("open", "");
+  await second.getByRole("button", { name: "Mark this translation as acceptable.", exact: true }).click();
+  await expect(second.getByText("You marked this translation as acceptable.", { exact: true })).toBeVisible();
+  const third = page.locator('details[data-studio-disclosure="9:30"]');
+  await third.locator(":scope > summary").click();
+  await third.getByRole("button", { name: "Ignore this error.", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Save and continue", exact: true })).toBeEnabled();
+  const result = await page.evaluate(async () => {
+    const { state } = await import(`/${"app"}/state.js`); const s = state.glossaryResearchStudio.study;
+    return { decision: s.pendingDecision, accepted: s.acceptedTranslations, ignored: s.ignoredTestParagraphIds, complete: s.steps["9"].value.complete,
+      calls: window.studioCalls.filter((c) => c.command === "start_glossary_studio_tool").length };
+  });
+  expect(result).toEqual({ decision: null, accepted: { "p15:o0": ["Tôi đi bộ p15."] }, ignored: ["p30"], complete: true, calls: 0 });
+});
+
+test("editing the entry from a finding changes only the study and replaces the stuck question", async ({ page }) => {
+  await mountReviewedEntryStudy(page);
+  await page.getByRole("dialog").getByRole("button", { name: "Review the errors yourself", exact: true }).click();
+  await page.locator('details[data-studio-disclosure="9:15"]').getByRole("button", { name: "Edit glossary entry.", exact: true }).click();
+  const editor = page.locator('[data-modal-dialog="glossary-term-editor"]');
+  await expect(editor).toContainText("Edit Term");
+  await expect(editor).toContainText("This edits the entry tested in step 9.");
+  await expect(editor.locator('[data-glossary-term-variant-input][data-variant-side="source"]').first()).toBeDisabled();
+  await editor.locator("[data-glossary-term-variant-note-input]").first().fill("Use for walking on foot.");
+  await editor.locator("[data-glossary-term-notes-input]").fill("Edited general note.");
+  await editor.getByRole("button", { name: "Save Term", exact: true }).click();
+  await expect(editor).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Resume this step", exact: true })).toBeEnabled();
+  const result = await page.evaluate(async () => {
+    const { state } = await import(`/${"app"}/state.js`); const s = state.glossaryResearchStudio.study;
+    return { note: s.candidates[0].note, generalNote: s.generalNote, decision: s.pendingDecision,
+      calls: window.studioCalls.filter((c) => ["start_glossary_studio_tool", "upsert_gtms_glossary_term"].includes(c.command)).length };
+  });
+  expect(result).toEqual({ note: "Use for walking on foot.", generalNote: "Edited general note.", decision: null, calls: 0 });
+});
+
 
 test("bibliography reads published references and performs no author-verification calls", async ({ page }) => {
   await mountStudio(page);

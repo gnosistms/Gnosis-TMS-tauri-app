@@ -1,8 +1,10 @@
 import { studioActivityItems } from "../app/glossary-research-studio-activity.js";
 import { studioResultPresentation, studioNarrativeText } from "../app/glossary-research-studio-result.js";
 import { escapeHtml, primaryButton, secondaryButton, errorButton, actionNavButton, pageShell, loadingSpinner } from "../lib/ui.js";
+import { renderGlossaryTermEditorModal } from "./glossary-term-editor-modal.js";
 import { studioView, studioCanVisitStep } from "../app/glossary-research-studio-flow.js";
-import { STUDIO_STEPS, STUDIO_DICTIONARY_REVIEW_VERSION, activeMeanings, meaningNumber, studioTrialRoundLabel, sourceCollisions, selectedForms, uniqueTexts, witnessedSplitForms, reviewCompoundReport, buildStudioDraft, stableSignature, studioSourceContext, studioContextRequest, meaningTrialSignature, meaningTrialsAreCurrent, entryBatchSignature, entryTrialsAreCurrent, studioStepNumber, studioStepStatusLabel } from "../app/glossary-research-studio-workflow.js";
+import { STUDIO_STEPS, STUDIO_DICTIONARY_REVIEW_VERSION, activeMeanings, meaningNumber, studioTrialRoundLabel, sourceCollisions, selectedForms, uniqueTexts, witnessedSplitForms, reviewCompoundReport, buildStudioDraft, stableSignature, studioSourceContext, studioContextRequest, meaningTrialSignature, meaningTrialsAreCurrent, entryBatchSignature, entryTrialsAreCurrent, studioStepNumber, studioStepStatusLabel,
+  currentStudioFinding, studioReviewOverride } from "../app/glossary-research-studio-workflow.js";
 import { studioGlossaryEntries } from "../app/glossary-research-studio-query.js";
 import { studyAssignments } from "../app/glossary-research-studio-testing.js";
 import { currentStudioRecommendation, sourceSummaryMustBeSkipped, studioCanRecommendSkip, studioFormsResearchStarted, studioResearchStarted } from "../app/glossary-research-studio-recommendations.js";
@@ -126,7 +128,18 @@ function meaningsReport(s) {
   }).join("");
 }
 
-function trialFindings(trial, s, view, key) {
+// Below a finding from the current step 9 test the human can overrule the reviewer,
+// stop testing with that paragraph, or edit the entry under test. Older rounds are history.
+function findingActions(s, view, choice, translation, signature) {
+  if (s.step !== "9" || !currentStudioFinding(s, choice.paragraphId, choice.occurrenceId, translation, signature)) return "";
+  const id = `${encodeURIComponent(choice.paragraphId)}:${encodeURIComponent(choice.occurrenceId)}`;
+  const override = studioReviewOverride(s, choice.paragraphId, choice.occurrenceId, translation);
+  const disabled = view.busy;
+  if (override) return `<div class="studio-finding-actions"><p>${override === "accepted" ? "You marked this translation as acceptable." : "Ignored. This paragraph is no longer used for testing."}</p>${button("Undo", `review-undo:${id}`, { disabled })}</div>`;
+  return `<div class="studio-finding-actions">${button("Mark this translation as acceptable.", `review-accept:${id}`, { disabled })}${button("Ignore this error.", `review-ignore:${id}`, { disabled })}${button("Edit glossary entry.", `edit-entry:${id}`, { disabled })}</div>`;
+}
+
+function trialFindings(trial, s, view, key, signature) {
   const groups = new Map();
   for (const choice of trial.choices ?? []) {
     if (!choice.problem) continue;
@@ -139,7 +152,7 @@ function trialFindings(trial, s, view, key) {
     const translation = trial.translations?.find((p) => p.paragraphId === paragraphId)?.translation;
     return `<section class="studio-entry">${source ? paragraph({ ...source, translation, contextKey: `${key}:finding:${paragraphId}`,
       highlightOccurrences: source.occurrences.filter((o) => choices.some((c) => c.occurrenceId === o.id)) }, s) : ""}
-      ${choices.map((c) => `<div class="studio-finding"><p class="modal__error">${e(c.problem)}</p>
+      ${choices.map((c) => `<div class="studio-finding"><p class="modal__error">${e(c.problem)}</p>${findingActions(s, view, c, translation, signature)}
         ${button("Review meaning", `review-assignment:${encodeURIComponent(c.paragraphId)}:${encodeURIComponent(c.occurrenceId)}`, { disabled: view.busy })}</div>`).join("")}</section>`;
   }).join("")}</section>`;
 }
@@ -193,7 +206,7 @@ function testingReport(s, view, phase = s.step) {
       return `<details class="studio-entry" data-studio-disclosure="${e(key)}"><summary>${stale ? "Recheck pending" : trial.passed ? "Passed" : "Needs review"} · ${label}${trial.rounds != null ? ` · ${studioTrialRoundLabel(trial.rounds)}` : ""} · ${quantity(trial.choices?.length ?? 0, "occurrence")} in ${quantity(trial.translations?.length ?? 0, "paragraph")}</summary>
         ${stale ? phase === "9" ? "<p>This batch has changed glossary guidance or source evidence. It will be rechecked in the next validation pass; unchanged current results are reused.</p>" : "<p>This trial used earlier notes, preferences or meaning assignments and must be rechecked.</p>" : ""}${key.startsWith("8:") ? `<p>${e(s.meanings.find((m) => key === `8:${m.id}`)?.definition)}</p>` : ""}
         ${trial.retainedPassingParagraphs ? `<p>${quantity(trial.retainedPassingParagraphs, "previously passing paragraph")} retained under unchanged research inputs; ${quantity(trial.translations.length - trial.retainedPassingParagraphs, "paragraph")} rechecked this round.</p>` : ""}
-        ${key.startsWith("8:") && s.focusedSamples?.[key.slice(2)] ? `<p>Focused sample: ${trial.translations?.length ?? 0} of ${s.focusedSamples[key.slice(2)].totalParagraphs} available paragraphs. Final entry validation retains the complete sample.</p>${trial.translations?.length < s.focusedSamples[key.slice(2)].totalParagraphs ? button("Test all examples for this meaning", `expand-meaning:${key.slice(2)}`, { disabled: view.busy }) : ""}` : ""}${trialFindings(trial, s, view, key)}<details data-studio-disclosure="${e(key)}:translations"><summary>All trial translations (${quantity(trial.translations?.length ?? 0, "paragraph")})</summary>
+        ${key.startsWith("8:") && s.focusedSamples?.[key.slice(2)] ? `<p>Focused sample: ${trial.translations?.length ?? 0} of ${s.focusedSamples[key.slice(2)].totalParagraphs} available paragraphs. Final entry validation retains the complete sample.</p>${trial.translations?.length < s.focusedSamples[key.slice(2)].totalParagraphs ? button("Test all examples for this meaning", `expand-meaning:${key.slice(2)}`, { disabled: view.busy }) : ""}` : ""}${trialFindings(trial, s, view, key, signature)}<details data-studio-disclosure="${e(key)}:translations"><summary>All trial translations (${quantity(trial.translations?.length ?? 0, "paragraph")})</summary>
         ${(trial.translations ?? []).map((t) => {
           const source = s.passages.find((p) => p.id === t.paragraphId);
           return source ? meaningPassage({ ...source, translation: t.translation, contextKey: `${key}:translation:${t.paragraphId}` }, s, trial.choices ?? []) : paragraph(t, s);
@@ -406,15 +419,30 @@ function modal(s, view) {
   return `<div class="modal-backdrop"><section class="card modal-card studio-modal" role="dialog" aria-modal="true" aria-labelledby="studio-question" data-modal-dialog="studio-question" tabindex="-1"><div class="card__body stack"><h2 id="studio-question">${e(title)}</h2>${body}<div class="modal__actions">${actions}</div>${view.error ? `<p role="alert">${e(view.error)}</p>` : ""}</div></section></div>`;
 }
 
-function reviewOutcomeLists(review, key, s) {
+// The reviewer's verdicts with the human's overrides: an accepted translation counts as correct;
+// an ignored paragraph stays a failure that no longer decides the test.
+function reviewedOccurrences(row, s) {
+  return (row.occurrences ?? []).map((o) => {
+    const override = o.passed ? null : studioReviewOverride(s, row.paragraphId, o.occurrenceId, row.translation);
+    return { ...o, override, passed: o.passed || override === "accepted" };
+  });
+}
+
+function reviewResult(review, s) {
+  const occurrences = review.flatMap((row) => reviewedOccurrences(row, s));
+  const ignored = occurrences.filter((o) => o.override === "ignored").length;
+  return `${occurrences.filter((o) => o.passed).length} of ${occurrences.length} occurrences passed${ignored ? `; ${ignored} ignored` : ""}.`;
+}
+
+function reviewOutcomeLists(review, key, s, view, signature) {
   return [["failed", "Translations that failed to use the correct meaning", false], ["passed", "Translations that used the correct meaning", true]].map(([id, label, passed]) => {
-    const rows = review.map((row) => ({ ...row, occurrences: (row.occurrences ?? []).filter((o) => o.passed === passed) })).filter((row) => row.occurrences.length);
+    const rows = review.map((row) => ({ ...row, occurrences: reviewedOccurrences(row, s).filter((o) => o.passed === passed) })).filter((row) => row.occurrences.length);
     const disclosure = `activity:${JSON.stringify(key)}:${id}`;
     return `<details class="studio-review-outcomes" data-studio-disclosure="${e(disclosure)}"><summary>${label} (${rows.reduce((sum, row) => sum + row.occurrences.length, 0)})</summary>${rows.map((row) => {
       const source = Array.isArray(s.passages) ? s.passages.find((p) => p.id === row.paragraphId) : null;
       return `<section class="studio-entry">${source ? paragraph({ ...source, translation: row.translation, contextKey: `${disclosure}:${row.paragraphId}`,
         highlightOccurrences: (source.occurrences ?? []).filter((o) => row.occurrences.some((r) => r.occurrenceId === o.id)) }, s)
-        : `<p lang="${e(s.scope.targetLanguage.code)}">${e(row.translation)}</p>`}${row.occurrences.filter((o) => o.problem).map((o) => `<p class="modal__error">${e(o.problem)}</p>`).join("")}</section>`;
+        : `<p lang="${e(s.scope.targetLanguage.code)}">${e(row.translation)}</p>`}${row.occurrences.filter((o) => o.problem).map((o) => `<p class="modal__error">${e(o.problem)}</p>${findingActions(s, view, { paragraphId: row.paragraphId, occurrenceId: o.occurrenceId }, row.translation, signature)}`).join("")}</section>`;
     }).join("") || "<p>None.</p>"}</details>`;
   }).join("");
 }
@@ -422,6 +450,7 @@ function reviewOutcomeLists(review, key, s) {
 function activityProgress(s, view) {
   if (s.step === "2a" && !studioFormsResearchStarted(s) && (!view.busy || view.recommendingStep === s.step)) return "";
   const items = studioActivityItems(s);
+  const signature = s.step === "9" ? stableSignature(buildStudioDraft(s)) : null;
   if (!items.length) return view.busy || view.message ? `<div class="studio-progress" role="status" aria-live="polite">${view.busy ? loadingSpinner({ key: `studio-${s.id}-${s.step}`, label: "Research in progress" }) : ""}<span>${e(view.message || "Research in progress…")}</span></div>` : "";
   function list(nodes, path = []) {
     return `<ol class="studio-work-list">${nodes.map((node) => {
@@ -436,7 +465,7 @@ function activityProgress(s, view) {
       const icon = state === "complete" ? "✓" : state === "failed" ? "!" : state === "paused" ? "Ⅱ" : "○";
       const singleOperation = children.length === 1 && children[0].id.startsWith("operation:") && !(children[0].children?.length) ? children[0] : null;
       const originalFindings = s.step === "2a" && key.length === 2 && key[0] === "origin" && node.id === "search";
-      const result = (originalFindings && s.origin?.evidence?.summary) || node.result || singleOperation?.result || "";
+      const result = (originalFindings && s.origin?.evidence?.summary) || (Array.isArray(node.review) && node.result ? reviewResult(node.review, s) : node.result) || singleOperation?.result || "";
       const formatted = result ? studioResultPresentation(result) : null;
       const reused = node.reused || singleOperation?.reused ? '<p class="studio-work-result studio-work-reused">Saved result reused.</p>' : "";
       const sources = s.step === "2a" && key.length === 1 && node.id === "origin"
@@ -454,7 +483,7 @@ function activityProgress(s, view) {
         ${completedCorpus ? `<p class="studio-work-result">We found ${quantity(corpusForms.length, "form")} used in ${corpusName}${corpusForms.length ? ":" : "."}</p>
           ${corpusForms.length ? `<ul class="studio-corpus-forms" aria-label="Forms found in the corpus">${corpusForms.map((form) => `<li>${e(form.text)} — ${e(form.paragraphCount.toLocaleString())} matching ${form.paragraphCount === 1 ? "paragraph" : "paragraphs"}</li>`).join("")}</ul>` : ""}`
           : formatted ? `${formatted.long ? `<p class="studio-work-result">${e(formatted.preview)}</p><details data-studio-disclosure="${e(`activity:${JSON.stringify(key)}`)}"><summary>${originalFindings ? "Read full findings" : "Read result summary"}</summary><div class="studio-work-result studio-report">${formatted.details ?? formatted.html}</div></details>` : `<div class="studio-work-result studio-report">${formatted.html}</div>`}${reused}` : ""}
-        ${Array.isArray(node.review) ? reviewOutcomeLists(node.review, key, s) : ""}
+        ${Array.isArray(node.review) ? reviewOutcomeLists(node.review, key, s, view, signature) : ""}
         ${sources ? `<details data-studio-disclosure="original-spelling-sources"><summary>Evidence and sources</summary>${sources}</details>` : ""}
         ${node.error || singleOperation?.error ? `<p class="studio-work-error">${e(node.error || singleOperation.error)}</p>` : ""}${completedCorpus && childList ? `<details data-studio-disclosure="forms-corpus-details"><summary>Check details</summary>${childList}</details>`
           : foldedBatch && childList ? `<details data-studio-disclosure="${e(`activity:${JSON.stringify(key)}:details`)}"><summary>Test details</summary>${childList}</details>` : childList}</li>`;
@@ -548,5 +577,6 @@ export function renderGlossaryResearchStudio(state) {
   }
   return pageShell({ title: s?.scope.term ? `Research: ${s.scope.term}` : "Glossary research studio",
     headerClass: "studio-page-header", bodyClass: s ? "page-body--studio" : "",
-    navButtons: [actionNavButton("Glossary", "studio:exit", true, { isBack: true })], body, tools: "", leftTools: "", noticeText: "" }) + modal(s, view);
+    navButtons: [actionNavButton("Glossary", "studio:exit", true, { isBack: true })], body, tools: "", leftTools: "", noticeText: "" }) + modal(s, view)
+    + (state.glossaryTermEditor?.studioEntry ? renderGlossaryTermEditorModal(state) : "");
 }

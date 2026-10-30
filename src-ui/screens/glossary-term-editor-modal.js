@@ -137,12 +137,13 @@ function renderVariantLane(
   notes,
   isSubmitting,
   redundantIndices = new Set(),
+  allowEmptyVariant = true,
 ) {
   const tooltipOptions = side === "target" ? { align: "end" } : {};
   const rubyConfig = rubyButtonConfig(languageCode);
   const hasEmptyTargetVariant =
     side === "target" && values.some((value) => isGlossaryEmptyTargetVariant(value));
-  const emptyVariantButtonMarkup = side === "target"
+  const emptyVariantButtonMarkup = side === "target" && allowEmptyVariant
     ? `
         <button
           class="term-lane__add-button term-lane__add-button--no-translation"
@@ -258,10 +259,15 @@ export function renderGlossaryTermEditorModal(state) {
   });
   const researchBack = editor.researchOrigin
     ? secondaryButton("Back to research", "studio:editor-back", { disabled: isSubmitting }) : "";
-  const sourceLanguageName = state.glossaryEditor?.sourceLanguage?.name ?? "Source";
-  const sourceLanguageCode = state.glossaryEditor?.sourceLanguage?.code ?? "";
-  const targetLanguageName = state.glossaryEditor?.targetLanguage?.name ?? "Target";
-  const targetLanguageCode = state.glossaryEditor?.targetLanguage?.code ?? "";
+  // The research studio's entry under test: its source forms come from the research,
+  // and an empty translation cannot be tested.
+  const studioEntry = editor.studioEntry ?? null;
+  const sourceLanguage = studioEntry?.sourceLanguage ?? state.glossaryEditor?.sourceLanguage;
+  const targetLanguage = studioEntry?.targetLanguage ?? state.glossaryEditor?.targetLanguage;
+  const sourceLanguageName = sourceLanguage?.name ?? "Source";
+  const sourceLanguageCode = sourceLanguage?.code ?? "";
+  const targetLanguageName = targetLanguage?.name ?? "Target";
+  const targetLanguageCode = targetLanguage?.code ?? "";
   const noticeMarkup = editor.notice
     ? `<p class="glossary-term-modal__notice" role="alert">${escapeHtml(editor.notice)}</p>`
     : "";
@@ -278,7 +284,7 @@ export function renderGlossaryTermEditorModal(state) {
     ? `<p class="modal__error">${escapeHtml(formatErrorForDisplay(editor.error))}</p>`
     : "";
   const submitButton = loadingPrimaryButton({
-    label: editor.researchOrigin ? "Save entry" : editor.termId ? "Save Term" : "Add Term",
+    label: editor.researchOrigin ? "Save entry" : editor.termId || studioEntry ? "Save Term" : "Add Term",
     loadingLabel: "Saving...",
     action: "submit-glossary-term-editor",
     isLoading: isSubmitting,
@@ -289,7 +295,7 @@ export function renderGlossaryTermEditorModal(state) {
     <div class="modal-backdrop modal-backdrop--glossary-term">
       <section class="card modal-card modal-card--glossary-term" role="dialog" aria-modal="true" aria-labelledby="glossary-term-editor-modal-title" data-modal-dialog="glossary-term-editor" tabindex="-1">
         <div class="card__body modal-card__body glossary-term-modal">
-          <h2 class="modal__title" id="glossary-term-editor-modal-title">${editor.termId ? "Edit Term" : "New Term"}</h2>
+          <h2 class="modal__title" id="glossary-term-editor-modal-title">${editor.termId || studioEntry ? "Edit Term" : "New Term"}</h2>
           ${noticeMarkup}
           ${duplicateWarningMarkup}
 
@@ -300,7 +306,7 @@ export function renderGlossaryTermEditorModal(state) {
               sourceLanguageCode,
               editor.sourceTerms,
               [],
-              isSubmitting,
+              isSubmitting || Boolean(studioEntry),
               redundantSourceVariantIndices,
             )}
             ${renderVariantLane(
@@ -310,6 +316,8 @@ export function renderGlossaryTermEditorModal(state) {
               editor.targetTerms,
               editor.targetVariantNotes,
               isSubmitting,
+              new Set(),
+              !studioEntry,
             )}
           </div>
 

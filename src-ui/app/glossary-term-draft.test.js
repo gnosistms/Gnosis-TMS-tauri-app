@@ -6,8 +6,11 @@ import {
   resetSessionState,
   state,
 } from "./state.js";
+import { setStudioEditorHandler } from "./glossary-research-studio-editor-bridge.js";
 import {
   addGlossaryTermVariant,
+  openStudioEntryEditor,
+  submitGlossaryTermEditor,
   moveGlossaryTermVariantToIndex,
   removeGlossaryTermVariant,
   updateGlossaryTermVariantNote,
@@ -76,4 +79,28 @@ test("target pair sanitizing keeps a raw blank row when it has a note", () => {
     targetTerms: ["alpha", ""],
     targetVariantNotes: ["", "Omit when redundant."],
   });
+});
+
+test("saving the research entry under test hands the edit to the study, not the glossary", async () => {
+  const renders = [];
+  const received = [];
+  setStudioEditorHandler(async (event, origin, value) => {
+    received.push([event, origin.studyId, value]);
+    if (value.targetTerms.includes("refused")) throw new Error("Meaning 2 would have no translation.");
+  });
+  try {
+    openStudioEntryEditor(() => renders.push("open"), { sourceTerms: ["antítesis"], targetTerms: ["antithesis", " polarity "],
+      targetVariantNotes: ["Logic.", ""], notesToTranslators: "General.", footnote: "" }, { studyId: "study", meaningId: "m" });
+    assert.equal(state.glossaryTermEditor.isOpen, true);
+    await submitGlossaryTermEditor(() => renders.push("render"));
+    assert.deepEqual(received, [["entry", "study", { targetTerms: ["antithesis", "polarity"], targetVariantNotes: ["Logic.", ""],
+      notesToTranslators: "General.", footnote: "" }]]);
+    assert.equal(state.glossaryTermEditor.isOpen, false);
+
+    openStudioEntryEditor(() => {}, { sourceTerms: ["antítesis"], targetTerms: ["refused"] }, { studyId: "study", meaningId: "m" });
+    await submitGlossaryTermEditor(() => {});
+    assert.equal(state.glossaryTermEditor.isOpen, true);
+    assert.equal(state.glossaryTermEditor.error, "Meaning 2 would have no translation.");
+    assert.equal(state.glossaryTermEditor.status, "idle");
+  } finally { setStudioEditorHandler(null); }
 });

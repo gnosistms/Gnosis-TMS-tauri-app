@@ -5,7 +5,8 @@ import assert from "node:assert/strict";
 import { newStudioStudy, exactOccurrences, deduplicatePassages, researchSample,
   approveStep, stepIsReusable, validateAssignments, routeSplits, finalUsage,
   stableSignature, buildStudioDraft, collisionChanges, uniqueSourceTexts, deduplicateSourceForms,
-  selectedForms, sourceCollisions, reviseAssignment, entryBatchSignature, applySplitReview, studioContextRequest, applyStudioContext, studioStepStatusLabel } from "./glossary-research-studio-workflow.js";
+  selectedForms, sourceCollisions, reviseAssignment, entryBatchSignature, applySplitReview, studioContextRequest, applyStudioContext, studioStepStatusLabel,
+  entryTrialsAreCurrent, reviewStudioFinding, applyStudioReviewOverrides, studioReviewOverride, applyStudioEntryEdit } from "./glossary-research-studio-workflow.js";
 
 const scope = { sourceLanguage: { code: "es" }, targetLanguage: { code: "en" } };
 
@@ -400,4 +401,80 @@ test("re-researching an exact existing entry reruns 2a once and then continues p
   s.step = "2b"; s.relatedEntries = [existing];
   assert.equal(startStudioReResearch(s), false);
   assert.deepEqual(s.scope.forms, ["mundo"]);
+});
+
+function reviewedStudy() {
+  const s = newStudioStudy(scope, "reviewed"); s.forms = [{ text: "caminar" }]; s.meanings = [{ id: "m" }];
+  s.candidates = [{ id: "c0", text: "walk", confirmed: true, meaningIds: ["m"] }];
+  s.passages = deduplicatePassages([{ id: "p", text: "caminar lejos" }, { id: "q", text: "caminar cerca" }], ["caminar"]);
+  s.assignments = s.passages.flatMap((p) => p.occurrences.map((o) => ({ paragraphId: p.id, occurrenceId: o.id, meaningId: "m" })));
+  s.tests["9:0"] = { phase: "9", passed: false, signature: stableSignature(buildStudioDraft(s)),
+    batchSignature: entryBatchSignature(s, s.passages, s.assignments),
+    translations: [{ paragraphId: "p", translation: "stroll far" }, { paragraphId: "q", translation: "walk near" }],
+    choices: [{ paragraphId: "p", occurrenceId: "o0", candidateId: null, passed: false, problem: "No confirmed candidate" },
+      { paragraphId: "q", occurrenceId: "o0", candidateId: "c0", passed: true, problem: "" }] };
+  return s;
+}
+
+test("an accepted translation overrules the reviewer for that exact text until undone", () => {
+  const s = reviewedStudy();
+  assert.equal(entryTrialsAreCurrent(s), false);
+  assert.equal(reviewStudioFinding(s, "accept", "p", "o0"), "9:0");
+  const choice = s.tests["9:0"].choices[0];
+  assert.deepEqual([choice.passed, choice.reviewerPassed, choice.override, choice.problem], [true, false, "accepted", "No confirmed candidate"]);
+  assert.equal(entryTrialsAreCurrent(s), true);
+  assert.deepEqual(finalUsage(s), { c0: { occurrences: 1, paragraphs: 1 } }, "an accepted rendering without a listed candidate is not usage evidence");
+  const retranslated = applyStudioReviewOverrides(s, { translations: [{ paragraphId: "p", translation: "walk far" }],
+    choices: [{ paragraphId: "p", occurrenceId: "o0", passed: false, problem: "Wrong meaning" }] });
+  assert.equal(retranslated.passed, false, "a different translation of the paragraph is reviewed again");
+  reviewStudioFinding(s, "undo", "p", "o0");
+  assert.deepEqual(s.acceptedTranslations, {});
+  assert.equal(s.tests["9:0"].passed, false);
+  assert.deepEqual(s.tests["9:0"].choices[0], { paragraphId: "p", occurrenceId: "o0", candidateId: null, passed: false, problem: "No confirmed candidate" });
+});
+
+test("an ignored paragraph no longer decides the test or counts as usage, without being called correct", () => {
+  const s = reviewedStudy();
+  reviewStudioFinding(s, "ignore", "p", "o0");
+  assert.deepEqual(s.ignoredTestParagraphIds, ["p"]);
+  assert.deepEqual([s.tests["9:0"].passed, s.tests["9:0"].choices[0].override, s.tests["9:0"].choices[0].reviewerPassed], [true, "ignored", false]);
+  assert.equal(studioReviewOverride(s, "p", "o0", "any later translation"), "ignored");
+  assert.deepEqual(finalUsage(s), { c0: { occurrences: 1, paragraphs: 1 } });
+  reviewStudioFinding(s, "undo", "p", "o0");
+  assert.deepEqual([s.ignoredTestParagraphIds, s.tests["9:0"].passed], [[], false]);
+  s.generalNote = "Edited after the test";
+  assert.throws(() => reviewStudioFinding(s, "accept", "p", "o0"), /no longer part of the current test/);
+});
+
+function entryStudy() {
+  const s = newStudioStudy(scope, "entry-edit"); s.forms = [{ text: "antítesis" }];
+  s.meanings = [{ id: "m1" }, { id: "m2" }];
+  s.candidates = [
+    { id: "a", text: "antithesis", note: "Logic.", confirmed: true, retained: true, meaningIds: ["m1"] },
+    { id: "b", text: "opposite", note: "Plain.", confirmed: true, retained: true, meaningIds: ["m2"] },
+    { id: "c", text: "contrast", note: "", confirmed: true, retained: true, meaningIds: ["m2"] },
+  ];
+  s.generalNote = "General.";
+  return s;
+}
+
+test("term editor changes reorder, rename, add and remove the study's translations", () => {
+  const s = entryStudy();
+  applyStudioEntryEdit(s, { targetTerms: ["contrasting", "antithesis", "polar opposite"],
+    targetVariantNotes: ["", "Logic and philosophy.", "Opposed poles."], notesToTranslators: "Edited.", footnote: "Foot." }, "m1");
+  const draft = buildStudioDraft(s);
+  assert.deepEqual(draft.targetTerms, ["contrasting", "antithesis", "polar opposite"]);
+  assert.deepEqual(draft.targetVariantNotes, ["", "Logic and philosophy.", "Opposed poles."]);
+  assert.deepEqual([draft.notesToTranslators, draft.footnote], ["Edited.", "Foot."]);
+  assert.equal(s.candidates.find((c) => c.id === "b").confirmed, false, "a removed translation stays in the study unconfirmed");
+  assert.deepEqual(s.candidates.find((c) => c.id === "c").meaningIds, ["m2"], "an in-place text change keeps its meaning");
+  assert.deepEqual(s.candidates.find((c) => c.text === "contrasting").meaningIds, ["m1"], "a new translation joins the finding's meaning");
+});
+
+test("term editor changes keep every meaning translated and leave the study unchanged when refused", () => {
+  const s = entryStudy();
+  const before = structuredClone(s.candidates);
+  assert.throws(() => applyStudioEntryEdit(s, { targetTerms: ["antithesis"], targetVariantNotes: ["Logic."] }, "m1"), /Meaning 2 would have no translation/);
+  assert.throws(() => applyStudioEntryEdit(s, { targetTerms: ["antithesis", ""], targetVariantNotes: [] }, "m1"), /empty translation/);
+  assert.deepEqual([s.candidates, s.generalNote], [before, "General."]);
 });

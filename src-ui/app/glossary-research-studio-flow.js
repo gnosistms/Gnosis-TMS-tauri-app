@@ -7,7 +7,7 @@ import { selectedTeam } from "./glossary-shared.js";
 import { canWriteGlossaries } from "./permissions.js";
 import { resolveAiActionProviderAndModel } from "./ai-settings-flow.js";
 import { openGlossaryEditor, loadSelectedGlossaryEditorData } from "./glossary-editor-flow.js";
-import { openGlossaryTermEditor } from "./glossary-term-draft.js";
+import { openGlossaryTermEditor, openStudioEntryEditor } from "./glossary-term-draft.js";
 import { setStudioEditorHandler } from "./glossary-research-studio-editor-bridge.js";
 import { loadStudioHistory, loadStudioStudy, saveStudioStudy, deleteStudioStudy, studioGlossaryEntries, refreshStudioGlossary, exportStudioStudy } from "./glossary-research-studio-query.js";
 import { hydrateStudioStep, resolveStudioEvidence } from "./glossary-research-studio-evidence.js";
@@ -18,7 +18,8 @@ import { prepareReadingTranslations, runResearchStage } from "./glossary-researc
 import { testMeanings, testCompleteEntry } from "./glossary-research-studio-testing.js";
 import { reviewCompoundReport, STUDIO_STEPS, STUDIO_DICTIONARY_REVIEW_VERSION, STUDIO_DEFAULT_BRANCH, newStudioStudy, uniqueTexts, selectedForms, activeMeanings,
   approveStep, stableSignature, stepSignature, stepSignatureMatches, stepIsReusable, buildStudioDraft, finalUsage, studioDependentSteps, clearStudioDependents, startStudioReResearch,
-  collisionChanges, sourceCollisions, temporaryGlossaryTerms, uniqueSourceTexts, deduplicateSourceForms, applySplitReview, preferCandidate, reviseAssignment, studioContextRequest, applyStudioContext, entryTrialsAreCurrent, meaningTrialsAreCurrent, studioStepNumber } from "./glossary-research-studio-workflow.js";
+  collisionChanges, sourceCollisions, temporaryGlossaryTerms, uniqueSourceTexts, deduplicateSourceForms, applySplitReview, preferCandidate, reviseAssignment, studioContextRequest, applyStudioContext, entryTrialsAreCurrent, meaningTrialsAreCurrent, studioStepNumber,
+  meaningNumber, reviewStudioFinding, applyStudioEntryEdit } from "./glossary-research-studio-workflow.js";
 import { requestGlossaryTermWriteIntent, glossaryTermWriteScope, clearFailedGlossaryTermWrite } from "./glossary-term-write-coordinator.js";
 import { requireBrokerSession } from "./auth-flow.js";
 import { glossaryRepoDescriptor, syncSingleGlossaryForTeam, getGlossarySyncIssueMessage } from "./glossary-repo-flow.js";
@@ -733,6 +734,44 @@ async function returnAfterEditor(event, origin, value) {
   } else await persist(s);
   if (visible) { state.screen = "glossaryResearchStudio"; renderStudio(); }
 }
+// Step 9's entry under test, edited in the term editor. A change replaces the stuck AI
+// repair question; Resume then validates the edited entry.
+function openEntryEditor(s, finding) {
+  if (studioView().busy || s.step !== "9") throw new Error("Pause research before editing the entry.");
+  const [paragraphId, occurrenceId] = finding.split(":").map(decodeURIComponent);
+  const meaningId = s.assignments.find((a) => a.paragraphId === paragraphId && a.occurrenceId === occurrenceId)?.meaningId;
+  const meanings = activeMeanings(s);
+  openStudioEntryEditor(renderStudio, buildStudioDraft(s), { studyId: s.id, meaningId,
+    sourceLanguage: s.scope.sourceLanguage, targetLanguage: s.scope.targetLanguage,
+    notice: `This edits the entry tested in step 9. The glossary is changed only when you save the entry in step 11. Source variants come from step 2a.${meanings.length > 1 && meanings.some((m) => m.id === meaningId) ? ` New translations are added to meaning ${meaningNumber(s, meaningId)}.` : ""}` });
+}
+
+async function saveEditedEntry(origin, edit) {
+  const s = studioView().study;
+  if (s?.id !== origin.studyId || !contextMatches(s) || studioView().busy || s.step !== "9") throw new Error("Pause research before editing the entry.");
+  const before = stableSignature(buildStudioDraft(s));
+  applyStudioEntryEdit(s, edit, origin.meaningId);
+  if (stableSignature(buildStudioDraft(s)) === before) return;
+  if (s.pendingDecision?.kind === "selection") { s.pendingDecision = null; s.status = "active"; studioView().hideDecision = false; }
+  await persist(s);
+}
+
+// The human's verdict on a step 9 finding. Once every batch in the stuck question
+// passes, the question no longer applies; current results then complete step 9
+// without new translations.
+async function reviewFinding(s, name) {
+  if (studioView().busy || s.step !== "9") throw new Error("Pause research before reviewing a finding.");
+  const action = name.slice("review-".length, name.indexOf(":"));
+  const [paragraphId, occurrenceId] = name.slice(name.indexOf(":") + 1).split(":").map(decodeURIComponent);
+  reviewStudioFinding(s, action, paragraphId, occurrenceId);
+  const d = s.pendingDecision;
+  if (d?.kind === "selection" && (d.keys ?? [d.key]).every((key) => s.tests[key]?.passed)) {
+    s.pendingDecision = null; s.status = "active"; studioView().hideDecision = false;
+  }
+  await persist(s);
+  if (!s.pendingDecision && entryTrialsAreCurrent(s) && !s.steps["9"]?.value?.complete) await runCurrentStage();
+  else renderStudio();
+}
 
 // Reviewing a stuck question yourself opens the first stuck batch's findings.
 function revealStudioFindings(keys) {
@@ -743,7 +782,7 @@ function revealStudioFindings(keys) {
   (details.querySelector(".studio-findings") ?? details).scrollIntoView({ block: "start" });
 }
 
-setStudioEditorHandler(returnAfterEditor);
+setStudioEditorHandler((event, origin, value) => event === "entry" ? saveEditedEntry(origin, value) : returnAfterEditor(event, origin, value));
 
 export async function backStudio() {
   const s = studioView().study; if (!s) { state.screen = "glossaryEditor"; renderStudio(); return; }
@@ -1098,6 +1137,8 @@ export async function studioAction(action, render) {
     else if (name === "review-decision") { studioView().hideDecision = false; render(); }
     else if (name === "load-context") await loadSourceContext();
     else if (name.startsWith("view-source:")) await viewSourceParagraph(name.slice(12));
+    else if (/^review-(accept|ignore|undo):/u.test(name)) await reviewFinding(s, name);
+    else if (name.startsWith("edit-entry:")) openEntryEditor(s, name.slice("edit-entry:".length));
     else if (name.startsWith("review-assignment:")) {
       if (studioView().busy) throw new Error("Pause research before reviewing a meaning.");
       const [paragraphId, occurrenceId] = name.slice("review-assignment:".length).split(":").map(decodeURIComponent);

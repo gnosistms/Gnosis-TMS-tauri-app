@@ -36,11 +36,12 @@ export function summarizeStudioActivity(value) {
   return [summary, ...translations].join("\n\n");
 }
 
-// Each paragraph's translation and per-occurrence verdicts, for the work list's review outcome lists.
+// Each paragraph's translation and the reviewer's own per-occurrence verdicts, for the
+// work list's review outcome lists. The human's overrides are applied when shown.
 export function studioReviewOutcomes(trial) {
   return (trial.translations ?? []).flatMap((row) => {
     const occurrences = (trial.choices ?? []).filter((c) => c.paragraphId === row?.paragraphId)
-      .map(({ occurrenceId, passed, problem }) => ({ occurrenceId, passed: Boolean(passed), problem: problem ?? "" }));
+      .map(({ occurrenceId, passed, reviewerPassed, problem }) => ({ occurrenceId, passed: Boolean(reviewerPassed ?? passed), problem: problem ?? "" }));
     return occurrences.length ? [{ paragraphId: row.paragraphId, translation: row.translation ?? "", occurrences }] : [];
   });
 }

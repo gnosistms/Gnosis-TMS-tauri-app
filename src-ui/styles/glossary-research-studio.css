@@ -179,6 +179,7 @@
 
 .studio-candidate-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:8px}.studio-priority{font-size:.85rem;font-weight:600}.studio-candidate .studio-actions{margin-bottom:0}.studio-preference ol{display:flex;gap:10px 30px;flex-wrap:wrap;padding-left:24px;line-height:1.8}
 .studio-finding+.studio-finding{border-top:1px solid var(--surface-border);margin-top:16px;padding-top:16px}
+.studio-finding-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;margin:8px 0 12px}.studio-finding-actions>p{margin:0;font-size:.875rem}
 .studio-main .modal__error,.studio-modal .modal__error{white-space:normal;overflow:visible;overflow-wrap:anywhere}
 .studio-preliminary-label{font-size:.85rem;line-height:1.5;margin:0 0 8px}.studio-translation>p:last-child{margin-bottom:0}
 

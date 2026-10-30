@@ -143,3 +143,20 @@ test("glossary term modal renders a remote-update notice banner when present", (
   assert.match(html, /more recent version on GitHub/);
   assert.match(html, /redo your edits and save again/);
 });
+
+test("the research entry under test opens as an edit with read-only research source forms", () => {
+  installModalFixture();
+  state.glossaryEditor = null;
+  Object.assign(state.glossaryTermEditor, { sourceTerms: ["antítesis"], targetTerms: ["antithesis"], targetVariantNotes: [""],
+    notice: "This edits the entry tested in step 9.",
+    studioEntry: { studyId: "s", meaningId: "m", sourceLanguage: { code: "es", name: "Spanish" }, targetLanguage: { code: "en", name: "English" } } });
+  const html = renderGlossaryTermEditorModal(state);
+  assert.match(html, />Edit Term</);
+  assert.match(html, /Save Term/);
+  assert(html.includes("Spanish") && html.includes("English"));
+  assert(html.includes("This edits the entry tested in step 9."));
+  assert.match(html, /data-variant-side="source"[^>]*data-variant-index="0"[\s\S]*?disabled[\s\S]*?>antítesis<\/textarea>/u);
+  assert.match(html, /data-action="add-glossary-term-variant:source"[^>]*disabled/u);
+  assert.doesNotMatch(html, /data-action="add-glossary-term-variant:target"[^>]*disabled/u);
+  assert(!html.includes("add-glossary-term-empty-variant"));
+});

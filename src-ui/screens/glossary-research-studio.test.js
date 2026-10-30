@@ -154,6 +154,46 @@ test("a completed review lists failed and correct meaning choices in collapsed g
   } finally { state.glossaryResearchStudio = previous; }
 });
 
+test("current step 9 findings offer accept, ignore and edit; overrides show their state with Undo", () => {
+  const previous = state.glossaryResearchStudio;
+  try {
+    const study = newStudioStudy({ sourceLanguage: { code: "es", name: "Spanish" }, targetLanguage: { code: "en", name: "English" }, term: "gloria" }, "human-review");
+    study.step = "9"; study.forms = [{ text: "gloria" }]; study.meanings = [{ id: "m" }];
+    study.candidates = [{ id: "c", text: "glory", confirmed: true, retained: true, meaningIds: ["m"] }];
+    study.passages = [{ id: "a", text: "La gloria", occurrences: [{ id: "o0", start: 3, end: 9 }], references: [] }];
+    study.assignments = [{ paragraphId: "a", occurrenceId: "o0", meaningId: "m" }];
+    const failure = (translation) => [{ paragraphId: "a", translation, occurrences: [{ occurrenceId: "o0", passed: false, problem: "Used the wrong meaning" }] }];
+    study.tests = { "9:0": { phase: "9", passed: false, rounds: 1, signature: stableSignature(buildStudioDraft(study)),
+      translations: [{ paragraphId: "a", translation: "The fame" }], choices: [{ paragraphId: "a", occurrenceId: "o0", passed: false, problem: "Used the wrong meaning" }] } };
+    const round = (id, translation) => ({ id, label: id, status: "complete", children: [
+      { id: "assess", label: "Review meaning selection and translation quality", status: "complete", result: "0 of 1 occurrences passed.", review: failure(translation), children: [] }] });
+    study.activitySteps = { "9": { items: [{ id: "batch-0", label: "Batch 1", status: "running", children: [round("round-0", "An older rendering"), round("round-1", "The fame")] }] } };
+    state.glossaryResearchStudio = { study, history: [], busy: false };
+    let html = renderGlossaryResearchStudio(state);
+    for (const action of ["review-accept", "review-ignore", "edit-entry"]) {
+      assert.equal(html.match(new RegExp(`data-action="studio:${action}:a:o0"`, "gu"))?.length, 2, `${action} in the work list and the findings report`);
+    }
+    for (const label of ["Mark this translation as acceptable.", "Ignore this error.", "Edit glossary entry."]) assert(html.includes(label));
+    const older = html.slice(html.indexOf("An older rendering"), html.indexOf("The fame"));
+    assert(older.includes("Used the wrong meaning") && !older.includes("studio:review-accept"), "an older round stays history");
+
+    study.acceptedTranslations = { "a:o0": ["The fame"] };
+    html = renderGlossaryResearchStudio(state);
+    assert(html.includes("1 of 1 occurrences passed."));
+    const accepted = html.match(/<summary>Translations that used the correct meaning \(1\)<\/summary>([\s\S]*?)<\/details>/u)?.[1] ?? "";
+    assert(accepted.includes("You marked this translation as acceptable.") && accepted.includes('data-action="studio:review-undo:a:o0"'));
+
+    study.acceptedTranslations = {}; study.ignoredTestParagraphIds = ["a"];
+    html = renderGlossaryResearchStudio(state);
+    assert(html.includes("0 of 1 occurrences passed; 1 ignored."));
+    assert(html.includes("Ignored. This paragraph is no longer used for testing."));
+    assert(!html.includes("studio:review-accept"));
+
+    study.ignoredTestParagraphIds = []; state.glossaryResearchStudio.busy = true;
+    assert.match(renderGlossaryResearchStudio(state), /data-action="studio:review-accept:a:o0"[^>]*disabled/u);
+  } finally { state.glossaryResearchStudio = previous; }
+});
+
 test("a stuck selection offers human review or three more AI rounds; progress questions keep Stop and Continue", () => {
   const previous = state.glossaryResearchStudio;
   try {

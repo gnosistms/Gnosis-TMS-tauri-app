@@ -3,7 +3,8 @@ import { studioReviewOutcomes } from "./glossary-research-studio-activity.js";
 import { focusedSample, exploratoryContext } from "./glossary-research-studio-sampling.js";
 import { buildEditorGlossaryModel, buildEditorAiTranslationGlossaryHints } from "./editor-glossary-highlighting.js";
 import { activeMeanings, meaningNumber, studioTrialRoundLabel, buildStudioDraft, draftCandidates, stableSignature, exactOccurrences, temporaryGlossaryTerms,
-  studyAssignments, studioSourceContext, studioToolSignature, meaningTrialSignature, meaningTrialsAreCurrent, entryBatchSignature, STUDIO_TRANSLATION_CONTRACT_VERSION } from "./glossary-research-studio-workflow.js";
+  studyAssignments, studioSourceContext, studioToolSignature, meaningTrialSignature, meaningTrialsAreCurrent, entryBatchSignature, applyStudioReviewOverrides,
+  STUDIO_TRANSLATION_CONTRACT_VERSION } from "./glossary-research-studio-workflow.js";
 export { studyAssignments } from "./glossary-research-studio-workflow.js";
 
 const branch = (tools, id) => tools.forActivity?.(id) ?? tools;
@@ -163,7 +164,9 @@ export async function assessTrial(s, tools, translations, assignments, candidate
       targetStart: span?.start, targetEnd: span?.end,
       problem: choice.problem || (!candidate ? "No confirmed candidate for this meaning" : !span ? "Confirmed target form is not present at a distinct target span" : !quoted ? "The quoted rendering does not identify the confirmed target form" : "") };
   });
-  return { choices, passed: choices.every((c) => c.passed) };
+  // The human's accepted translations and ignored paragraphs outrank the reviewer.
+  const reviewed = applyStudioReviewOverrides(s, { choices, translations });
+  return { choices: reviewed.choices, passed: reviewed.passed };
 }
 
 function repairEvidence(trial) {
@@ -440,7 +443,7 @@ export async function testCompleteEntry(s, tools) {
       const restored = Boolean(best && best.signature !== signature);
       if (restored) {
         s.candidates = structuredClone(best.candidates);
-        for (const [key, trial] of Object.entries(best.tests)) s.tests[key] = structuredClone(trial);
+        for (const [key, trial] of Object.entries(best.tests)) s.tests[key] = applyStudioReviewOverrides(s, structuredClone(trial));
         s.entryValidation.expectedSignature = best.signature;
         limited = Object.keys(best.tests).filter((key) => !s.tests[key].passed).map((key) => ({ key, trial: s.tests[key], rounds: s.rounds[key] ?? 0 }));
       }
