@@ -154,6 +154,23 @@ test("a completed review lists failed and correct meaning choices in collapsed g
   } finally { state.glossaryResearchStudio = previous; }
 });
 
+test("a stuck selection offers human review or three more AI rounds; progress questions keep Stop and Continue", () => {
+  const previous = state.glossaryResearchStudio;
+  try {
+    const study = newStudioStudy({ sourceLanguage: { code: "es", name: "Spanish" }, targetLanguage: { code: "en", name: "English" }, term: "gloria" }, "stuck");
+    study.step = "9";
+    study.pendingDecision = { kind: "selection", key: "9:0", keys: ["9:0"], rounds: 3, report: "Batch 1 still has failures." };
+    state.glossaryResearchStudio = { study, history: [], busy: false };
+    let html = renderGlossaryResearchStudio(state);
+    assert.match(html, /data-action="studio:decision:stop"[^>]*>\s*Review the errors yourself/u);
+    assert.match(html, /data-action="studio:decision:continue"[^>]*>\s*Continue 3 more rounds with AI/u);
+    study.step = "8"; study.pendingDecision = { kind: "progress", rounds: 5, reportKey: "m:5", report: "Progress." };
+    html = renderGlossaryResearchStudio(state);
+    assert.match(html, /data-action="studio:decision:stop"[^>]*>\s*Stop\s*</u);
+    assert(!html.includes("Continue 3 more rounds with AI"));
+  } finally { state.glossaryResearchStudio = previous; }
+});
+
 test("completed validation batches fold their test details while running batches stay open", () => {
   const previous = state.glossaryResearchStudio;
   try {

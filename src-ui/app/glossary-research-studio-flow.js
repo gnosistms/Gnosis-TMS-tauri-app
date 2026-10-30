@@ -733,6 +733,16 @@ async function returnAfterEditor(event, origin, value) {
   } else await persist(s);
   if (visible) { state.screen = "glossaryResearchStudio"; renderStudio(); }
 }
+
+// Reviewing a stuck question yourself opens the first stuck batch's findings.
+function revealStudioFindings(keys) {
+  const details = [...(globalThis.document?.querySelectorAll?.("details[data-studio-disclosure]") ?? [])]
+    .find((element) => keys.includes(element.dataset.studioDisclosure));
+  if (!details) return;
+  details.open = true;
+  (details.querySelector(".studio-findings") ?? details).scrollIntoView({ block: "start" });
+}
+
 setStudioEditorHandler(returnAfterEditor);
 
 export async function backStudio() {
@@ -921,7 +931,10 @@ export async function resolveStudioDecision(action) {
     if (action === "stop") { studioView().hideDecision = true; s.status = "paused"; await persist(s); return; }
     s.reports[d.reportKey].continued = true;
   } else if (d.kind === "selection") {
-    if (action === "stop") { studioView().hideDecision = true; s.status = "paused"; await persist(s); return; }
+    if (action === "stop") {
+      studioView().hideDecision = true; s.status = "paused"; await persist(s);
+      renderStudio(); revealStudioFindings(d.keys ?? [d.key]); return;
+    }
     s.retryAllowances ??= {};
     for (const key of d.keys ?? [d.key]) s.retryAllowances[key] = (s.rounds[key] ?? d.rounds) + 3;
   } else if (d.kind === "candidate") {

@@ -2330,10 +2330,10 @@ test("step9 collects a stable pass before one coordinated repair and finishes wi
 test("Continue extends only the failed batches presented in a grouped three-round pause", async ({ page }) => {
   await mountEntryPassStudy(page, true);
   await expect(page.getByRole("dialog")).toContainText("Batches 2, 3");
-  await page.getByRole("dialog").getByRole("button", { name: "Stop", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Review the errors yourself", exact: true }).click();
   await expect(page.getByRole("button", { name: "Review paused research", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Review paused research", exact: true }).click();
-  await page.getByRole("dialog").getByRole("button", { name: "Continue", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Continue 3 more rounds with AI", exact: true }).click();
   await expect(page.getByRole("button", { name: "Save and continue", exact: true })).toBeEnabled();
   const allowances = await page.evaluate(async () => (await import(`/${"app"}/state.js`)).state.glossaryResearchStudio.study.retryAllowances);
   expect(allowances).toEqual({ "9:15": 6, "9:30": 6 });

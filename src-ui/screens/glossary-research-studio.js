@@ -399,7 +399,9 @@ function modal(s, view) {
   } else {
     title = decision?.kind === "progress" ? `Research progress · ${decision.rounds} repair rounds` : "Selection needs review";
     body = `<p>${e(decision?.report ?? "The batch still has failures after three repair rounds. You can stop and resume later, edit the research using Back, or continue testing.")}</p>`;
-    actions = button("Stop", "decision:stop") + primaryButton("Continue", "studio:decision:continue");
+    actions = decision?.kind === "selection"
+      ? button("Review the errors yourself", "decision:stop") + primaryButton("Continue 3 more rounds with AI", "studio:decision:continue")
+      : button("Stop", "decision:stop") + primaryButton("Continue", "studio:decision:continue");
   }
   return `<div class="modal-backdrop"><section class="card modal-card studio-modal" role="dialog" aria-modal="true" aria-labelledby="studio-question" data-modal-dialog="studio-question" tabindex="-1"><div class="card__body stack"><h2 id="studio-question">${e(title)}</h2>${body}<div class="modal__actions">${actions}</div>${view.error ? `<p role="alert">${e(view.error)}</p>` : ""}</div></section></div>`;
 }

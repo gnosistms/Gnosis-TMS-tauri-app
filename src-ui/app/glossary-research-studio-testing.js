@@ -446,7 +446,7 @@ export async function testCompleteEntry(s, tools) {
       }
       const first = limited[0];
       s.pendingDecision = { kind: "selection", ...first, keys: limited.map((item) => item.key),
-        report: `${restored ? `Repairs after validation pass ${best.pass} made the results worse, so the entry from that pass has been restored (${best.occurrences - best.failed} of ${best.occurrences} occurrences passed). ` : ""}${limited.length === 1 ? "Batch" : "Batches"} ${limited.map((item) => Number(item.key.slice(2)) / 15 + 1).join(", ")} still ${limited.length === 1 ? "has" : "have"} failures after the permitted repair rounds. Stop to review the findings, or continue these batches for three more repair rounds.` };
+        report: `${restored ? `Repairs after validation pass ${best.pass} made the results worse, so the entry from that pass has been restored (${best.occurrences - best.failed} of ${best.occurrences} occurrences passed). ` : ""}${limited.length === 1 ? "Batch" : "Batches"} ${limited.map((item) => Number(item.key.slice(2)) / 15 + 1).join(", ")} still ${limited.length === 1 ? "has" : "have"} failures after the permitted repair rounds. Review the errors yourself, or continue these batches for three more repair rounds with AI.` };
       s.entryValidation.phase = "awaiting-review";
       return { pending: true };
     }
