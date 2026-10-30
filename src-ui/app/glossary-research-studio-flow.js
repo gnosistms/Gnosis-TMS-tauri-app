@@ -987,12 +987,15 @@ export function updateStudioInput(target) {
 }
 
 // An unmatched occurrence gets one meaning: an existing one, or a new one typed
-// in. The choice starts on the AI's suggestion, which may repeat an existing one.
+// in. The choice starts on the AI's suggestion: the existing meaning it names,
+// or, in decisions saved before it named one, a definition it repeats.
 export const STUDIO_NEW_MEANING = "new";
 export function unmatchedMeaningChoice(s, decision = s.pendingDecision) {
   const active = s.meanings.filter((m) => m.enabled !== false);
   const chosen = s.decisionInput?.meaning;
   if (chosen === STUDIO_NEW_MEANING || active.some((m) => m.id === chosen)) return chosen;
+  const named = decision?.recommendation?.meaningId;
+  if (active.some((m) => m.id === named)) return named;
   const suggested = String(decision?.recommendation?.definition ?? "").trim().toLocaleLowerCase();
   return active.find((m) => suggested && String(m.definition ?? "").trim().toLocaleLowerCase() === suggested)?.id ?? STUDIO_NEW_MEANING;
 }
@@ -1047,7 +1050,7 @@ export async function resolveStudioDecision(action) {
       }
       if (!s.meanings.some((m) => m.id === id)) throw new Error("Select a meaning.");
       const a = s.assignments.find((a) => a.paragraphId === d.paragraphId && a.occurrenceId === d.occurrenceId);
-      a.meaningId = id;
+      a.meaningId = id; a.humanChoice = true;
     }
   }
   s.pendingDecision = null; s.status = "active"; studioView().hideDecision = false;

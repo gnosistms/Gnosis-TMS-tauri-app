@@ -725,6 +725,8 @@ test("meaning decisions number enabled definitions and offer report-only senses 
     assert(!html.includes('data-studio-decision="definition"'), "the new-meaning box shows only for a new meaning");
     s.decisionInput = {}; s.pendingDecision.recommendation.definition = "  perceptible ";
     assert(renderGlossaryResearchStudio(state).includes('value="a" selected>1. Perceptible'), "the AI repeated an existing meaning");
+    s.pendingDecision.recommendation = { meaningId: "b", definition: "Receptive to the senses", translation: "perceptible" };
+    assert(renderGlossaryResearchStudio(state).includes('value="b" selected>2. Sensory receptivity'), "the AI named an existing meaning in other words");
   } finally { state.glossaryResearchStudio = previous; }
 });
 
