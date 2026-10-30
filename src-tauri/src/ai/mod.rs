@@ -509,7 +509,7 @@ fn subtitle_cue_review_rule() -> &'static str {
 }
 
 fn translation_glossary_rules() -> &'static str {
-    "Glossary rules:\nGlossary hints are compact JSON. Apply a glossary hint only when its sourceTerm appears in source_text. Shared guidance entries use sourceTerms: apply their globalNotes to occurrences of any listed form. Shared notes can refer to exact numbered rows and source spans; apply those conditions only to the specified occurrences. targetVariants contains non-empty target text sorted in order of preference, best first. Use later variants only when grammar or context requires it. noTranslation means this glossary term may be omitted from the translation; noTranslation.position ranks omission against targetVariants: \"only\" means omit the source term because no target text is recommended, \"first\" means omission is preferred and targetVariants are fallbacks, and \"later\" means targetVariants are preferred while omission is allowed when smoother or clearer. If a target variant text uses the notation base[ruby: annotation], preserve that ruby annotation when using the term. Use target variant notes, noTranslation.note, globalNotes, and footnotes as translation guidance when present. If two different source terms that mean the same thing in the sentence call for the same target text, write it once instead of repeating it."
+    "Glossary rules:\nGlossary hints are compact JSON. Apply a glossary hint only when its sourceTerm appears in source_text. Shared guidance entries use sourceTerms: apply their globalNotes to occurrences of any listed form. Shared notes can refer to exact numbered rows and source spans; apply those conditions only to the specified occurrences. targetVariants contains non-empty target text sorted in order of preference, best first. Use later variants only when grammar or context requires it. noTranslation means this glossary term may be omitted from the translation; noTranslation.position ranks omission against targetVariants: \"only\" means omit the source term because no target text is recommended, \"first\" means omission is preferred and targetVariants are fallbacks, and \"later\" means targetVariants are preferred while omission is allowed when smoother or clearer. If a target variant text uses the notation base[ruby: annotation], preserve that ruby annotation when using the term. A standalone … between words of a target variant marks where target grammar may place words that modify the term, such as an adjective; put them there, and with no such words join the parts directly. Use target variant notes, noTranslation.note, globalNotes, and footnotes as translation guidance when present. If two different source terms that mean the same thing in the sentence call for the same target text, write it once instead of repeating it."
 }
 
 // ---- Batch translate / review ----------------------------------------------
@@ -3289,6 +3289,9 @@ mod tests {
         ));
         assert!(prompt.contains(
             "If a target variant text uses the notation base[ruby: annotation], preserve that ruby annotation when using the term."
+        ));
+        assert!(prompt.contains(
+            "A standalone … between words of a target variant marks where target grammar may place words that modify the term"
         ));
         assert!(prompt.contains(r#""sourceTerm":"gnostica""#));
         assert!(prompt

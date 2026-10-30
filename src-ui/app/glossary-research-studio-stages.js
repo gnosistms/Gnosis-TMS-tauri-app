@@ -808,9 +808,18 @@ export async function assignMeanings(s, tools) {
   if (!meanings.length) throw new Error("Select at least one meaning before continuing.");
   const meaningViews = decisionMeanings(meanings);
   const wordMeaningRule = "Judge what the researched word itself contributes, not merely the topic of neighboring words. An adjective modifying something unconscious does not automatically mean unconscious; a harmful agent is not automatically evidence of secrecy. Preserve full context and explicit sense conditions.";
+  // Answers from the "Choose a meaning" dialog guide every later classification.
+  const reviewedRule = " reviewedExamples are occurrences the human researcher assigned; give the same meaning to occurrences that use the word the same way.";
+  function reviewedExamples() {
+    return s.assignments.filter((a) => a.humanChoice && a.meaningId).flatMap((a) => {
+      const p = s.passages.find((p) => p.id === a.paragraphId); const o = p?.occurrences.find((o) => o.id === a.occurrenceId);
+      return o ? [{ text: p.text, occurrence: { start: o.start, end: o.end, surface: o.surface }, meaningId: a.meaningId }] : [];
+    });
+  }
   async function classify(passages, purpose = `Assigning meanings in ${passages.length} research paragraphs`, work = branch(tools, "assign"), expanded = false) {
-    const result = await work.ask("Assign a meaning to EACH occurrence separately in source order. Apply human-edited applicability conditions and preference rules in the definitions; a broad sense must not override a more specific human rule. Use only supplied meaning IDs; null means unmatched. Return each paragraph once with one meaningIds entry for every supplied occurrence in its original order. Do not copy occurrence IDs, offsets, source text or citations into the response. If a paragraph cannot be disambiguated without its neighbors, include its ID in contextParagraphIds. " + wordMeaningRule,
-      { meanings: meaningViews, paragraphs: decisionParagraphs(passages, s) }, '{"paragraphMeanings":[{"paragraphId":"supplied ID","meaningIds":[null]}],"contextParagraphIds":[]}', purpose);
+    const examples = reviewedExamples();
+    const result = await work.ask("Assign a meaning to EACH occurrence separately in source order. Apply human-edited applicability conditions and preference rules in the definitions; a broad sense must not override a more specific human rule. Use only supplied meaning IDs; null means unmatched. Return each paragraph once with one meaningIds entry for every supplied occurrence in its original order. Do not copy occurrence IDs, offsets, source text or citations into the response. If a paragraph cannot be disambiguated without its neighbors, include its ID in contextParagraphIds. " + wordMeaningRule + (examples.length ? reviewedRule : ""),
+      { meanings: meaningViews, paragraphs: decisionParagraphs(passages, s), ...(examples.length ? { reviewedExamples: examples } : {}) }, '{"paragraphMeanings":[{"paragraphId":"supplied ID","meaningIds":[null]}],"contextParagraphIds":[]}', purpose);
     const rows = array(result.paragraphMeanings, "Paragraph meaning assignments");
     if (rows.length !== passages.length || new Set(rows.map((r) => r.paragraphId)).size !== rows.length) throw new Error("Paragraph assignments were incomplete or duplicated.");
     const assigned = [];
@@ -829,14 +838,27 @@ export async function assignMeanings(s, tools) {
     }
     return validated;
   }
-  if (!s.assignments.length) s.assignments = await classify(s.passages);
+  if (!s.assignments.length) { delete s.unmatchedRecheck; s.assignments = await classify(s.passages); }
+  // An answer can settle other unmatched occurrences, so after each new one the
+  // paragraphs that still have them are classified again with the answers.
+  const open = s.passages.filter((p) => s.assignments.some((a) => a.paragraphId === p.id && !a.meaningId));
+  const answered = s.assignments.filter((a) => a.humanChoice && a.meaningId).map(({ paragraphId, occurrenceId, meaningId }) => ({ paragraphId, occurrenceId, meaningId }));
+  const recheck = stableSignature({ meaningIds: meanings.map((m) => m.id), answered });
+  if (open.length && answered.length && s.unmatchedRecheck !== recheck) {
+    const rechecked = await classify(open, `Re-checking ${open.length} paragraphs with unmatched occurrences against your answers`);
+    for (const a of s.assignments) if (!a.meaningId) a.meaningId = rechecked.find((r) => r.paragraphId === a.paragraphId && r.occurrenceId === a.occurrenceId)?.meaningId ?? null;
+    s.unmatchedRecheck = recheck;
+  }
   async function reviewUnmatched() {
     const unmatched = s.assignments.find((a) => !a.meaningId);
     if (!unmatched) return false;
     const paragraph = s.passages.find((p) => p.id === unmatched.paragraphId);
-    const recommendation = await tools.ask("Explain this occurrence and recommend a self-contained definition in the target language. Do not put internal IDs, workflow instructions, or discussion of existing-meaning IDs into the definition. If an existing definition fits, repeat that definition without inventing a duplicate sense.",
-      { paragraph, occurrenceId: unmatched.occurrenceId, existingMeanings: meanings }, '{"definition":"suggested definition","translation":"whole paragraph in target language"}');
-    s.pendingDecision = { kind: "unmatched", ...unmatched, paragraph, recommendation };
+    const examples = reviewedExamples();
+    const recommendation = await tools.ask("Explain this occurrence and recommend a self-contained definition in the target language. Do not put internal IDs, workflow instructions, or discussion of existing-meaning IDs into the definition. If an existing meaning fits, return its ID as meaningId and repeat its definition without inventing a duplicate sense; otherwise meaningId is null." + (examples.length ? reviewedRule : ""),
+      { paragraph, occurrenceId: unmatched.occurrenceId, existingMeanings: meaningViews, ...(examples.length ? { reviewedExamples: examples } : {}) },
+      '{"meaningId":"ID of the existing meaning that fits, or null","definition":"suggested definition","translation":"whole paragraph in target language"}');
+    const meaningId = meanings.some((m) => m.id === recommendation.meaningId) ? recommendation.meaningId : null;
+    s.pendingDecision = { kind: "unmatched", ...unmatched, paragraph, recommendation: { ...recommendation, meaningId } };
     return true;
   }
   branch(tools, "assign").finishActivity?.(`${s.assignments.length} sampled occurrences assigned.`);

@@ -11,6 +11,9 @@
 //! The app never tries to get past a check. If the page shows one that needs a
 //! person, the window is made visible so the user can complete it; otherwise
 //! the result is "unreachable", which is never reported as "no entry".
+//! Past a check, a page the reader cannot read shows an orange Close button at
+//! its top, which ends the lookup and keeps the page's title and opening text.
+//! A hidden page that is plainly a DLE page ends the lookup within seconds.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
@@ -25,8 +28,10 @@ const AUTOMATIC_WAIT: Duration = Duration::from_secs(25);
 const PERSON_WAIT: Duration = Duration::from_secs(120);
 const TICK: Duration = Duration::from_millis(500);
 
-/// Runs inside the DLE page. Reports once, when the page shows an entry, a
-/// "not in the dictionary" message, or a check that needs a person.
+/// Runs inside the DLE page. Reports when the page shows an entry, a "not in
+/// the dictionary" message, or a check that needs a person. Any other page
+/// shows a Close button that reports it as closed, and a finished one that
+/// stays unreadable for five seconds is reported once as unrecognized.
 const EXTRACT_SCRIPT: &str = r#"
 (function () {
   if (window.__gnosisResearchStarted) return;
@@ -101,7 +106,39 @@ const EXTRACT_SCRIPT: &str = r#"
     return /Just a moment|Verify you are human|Checking your browser|Performing security verification|Verifica que eres|Un momento/i.test(document.title + " " + text)
       || !!document.querySelector('iframe[src*="challenges.cloudflare.com"], #challenge-form, .cf-turnstile, #cf-challenge-running');
   }
-  var askedPerson = false;
+  function unreadPage(status) {
+    var text = document.body ? document.body.innerText : "";
+    return { status: status, url: location.href, title: clean(document.title), text: clean(text).slice(0, 800),
+             dle: /Diccionario de la lengua/i.test(document.title) };
+  }
+  // The Close button sits in a closed shadow root on <html>, so the page's
+  // styles do not reach it and it is not part of the page's text. Its colours
+  // are the app's primary button.
+  var closeBar = null;
+  function showClose(show) {
+    if (!closeBar && show) {
+      closeBar = document.createElement("div");
+      var root = closeBar.attachShadow({ mode: "closed" });
+      root.innerHTML = "<style>"
+        + ":host { all: initial; }"
+        + ".bar { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 2147483647;"
+        + " display: flex; align-items: center; gap: 14px; box-sizing: border-box; max-width: calc(100vw - 32px);"
+        + " padding: 8px 8px 8px 16px; border: 1px solid rgba(164, 112, 41, 0.16); border-radius: 12px;"
+        + " background: #fffaf4; box-shadow: 0 9px 20px rgba(131, 82, 22, 0.18); color: #4a2d13;"
+        + " font: 600 14px/1.3 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }"
+        + "button { min-height: 38px; padding: 0 16px; border: 0; border-radius: 12px; cursor: pointer; font: inherit;"
+        + " font-size: 15px; color: #fff8ed; background: linear-gradient(180deg, #f39c18 0%, #ec8609 100%);"
+        + " box-shadow: 0 8px 16px rgba(214, 128, 12, 0.24); }"
+        + "button:hover { background: linear-gradient(180deg, #f5a11d 0%, #ed8c13 100%); }"
+        + "</style><div class=\"bar\"><span>Gnosis TMS can’t read this page.</span><button type=\"button\">Close</button></div>";
+      root.querySelector("button").addEventListener("click", function () {
+        clearInterval(timer); report(unreadPage("closed"));
+      });
+      document.documentElement.appendChild(closeBar);
+    }
+    if (closeBar) closeBar.style.display = show ? "" : "none";
+  }
+  var askedPerson = false, settledAt = null, reportedUnreadable = false;
   function look() {
     var text = document.body ? document.body.innerText : "";
     var entry = entryFromPage();
@@ -109,10 +146,20 @@ const EXTRACT_SCRIPT: &str = r#"
     if (/no est[áa] (registrada )?en el Diccionario/i.test(text)) {
       clearInterval(timer); report({ status: "not_found", url: location.href, message: text.slice(0, 300) }); return;
     }
-    if (!askedPerson && showsCheck(text)) {
-      askedPerson = true;
-      report({ status: "needs_person", url: location.href });
+    if (showsCheck(text)) {
+      settledAt = null;
+      showClose(false);
+      if (!askedPerson) { askedPerson = true; report({ status: "needs_person", url: location.href }); }
+      return;
     }
+    if (document.readyState === "loading") return;
+    showClose(true);
+    // Keep looking afterwards: a page that fills in late can still be read.
+    if (reportedUnreadable || document.readyState !== "complete") return;
+    settledAt = settledAt || Date.now();
+    if (Date.now() - settledAt < 5000) return;
+    reportedUnreadable = true;
+    report(unreadPage("unrecognized"));
   }
   var timer = setInterval(look, 500);
   document.addEventListener("DOMContentLoaded", look);
@@ -128,8 +175,78 @@ pub(crate) struct DleLookup {
     pub entry: Option<Value>,
     pub message: Option<String>,
     pub needed_person: bool,
+    /// Title and opening text of a page the reader could not read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache: Option<Value>,
+}
+
+#[derive(Debug, PartialEq)]
+enum Outcome {
+    AskPerson,
+    KeepWaiting,
+    Finish,
+}
+
+/// What one report from the page means for the lookup.
+fn outcome(report: &Value, needed_person: bool) -> Outcome {
+    match report["status"].as_str() {
+        Some("needs_person") if !needed_person => Outcome::AskPerson,
+        Some("needs_person") => Outcome::KeepWaiting,
+        // A hidden unreadable page ends the lookup when it is plainly a DLE
+        // page; any other may be a check that does not say so, and is shown to
+        // the person as before. Once shown, the person ends it with Close.
+        Some("unrecognized") if needed_person || report["dle"] != true => Outcome::KeepWaiting,
+        _ => Outcome::Finish,
+    }
+}
+
+fn lookup(report: Option<Value>, url: &str, needed_person: bool) -> DleLookup {
+    let Some(report) = report else {
+        return DleLookup {
+            status: "unreachable".to_string(),
+            url: url.to_string(),
+            entry: None,
+            message: Some(if needed_person {
+                "The DLE page was shown to you but did not show an entry in time.".to_string()
+            } else {
+                "The DLE page did not show an entry in time.".to_string()
+            }),
+            needed_person,
+            page: None,
+            cache: None,
+        };
+    };
+    let url = report["url"].as_str().unwrap_or(url).to_string();
+    let unread = match report["status"].as_str() {
+        Some("unrecognized") => Some("The DLE showed a page the reader could not read."),
+        Some("closed") => Some("You closed a DLE page the reader could not read."),
+        _ => None,
+    };
+    if let Some(message) = unread {
+        return DleLookup {
+            status: "unreachable".to_string(),
+            url,
+            entry: None,
+            message: Some(message.to_string()),
+            needed_person,
+            page: Some(serde_json::json!({ "title": report["title"], "text": report["text"] })),
+            cache: None,
+        };
+    }
+    DleLookup {
+        status: report["status"]
+            .as_str()
+            .unwrap_or("unreachable")
+            .to_string(),
+        url,
+        entry: report.get("entry").cloned(),
+        message: report["message"].as_str().map(str::to_string),
+        needed_person,
+        page: None,
+        cache: None,
+    }
 }
 
 fn decode_result(url: &tauri::Url) -> Option<Value> {
@@ -216,19 +333,18 @@ pub(crate) async fn glossary_studio_fetch_dle(
                 return (None, needed_person);
             }
             match receiver.recv_timeout(TICK) {
-                Ok(value)
-                    if value.get("status").and_then(Value::as_str) == Some("needs_person") =>
-                {
-                    if !needed_person {
+                Ok(value) => match outcome(&value, needed_person) {
+                    Outcome::AskPerson => {
                         needed_person = true;
                         deadline = started.elapsed() + PERSON_WAIT;
                         show(&window);
                     }
-                }
-                Ok(value) => {
-                    let _ = window.close();
-                    return (Some(value), needed_person);
-                }
+                    Outcome::KeepWaiting => {}
+                    Outcome::Finish => {
+                        let _ = window.close();
+                        return (Some(value), needed_person);
+                    }
+                },
                 Err(mpsc::RecvTimeoutError::Timeout) if started.elapsed() < deadline => {}
                 Err(mpsc::RecvTimeoutError::Timeout) if !needed_person => {
                     // A hidden page that has not answered (macOS slows the timers of
@@ -249,39 +365,7 @@ pub(crate) async fn glossary_studio_fetch_dle(
     .map_err(|error| format!("The dictionary worker failed: {error}"))?;
 
     let (value, needed_person) = result;
-    let lookup = match value {
-        Some(value) => DleLookup {
-            status: value
-                .get("status")
-                .and_then(Value::as_str)
-                .unwrap_or("unreachable")
-                .to_string(),
-            url: value
-                .get("url")
-                .and_then(Value::as_str)
-                .unwrap_or(&url)
-                .to_string(),
-            entry: value.get("entry").cloned(),
-            message: value
-                .get("message")
-                .and_then(Value::as_str)
-                .map(str::to_string),
-            needed_person,
-            cache: None,
-        },
-        None => DleLookup {
-            status: "unreachable".to_string(),
-            url: url.clone(),
-            entry: None,
-            message: Some(if needed_person {
-                "The DLE page was shown to you but did not show an entry in time.".to_string()
-            } else {
-                "The DLE page did not show an entry in time.".to_string()
-            }),
-            needed_person,
-            cache: None,
-        },
-    };
+    let lookup = lookup(value, &url, needed_person);
     let cache_value = serde_json::to_value(&lookup).map_err(|error| error.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
         super::dle_cache::save(&cache_root, &url, &cache_value)
@@ -306,6 +390,7 @@ fn urlencoding_path(word: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn only_the_result_address_carries_data() {
@@ -321,5 +406,41 @@ mod tests {
     #[test]
     fn words_are_percent_encoded() {
         assert_eq!(urlencoding_path("término"), "t%C3%A9rmino");
+    }
+
+    #[test]
+    fn a_shown_unreadable_page_waits_for_the_person_to_close_it() {
+        let check = json!({"status": "needs_person"});
+        assert_eq!(outcome(&check, false), Outcome::AskPerson);
+        assert_eq!(outcome(&check, true), Outcome::KeepWaiting);
+        let unknown = json!({"status": "unrecognized", "dle": false});
+        assert_eq!(outcome(&unknown, false), Outcome::KeepWaiting);
+        assert_eq!(outcome(&unknown, true), Outcome::KeepWaiting);
+        let dle_page = json!({"status": "unrecognized", "dle": true});
+        assert_eq!(outcome(&dle_page, false), Outcome::Finish);
+        assert_eq!(outcome(&dle_page, true), Outcome::KeepWaiting);
+        assert_eq!(outcome(&json!({"status": "closed"}), true), Outcome::Finish);
+        assert_eq!(outcome(&json!({"status": "found"}), false), Outcome::Finish);
+    }
+
+    #[test]
+    fn an_unreadable_page_is_unreachable_and_keeps_what_it_showed() {
+        let report = json!({"status": "unrecognized", "url": "https://dle.rae.es/ilustrados",
+            "title": "ilustrados | Diccionario", "text": "Quizás quiso decir: ilustrado", "dle": true});
+        let result = lookup(Some(report), "https://dle.rae.es/ilustrados", true);
+        assert_eq!(result.status, "unreachable");
+        assert!(result.entry.is_none() && result.needed_person);
+        let saved = serde_json::to_value(&result).unwrap();
+        assert_eq!(saved["page"]["text"], "Quizás quiso decir: ilustrado");
+        // Never cached: an unreadable page is not dictionary evidence.
+        assert!(!super::super::dle_cache::usable(&saved));
+        let closed = json!({"status": "closed", "url": "https://dle.rae.es/ilustrados",
+            "title": "ilustrados | Diccionario", "text": "Quizás quiso decir: ilustrado"});
+        let result = lookup(Some(closed), "https://dle.rae.es/ilustrados", true);
+        assert_eq!(result.status, "unreachable");
+        assert!(result.message.unwrap().starts_with("You closed"));
+        assert_eq!(result.page.unwrap()["title"], "ilustrados | Diccionario");
+        let timed_out = serde_json::to_value(lookup(None, "https://dle.rae.es/x", false)).unwrap();
+        assert!(timed_out.get("page").is_none());
     }
 }

@@ -7,6 +7,7 @@ import {
   buildEditorGlossaryModel,
   buildEditorRowGlossaryHighlights,
   buildEditorRowSourceGlossaryHighlights,
+  findGlossaryTargetFormOccurrences,
   findLongestGlossaryMatches,
   glossaryTermMatchesTokenSequence,
 } from "./editor-glossary-highlighting.js";
@@ -140,6 +141,47 @@ test("source highlights are marked as errors when the expected target term is mi
 
   assert.match(highlights.get("es")?.html ?? "", /glossary-match-error/);
   assert.equal(highlights.has("vi"), false);
+});
+
+test("a gap in a target variant lets target grammar insert words that modify the term", () => {
+  const model = buildEditorGlossaryModel(glossaryPayload({
+    terms: [{ termId: "t1", sourceTerms: ["batallar de las antítesis"],
+      targetTerms: ["sự giằng co … giữa các mặt đối lập"] }],
+  }));
+  const highlights = (target) => buildEditorRowGlossaryHighlights([
+    { code: "es", text: "el tremendo batallar de las antítesis" },
+    { code: "vi", text: target },
+  ], model);
+
+  const split = highlights("sự giằng co dữ dội giữa các mặt đối lập");
+  assert.doesNotMatch(split.get("es")?.html ?? "", /glossary-match-error/);
+  const marks = [...(split.get("vi")?.html ?? "").matchAll(/<mark[^>]*>([^<]*)<\/mark>/gu)].map((m) => m[1]);
+  assert.deepEqual(marks, ["sự giằng co", "giữa các mặt đối lập"]);
+
+  const unsplit = highlights("sự giằng co giữa các mặt đối lập");
+  assert.doesNotMatch(unsplit.get("es")?.html ?? "", /glossary-match-error/);
+  assert.equal([...(unsplit.get("vi")?.html ?? "").matchAll(/<mark/gu)].length, 1);
+
+  for (const target of ["sự giằng co một hai ba bốn năm giữa các mặt đối lập", "sự giằng co dữ dội; giữa các mặt đối lập"]) {
+    assert.match(highlights(target).get("es")?.html ?? "", /glossary-match-error/, target);
+  }
+});
+
+test("only a standalone ellipsis between words is a gap, and source terms never have gaps", () => {
+  const forms = ["sự giằng co … giữa các mặt đối lập", "a ... b", "chờ…", "x … y … z"];
+  const spans = (text, index) => findGlossaryTargetFormOccurrences(text, [forms[index]], "vi")
+    .map((o) => o.pieces.map((p) => text.slice(p.start, p.end)));
+  assert.deepEqual(spans("sự giằng co rất dữ dội giữa các mặt đối lập", 0), [["sự giằng co", "giữa các mặt đối lập"]]);
+  assert.deepEqual(spans("a c b", 1), [["a", "b"]]);
+  assert.deepEqual(spans("chờ… nữa", 2), [["chờ…"]]);
+  assert.deepEqual(spans("chờ thêm…", 2), []);
+  assert.deepEqual(spans("x 1 y 2 z", 3), [["x", "y", "z"]]);
+  assert.deepEqual(spans("x y z", 3), [["x y z"]]);
+
+  const model = buildEditorGlossaryModel(glossaryPayload({
+    terms: [{ termId: "t1", sourceTerms: ["batallar … antítesis"], targetTerms: ["x"] }],
+  }));
+  assert.equal(buildEditorRowSourceGlossaryHighlights([{ code: "es", text: "batallar de las antítesis" }], model).size, 0);
 });
 
 test("source highlights are not marked as errors when the glossary allows omitting the target term", () => {

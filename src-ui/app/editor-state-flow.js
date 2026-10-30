@@ -17,7 +17,10 @@ import {
   normalizeEditorPreviewSearchState,
   selectedEditorPreviewLanguageCode,
 } from "./editor-preview.js";
-import { loadStoredEditorPreviewLanguageCode } from "./editor-preferences.js";
+import {
+  loadStoredEditorCollapsedLanguageCodes,
+  loadStoredEditorPreviewLanguageCode,
+} from "./editor-preferences.js";
 import { normalizeEditorReplaceState } from "./editor-replace.js";
 import { normalizeEditorRowTextStyle } from "./editor-row-text-style.js";
 import { cloneRowTimings } from "./editor-timing.js";
@@ -74,9 +77,13 @@ function normalizeEditorChapterFilters(filters) {
   return normalizeEditorChapterFilterState(filters);
 }
 
-function cloneCollapsedLanguageCodes(collapsedLanguageCodes) {
-  return collapsedLanguageCodes instanceof Set
-    ? new Set(collapsedLanguageCodes)
+function preserveCollapsedLanguageCodes(nextEditorChapter, previousEditorChapter, isSameChapter) {
+  if (!isSameChapter) {
+    return loadStoredEditorCollapsedLanguageCodes(nextEditorChapter?.chapterId);
+  }
+
+  return previousEditorChapter?.collapsedLanguageCodes instanceof Set
+    ? new Set(previousEditorChapter.collapsedLanguageCodes)
     : new Set();
 }
 
@@ -310,7 +317,7 @@ export function applyEditorUiState(nextEditorChapter, previousEditorChapter = st
     previewLanguageCode: preserveEditorPreviewLanguage(nextEditorChapter, previousEditorChapter, isSameChapter),
     previewSearch: preserveEditorPreviewSearch(previousEditorChapter, isSameChapter),
     fontSizePx: coerceEditorFontSizePx(previousEditorChapter?.fontSizePx),
-    collapsedLanguageCodes: cloneCollapsedLanguageCodes(previousEditorChapter?.collapsedLanguageCodes),
+    collapsedLanguageCodes: preserveCollapsedLanguageCodes(nextEditorChapter, previousEditorChapter, isSameChapter),
     dirtyRowIds: isSameChapter
       ? compactDirtyRowIds(nextEditorChapter?.rows, previousEditorChapter?.dirtyRowIds)
       : new Set(),

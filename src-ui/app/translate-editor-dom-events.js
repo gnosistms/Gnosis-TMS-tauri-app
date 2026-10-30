@@ -2,6 +2,7 @@ import { syncEditorRowTextareaHeight } from "./autosize.js";
 import { syncEditorImagePreviewFrameWithResult } from "./editor-image-preview-size.js";
 import { syncEditorVirtualizationRowLayout } from "./editor-virtualization.js";
 import { closestEventTarget } from "./event-target.js";
+import { isSaveShortcut } from "./events/keyboard-shortcuts.js";
 import { onCurrentWebviewDragDrop, openExternalUrl } from "./runtime.js";
 import { noteUserScrollIntent } from "./editor-scroll-session.js";
 import { state } from "./state.js";
@@ -762,12 +763,13 @@ export function registerTranslateEditorDomEvents(app, render) {
       return;
     }
 
+    // Return sends; Shift+Return keeps the native newline.
     const assistantDraftInput = closestEventTarget(event.target, "[data-editor-assistant-draft]");
     if (assistantDraftInput instanceof HTMLTextAreaElement) {
       const key = typeof event.key === "string" ? event.key.toLowerCase() : "";
       if (
         key === "enter"
-        && event.shiftKey
+        && !event.shiftKey
         && !event.metaKey
         && !event.ctrlKey
         && !event.altKey
@@ -779,18 +781,7 @@ export function registerTranslateEditorDomEvents(app, render) {
     }
 
     const input = closestEventTarget(event.target, "[data-editor-image-url-input]");
-    if (!(input instanceof HTMLInputElement)) {
-      return;
-    }
-
-    const key = typeof event.key === "string" ? event.key.toLowerCase() : "";
-    if (
-      key !== "enter"
-      || !event.shiftKey
-      || event.metaKey
-      || event.ctrlKey
-      || event.altKey
-    ) {
+    if (!(input instanceof HTMLInputElement) || !isSaveShortcut(event)) {
       return;
     }
 

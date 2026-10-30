@@ -1,8 +1,10 @@
 import { focusedSample } from "./glossary-research-studio-sampling.js";
-import { buildEditorGlossaryModel, findLongestGlossaryMatches } from "./editor-glossary-highlighting.js";
+import { buildEditorGlossaryModel, findGlossaryTargetFormOccurrences, findLongestGlossaryMatches, glossaryTermWithoutGaps } from "./editor-glossary-highlighting.js";
 
 export const STUDIO_TRANSLATION_CONTRACT_VERSION = 3;
 export const STUDIO_DICTIONARY_REVIEW_VERSION = 3;
+// Step 2b preselects researching the term together with the related entries.
+export const STUDIO_DEFAULT_BRANCH = "research";
 
 export function studioSourceContext(paragraph) {
   const texts = (camel, snake) => (Array.isArray(camel) ? camel : Array.isArray(snake) ? snake : [])
@@ -49,8 +51,13 @@ export function applyStudioContext(study, paragraphId, result) {
 }
 
 export function studioMatches(text, terms, languageCode = "es") {
-  const model = buildEditorGlossaryModel({ sourceLanguage: { code: languageCode },
-    targetLanguage: { code: "en" }, terms });
+  return studioModelMatches(text, studioMatchModel(terms, languageCode));
+}
+
+const studioMatchModel = (terms, languageCode) => buildEditorGlossaryModel({ sourceLanguage: { code: languageCode },
+  targetLanguage: { code: "en" }, terms });
+
+function studioModelMatches(text, model) {
   const { tokens, matches } = findLongestGlossaryMatches(text, model?.sourceMatcher);
   const offsets = [0];
   for (const token of tokens) offsets.push(offsets.at(-1) + token.value.length);
@@ -106,7 +113,7 @@ export function clearStudioDependents(study, step) {
   }
   const reset = (owner, values) => { if (later.has(owner)) Object.assign(study, values); };
   reset("2a", { forms: [], formDiscovery: null, origin: null });
-  reset("2b", { relatedEntries: [], carriedTargets: [], branch: "separate", mergeDestinations: {}, reResearchStarted: false });
+  reset("2b", { relatedEntries: [], carriedTargets: [], branch: STUDIO_DEFAULT_BRANCH, mergeDestinations: {}, reResearchStarted: false });
   reset("3", { population: [], populationCount: null, populationFingerprint: null, passages: [], sampling: null });
   reset("4.5", { meanings: [] });
   reset("4.6", { assignments: [], displayTranslations: {}, recoveryScanned: [], recoveryConsidered: 0,
@@ -136,6 +143,18 @@ export function clearStudioDependents(study, step) {
   study.pendingDecision = null; study.decisionInput = {};
   study.status = "active"; study.error = "";
   if (study.steps[step]) study.steps[step].status = "awaiting-review";
+}
+
+// Re-research adds the related entries' forms and reruns 2a. Clearing 2b onward
+// first keeps 2a from offering a redo that would forget this choice and loop.
+export function startStudioReResearch(study) {
+  const forms = uniqueSourceTexts([...study.scope.forms, ...study.relatedEntries.flatMap((e) => e.sourceTerms)], study.scope.sourceLanguage.code);
+  const carriedTargets = study.relatedEntries.flatMap((e) => e.targetTerms.map((text, i) => ({ text, note: e.targetVariantNotes?.[i] ?? "", originTermId: e.termId })));
+  const rerunForms = stableSignature(forms) !== stableSignature(study.scope.forms) || !study.reResearchStarted;
+  if (rerunForms) { clearStudioDependents(study, "2a"); delete study.steps["2a"]; }
+  Object.assign(study, { carriedTargets, branch: "research", reResearchStarted: true });
+  study.scope.forms = forms;
+  return rerunForms;
 }
 
 export function stableSignature(value) {
@@ -272,19 +291,48 @@ export function temporaryGlossaryTerms(study) {
     sourceTerms: q.forms, targetTerms: q.targetTerms ?? [], targetVariantNotes: [] }))];
 }
 
+// Saved glossary entries that match the study's paragraphs. Steps 8 and 9
+// translate with them, as production does, and skip occurrences that a longer
+// saved entry covers. The study supersedes entries it replaces, merges or shares
+// a source form with; step 10b decides those collisions.
+export function studioGlossaryContext(study, entries) {
+  const language = study.scope.sourceLanguage.code;
+  const owned = new Set([...selectedForms(study), ...study.queue.flatMap((q) => q.forms)].map((form) => sourceFormKey(form, language)));
+  const related = new Set((study.relatedEntries ?? []).map((entry) => entry.termId));
+  const candidates = (Array.isArray(entries) ? entries : []).filter((entry) => entry?.termId && entry.lifecycleState !== "deleted"
+    && entry.termId !== study.savedTermId && !related.has(entry.termId) && Array.isArray(entry.sourceTerms)
+    && !entry.sourceTerms.some((form) => owned.has(sourceFormKey(form, language))))
+    .map(({ termId, sourceTerms, targetTerms, targetVariantNotes, notesToTranslators, footnote }) => ({ termId, sourceTerms,
+      targetTerms: targetTerms ?? [], targetVariantNotes: targetVariantNotes ?? [], notesToTranslators: notesToTranslators ?? "", footnote: footnote ?? "" }));
+  const model = buildEditorGlossaryModel({ sourceLanguage: { code: language }, targetLanguage: { code: "en" }, terms: candidates });
+  const matched = new Set(study.passages.flatMap((paragraph) => findLongestGlossaryMatches(paragraph.text, model?.sourceMatcher).matches
+    .flatMap((match) => match.candidate.termIdsOrdered)));
+  return candidates.filter((entry) => matched.has(entry.termId));
+}
+
+// Signature inputs for the saved entries, omitted when none match so older trials stay current.
+const glossaryContextSignature = (study) => study.glossaryContext?.length ? { glossaryContext: study.glossaryContext } : {};
+
 export function selectedForms(study) {
   return deduplicateSourceForms(study.forms, study.scope.sourceLanguage.code)
     .filter((f) => f.selected !== false).map((f) => f.text);
 }
 
 export function studyAssignments(study, meaningId) {
-  const terms = [{ termId: "original", sourceTerms: buildStudioDraft(study).sourceTerms, targetTerms: [] }, ...temporaryGlossaryTerms(study)];
+  const terms = [{ termId: "original", sourceTerms: buildStudioDraft(study).sourceTerms, targetTerms: [] }, ...temporaryGlossaryTerms(study),
+    ...(study.glossaryContext ?? [])];
+  // Renders call this several times per meaning, so build the model once and match each paragraph once.
+  const model = studioMatchModel(terms, study.scope.sourceLanguage.code);
+  const owned = new Map();
+  const ownedSpans = (paragraph) => {
+    if (!owned.has(paragraph.id)) owned.set(paragraph.id, studioModelMatches(paragraph.text, model).filter((match) => match.termIds.includes("original")));
+    return owned.get(paragraph.id);
+  };
   return study.assignments.filter((a) => (!a.entryId || a.entryId === "original")
     && (!meaningId || a.meaningId === meaningId)).filter((assignment) => {
     const paragraph = study.passages.find((p) => p.id === assignment.paragraphId);
     const occurrence = paragraph?.occurrences.find((o) => o.id === assignment.occurrenceId);
-    return paragraph && occurrence && studioMatches(paragraph.text, terms, study.scope.sourceLanguage.code)
-      .some((match) => match.termIds.includes("original") && match.start <= occurrence.start && match.end >= occurrence.end);
+    return paragraph && occurrence && ownedSpans(paragraph).some((match) => match.start <= occurrence.start && match.end >= occurrence.end);
   });
 }
 
@@ -294,7 +342,17 @@ export function meaningTrialSignature(study, meaningId, assignments = focusedSam
     meaning: study.meanings.find((meaning) => meaning.id === meaningId), model: study.model, generalNote: study.generalNote ?? "",
     sourceLanguage: study.scope.sourceLanguage, targetLanguage: study.scope.targetLanguage,
     translationRuntimeVersion: study.translationRuntimeVersion ?? null,
-    translationContractVersion: STUDIO_TRANSLATION_CONTRACT_VERSION });
+    translationContractVersion: STUDIO_TRANSLATION_CONTRACT_VERSION, ...glossaryContextSignature(study) });
+}
+
+// Step 8 chooses which candidates to confirm for each meaning. With one meaning and
+// one candidate word (its inflections share a group) there is nothing to choose, and
+// step 9 tests that word in the complete entry.
+export function studioSingleWordCandidates(study) {
+  const meanings = activeMeanings(study);
+  if (meanings.length !== 1) return null;
+  const candidates = study.candidates.filter((c) => c.selected !== false && c.meaningIds.includes(meanings[0].id));
+  return candidates.length && new Set(candidates.map((c) => c.groupId || c.text)).size === 1 ? candidates : null;
 }
 
 export function meaningTrialsAreCurrent(study) {
@@ -308,7 +366,7 @@ export function meaningTrialsAreCurrent(study) {
 
 export function entryBatchSignature(study, paragraphs, assignments) {
   return stableSignature({ paragraphs, assignments, meanings: activeMeanings(study),
-    temporaryGlossary: temporaryGlossaryTerms(study), model: study.model,
+    temporaryGlossary: temporaryGlossaryTerms(study), ...glossaryContextSignature(study), model: study.model,
     translationRuntimeVersion: study.translationRuntimeVersion ?? null,
     translationContractVersion: STUDIO_TRANSLATION_CONTRACT_VERSION,
     sourceLanguage: study.scope.sourceLanguage, targetLanguage: study.scope.targetLanguage });
@@ -325,6 +383,57 @@ export function exactOccurrences(text, forms, languageCode = "es") {
     id: `o${index}`, start: match.start, end: match.end,
     surface: text.slice(match.start, match.end),
   }));
+}
+
+// Target forms may contain the editor's "…" gap, which allows words that target
+// grammar places inside the form. Pieces keep the exact spelling check.
+export function exactTargetOccurrences(text, forms, languageCode) {
+  const normal = (value) => value.normalize("NFC").toLocaleLowerCase().replace(/\s+/gu, " ").trim();
+  return findGlossaryTargetFormOccurrences(text, forms, languageCode).filter((match) => match.formIndexes.some((index) =>
+    normal(glossaryTermWithoutGaps(forms[index])) === normal(match.pieces.map((piece) => text.slice(piece.start, piece.end)).join(" "))))
+    .map((match, index) => ({ id: `o${index}`, start: match.start, end: match.end, pieces: match.pieces,
+      surface: text.slice(match.start, match.end) }));
+}
+
+const isGapWord = (word) => word === "…" || word === "...";
+function gapLayout(form) {
+  const words = []; const gaps = new Set();
+  for (const word of String(form).trim().split(/\s+/u)) isGapWord(word) ? gaps.add(words.length) : words.push(word);
+  return { words, gaps };
+}
+const gapLayoutText = (words, gaps) => words.flatMap((word, i) => gaps.has(i) ? ["…", word] : [word]).join(" ");
+
+// Each way to open one more gap between two words of a target form.
+export function studioSplitForms(form) {
+  const { words, gaps } = gapLayout(form);
+  return words.slice(1).map((_, i) => i + 1).filter((i) => !gaps.has(i)).map((i) => gapLayoutText(words, new Set([...gaps, i])));
+}
+
+// A candidate rendered with words inside it keeps one form with every observed gap.
+export function mergeStudioGapForms(form, split) {
+  const base = gapLayout(form); const added = gapLayout(split);
+  if (base.words.join(" ") !== added.words.join(" ")) return form;
+  return gapLayoutText(base.words, new Set([...base.gaps, ...added.gaps]));
+}
+
+// Steps 8 and 9 pass a rendering split by words that target grammar requires.
+// The candidate then gets the gap, so the editor matches such renderings too.
+export function applyStudioSplitForms(study, choices) {
+  const changes = [];
+  for (const choice of choices) {
+    if (!choice.passed || !choice.splitForm) continue;
+    const candidate = study.candidates.find((c) => c.id === choice.candidateId);
+    if (!candidate) continue;
+    const from = candidate.text; const to = mergeStudioGapForms(from, choice.splitForm);
+    if (to === from) continue;
+    for (const c of study.candidates) if (c.text === from) c.text = to;
+    changes.push({ from, to, rendered: choice.rendered });
+  }
+  return changes;
+}
+
+export function studioSplitFormReport(changes) {
+  return changes.map(({ from, to, rendered }) => `Changed "${from}" to "${to}": target grammar placed words inside it ("${rendered}"), and "…" lets the glossary match them.`).join(" ");
 }
 
 export function deduplicatePassages(passages, forms, languageCode = "es") {
@@ -522,6 +631,57 @@ export function buildStudioDraft(study, candidates = draftCandidates(study)) {
   };
 }
 
+// Term editor changes to the entry under test, mapped onto the study's candidates.
+// Order and notes follow the visible text; changing a text in place renames it; a new
+// translation joins the meaning the editor was opened for. Removed translations stay
+// in the study unconfirmed, so earlier research still shows them.
+export function applyStudioEntryEdit(study, edit, meaningId) {
+  const before = buildStudioDraft(study);
+  const targets = (edit.targetTerms ?? []).map((text) => String(text ?? "").trim());
+  const notes = targets.map((_, index) => String(edit.targetVariantNotes?.[index] ?? "").trim());
+  if (!targets.length || targets.some((text) => !text)) throw new Error("Enter at least one translation. An empty translation cannot be tested.");
+  const active = new Set(activeMeanings(study).map((m) => m.id));
+  const inDraft = (c) => c.confirmed && c.retained !== false && c.meaningIds.some((id) => active.has(id));
+  const candidates = structuredClone(study.candidates);
+  const drafted = candidates.filter(inDraft);
+  const removed = before.targetTerms.filter((text) => !targets.includes(text));
+  const renamed = new Map();
+  targets.forEach((text, index) => {
+    const old = before.targetTerms[index];
+    if (!before.targetTerms.includes(text) && removed.includes(old) && ![...renamed.values()].includes(old)) renamed.set(text, old);
+  });
+  const renamedFrom = new Map([...renamed].map(([text, old]) => [old, text]));
+  for (const c of drafted) {
+    if (renamedFrom.has(c.text)) c.text = renamedFrom.get(c.text);
+    else if (removed.includes(c.text)) c.confirmed = false;
+  }
+  for (const [index, text] of targets.entries()) {
+    const previous = renamed.has(text) ? renamed.get(text) : text;
+    const known = before.targetTerms.indexOf(previous);
+    if (known < 0) {
+      if (!active.has(meaningId)) throw new Error("Choose a finding for an active meaning before adding a translation.");
+      const reused = candidates.find((c) => c.text === text && c.meaningIds.includes(meaningId));
+      if (reused) Object.assign(reused, { confirmed: true, retained: true, selected: true, note: notes[index] });
+      else candidates.push({ id: `human-entry-${globalThis.crypto.randomUUID()}`, text, note: notes[index], meaningIds: [meaningId],
+        confirmed: true, selected: true, retained: true });
+    } else if (notes[index] !== before.targetVariantNotes[known]) {
+      for (const c of candidates) if (inDraft(c) && c.text === text) c.note = notes[index];
+    }
+  }
+  const rank = (c) => targets.indexOf(c.text);
+  const ordered = candidates.filter((c) => rank(c) >= 0).sort((a, b) => rank(a) - rank(b));
+  let next = 0;
+  const reordered = candidates.map((c) => rank(c) >= 0 ? ordered[next++] : c);
+  for (const meaning of activeMeanings(study)) {
+    if (!reordered.some((c) => inDraft(c) && c.meaningIds.includes(meaning.id))) {
+      throw new Error(`Meaning ${meaningNumber(study, meaning.id)} would have no translation. Keep at least one translation for each meaning.`);
+    }
+  }
+  study.candidates = reordered;
+  study.generalNote = edit.notesToTranslators ?? "";
+  study.footnote = edit.footnote ?? "";
+}
+
 function currentEntryBatches(study) {
   const assignments = studyAssignments(study);
   const paragraphs = study.passages.filter((p) => assignments.some((a) => a.paragraphId === p.id));
@@ -546,6 +706,60 @@ export function entryTrialsAreCurrent(study) {
   return batches.length > 0 && batches.every((input) => currentEntryTrial(study, input, signature));
 }
 
+// The human may overrule the reviewer for one exact translation, or stop using a
+// paragraph as test evidence. Overrides change verdicts only, never test inputs,
+// so saved trials stay current and nothing is translated again.
+export function studioReviewOverride(study, paragraphId, occurrenceId, translation) {
+  if ((study.ignoredTestParagraphIds ?? []).includes(paragraphId)) return "ignored";
+  return (study.acceptedTranslations?.[`${paragraphId}:${occurrenceId}`] ?? []).includes(translation) ? "accepted" : null;
+}
+
+export function applyStudioReviewOverrides(study, trial) {
+  if (!Array.isArray(trial?.choices)) return trial;
+  trial.choices = trial.choices.map(({ override: _override, reviewerPassed, ...choice }) => {
+    const passed = reviewerPassed ?? choice.passed;
+    const translation = trial.translations?.find((t) => t.paragraphId === choice.paragraphId)?.translation;
+    const override = studioReviewOverride(study, choice.paragraphId, choice.occurrenceId, translation);
+    return override === "ignored" || (override === "accepted" && !passed)
+      ? { ...choice, passed: true, reviewerPassed: passed, override } : { ...choice, passed };
+  });
+  trial.passed = trial.choices.every((choice) => choice.passed);
+  return trial;
+}
+
+// A finding in the current step's latest trial. In step 8 that is the meaning's trial for its
+// current inputs and repair round; in step 9, a batch tested with the current entry.
+export function currentStudioFinding(study, paragraphId, occurrenceId, translation, signature) {
+  const phase = study.step === "8" ? "8" : "9";
+  const entry = phase === "9" ? signature ?? stableSignature(buildStudioDraft(study)) : null;
+  for (const [key, trial] of Object.entries(study.tests ?? {})) {
+    if (phase === "9" ? !/^9:\d+$/u.test(key) || trial.signature !== entry : !key.startsWith("8:")) continue;
+    const paragraph = trial.translations?.find((t) => t.paragraphId === paragraphId);
+    const choice = trial.choices?.find((c) => c.paragraphId === paragraphId && c.occurrenceId === occurrenceId);
+    if (!paragraph || !choice || (translation !== undefined && paragraph.translation !== translation)) continue;
+    if (phase === "8" && (trial.rounds !== (study.rounds?.[key] ?? 0) || trial.signature !== meaningTrialSignature(study, key.slice(2)))) continue;
+    return { key, trial, choice, translation: paragraph.translation };
+  }
+  return null;
+}
+
+export function reviewStudioFinding(study, action, paragraphId, occurrenceId) {
+  const finding = currentStudioFinding(study, paragraphId, occurrenceId);
+  if (!finding) throw new Error("This finding is no longer part of the current test.");
+  const key = `${paragraphId}:${occurrenceId}`;
+  const ignored = study.ignoredTestParagraphIds ?? [];
+  const accepted = study.acceptedTranslations?.[key] ?? [];
+  if (action === "accept") study.acceptedTranslations = { ...study.acceptedTranslations, [key]: [...new Set([...accepted, finding.translation])] };
+  else if (action === "ignore") study.ignoredTestParagraphIds = [...new Set([...ignored, paragraphId])];
+  else if (action === "undo" && ignored.includes(paragraphId)) study.ignoredTestParagraphIds = ignored.filter((id) => id !== paragraphId);
+  else if (action === "undo") {
+    study.acceptedTranslations = { ...study.acceptedTranslations, [key]: accepted.filter((text) => text !== finding.translation) };
+    if (!study.acceptedTranslations[key].length) delete study.acceptedTranslations[key];
+  } else throw new Error("Unknown review action.");
+  for (const trial of [...Object.values(study.tests ?? {}), ...Object.values(study.entryValidation?.best?.tests ?? {})]) applyStudioReviewOverrides(study, trial);
+  return finding.key;
+}
+
 export function finalUsage(study, { groupByText = false } = {}) {
   const signature = stableSignature(buildStudioDraft(study));
   const keys = new Map(study.candidates.map((c) => [c.id, groupByText ? c.text : c.id]));
@@ -559,6 +773,8 @@ export function finalUsage(study, { groupByText = false } = {}) {
       if (seen.has(key)) throw new Error("A research occurrence was counted twice.");
       if (choice.preservedSourceSpelling && input.assignments.some((a) => a.paragraphId === choice.paragraphId
         && a.occurrenceId === choice.occurrenceId && a.preserveSourceSpelling)) { seen.add(key); continue; }
+      // Ignored paragraphs are not evidence; an accepted rendering may use no listed candidate.
+      if (choice.override === "ignored" || (choice.override === "accepted" && !keys.has(choice.candidateId))) { seen.add(key); continue; }
       if (!keys.has(choice.candidateId)) throw new Error("A test selected an unknown candidate.");
       seen.add(key);
       const count = counts[keys.get(choice.candidateId)];

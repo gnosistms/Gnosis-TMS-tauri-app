@@ -20,7 +20,7 @@ export function summarizeStudioActivity(value) {
   }
   if (Array.isArray(value.assignments)) lines.push(`${value.assignments.length} occurrences assigned; ${value.assignments.filter((a) => !a.meaningId).length} need review.`);
   if (Array.isArray(value.choices)) lines.push(`${value.choices.length} occurrences reviewed; ${value.choices.filter((c) => c.problem).length} findings to review.`);
-  if (Array.isArray(value.rows)) lines.push(`${value.rows.length} paragraphs translated.`, ...value.rows.slice(0, 2).map((row) => clip(row.translatedText ?? "", 400)).filter(Boolean));
+  if (Array.isArray(value.rows)) lines.push(`${value.rows.length} paragraphs translated.`);
   if (Number.isInteger(value.population_distinct)) lines.push(`${value.population_distinct.toLocaleString()} matching paragraphs.`);
   else if (Array.isArray(value.items)) lines.push(`${value.items.length.toLocaleString()} paragraphs returned.`);
   if (Array.isArray(value.candidateIds)) lines.push(`${value.candidateIds.length} spellings need investigation.`);
@@ -30,7 +30,20 @@ export function summarizeStudioActivity(value) {
   if (value.originTerm) lines.push(`Original term: ${value.originTerm}.`);
   if (value.edition === "en" && value.language !== "en") lines.push("Looked up in the English Wiktionary edition.");
   if (value.status) lines.push(`Source status: ${value.status}.`);
-  return clip(lines.join("\n") || "Completed. Results are available in the research report.");
+  const summary = clip(lines.join("\n") || "Completed. Results are available in the research report.");
+  // The collapsed preview shows only the count; the expanded summary shows every translation in full.
+  const translations = Array.isArray(value.rows) ? value.rows.map((row) => String(row?.translatedText ?? "").trim()).filter(Boolean) : [];
+  return [summary, ...translations].join("\n\n");
+}
+
+// Each paragraph's translation and the reviewer's own per-occurrence verdicts, for the
+// work list's review outcome lists. The human's overrides are applied when shown.
+export function studioReviewOutcomes(trial) {
+  return (trial.translations ?? []).flatMap((row) => {
+    const occurrences = (trial.choices ?? []).filter((c) => c.paragraphId === row?.paragraphId)
+      .map(({ occurrenceId, passed, reviewerPassed, problem }) => ({ occurrenceId, passed: Boolean(reviewerPassed ?? passed), problem: problem ?? "" }));
+    return occurrences.length ? [{ paragraphId: row.paragraphId, translation: row.translation ?? "", occurrences }] : [];
+  });
 }
 
 export function createStudioActivity(study, changed, isCurrent) {
@@ -52,35 +65,44 @@ export function createStudioActivity(study, changed, isCurrent) {
     if (!isCurrent() || !ownsRecord()) return;
     Object.assign(find(path), fields); changed();
   };
-  function plan(items, path = [], announce = true) {
+  // A prefix prunes rows with it that the plan no longer has, such as batches of an older, larger sample.
+  function plan(items, path = [], announce = true, prune = "") {
     if (!isCurrent() || !ownsRecord()) return;
+    if (prune) {
+      const parent = path.length ? find(path) : null; const siblings = parent ? parent.children ??= [] : record.items;
+      const kept = siblings.filter((node) => !node.id.startsWith(prune) || items.some((item) => item.id === node.id));
+      siblings.splice(0, siblings.length, ...kept);
+    }
     for (const { id, label, children } of items) {
       const node = find([...path, id]); node.label = label;
       if (children) plan(children, [...path, id], false);
     }
     if (announce) changed();
   }
-  function pause(nodes = record.items) {
+  function settle(status, nodes = record.items) {
     if (study.activitySteps[step] !== record) return;
-    for (const node of nodes) { if (node.status === "running") node.status = "paused"; pause(node.children); }
+    for (const node of nodes) { if (node.status === "running") node.status = status; settle(status, node.children); }
   }
   return { plan, update,
     start(path, label) {
       if (!isCurrent() || !ownsRecord()) return;
+      for (let n = 1; n <= path.length; n++) delete find(path.slice(0, n)).review;
       for (let n = 1; n < path.length; n++) Object.assign(find(path.slice(0, n)), { status: "running", result: "", error: "" });
       update(path, { label, status: "running", result: "", error: "" });
     },
     done(path, result, reused = false) { update(path, { status: "complete", result: summarizeStudioActivity(result), reused, error: "" }); },
-    finish(path, result) { update(path, { status: "complete", result: clip(result), error: "" }); },
+    finish(path, result, review) { update(path, { status: "complete", result: clip(result), error: "", ...(review ? { review } : {}) }); },
     fail(path, error) { update(path, { status: error?.message === "Research paused." ? "paused" : "failed", error: error?.message === "Research paused." ? "" : clip(error?.message ?? error, 400) }); },
-    pause() { pause(); changed(); },
+    pause() { settle("paused"); changed(); },
+    // An error ends the run, so nothing it left running is still working.
+    stop() { settle("failed"); changed(); },
   };
 }
 
 export function studioStageActivities(s) {
   const nodes = (rows) => rows.map(([id, label]) => ({ id, label }));
   const plans = {
-    "2a": [["discover", "Find additional forms and spellings"], ["forms", "Check forms against the corpus"], ["origin", "Verify original spelling"], ["identity", "Review which forms belong to this word"], ["accepted", "Verify accepted alternatives"]],
+    "2a": [["discover", "Find additional forms and spellings"], ["forms", "Check forms against the corpus"], ["origin", "Verify original spelling"], ["identity", "Verify which forms are the same word"], ["accepted", "Verify accepted alternatives"]],
     "3": [["population", "Find matching corpus paragraphs"], ["sample", "Select research examples"]],
     "4.1": [["dictionary", "Look up the source word"], ["origin", "Check its original-language form"], ["analysis", "Review dictionary meanings"]],
     "4.2": [["examples", "Read usage examples for each form"], ["analysis", "Identify meanings in the corpus"]],
@@ -94,7 +116,7 @@ export function studioStageActivities(s) {
     id: m.id, label: `Meaning ${(s.meanings ?? []).indexOf(m) + 1} · ${clip(m.definition ?? "", 110)}`,
   }));
   if (s.step === "9") {
-    const assignments = (s.assignments ?? []).filter((a) => !a.entryId || a.entryId === "original");
+    const assignments = studyAssignments(s);
     const count = (s.passages ?? []).filter((p) => assignments.some((a) => a.paragraphId === p.id)).length;
     return Array.from({ length: Math.ceil(count / 15) }, (_, i) => ({ id: `batch-${i * 15}`, label: `Batch ${i + 1} · paragraphs ${i * 15 + 1}–${Math.min(count, (i + 1) * 15)} of ${count}` }));
   }

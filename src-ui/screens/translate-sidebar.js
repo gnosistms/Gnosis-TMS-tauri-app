@@ -730,7 +730,7 @@ function renderAssistantComposer(editorChapter, rows, languages, targetCode, off
           ${isDisabled ? "disabled" : ""}
         >${escapeHtml(assistant.composerDraft)}</textarea>
       </div>
-      <p class="translation-row-text-style-actions__hint assistant-composer__hint">Shift + Return to send</p>
+      <p class="translation-row-text-style-actions__hint assistant-composer__hint">Return to send, Shift + Return for new line</p>
     </div>
   `;
 }

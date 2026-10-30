@@ -2001,8 +2001,8 @@ test.describe("editor regressions", () => {
     await page.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
     await expect(page.locator(".assistant-item")).toContainText("inner transformation");
     await expect(page.locator("[data-editor-assistant-draft]")).toBeVisible();
-    // The composer sends via Shift+Return; there is no separate send button.
-    await expect(page.locator(".assistant-composer__hint")).toContainText("Shift + Return to send");
+    // The composer sends via Return; there is no separate send button.
+    await expect(page.locator(".assistant-composer__hint")).toContainText("Return to send, Shift + Return for new line");
   });
 
   test("sending assistant messages clears the composer and preserves the next draft", async ({ page }) => {
@@ -2029,9 +2029,16 @@ test.describe("editor regressions", () => {
     await page.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
     const composer = page.locator("[data-editor-assistant-draft]");
 
+    // Shift+Return breaks a line without sending.
+    await composer.fill("First line");
+    await composer.press("Shift+Enter");
+    await composer.pressSequentially("second line");
+    await expect(composer).toHaveValue("First line\nsecond line");
+    expect((await readMockTauriState(page)).invocations.some((entry) => entry.command === "run_ai_assistant_turn")).toBe(false);
+
     for (const message of ["Explain the first sentence.", "Explain the second sentence."]) {
       await composer.fill(message);
-      await composer.press("Shift+Enter");
+      await composer.press("Enter");
       await expect(page.locator(".assistant-item").filter({ hasText: message })).toHaveCount(1);
       await expect(composer).toHaveValue("");
       await expect(composer).toBeFocused();
@@ -2689,7 +2696,7 @@ test.describe("editor regressions", () => {
     await expect(lastField).toBeVisible();
 
     const beforeMetrics = await readTranslateScrollMetrics(page);
-    expect(beforeMetrics.bottomGap).toBeLessThan(80);
+    expect(beforeMetrics.bottomGap).toBeLessThan(120);
 
     const uploadButton = page.locator(
       '[data-action="open-editor-image-upload"][data-row-id="fixture-row-0080"][data-language-code="vi"]',
@@ -2743,7 +2750,7 @@ test.describe("editor regressions", () => {
     await expect(lastField).toBeVisible();
 
     const beforeMetrics = await readTranslateScrollMetrics(page);
-    expect(beforeMetrics.bottomGap).toBeLessThan(80);
+    expect(beforeMetrics.bottomGap).toBeLessThan(120);
 
     await page.locator(
       '[data-action="open-editor-image-upload"][data-row-id="fixture-row-0080"][data-language-code="vi"]',
@@ -6150,7 +6157,11 @@ test.describe("editor regressions", () => {
       `[data-editor-image-url-input][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
     );
     await urlInput.fill(url);
+    // Shift+Return no longer inserts; Cmd/Ctrl+S, the save shortcut, does.
     await urlInput.press("Shift+Enter");
+    await page.waitForTimeout(200);
+    expect(await commandWasInvoked("find_gtms_editor_image_reuse")).toBe(false);
+    await urlInput.press(await editorSaveShortcut(page));
 
     const dialog = page.locator('[data-modal-dialog="editor-image-reuse"]');
     await expect(dialog).toBeVisible();
@@ -6196,7 +6207,7 @@ test.describe("editor regressions", () => {
       `[data-editor-image-url-input][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
     );
     await urlInput.fill("https://example.com/separator.png");
-    await urlInput.press("Shift+Enter");
+    await urlInput.press(await editorSaveShortcut(page));
 
     const dialog = page.locator('[data-modal-dialog="editor-image-reuse"]');
     await expect(dialog).toBeVisible();
@@ -6376,8 +6387,22 @@ test.describe("editor regressions", () => {
     const field = await activateMainEditorField(page, rowId, "vi");
     await expect(field).toHaveValue(text);
     const saveShortcut = await editorSaveShortcut(page);
-    await expect(page.locator(".translation-row-text-style-actions__hint").first())
-      .toHaveText(saveShortcut === "Meta+s" ? "Command + S to save" : "Ctrl + S to save");
+    const toolbar = page.locator(
+      `[data-editor-language-panel][data-row-id="${rowId}"][data-language-code="vi"] .translation-row-text-style-actions`,
+    );
+    const saveHint = toolbar.locator(".translation-row-text-style-actions__row--styles .translation-row-text-style-actions__hint");
+    await expect(saveHint).toBeVisible();
+    await expect(saveHint).toHaveText(saveShortcut === "Meta+s" ? "Command + S to save" : "Ctrl + S to save");
+    // Styles on the top row with the save hint at its right end; inserts below.
+    const [toolbarBox, stylesBox, insertsBox, hintBox] = await Promise.all([
+      toolbar.boundingBox(),
+      toolbar.locator(".translation-row-text-style-actions__row--styles").boundingBox(),
+      toolbar.locator(".translation-row-text-style-actions__row--inserts").boundingBox(),
+      saveHint.boundingBox(),
+    ]);
+    expect(insertsBox.y).toBeGreaterThanOrEqual(stylesBox.y + stylesBox.height);
+    expect(hintBox.y + hintBox.height).toBeLessThanOrEqual(insertsBox.y);
+    expect(Math.abs(hintBox.x + hintBox.width - (toolbarBox.x + toolbarBox.width))).toBeLessThan(2);
     await field.evaluate((element) => element.setSelectionRange(element.value.length, element.value.length));
     await page.keyboard.press("Enter");
     await page.keyboard.type("Third paragraph");

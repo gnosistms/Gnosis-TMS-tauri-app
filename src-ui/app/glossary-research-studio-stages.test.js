@@ -149,6 +149,57 @@ test("a recovered paragraph with a second unmatched occurrence requires human re
   assert.equal(s.pendingDecision.paragraphId, "extra");
   assert.equal(s.pendingDecision.occurrenceId, "o1");
 });
+
+test("a Choose a meaning answer re-checks the remaining unmatched occurrences with it", async () => {
+  const s = study();
+  s.passages = deduplicatePassages([{ id: "first", text: "marche un" }, { id: "second", text: "marche marche" }, { id: "third", text: "marche trois" }], ["marche"], "fr");
+  s.meanings = [{ id: "a", definition: "Walk" }];
+  const requests = [];
+  const tools = { ask: async (_q, data) => {
+    if (!data.paragraphs) return { meaningId: null, definition: "Ghost of the ego", translation: "walk" };
+    requests.push(data);
+    const answered = data.meanings.some((m) => m.id === "human-1");
+    return meaningReply(data, (p, _o, i) => answered ? "human-1" : p.id === "second" && i === 0 ? "a" : null);
+  } };
+  assert.equal((await assignMeanings(s, tools)).pending, true);
+  assert.equal(s.pendingDecision.paragraphId, "first");
+  assert.equal(requests[0].reviewedExamples, undefined, "the first pass has no answers to show");
+  // The translator enters a new meaning for the first paragraph.
+  s.meanings.push({ id: "human-1", definition: "Ghost of the ego", enabled: true });
+  Object.assign(s.assignments.find((a) => a.paragraphId === "first"), { meaningId: "human-1", humanChoice: true });
+  s.pendingDecision = null;
+  const result = await assignMeanings(s, tools);
+  assert.equal(result.pending, undefined);
+  assert.equal(s.pendingDecision, null);
+  assert.deepEqual(requests[1].paragraphs.map((p) => p.id), ["second", "third"]);
+  assert.deepEqual(requests[1].reviewedExamples, [{ text: "marche un", occurrence: { start: 0, end: 6, surface: "marche" }, meaningId: "human-1" }]);
+  assert.deepEqual(s.assignments.map((a) => `${a.paragraphId}:${a.occurrenceId}:${a.meaningId}`),
+    ["first:o0:human-1", "second:o0:a", "second:o1:human-1", "third:o0:human-1"], "only unmatched occurrences take the re-check");
+  await assignMeanings(s, tools);
+  assert.equal(requests.length, 2);
+});
+
+test("a re-check that leaves an occurrence unmatched runs again only after another answer", async () => {
+  const s = study();
+  s.passages = deduplicatePassages([{ id: "first", text: "marche un" }, { id: "second", text: "marche deux" }], ["marche"], "fr");
+  s.meanings = [{ id: "a", definition: "Walk" }];
+  let classified = 0;
+  const tools = { ask: async (_q, data) => {
+    if (!data.paragraphs) return { meaningId: "invented", definition: "Walk", translation: "walk" };
+    classified += 1;
+    return meaningReply(data, () => null);
+  } };
+  await assignMeanings(s, tools);
+  assert.equal(s.pendingDecision.recommendation.meaningId, null, "an unknown suggested meaning is not offered");
+  Object.assign(s.assignments[0], { meaningId: "a", humanChoice: true }); s.pendingDecision = null;
+  await assignMeanings(s, tools);
+  assert.equal(classified, 2);
+  assert.equal(s.pendingDecision.paragraphId, "second");
+  s.pendingDecision = null;
+  await assignMeanings(s, tools);
+  assert.equal(classified, 2, "resuming without a new answer does not classify again");
+});
+
 test("French dictionaries use the native edition then English, independently of optional forms research", async () => {
   const s = study(); s.step = "4.1"; const calls = [];
   const result = await runResearchStage(s, {

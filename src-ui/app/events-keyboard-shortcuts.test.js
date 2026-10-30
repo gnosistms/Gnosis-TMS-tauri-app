@@ -366,3 +366,41 @@ for (const { platform, modifiers } of [
     }
   });
 }
+
+for (const { platform, modifiers } of [
+  { platform: "MacIntel", modifiers: { metaKey: true, ctrlKey: false } },
+  { platform: "Win32", modifiers: { metaKey: false, ctrlKey: true } },
+]) {
+  for (const [dialogName, action] of [
+    ["glossary-term-editor", "submit-glossary-term-editor"],
+    ["qa-term-editor", "submit-qa-term-editor"],
+  ]) {
+    test(`the primary modifier with S saves the ${dialogName} on ${platform}`, () => {
+      navigator.platform = platform;
+      const dispatched = [];
+      registerKeyboardShortcutEvents(async (name) => { dispatched.push(name); });
+      const dialog = { getAttribute: (name) => name === "data-modal-dialog" ? dialogName : null };
+      const target = new HTMLTextAreaElement();
+      target.matches = () => false;
+      target.closest = (selector) => selector === "[data-modal-dialog]" ? dialog : null;
+      const run = (overrides) => {
+        const event = keyboardEvent({ key: "s", target, ...modifiers, ...overrides });
+        keydownHandler(event);
+        return event;
+      };
+
+      assert.equal(run({}).prevented, true);
+      assert.equal(run({ key: "S" }).prevented, true);
+      assert.deepEqual(dispatched, [action, action]);
+      for (const excluded of [
+        { metaKey: !modifiers.metaKey, ctrlKey: !modifiers.ctrlKey }, { shiftKey: true }, { altKey: true },
+        { repeat: true }, { isComposing: true },
+        // Shift+Return is a newline now, not a save.
+        { key: "Enter", metaKey: false, ctrlKey: false, shiftKey: true },
+      ]) {
+        assert.equal(run(excluded).prevented, false);
+      }
+      assert.equal(dispatched.length, 2);
+    });
+  }
+}

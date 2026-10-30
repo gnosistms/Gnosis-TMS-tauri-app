@@ -5,6 +5,7 @@ const EDITOR_FONT_SIZE_STORAGE_KEY = "gnosis-tms-editor-font-size";
 const EDITOR_LOCATION_STORAGE_KEY = "gnosis-tms-editor-location";
 const EDITOR_PREVIEW_LANGUAGE_STORAGE_KEY = "gnosis-tms-editor-preview-language";
 const EDITOR_PREVIEW_SCROLL_STORAGE_KEY = "gnosis-tms-editor-preview-scroll";
+const EDITOR_COLLAPSED_LANGUAGES_STORAGE_KEY = "gnosis-tms-editor-collapsed-languages";
 
 function normalizeStorageLogin(login) {
   return typeof login === "string" && login.trim() ? login.trim().toLowerCase() : null;
@@ -32,6 +33,11 @@ function scopedEditorPreviewLanguageKey(login = getActiveStorageLogin()) {
 function scopedEditorPreviewScrollKey(login = getActiveStorageLogin()) {
   const normalizedLogin = resolveStorageLogin(login);
   return normalizedLogin ? `${EDITOR_PREVIEW_SCROLL_STORAGE_KEY}:${normalizedLogin}` : null;
+}
+
+function scopedEditorCollapsedLanguagesKey(login = getActiveStorageLogin()) {
+  const normalizedLogin = resolveStorageLogin(login);
+  return normalizedLogin ? `${EDITOR_COLLAPSED_LANGUAGES_STORAGE_KEY}:${normalizedLogin}` : null;
 }
 
 function isPlainObject(value) {
@@ -198,6 +204,59 @@ function loadStoredEditorPreviewScrollMap(login = getActiveStorageLogin()) {
     }
 
     normalizedMap[chapterId] = scrollTop;
+  }
+
+  if (removedInvalidEntry) {
+    if (Object.keys(normalizedMap).length > 0) {
+      writePersistentValue(key, normalizedMap);
+    } else {
+      removePersistentValue(key);
+    }
+  }
+
+  return normalizedMap;
+}
+
+function normalizeStoredEditorCollapsedLanguageCodes(value) {
+  const values = value instanceof Set ? [...value] : Array.isArray(value) ? value : [];
+  const codes = values
+    .filter((code) => typeof code === "string" && code.trim())
+    .map((code) => code.trim());
+  return [...new Set(codes)].sort();
+}
+
+function loadStoredEditorCollapsedLanguagesMap(login = getActiveStorageLogin()) {
+  const key = scopedEditorCollapsedLanguagesKey(login);
+  if (!key) {
+    return {};
+  }
+
+  const rawValue = readPersistentValue(key, null);
+  if (rawValue === null || rawValue === undefined) {
+    return {};
+  }
+
+  if (!isPlainObject(rawValue)) {
+    removePersistentValue(key);
+    return {};
+  }
+
+  const normalizedMap = {};
+  let removedInvalidEntry = false;
+
+  for (const [chapterId, value] of Object.entries(rawValue)) {
+    if (typeof chapterId !== "string" || !chapterId.trim()) {
+      removedInvalidEntry = true;
+      continue;
+    }
+
+    const normalizedCodes = normalizeStoredEditorCollapsedLanguageCodes(value);
+    if (normalizedCodes.length === 0) {
+      removedInvalidEntry = true;
+      continue;
+    }
+
+    normalizedMap[chapterId] = normalizedCodes;
   }
 
   if (removedInvalidEntry) {
@@ -431,6 +490,62 @@ export function clearStoredEditorPreviewScrollTop(chapterId, login = getActiveSt
   delete scrollMap[chapterId];
   if (Object.keys(scrollMap).length > 0) {
     writePersistentValue(key, scrollMap);
+  } else {
+    removePersistentValue(key);
+  }
+}
+
+export function loadStoredEditorCollapsedLanguageCodes(chapterId, login = getActiveStorageLogin()) {
+  if (typeof chapterId !== "string" || !chapterId.trim()) {
+    return new Set();
+  }
+
+  return new Set(loadStoredEditorCollapsedLanguagesMap(login)[chapterId] ?? []);
+}
+
+export function saveStoredEditorCollapsedLanguageCodes(
+  chapterId,
+  collapsedLanguageCodes,
+  login = getActiveStorageLogin(),
+) {
+  if (typeof chapterId !== "string" || !chapterId.trim()) {
+    return;
+  }
+
+  const normalizedCodes = normalizeStoredEditorCollapsedLanguageCodes(collapsedLanguageCodes);
+  if (normalizedCodes.length === 0) {
+    clearStoredEditorCollapsedLanguageCodes(chapterId, login);
+    return;
+  }
+
+  const key = scopedEditorCollapsedLanguagesKey(login);
+  if (!key) {
+    return;
+  }
+
+  const collapsedLanguages = loadStoredEditorCollapsedLanguagesMap(login);
+  collapsedLanguages[chapterId] = normalizedCodes;
+  writePersistentValue(key, collapsedLanguages);
+}
+
+export function clearStoredEditorCollapsedLanguageCodes(chapterId, login = getActiveStorageLogin()) {
+  if (typeof chapterId !== "string" || !chapterId.trim()) {
+    return;
+  }
+
+  const key = scopedEditorCollapsedLanguagesKey(login);
+  if (!key) {
+    return;
+  }
+
+  const collapsedLanguages = loadStoredEditorCollapsedLanguagesMap(login);
+  if (!Object.prototype.hasOwnProperty.call(collapsedLanguages, chapterId)) {
+    return;
+  }
+
+  delete collapsedLanguages[chapterId];
+  if (Object.keys(collapsedLanguages).length > 0) {
+    writePersistentValue(key, collapsedLanguages);
   } else {
     removePersistentValue(key);
   }

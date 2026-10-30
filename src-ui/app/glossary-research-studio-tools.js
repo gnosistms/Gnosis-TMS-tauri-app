@@ -150,9 +150,10 @@ export function createStudioTools(study, { persist, progress, isCurrent, activit
       get lastToolSignature() { return requestSignatures.get(JSON.stringify(parent)); },
       run: (kind, payload, purpose = kind) => run(kind, payload, purpose, parent),
       ask: (question, data, shape, purpose, shared = false) => ask(question, data, shape, purpose, shared, parent),
-      planActivity: (items) => activity.plan(items, parent),
+      planActivity: (items, prune = "") => activity.plan(items, parent, true, prune),
+      stopActivity: () => activity.stop(),
       forActivity: (id) => scoped([...parent, id]),
-      finishActivity: (summary) => activity.finish(parent, summary),
+      finishActivity: (summary, review) => activity.finish(parent, summary, review),
       async cancel() {
         activity.pause();
         timing?.finish("paused");

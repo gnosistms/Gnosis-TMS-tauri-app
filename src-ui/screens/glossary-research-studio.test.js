@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { state } from "../app/state.js";
-import { newStudioStudy, STUDIO_STEPS, buildStudioDraft, stableSignature, entryBatchSignature, studioStepNumber } from "../app/glossary-research-studio-workflow.js";
+import { newStudioStudy, STUDIO_STEPS, STUDIO_DEFAULT_BRANCH, buildStudioDraft, stableSignature, entryBatchSignature, studioStepNumber } from "../app/glossary-research-studio-workflow.js";
 import { STUDIO_SKIP_PROMPTS, studioRecommendationKey } from "../app/glossary-research-studio-recommendations.js";
 import { renderGlossaryResearchStudio } from "./glossary-research-studio.js";
 
@@ -111,6 +111,140 @@ test("an unfinished lookup does not claim there are no matching entries", () => 
   } finally { state.glossaryResearchStudio = previous; }
 });
 
+test("related entries ask what to do about the research term", () => {
+  const previous = state.glossaryResearchStudio;
+  try {
+    const study = newStudioStudy({ sourceLanguage: { code: "es", name: "Spanish" },
+      targetLanguage: { code: "en", name: "English" }, term: "<b>Mundo</b>" }, "related");
+    study.step = "2b";
+    study.relatedEntries = [{ termId: "t", sourceTerms: ["mundo"], targetTerms: ["world"], notesToTranslators: "" }];
+    state.glossaryResearchStudio = { study, busy: false, branch: STUDIO_DEFAULT_BRANCH, mergeDestinations: {} };
+    const html = renderGlossaryResearchStudio(state);
+    assert(html.includes('<option value="research" selected>'), "researching with the existing entries is preselected");
+    assert(html.includes("The glossary entries below look like the same or similar to the one you are researching."));
+    assert(html.includes("What do you want to do about this?"));
+    assert(html.includes("Research &lt;b&gt;Mundo&lt;/b&gt; without looking at the existing glossary entries."));
+    assert(html.includes("Research &lt;b&gt;Mundo&lt;/b&gt; taking the existing entries into account."));
+    assert(html.includes("Merge &lt;b&gt;Mundo&lt;/b&gt; into the list of source variants for one of the existing entries."));
+    assert(!html.includes("<b>Mundo</b>"));
+  } finally { state.glossaryResearchStudio = previous; }
+});
+
+test("a completed review lists failed and correct meaning choices in collapsed groups", () => {
+  const previous = state.glossaryResearchStudio;
+  try {
+    const study = newStudioStudy({ sourceLanguage: { code: "es", name: "Spanish" }, targetLanguage: { code: "en", name: "English" }, term: "gloria" }, "review");
+    study.step = "9";
+    study.passages = [{ id: "a", text: "La gloria y la gloria", occurrences: [{ id: "o0", start: 3, end: 9 }, { id: "o1", start: 15, end: 21 }], references: [] },
+      { id: "b", text: "Otra gloria", occurrences: [{ id: "o0", start: 5, end: 11 }], references: [] }];
+    const review = [{ paragraphId: "a", translation: "The glory and the <b>fame</b>", occurrences: [{ occurrenceId: "o0", passed: true, problem: "" }, { occurrenceId: "o1", passed: false, problem: "Used the wrong meaning" }] },
+      { paragraphId: "b", translation: "Another glory", occurrences: [{ occurrenceId: "o0", passed: true, problem: "" }] }];
+    study.activitySteps = { "9": { items: [{ id: "batch-0", label: "Batch 1", status: "complete", children: [{ id: "round-0", label: "initial test", status: "complete", children: [
+      { id: "assess", label: "Review meaning selection and translation quality", status: "complete", result: "2 of 3 occurrences passed.", review, children: [] }] }] }] } };
+    state.glossaryResearchStudio = { study, history: [], busy: false };
+    const html = renderGlossaryResearchStudio(state);
+    const failed = html.match(/<details class="studio-review-outcomes"[^>]*><summary>Translations that failed to use the correct meaning \(1\)<\/summary>([\s\S]*?)<\/details>/u);
+    const passed = html.match(/<details class="studio-review-outcomes"[^>]*><summary>Translations that used the correct meaning \(2\)<\/summary>/u);
+    assert(failed && passed);
+    assert.doesNotMatch(html, /<details class="studio-review-outcomes"[^>]*\sopen/u);
+    assert(failed[1].includes("Used the wrong meaning"));
+    assert(failed[1].includes("The glory and the &lt;b&gt;fame&lt;/b&gt;"));
+    assert(failed[1].includes("<mark>gloria</mark>"));
+    assert(!failed[1].includes("Another glory"));
+  } finally { state.glossaryResearchStudio = previous; }
+});
+
+test("current step 9 findings offer accept, ignore and edit; overrides show their state with Undo", () => {
+  const previous = state.glossaryResearchStudio;
+  try {
+    const study = newStudioStudy({ sourceLanguage: { code: "es", name: "Spanish" }, targetLanguage: { code: "en", name: "English" }, term: "gloria" }, "human-review");
+    study.step = "9"; study.forms = [{ text: "gloria" }]; study.meanings = [{ id: "m" }];
+    study.candidates = [{ id: "c", text: "glory", confirmed: true, retained: true, meaningIds: ["m"] }];
+    study.passages = [{ id: "a", text: "La gloria", occurrences: [{ id: "o0", start: 3, end: 9 }], references: [] }];
+    study.assignments = [{ paragraphId: "a", occurrenceId: "o0", meaningId: "m" }];
+    const failure = (translation) => [{ paragraphId: "a", translation, occurrences: [{ occurrenceId: "o0", passed: false, problem: "Used the wrong meaning" }] }];
+    study.tests = { "9:0": { phase: "9", passed: false, rounds: 1, signature: stableSignature(buildStudioDraft(study)),
+      translations: [{ paragraphId: "a", translation: "The fame" }], choices: [{ paragraphId: "a", occurrenceId: "o0", passed: false, problem: "Used the wrong meaning" }] } };
+    const round = (id, translation) => ({ id, label: id, status: "complete", children: [
+      { id: "assess", label: "Review meaning selection and translation quality", status: "complete", result: "0 of 1 occurrences passed.", review: failure(translation), children: [] }] });
+    study.activitySteps = { "9": { items: [{ id: "batch-0", label: "Batch 1", status: "running", children: [round("round-0", "An older rendering"), round("round-1", "The fame")] }] } };
+    state.glossaryResearchStudio = { study, history: [], busy: false };
+    let html = renderGlossaryResearchStudio(state);
+    for (const action of ["review-accept", "review-ignore", "edit-entry"]) {
+      assert.equal(html.match(new RegExp(`data-action="studio:${action}:a:o0"`, "gu"))?.length, 2, `${action} in the work list and the findings report`);
+    }
+    for (const label of ["Mark this translation as acceptable", "Ignore this error", "Edit glossary entry"]) assert(html.includes(`>${label}<`), label);
+    const older = html.slice(html.indexOf("An older rendering"), html.indexOf("The fame"));
+    assert(older.includes("Used the wrong meaning") && !older.includes("studio:review-accept"), "an older round stays history");
+
+    study.acceptedTranslations = { "a:o0": ["The fame"] };
+    html = renderGlossaryResearchStudio(state);
+    assert(html.includes("1 of 1 occurrences passed."));
+    const accepted = html.match(/<summary>Translations that used the correct meaning \(1\)<\/summary>([\s\S]*?)<\/details>/u)?.[1] ?? "";
+    assert(accepted.includes("You marked this translation as acceptable.") && accepted.includes('data-action="studio:review-undo:a:o0"'));
+
+    study.acceptedTranslations = {}; study.ignoredTestParagraphIds = ["a"];
+    html = renderGlossaryResearchStudio(state);
+    assert(html.includes("0 of 1 occurrences passed; 1 ignored."));
+    assert(html.includes("Ignored. This paragraph is no longer used for testing."));
+    assert(!html.includes("studio:review-accept"));
+
+    study.ignoredTestParagraphIds = []; state.glossaryResearchStudio.busy = true;
+    assert.match(renderGlossaryResearchStudio(state), /data-action="studio:review-accept:a:o0"[^>]*disabled/u);
+  } finally { state.glossaryResearchStudio = previous; }
+});
+
+test("a stuck selection offers human review or three more AI rounds; step 8 progress offers review or five more", () => {
+  const previous = state.glossaryResearchStudio;
+  try {
+    const study = newStudioStudy({ sourceLanguage: { code: "es", name: "Spanish" }, targetLanguage: { code: "en", name: "English" }, term: "gloria" }, "stuck");
+    study.step = "9";
+    study.pendingDecision = { kind: "selection", key: "9:0", keys: ["9:0"], rounds: 3, report: "Batch 1 still has failures." };
+    state.glossaryResearchStudio = { study, history: [], busy: false };
+    let html = renderGlossaryResearchStudio(state);
+    assert.match(html, /data-action="studio:decision:stop"[^>]*>\s*Review the errors yourself/u);
+    assert.match(html, /data-action="studio:decision:continue"[^>]*>\s*Continue 3 more rounds with AI/u);
+    study.step = "8"; study.pendingDecision = { kind: "progress", rounds: 5, reportKey: "m:5", report: "Progress." };
+    html = renderGlossaryResearchStudio(state);
+    assert.match(html, /data-action="studio:decision:stop"[^>]*>\s*Review the errors yourself/u);
+    assert.match(html, /data-action="studio:decision:continue"[^>]*>\s*Continue 5 more rounds with AI/u);
+    assert(!html.includes("Continue 3 more rounds with AI"));
+  } finally { state.glossaryResearchStudio = previous; }
+});
+
+test("a skipped step 8 says why it was skipped", () => {
+  const previous = state.glossaryResearchStudio;
+  try {
+    const study = newStudioStudy({ sourceLanguage: { code: "es", name: "Spanish" }, targetLanguage: { code: "en", name: "English" }, term: "gloria" }, "skipped-8");
+    study.step = "8";
+    study.steps["8"] = { status: "skipped", approved: { skipped: true, reason: "There is one meaning and one candidate translation." } };
+    state.glossaryResearchStudio = { study, history: [], busy: false };
+    assert(renderGlossaryResearchStudio(state).includes("<p>Skipped. There is one meaning and one candidate translation.</p>"));
+    study.steps["8"] = { status: "complete", approved: {} };
+    assert(!renderGlossaryResearchStudio(state).includes("Skipped."));
+  } finally { state.glossaryResearchStudio = previous; }
+});
+
+test("completed validation batches fold their test details while running batches stay open", () => {
+  const previous = state.glossaryResearchStudio;
+  try {
+    const study = newStudioStudy({ sourceLanguage: { code: "es", name: "Spanish" }, targetLanguage: { code: "en", name: "English" }, term: "gloria" }, "fold");
+    study.step = "9";
+    const round = (status) => [{ id: "round-0", label: "initial test", status, children: [
+      { id: "translate", label: "Translate with the complete glossary entry", status, result: status === "complete" ? "15 paragraphs translated." : "", children: [] }] }];
+    study.activitySteps = { "9": { items: [
+      { id: "batch-0", label: "Batch 1 · paragraphs 1–15 of 30", status: "complete", result: "16 of 16 occurrences passed.", children: round("complete") },
+      { id: "batch-15", label: "Batch 2 · paragraphs 16–30 of 30", status: "running", children: round("running") }] } };
+    state.glossaryResearchStudio = { study, history: [], busy: true };
+    const html = renderGlossaryResearchStudio(state);
+    const done = html.match(/Batch 1 · paragraphs 1–15 of 30[\s\S]*?16 of 16 occurrences passed\.[\s\S]*?<details data-studio-disclosure="activity:\[&quot;batch-0&quot;\]:details"><summary>Test details<\/summary>([\s\S]*?)<\/details><\/li>/u);
+    assert(done, "the completed batch keeps its result visible and folds its rounds");
+    assert(done[1].includes("15 paragraphs translated."));
+    assert(!html.includes('activity:[&quot;batch-15&quot;]:details'), "the running batch is not folded");
+    assert(html.slice(html.indexOf("Batch 2 · paragraphs")).includes("Translate with the complete glossary entry"));
+  } finally { state.glossaryResearchStudio = previous; }
+});
+
 test("optional dictionary research explains the action and cannot continue before a result", () => {
   const previous = state.glossaryResearchStudio;
   try {
@@ -124,6 +258,22 @@ test("optional dictionary research explains the action and cannot continue befor
     assert(html.includes("Skip this step"));
     study.steps["4.1"] = { value: { meanings: [] } };
     assert(renderGlossaryResearchStudio(state).includes("Refresh dictionary research"));
+  } finally { state.glossaryResearchStudio = previous; }
+});
+
+test("the source-summary skip rule is not repeated on the internet source search or meaning review", () => {
+  const previous = state.glossaryResearchStudio;
+  try {
+    const study = newStudioStudy({ sourceLanguage: { code: "es", name: "Spanish" }, targetLanguage: { code: "en", name: "English" }, term: "Mundo" }, "skip-rule");
+    state.glossaryResearchStudio = { study, busy: false };
+    const rule = "If both source searches are skipped, the source summary (4.4.3) is skipped automatically.";
+    study.step = "4.4.1";
+    assert(renderGlossaryResearchStudio(state).includes(rule));
+    study.step = "4.4.2";
+    assert(!renderGlossaryResearchStudio(state).includes(rule));
+    for (const id of ["4.4.1", "4.4.2"]) study.steps[id] = { status: "skipped", approved: { skipped: true } };
+    study.step = "4.5";
+    assert(!renderGlossaryResearchStudio(state).includes(rule), "applied rule");
   } finally { state.glossaryResearchStudio = previous; }
 });
 
@@ -148,6 +298,34 @@ test("skip advice is escaped and advisory, stale advice is hidden, and the summa
     assert.match(html, /<h2>4\.4\.3 · Source summary<\/h2>/);
     assert(!html.includes("4.4.4 · Source summary"));
     assert(html.includes("Skipping here discards the entire source-research branch"));
+  } finally { state.glossaryResearchStudio = previous; }
+});
+
+test("Run is the orange default until the AI recommends Skip, and both stay available while advice loads", () => {
+  const previous = state.glossaryResearchStudio;
+  const primary = (html, action) => new RegExp(`class="button button--primary" data-action="studio:${action}"`, "u").test(html);
+  const orange = (html, emphasized, plain, message) => {
+    assert(primary(html, emphasized), `${message}: ${emphasized} is orange`);
+    assert(!primary(html, plain) && html.includes(`data-action="studio:${plain}"`), `${message}: ${plain} stays plain`);
+  };
+  try {
+    for (const step of Object.keys(STUDIO_SKIP_PROMPTS)) {
+      const s = newStudioStudy({ term: "mundo", sourceLanguage: { code: "es", name: "Spanish" },
+        targetLanguage: { code: "en", name: "English" } }, "recommendation-emphasis");
+      s.step = step; const view = { study: s, busy: false }; state.glossaryResearchStudio = view;
+      orange(renderGlossaryResearchStudio(state), "run", "skip", `${step}: no recommendation`);
+      for (const [choice, emphasized, plain] of [["Skip", "skip", "run"], ["Run", "run", "skip"]]) {
+        s.skipRecommendations = { [step]: { contextKey: studioRecommendationKey(s), recommendation: choice, reason: "Because." } };
+        orange(renderGlossaryResearchStudio(state), emphasized, plain, `${step}: ${choice} recommended`);
+      }
+      // A refresh hides the earlier Skip advice, so Run is the default again.
+      Object.assign(view, { busy: true, recommendingStep: step });
+      const html = renderGlossaryResearchStudio(state);
+      orange(html, "run", "skip", `${step}: getting advice`);
+      assert(!html.includes('data-action="studio:pause"'), `${step}: no Pause while getting advice`);
+      view.recommendingStep = null;
+      assert(renderGlossaryResearchStudio(state).includes('data-action="studio:pause"'), `${step}: research keeps Pause`);
+    }
   } finally { state.glossaryResearchStudio = previous; }
 });
 
@@ -534,8 +712,21 @@ test("meaning decisions number enabled definitions and offer report-only senses 
     s.pendingDecision = { kind: "unmatched", paragraph: s.passages[0], paragraphId: "p", occurrenceId: "o0", recommendation: { definition: "New meaning", translation: "perceptible" } };
     html = renderGlossaryResearchStudio(state);
     assert(html.includes('value="b" >2. Sensory receptivity'));
-    assert(html.includes("Choose an existing definition"));
+    assert(html.includes("Choose the meaning it has here"));
     assert(!html.includes("does not match a listed meaning"));
+    // One choice: an existing meaning, or the AI's new one typed below. One button assigns it.
+    assert.match(html, /<option value="new" selected>Enter new meaning below<\/option><\/select>/u);
+    assert.match(html, /data-studio-decision="definition">New meaning<\/textarea>/u);
+    assert.match(html, /data-action="studio:decision:assign"[^>]*>\s*Assign meaning/u);
+    assert.doesNotMatch(html, /Assign selected meaning|Add new meaning|Select a definition|studio:decision:new/u);
+    s.decisionInput = { meaning: "b" };
+    html = renderGlossaryResearchStudio(state);
+    assert(html.includes('value="b" selected>2. Sensory receptivity'));
+    assert(!html.includes('data-studio-decision="definition"'), "the new-meaning box shows only for a new meaning");
+    s.decisionInput = {}; s.pendingDecision.recommendation.definition = "  perceptible ";
+    assert(renderGlossaryResearchStudio(state).includes('value="a" selected>1. Perceptible'), "the AI repeated an existing meaning");
+    s.pendingDecision.recommendation = { meaningId: "b", definition: "Receptive to the senses", translation: "perceptible" };
+    assert(renderGlossaryResearchStudio(state).includes('value="b" selected>2. Sensory receptivity'), "the AI named an existing meaning in other words");
   } finally { state.glossaryResearchStudio = previous; }
 });
 
@@ -572,6 +763,7 @@ test("legacy compound findings show verified research counts and separate unsupp
     state.glossaryResearchStudio = { study: s, busy: false };
     const html = renderGlossaryResearchStudio(state);
     assert(html.includes("sensibles mallas · 2 paragraphs"));
+    assert(html.includes("They will be used as context when translations are suggested in step 6."));
     assert(html.includes("Unverified suggestions (1)"));
     assert(!html.includes("<summary>nervios sensibles"));
     assert(html.includes("No exact occurrence with this meaning"));
@@ -780,5 +972,30 @@ test("report-only note explanations are collapsed, escaped and kept out of edita
     html = renderGlossaryResearchStudio(state);
     assert(html.includes('data-studio-disclosure="usage-note-repairs:8"'));
     assert(html.includes("Verified provenance and detailed reasoning."));
+  } finally { state.glossaryResearchStudio = previous; }
+});
+
+test("an unanswered recommendation shows the countdown to the AI's choice, which the timer updates in place", () => {
+  const previous = state.glossaryResearchStudio;
+  try {
+    const s = newStudioStudy({ term: "mundo", sourceLanguage: { code: "es", name: "Spanish" },
+      targetLanguage: { code: "en", name: "English" } }, "auto-choice");
+    s.step = "4.3";
+    s.skipRecommendations = { "4.3": { contextKey: studioRecommendationKey(s), recommendation: "Skip", reason: "Because.", createdAt: "2026-10-30T10:00:00.000Z" } };
+    const view = { study: s, busy: false }; state.glossaryResearchStudio = view;
+    let html = renderGlossaryResearchStudio(state);
+    assert.match(html, /<div class="studio-auto-choice" data-studio-auto-choice style="--studio-auto-choice-left: 1">/u);
+    assert.match(html, /<p role="timer" data-studio-auto-choice-text>Skipping this step in 10 seconds unless you choose\.<\/p>/u);
+    assert(html.indexOf("data-studio-auto-choice") < html.indexOf("Show reasoning"), "the countdown precedes the reasoning");
+    view.autoChoice = { key: `${s.id}:4.3:2026-10-30T10:00:00.000Z`, choice: "skip", remaining: 2_500, at: 0, held: true };
+    html = renderGlossaryResearchStudio(state);
+    assert.match(html, /class="studio-auto-choice is-held" data-studio-auto-choice style="--studio-auto-choice-left: 0.25"/u);
+    assert(html.includes("Countdown paused while the reasoning is open."));
+    view.autoChoiceAnswered = view.autoChoice.key;
+    html = renderGlossaryResearchStudio(state);
+    assert(html.includes("AI recommendation: Skip it."));
+    assert(!html.includes("data-studio-auto-choice"), "answered advice no longer counts down");
+    delete view.autoChoiceAnswered; view.revisiting = true;
+    assert(!renderGlossaryResearchStudio(state).includes("data-studio-auto-choice"), "revisited steps wait for the translator");
   } finally { state.glossaryResearchStudio = previous; }
 });

@@ -38,20 +38,20 @@ const translateCssSource = readFileSync(
   "utf8",
 );
 
-test("assistant composer shows the Shift + Return send hint", () => {
+test("assistant composer shows the Return send hint", () => {
   assert.equal(
-    translateSidebarSource.includes("Shift + Return to send"),
+    translateSidebarSource.includes("Return to send, Shift + Return for new line"),
     true,
   );
 });
 
-test("assistant composer shortcut handling submits on Shift + Return", () => {
+test("assistant composer shortcut handling submits on Return and keeps Shift + Return a newline", () => {
   assert.equal(
     translateEditorDomEventsSource.includes("[data-editor-assistant-draft]"),
     true,
   );
   assert.equal(
-    translateEditorDomEventsSource.includes("&& event.shiftKey"),
+    translateEditorDomEventsSource.includes("&& !event.shiftKey"),
     true,
   );
   assert.equal(

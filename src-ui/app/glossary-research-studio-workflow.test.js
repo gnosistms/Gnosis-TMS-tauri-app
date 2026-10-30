@@ -1,11 +1,12 @@
 import test from "node:test";
-import { studioDependentSteps, clearStudioDependents } from "./glossary-research-studio-workflow.js";
+import { studioDependentSteps, clearStudioDependents, startStudioReResearch, exactTargetOccurrences, studioSplitForms, mergeStudioGapForms } from "./glossary-research-studio-workflow.js";
 import assert from "node:assert/strict";
 
 import { newStudioStudy, exactOccurrences, deduplicatePassages, researchSample,
   approveStep, stepIsReusable, validateAssignments, routeSplits, finalUsage,
   stableSignature, buildStudioDraft, collisionChanges, uniqueSourceTexts, deduplicateSourceForms,
-  selectedForms, sourceCollisions, reviseAssignment, entryBatchSignature, applySplitReview, studioContextRequest, applyStudioContext, studioStepStatusLabel } from "./glossary-research-studio-workflow.js";
+  selectedForms, sourceCollisions, reviseAssignment, entryBatchSignature, applySplitReview, studioContextRequest, applyStudioContext, studioStepStatusLabel,
+  entryTrialsAreCurrent, reviewStudioFinding, applyStudioReviewOverrides, studioReviewOverride, applyStudioEntryEdit, studioSingleWordCandidates } from "./glossary-research-studio-workflow.js";
 
 const scope = { sourceLanguage: { code: "es" }, targetLanguage: { code: "en" } };
 
@@ -375,10 +376,131 @@ test("revising source forms clears discovery outputs including skipped checkpoin
   s.meanings = [{ id: "old-meaning" }]; s.assignments = [{ meaningId: "old-meaning" }];
   s.candidates = [{ text: "old-translation" }]; s.queue = [{ studyId: "separate-child" }];
   s.forms = [{ text: "walk", selected: true }]; s.skipRecommendations = { "4.1": { recommendation: "Skip" } };
+  s.branch = "separate";
   const scopeBefore = structuredClone(s.scope);
   clearStudioDependents(s, "2a");
   assert.deepEqual(s.scope, scopeBefore); assert.deepEqual(s.forms, [{ text: "walk", selected: true }]);
+  assert.equal(s.branch, "research", "2b defaults to researching with the related entries");
   for (const key of ["population", "passages", "meanings", "assignments", "candidates", "queue"]) assert.deepEqual(s[key], []);
   assert.deepEqual(s.skipRecommendations, {}); assert.deepEqual(s.steps["4.1"], { status: "undone" });
   assert.equal(s.steps["1"].status, "complete");
+});
+
+test("re-researching an exact existing entry reruns 2a once and then continues past 2b", () => {
+  const s = newStudioStudy({ ...scope, term: "mundo", forms: ["mundo"] }, "re-research");
+  const existing = { termId: "t", sourceTerms: ["mundo"], targetTerms: ["world"], targetVariantNotes: ["Usual"] };
+  s.step = "2b"; s.relatedEntries = [existing];
+  s.steps["2a"] = { status: "complete", approved: { forms: [] } };
+  s.steps["2b"] = { status: "awaiting-review", value: { entries: [existing] } };
+  assert.equal(startStudioReResearch(s), true);
+  assert.deepEqual(studioDependentSteps(s, "2a"), [], "rerunning 2a must not offer a redo that resets this choice");
+  assert.equal(s.steps["2a"], undefined);
+  assert.equal(s.branch, "research"); assert.equal(s.reResearchStarted, true);
+  assert.deepEqual(s.carriedTargets, [{ text: "world", note: "Usual", originTermId: "t" }]);
+  // 2a and 2b run again and find the same entry.
+  s.step = "2b"; s.relatedEntries = [existing];
+  assert.equal(startStudioReResearch(s), false);
+  assert.deepEqual(s.scope.forms, ["mundo"]);
+});
+
+function reviewedStudy() {
+  const s = newStudioStudy(scope, "reviewed"); s.forms = [{ text: "caminar" }]; s.meanings = [{ id: "m" }];
+  s.candidates = [{ id: "c0", text: "walk", confirmed: true, meaningIds: ["m"] }];
+  s.passages = deduplicatePassages([{ id: "p", text: "caminar lejos" }, { id: "q", text: "caminar cerca" }], ["caminar"]);
+  s.assignments = s.passages.flatMap((p) => p.occurrences.map((o) => ({ paragraphId: p.id, occurrenceId: o.id, meaningId: "m" })));
+  s.tests["9:0"] = { phase: "9", passed: false, signature: stableSignature(buildStudioDraft(s)),
+    batchSignature: entryBatchSignature(s, s.passages, s.assignments),
+    translations: [{ paragraphId: "p", translation: "stroll far" }, { paragraphId: "q", translation: "walk near" }],
+    choices: [{ paragraphId: "p", occurrenceId: "o0", candidateId: null, passed: false, problem: "No confirmed candidate" },
+      { paragraphId: "q", occurrenceId: "o0", candidateId: "c0", passed: true, problem: "" }] };
+  return s;
+}
+
+test("an accepted translation overrules the reviewer for that exact text until undone", () => {
+  const s = reviewedStudy();
+  assert.equal(entryTrialsAreCurrent(s), false);
+  assert.equal(reviewStudioFinding(s, "accept", "p", "o0"), "9:0");
+  const choice = s.tests["9:0"].choices[0];
+  assert.deepEqual([choice.passed, choice.reviewerPassed, choice.override, choice.problem], [true, false, "accepted", "No confirmed candidate"]);
+  assert.equal(entryTrialsAreCurrent(s), true);
+  assert.deepEqual(finalUsage(s), { c0: { occurrences: 1, paragraphs: 1 } }, "an accepted rendering without a listed candidate is not usage evidence");
+  const retranslated = applyStudioReviewOverrides(s, { translations: [{ paragraphId: "p", translation: "walk far" }],
+    choices: [{ paragraphId: "p", occurrenceId: "o0", passed: false, problem: "Wrong meaning" }] });
+  assert.equal(retranslated.passed, false, "a different translation of the paragraph is reviewed again");
+  reviewStudioFinding(s, "undo", "p", "o0");
+  assert.deepEqual(s.acceptedTranslations, {});
+  assert.equal(s.tests["9:0"].passed, false);
+  assert.deepEqual(s.tests["9:0"].choices[0], { paragraphId: "p", occurrenceId: "o0", candidateId: null, passed: false, problem: "No confirmed candidate" });
+});
+
+test("an ignored paragraph no longer decides the test or counts as usage, without being called correct", () => {
+  const s = reviewedStudy();
+  reviewStudioFinding(s, "ignore", "p", "o0");
+  assert.deepEqual(s.ignoredTestParagraphIds, ["p"]);
+  assert.deepEqual([s.tests["9:0"].passed, s.tests["9:0"].choices[0].override, s.tests["9:0"].choices[0].reviewerPassed], [true, "ignored", false]);
+  assert.equal(studioReviewOverride(s, "p", "o0", "any later translation"), "ignored");
+  assert.deepEqual(finalUsage(s), { c0: { occurrences: 1, paragraphs: 1 } });
+  reviewStudioFinding(s, "undo", "p", "o0");
+  assert.deepEqual([s.ignoredTestParagraphIds, s.tests["9:0"].passed], [[], false]);
+  s.generalNote = "Edited after the test";
+  assert.throws(() => reviewStudioFinding(s, "accept", "p", "o0"), /no longer part of the current test/);
+});
+
+function entryStudy() {
+  const s = newStudioStudy(scope, "entry-edit"); s.forms = [{ text: "antítesis" }];
+  s.meanings = [{ id: "m1" }, { id: "m2" }];
+  s.candidates = [
+    { id: "a", text: "antithesis", note: "Logic.", confirmed: true, retained: true, meaningIds: ["m1"] },
+    { id: "b", text: "opposite", note: "Plain.", confirmed: true, retained: true, meaningIds: ["m2"] },
+    { id: "c", text: "contrast", note: "", confirmed: true, retained: true, meaningIds: ["m2"] },
+  ];
+  s.generalNote = "General.";
+  return s;
+}
+
+test("term editor changes reorder, rename, add and remove the study's translations", () => {
+  const s = entryStudy();
+  applyStudioEntryEdit(s, { targetTerms: ["contrasting", "antithesis", "polar opposite"],
+    targetVariantNotes: ["", "Logic and philosophy.", "Opposed poles."], notesToTranslators: "Edited.", footnote: "Foot." }, "m1");
+  const draft = buildStudioDraft(s);
+  assert.deepEqual(draft.targetTerms, ["contrasting", "antithesis", "polar opposite"]);
+  assert.deepEqual(draft.targetVariantNotes, ["", "Logic and philosophy.", "Opposed poles."]);
+  assert.deepEqual([draft.notesToTranslators, draft.footnote], ["Edited.", "Foot."]);
+  assert.equal(s.candidates.find((c) => c.id === "b").confirmed, false, "a removed translation stays in the study unconfirmed");
+  assert.deepEqual(s.candidates.find((c) => c.id === "c").meaningIds, ["m2"], "an in-place text change keeps its meaning");
+  assert.deepEqual(s.candidates.find((c) => c.text === "contrasting").meaningIds, ["m1"], "a new translation joins the finding's meaning");
+});
+
+test("term editor changes keep every meaning translated and leave the study unchanged when refused", () => {
+  const s = entryStudy();
+  const before = structuredClone(s.candidates);
+  assert.throws(() => applyStudioEntryEdit(s, { targetTerms: ["antithesis"], targetVariantNotes: ["Logic."] }, "m1"), /Meaning 2 would have no translation/);
+  assert.throws(() => applyStudioEntryEdit(s, { targetTerms: ["antithesis", ""], targetVariantNotes: [] }, "m1"), /empty translation/);
+  assert.deepEqual([s.candidates, s.generalNote], [before, "General."]);
+});
+
+test("step 8 has nothing to choose only with one meaning and one candidate word", () => {
+  const s = newStudioStudy(scope, "single-word");
+  s.meanings = [{ id: "m" }, { id: "off", enabled: false }];
+  s.candidates = [{ id: "a", text: "walk", meaningIds: ["m"] }, { id: "x", text: "go", meaningIds: ["off"] }];
+  assert.deepEqual(studioSingleWordCandidates(s).map((c) => c.id), ["a"]);
+  s.candidates = [{ id: "a", text: "walk", groupId: "g", meaningIds: ["m"] }, { id: "b", text: "walked", groupId: "g", meaningIds: ["m"] },
+    { id: "c", text: "stroll", selected: false, meaningIds: ["m"] }];
+  assert.deepEqual(studioSingleWordCandidates(s).map((c) => c.id), ["a", "b"], "inflections of one word, ignoring an unselected word");
+  s.candidates.push({ id: "d", text: "stride", meaningIds: ["m"] });
+  assert.equal(studioSingleWordCandidates(s), null, "two words leave a choice");
+  s.candidates = [{ id: "a", text: "walk", meaningIds: ["m", "n"] }]; s.meanings.push({ id: "n" });
+  assert.equal(studioSingleWordCandidates(s), null, "two meanings are tested separately");
+});
+
+test("split forms open one more gap between words and merge into one gapped form", () => {
+  assert.deepEqual(studioSplitForms("a b c"), ["a … b c", "a b … c"]);
+  assert.deepEqual(studioSplitForms("a … b c"), ["a … b … c"]);
+  assert.deepEqual(studioSplitForms("word"), []);
+  assert.equal(mergeStudioGapForms("a b c", "a … b c"), "a … b c");
+  assert.equal(mergeStudioGapForms("a … b c", "a b … c"), "a … b … c");
+  assert.equal(mergeStudioGapForms("a b c", "x … y"), "a b c");
+  const text = "Có sự giằng co dữ dội giữa các mặt đối lập.";
+  assert.deepEqual(exactTargetOccurrences(text, ["sự giằng co … giữa các mặt đối lập"], "vi").map((o) => o.surface), ["sự giằng co dữ dội giữa các mặt đối lập"]);
+  assert.deepEqual(exactTargetOccurrences(text, ["sự giằng co giữa các mặt đối lập"], "vi"), []);
 });

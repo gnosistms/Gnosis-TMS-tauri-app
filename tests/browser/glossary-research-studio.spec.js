@@ -406,7 +406,9 @@ test("redoing saved research warns before running tools and cancellation preserv
   await expect(page.locator('[data-action="studio:visit:9"]')).toContainText("✓");
   await page.getByRole("button", { name: "Redo this step", exact: true }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Continue", exact: true }).click();
-  await expect(page.locator('[data-action="studio:next"]')).toBeEnabled();
+  // The redone step only reports findings, so research continues past it.
+  await expect(page.getByRole("heading", { name: "4.3 · Word parts", exact: true })).toBeVisible();
+  await expect(page.locator('[data-action="studio:visit:4.2"]')).toHaveText("4.2 · Corpus meanings ✓");
   await expect(page.locator('[data-action="studio:visit:5"]')).toHaveText("5 · Compounds and phrases · undone");
   expect(await page.evaluate(() => window.studioCalls.slice(window.revisitCalls).some((c) => c.command === "start_glossary_studio_tool"))).toBe(true);
 });
@@ -519,6 +521,29 @@ test("Skip recommendation waits for the human, who can run the step anyway", asy
   await page.getByRole("button", { name: "Run this step", exact: true }).click();
   await expect(page.getByLabel("Source form", { exact: true }).first()).toBeEnabled();
   await expect(page.getByLabel("Source form", { exact: true })).toHaveCount(3);
+});
+
+for (const choice of ["Run", "Skip"]) test(`${choice} works before the recommendation arrives, which is then discarded`, async ({ page }) => {
+  await mountStudio(page);
+  await page.evaluate(() => { window.studioHold = "recommendation"; });
+  await page.getByRole("button", { name: "New research", exact: true }).click();
+  await page.getByLabel("Term to research").fill("walk");
+  await page.getByRole("listbox", { name: "Projects", exact: true }).selectOption("p1");
+  await page.getByRole("button", { name: "Begin research", exact: true }).click();
+  await expect(page.locator(".studio-recommendation")).toContainText("Considering whether this research step would help");
+  const footer = page.locator('.studio-footer[data-studio-step="2a"]');
+  await expect(footer.locator('[data-action="studio:run"]')).toHaveClass(/button--primary/u);
+  await expect(footer.locator('[data-action="studio:skip"]')).not.toHaveClass(/button--primary/u);
+  await expect(footer.getByRole("button", { name: "Pause research", exact: true })).toHaveCount(0);
+  await footer.getByRole("button", { name: `${choice} this step`, exact: true }).click();
+  if (choice === "Run") await expect(page.getByLabel("Source form", { exact: true })).toHaveCount(3);
+  else await expect(page.getByRole("heading", { name: "4.1 · Dictionary", exact: true })).toBeVisible();
+  const saved = await page.evaluate(async () => {
+    const s = (await import(`/${"app"}/state.js`)).state.glossaryResearchStudio.study;
+    return { status: s.steps["2a"]?.status, advice: s.skipRecommendations?.["2a"] ?? null,
+      cancellations: window.studioCalls.filter((c) => c.command === "glossary_studio_job" && c.args.cancel).length };
+  });
+  expect(saved).toEqual({ status: choice === "Run" ? "awaiting-review" : "skipped", advice: null, cancellations: 1 });
 });
 
 test("uncertainty recommends Run, while a human Skip preserves only the entered forms", async ({ page }) => {
@@ -688,25 +713,6 @@ test("step 1 edits after completed forms automatically produce new advice withou
   expect(result).toEqual({ adviceCalls: 2, researchRuns: 1, discovery: null });
 });
 
-test("pausing a recommendation cancels its job without starting research or applying a late decision", async ({ page }) => {
-  await mountStudio(page);
-  await page.evaluate(() => { window.studioHold = "recommendation"; });
-  await page.getByRole("button", { name: "New research", exact: true }).click();
-  await page.getByLabel("Term to research").fill("walk");
-  await page.getByRole("listbox", { name: "Projects", exact: true }).selectOption("p1");
-  await page.getByRole("button", { name: "Begin research", exact: true }).click();
-  await expect(page.locator(".studio-recommendation")).toContainText("Considering whether");
-  await page.getByRole("button", { name: "Pause research", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Run this step", exact: true })).toBeEnabled();
-  const result = await page.evaluate(async () => {
-    const s = (await import(`/${"app"}/state.js`)).state.glossaryResearchStudio.study;
-    return { step: s.step, recommendation: s.skipRecommendations?.["2a"] ?? null,
-      stages: window.studioCalls.filter((c) => c.command === "start_glossary_studio_tool").map((c) => c.args.input.step),
-      cancellations: window.studioCalls.filter((c) => c.command === "glossary_studio_job" && c.args.cancel).length };
-  });
-  expect(result).toEqual({ step: "2a", recommendation: null, stages: ["recommendation:2a"], cancellations: 1 });
-});
-
 test("source summary is shown as 4.4.3, waits for a choice and warns before discarding source research", async ({ page }) => {
   await mountStudio(page);
   await page.getByRole("button", { name: "New research", exact: true }).click();
@@ -839,12 +845,14 @@ test("English-source studio completes research, reuses previous-step results and
   expect(await page.evaluate(() => window.studioCalls.filter((c) => c.command === "start_glossary_studio_tool").length)).toBe(calls);
   await next(); await heading("4.1 · Dictionary");
   await page.getByRole("button", { name: "Skip this step", exact: true }).click();
-  await heading("4.2 · Corpus meanings"); await next(); await heading("4.3 · Word parts");
+  // Corpus meanings only reports findings, so research continues to word parts.
+  await heading("4.3 · Word parts");
+  await expect(page.locator('[data-action="studio:visit:4.2"]')).toHaveText("4.2 · Corpus meanings ✓");
   await page.getByRole("button", { name: "Skip this step", exact: true }).click();
   await heading("4.4.2 · Internet sources");
   await page.getByRole("button", { name: "Skip this step", exact: true }).click();
   await heading("4.5 · Review meanings");
-  await expect(page.getByText(/source summary \(4.4.3\) is skipped automatically/)).toBeVisible();
+  await expect(page.getByText(/source summary \(4.4.3\) is skipped automatically/)).toHaveCount(0);
   await next(); await heading("4.6 · Assign meanings");
   await page.getByText("Show usage examples (3 paragraphs)").click();
   for (let i = 0; i < 3; i += 1) {
@@ -998,7 +1006,7 @@ test("five-round Stop checkpoints survive reload and reopen for an explicit deci
     s.pendingDecision = { kind: "progress", reportKey: "m1:5", rounds: 5, report: s.reports["m1:5"].report };
     document.querySelector("#app").innerHTML = renderGlossaryResearchStudio(state);
   });
-  await page.getByRole("dialog").getByRole("button", { name: "Stop", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Review the errors yourself", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Review paused research", exact: true })).toBeVisible();
   await mountStudio(page);
@@ -2040,7 +2048,7 @@ test("research progress renders preserve independently opened trial details with
   await expect(first.locator("details")).toHaveAttribute("open", "");
   await expect(second).toHaveAttribute("open", "");
   await expect(second.locator("details")).not.toHaveAttribute("open", "");
-  await page.getByRole("button", { name: "Stop", exact: true }).click();
+  await page.getByRole("button", { name: "Review the errors yourself", exact: true }).click();
   await first.locator("details > summary").click();
   await first.locator(":scope > summary").click();
   // A later render with changed counts/status must retain the user's closed choice too.
@@ -2323,16 +2331,131 @@ test("step9 collects a stable pass before one coordinated repair and finishes wi
   await expect(page.getByText(/Recheck pending · Translation batch/)).toHaveCount(0);
 });
 
+test("a step 9 repair that needs an unconfirmed translation asks to confirm it or go back to step 8", async ({ page }) => {
+  for (const [label, expected] of [["Confirm and retest", { step: "9", confirmed: true }], ["Go back to step 8", { step: "8", confirmed: false }]]) {
+    await mountEntryPassStudy(page, true);
+    await page.evaluate(async () => {
+      const { state } = await import(`/${"app"}/state.js`);
+      const { renderGlossaryResearchStudio } = await import(`/${"screens"}/glossary-research-studio.js`);
+      const s = state.glossaryResearchStudio.study;
+      s.candidates.push({ id: "c2", text: "dạo bước", meaningIds: ["m1"], selected: true, confirmed: false, retained: true });
+      s.pendingDecision = { kind: "needs-form", reason: "Dạo bước is needed.", keys: ["9:15"],
+        offers: [{ candidateId: "c2", text: "dạo bước", meaningId: "m1", occurrences: 2 }] };
+      document.querySelector("#app").innerHTML = renderGlossaryResearchStudio(state);
+    });
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByRole("heading")).toHaveText("A translation needs confirming");
+    await expect(dialog).toContainText("“dạo bước” for meaning 1: used in 2 failed occurrences but not confirmed.");
+    await expect(dialog).toContainText("Repair note: Dạo bước is needed.");
+    await dialog.getByRole("button", { name: label, exact: true }).click();
+    await expect.poll(() => page.evaluate(async () => {
+      const { state } = await import(`/${"app"}/state.js`); const s = state.glossaryResearchStudio.study;
+      return { step: s.step, confirmed: s.candidates.find((c) => c.id === "c2").confirmed, decision: s.pendingDecision?.kind === "needs-form" };
+    })).toEqual({ ...expected, decision: false });
+  }
+});
+
 test("Continue extends only the failed batches presented in a grouped three-round pause", async ({ page }) => {
   await mountEntryPassStudy(page, true);
   await expect(page.getByRole("dialog")).toContainText("Batches 2, 3");
-  await page.getByRole("dialog").getByRole("button", { name: "Stop", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Review the errors yourself", exact: true }).click();
   await expect(page.getByRole("button", { name: "Review paused research", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Review paused research", exact: true }).click();
-  await page.getByRole("dialog").getByRole("button", { name: "Continue", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Continue 3 more rounds with AI", exact: true }).click();
   await expect(page.getByRole("button", { name: "Save and continue", exact: true })).toBeEnabled();
   const allowances = await page.evaluate(async () => (await import(`/${"app"}/state.js`)).state.glossaryResearchStudio.study.retryAllowances);
   expect(allowances).toEqual({ "9:15": 6, "9:30": 6 });
+});
+
+test("one meaning with one candidate word skips step 8 and tests the entry in step 9", async ({ page }) => {
+  await mountStudio(page);
+  await page.evaluate(async () => {
+    const { state } = await import(`/${"app"}/state.js`);
+    const { newStudioStudy, deduplicatePassages } = await import(`/${"app"}/glossary-research-studio-workflow.js`);
+    const { renderGlossaryResearchStudio } = await import(`/${"screens"}/glossary-research-studio.js`);
+    const s = newStudioStudy({ ...state.glossaryEditor, teamId: "team", installationId: 7, term: "walk", corpus: "projects" }, "single-word");
+    s.step = "7"; s.forms = [{ text: "walk" }]; s.meanings = [{ id: "m1", definition: "Move on foot" }];
+    s.passages = deduplicatePassages([{ id: "p1", text: "I walk home." }, { id: "p2", text: "We walk far." }], ["walk"], "en");
+    s.assignments = s.passages.map((p) => ({ paragraphId: p.id, occurrenceId: "o0", meaningId: "m1", entryId: "original" }));
+    s.candidates = [{ id: "c1", text: "đi bộ", note: "", meaningIds: ["m1"], groupId: "g1", selected: true, retained: true }];
+    s.steps["7"] = { value: { decisions: [] } };
+    state.glossaryResearchStudio.study = s;
+    document.querySelector("#app").innerHTML = renderGlossaryResearchStudio(state);
+  });
+  await page.getByRole("button", { name: "Save and continue", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "9 · Test complete entry", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Save and continue", exact: true })).toBeEnabled();
+  const result = await page.evaluate(async () => {
+    const { state } = await import(`/${"app"}/state.js`); const s = state.glossaryResearchStudio.study;
+    const calls = window.studioCalls.filter((c) => c.command === "start_glossary_studio_tool");
+    return { step8: s.steps["8"].status, confirmed: s.candidates[0].confirmed, meaningTests: Object.keys(s.tests).filter((key) => key.startsWith("8:")).length,
+      initialPicks: calls.filter((c) => c.args.input.payload.prompt?.includes("Select one initial")).length,
+      translations: calls.filter((c) => c.args.input.kind === "translate").length, entryPassed: s.tests["9:0"].passed };
+  });
+  expect(result).toEqual({ step8: "skipped", confirmed: true, meaningTests: 0, initialPicks: 0, translations: 1, entryPassed: true });
+});
+
+// The paused study with saved trials: batch 1 passed; batches 2 and 3 each fail one occurrence.
+async function mountReviewedEntryStudy(page) {
+  await mountEntryPassStudy(page, true);
+  await page.evaluate(async () => {
+    const { state } = await import(`/${"app"}/state.js`);
+    const { buildStudioDraft, stableSignature, entryBatchSignature, studyAssignments } = await import(`/${"app"}/glossary-research-studio-workflow.js`);
+    const { renderGlossaryResearchStudio } = await import(`/${"screens"}/glossary-research-studio.js`);
+    const s = state.glossaryResearchStudio.study;
+    const assignments = studyAssignments(s);
+    const signature = stableSignature(buildStudioDraft(s));
+    for (const index of [0, 15, 30]) {
+      const batch = s.passages.slice(index, index + 15);
+      const members = assignments.filter((a) => batch.some((p) => p.id === a.paragraphId));
+      const fails = (id) => index > 0 && id === `p${index}`;
+      s.tests[`9:${index}`] = { phase: "9", signature, batchSignature: entryBatchSignature(s, batch, members), rounds: index ? 3 : 0, passed: index === 0,
+        translations: batch.map((p) => ({ paragraphId: p.id, source: p.text, translation: `Tôi đi bộ ${p.id}.` })),
+        choices: members.map((a) => ({ paragraphId: a.paragraphId, occurrenceId: a.occurrenceId, candidateId: "c1", rendered: "đi bộ",
+          passed: !fails(a.paragraphId), problem: fails(a.paragraphId) ? "The reviewer disagrees" : "" })) };
+    }
+    document.querySelector("#app").innerHTML = renderGlossaryResearchStudio(state);
+  });
+}
+
+test("reviewing stuck findings yourself can accept or ignore them and finish step9 without new translations", async ({ page }) => {
+  await mountReviewedEntryStudy(page);
+  await page.getByRole("dialog").getByRole("button", { name: "Review the errors yourself", exact: true }).click();
+  const second = page.locator('details[data-studio-disclosure="9:15"]');
+  await expect(second).toHaveAttribute("open", "");
+  await second.getByRole("button", { name: "Mark this translation as acceptable", exact: true }).click();
+  await expect(second.getByText("You marked this translation as acceptable.", { exact: true })).toBeVisible();
+  const third = page.locator('details[data-studio-disclosure="9:30"]');
+  await third.locator(":scope > summary").click();
+  await third.getByRole("button", { name: "Ignore this error", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Save and continue", exact: true })).toBeEnabled();
+  const result = await page.evaluate(async () => {
+    const { state } = await import(`/${"app"}/state.js`); const s = state.glossaryResearchStudio.study;
+    return { decision: s.pendingDecision, accepted: s.acceptedTranslations, ignored: s.ignoredTestParagraphIds, complete: s.steps["9"].value.complete,
+      calls: window.studioCalls.filter((c) => c.command === "start_glossary_studio_tool").length };
+  });
+  expect(result).toEqual({ decision: null, accepted: { "p15:o0": ["Tôi đi bộ p15."] }, ignored: ["p30"], complete: true, calls: 0 });
+});
+
+test("editing the entry from a finding changes only the study and replaces the stuck question", async ({ page }) => {
+  await mountReviewedEntryStudy(page);
+  await page.getByRole("dialog").getByRole("button", { name: "Review the errors yourself", exact: true }).click();
+  await page.locator('details[data-studio-disclosure="9:15"]').getByRole("button", { name: "Edit glossary entry", exact: true }).click();
+  const editor = page.locator('[data-modal-dialog="glossary-term-editor"]');
+  await expect(editor).toContainText("Edit Term");
+  await expect(editor).toContainText("This edits the entry tested in step 9.");
+  await expect(editor.locator('[data-glossary-term-variant-input][data-variant-side="source"]').first()).toBeDisabled();
+  await editor.locator("[data-glossary-term-variant-note-input]").first().fill("Use for walking on foot.");
+  await editor.locator("[data-glossary-term-notes-input]").fill("Edited general note.");
+  await editor.getByRole("button", { name: "Save Term", exact: true }).click();
+  await expect(editor).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Resume this step", exact: true })).toBeEnabled();
+  const result = await page.evaluate(async () => {
+    const { state } = await import(`/${"app"}/state.js`); const s = state.glossaryResearchStudio.study;
+    return { note: s.candidates[0].note, generalNote: s.generalNote, decision: s.pendingDecision,
+      calls: window.studioCalls.filter((c) => ["start_glossary_studio_tool", "upsert_gtms_glossary_term"].includes(c.command)).length };
+  });
+  expect(result).toEqual({ note: "Use for walking on foot.", generalNote: "Edited general note.", decision: null, calls: 0 });
 });
 
 
@@ -2352,13 +2475,14 @@ test("bibliography reads published references and performs no author-verificatio
     document.querySelector("#app").innerHTML = renderGlossaryResearchStudio(state);
   });
   await page.getByRole("button", { name: "Run this step", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Save and continue", exact: true })).toBeEnabled();
+  await expect(page.getByRole("heading", { name: "4.4.2 · Internet sources", exact: true })).toBeVisible();
   const calls = await page.evaluate(() => window.studioCalls.filter((c) => c.command === "start_glossary_studio_tool").map((c) => c.args.input));
   expect(calls.filter((c) => c.kind === "author")).toHaveLength(0);
-  expect(calls.filter((c) => c.kind === "ai")).toHaveLength(1);
+  expect(calls.filter((c) => c.kind === "ai" && c.step === "4.4.1")).toHaveLength(1);
   expect(calls.filter((c) => c.kind === "corpus" && c.payload.path === "/api/sample" && c.payload.params.kind === "samael")).toHaveLength(0);
   expect(calls.filter((c) => c.payload.params?.author_id === "author-a")).toHaveLength(0);
   expect(calls.filter((c) => c.payload.path === "/api/sample/source-books")).toHaveLength(2);
+  await page.locator('[data-action="studio:visit:4.4.1"]').click();
   await page.getByText("Sources and retrieval details", { exact: true }).click();
   await expect(page.getByText(/2 confirmed paragraphs.*3 corpus copies.*4 name\/title occurrences.*1 unresolved reference/)).toBeVisible();
   const saved = await page.evaluate(async () => (await import(`/${"app"}/state.js`)).state.glossaryResearchStudio.study.steps["4.4.1"].value.evidence.authors[0]);
@@ -2488,4 +2612,104 @@ test("completed meaning and entry tests do not offer comparison reruns", async (
     return ["8", "9"].map((step) => s.timing.steps[step].runs.length);
   });
   expect(runs).toEqual([1, 1]);
+});
+
+test("unanswered advice is taken after a ten-second countdown, which waits while the reasoning is read", async ({ page }) => {
+  await page.clock.install();
+  await mountStudio(page);
+  await page.evaluate(() => { window.studioRecommendationAnswer = { recommendation: "Skip", reason: "The supplied forms already cover this entry." }; });
+  await page.getByRole("button", { name: "New research", exact: true }).click();
+  await page.getByLabel("Term to research").fill("walk");
+  await page.getByRole("listbox", { name: "Projects", exact: true }).selectOption("p1");
+  await page.getByRole("button", { name: "Begin research", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "AI recommendation: Skip it.", exact: true })).toBeVisible();
+  // Freeze time while the countdown runs; research itself polls with real timers.
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1_000));
+  const timer = page.locator(".studio-recommendation").getByRole("timer");
+  await expect(timer).toHaveText(/^Skipping this step in \d+ seconds? unless you choose\.$/u);
+  const seconds = async () => Number((await timer.textContent()).match(/\d+/u)?.[0]);
+  await page.clock.runFor(250);
+  const start = await seconds();
+  await page.clock.runFor(3_000);
+  expect(await seconds()).toBe(start - 3);
+  // The bar drains with the seconds shown (its CSS transition then catches up).
+  const left = await page.locator("[data-studio-auto-choice]").evaluate((element) => Number(element.style.getPropertyValue("--studio-auto-choice-left")));
+  expect(left * 10).toBeGreaterThan(start - 4);
+  expect(left * 10).toBeLessThanOrEqual(start - 3);
+  await expect.poll(() => page.locator(".studio-auto-choice-bar").evaluate((bar) =>
+    Math.abs(parseFloat(getComputedStyle(bar, "::before").width) / bar.clientWidth - Number(bar.parentElement.style.getPropertyValue("--studio-auto-choice-left"))) < .02)).toBe(true);
+  await page.screenshot({ path: "/tmp/gnosis-studio-auto-choice.png", fullPage: true });
+  await page.getByText("Show reasoning", { exact: true }).click();
+  await page.clock.runFor(60_000);
+  await expect(timer).toHaveText("Countdown paused while the reasoning is open.");
+  await expect(page.getByRole("heading", { name: "2a · List other forms and spellings", exact: true })).toBeVisible();
+  await page.getByText("Show reasoning", { exact: true }).click();
+  await page.clock.runFor(1_000);
+  expect(await seconds()).toBeGreaterThanOrEqual(start - 5);
+  await page.clock.runFor(10_000);
+  await page.clock.resume();
+  await expect(page.getByRole("heading", { name: "4.1 · Dictionary", exact: true })).toBeVisible();
+  const saved = await page.evaluate(async () => {
+    const s = (await import(`/${"app"}/state.js`)).state.glossaryResearchStudio.study;
+    return { status: s.steps["2a"].status, forms: s.forms.map((f) => f.text),
+      formsResearch: window.studioCalls.filter((c) => c.command === "start_glossary_studio_tool" && c.args.input.step === "2a").length };
+  });
+  expect(saved).toEqual({ status: "skipped", forms: ["walk"], formsResearch: 0 });
+});
+
+test("a translator's choice answers the advice, so a cancelled source-summary skip waits instead of counting down again", async ({ page }) => {
+  await mountStudio(page);
+  await page.evaluate(() => { window.studioRecommendationAnswer = { recommendation: "Skip", reason: "Nothing from the sources reaches the glossary." }; });
+  await page.getByRole("button", { name: "New research", exact: true }).click();
+  await page.evaluate(async () => {
+    const { state } = await import(`/${"app"}/state.js`);
+    const { approveStep } = await import(`/${"app"}/glossary-research-studio-workflow.js`);
+    const { renderGlossaryResearchStudio } = await import(`/${"screens"}/glossary-research-studio.js`);
+    const s = state.glossaryResearchStudio.study; s.step = "4.4.2";
+    await approveStep(s, "4.4.1", { summary: "Useful source finding.", meanings: [{ definition: "Move on foot" }] });
+    document.querySelector("#app").innerHTML = renderGlossaryResearchStudio(state);
+  });
+  await page.getByRole("button", { name: "Skip this step", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "4.4.3 · Source summary", exact: true })).toBeVisible();
+  await expect(page.getByRole("timer")).toContainText("Skipping this step in");
+  await page.getByRole("button", { name: "Skip this step", exact: true }).click();
+  await expect(page.getByRole("dialog")).toContainText("source research");
+  await page.getByRole("button", { name: "Don't skip", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "AI recommendation: Skip it.", exact: true })).toBeVisible();
+  await expect(page.getByRole("timer")).toHaveCount(0);
+});
+
+test("an unmatched occurrence takes one meaning, existing or typed in, assigned with one button", async ({ page }) => {
+  await mountStudio(page);
+  await page.evaluate(async () => {
+    const { state } = await import(`/${"app"}/state.js`);
+    const { newStudioStudy, deduplicatePassages } = await import(`/${"app"}/glossary-research-studio-workflow.js`);
+    const { renderGlossaryResearchStudio } = await import(`/${"screens"}/glossary-research-studio.js`);
+    const s = newStudioStudy({ installationId: 7, teamId: "team", glossaryId: "g1", repoName: "glossary", term: "walk",
+      corpus: "projects", sourceLanguage: { code: "en", name: "English" }, targetLanguage: { code: "vi", name: "Vietnamese" } });
+    s.step = "4.6"; s.model = { providerId: "openai", modelId: "test" }; s.forms = [{ text: "walk" }];
+    s.passages = deduplicatePassages([{ id: "p0", text: "We went for a walk." }, { id: "p1", text: "I walk home." }], ["walk"], "en");
+    s.population = s.passages; s.meanings = [{ id: "m1", definition: "Di chuyển bằng chân" }];
+    s.assignments = s.passages.flatMap((p) => p.occurrences.map((o) => ({ paragraphId: p.id, occurrenceId: o.id, meaningId: p.id === "p0" ? null : "m1" })));
+    const unmatched = s.assignments.find((a) => !a.meaningId);
+    s.pendingDecision = { kind: "unmatched", ...unmatched, paragraph: s.passages[0], recommendation: { definition: "Cuộc đi dạo", translation: "Chúng tôi đi dạo." } };
+    state.glossaryResearchStudio.study = s;
+    document.querySelector("#app").innerHTML = renderGlossaryResearchStudio(state);
+  });
+  const dialog = page.getByRole("dialog");
+  const meaning = dialog.getByRole("combobox", { name: "Meaning", exact: true });
+  const typed = dialog.getByRole("textbox", { name: "New meaning", exact: true });
+  await expect(meaning).toHaveValue("new");
+  await expect(typed).toHaveValue("Cuộc đi dạo");
+  await expect(dialog.getByRole("button")).toHaveText(["Drop this paragraph", "Assign meaning"]);
+  await meaning.selectOption({ label: "1. Di chuyển bằng chân" });
+  await expect(typed).toHaveCount(0);
+  await meaning.selectOption({ label: "Enter new meaning below" });
+  await typed.fill("Một cuộc đi dạo");
+  await dialog.getByRole("button", { name: "Assign meaning", exact: true }).click();
+  await expect.poll(() => page.evaluate(async () => {
+    const s = (await import(`/${"app"}/state.js`)).state.glossaryResearchStudio.study;
+    const added = s.meanings.find((m) => m.definition === "Một cuộc đi dạo");
+    return { decision: s.pendingDecision?.kind ?? null, assigned: Boolean(added) && s.assignments.find((a) => a.paragraphId === "p0").meaningId === added.id };
+  })).toEqual({ decision: null, assigned: true });
 });

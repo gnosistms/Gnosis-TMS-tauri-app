@@ -203,6 +203,77 @@ export function tokenizeGlossaryTerm(term, languageCode) {
   );
 }
 
+// A standalone "…" (or "...") between two words of a target variant marks where
+// the target language may place up to four words that modify the term, as in
+// "sự giằng co … giữa các mặt đối lập". Source terms always match exactly.
+const GLOSSARY_GAP_MARKER_REGEX = /\s+(?:…|\.{3})\s+/u;
+const GLOSSARY_GAP_MAX_WORDS = 4;
+
+// Token segments around each gap, or null for a variant without one. Gaps
+// and ruby annotations are not combined.
+function glossaryTermGapSegments(term, languageCode) {
+  if (glossaryRubyHasAnnotation(term)) {
+    return null;
+  }
+  const parts = String(term ?? "").split(GLOSSARY_GAP_MARKER_REGEX);
+  if (parts.length < 2) {
+    return null;
+  }
+  const segments = parts.map((part) => tokenizeGlossaryTerm(part, languageCode));
+  return segments.every(glossaryTokensAreMatchable) ? segments : null;
+}
+
+export function glossaryTermWithoutGaps(term) {
+  return String(term ?? "").split(GLOSSARY_GAP_MARKER_REGEX).join(" ");
+}
+
+// Gap words must be words separated only by whitespace, so a gap never reaches
+// across a comma, quote or sentence boundary into the next clause.
+function glossaryGapIsValid(tokens, wordEntries, startWord, endWord) {
+  const from = wordEntries[startWord - 1].tokenIndex + 1;
+  const to = wordEntries[endWord].tokenIndex;
+  for (let index = from; index < to; index += 1) {
+    const token = tokens[index];
+    if (token.type === "word" ? glossaryPunctuationToken(token.normalized) !== null : /\S/u.test(token.value)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Every occurrence of a gapped variant as word pieces [startWord, endWord).
+// Adjacent pieces (an empty gap) merge, so one piece means the unsplit wording.
+function findGappedGlossaryOccurrences(segments, tokens, wordEntries) {
+  const words = wordEntries.map((word) => word.normalized);
+  const occurrences = [];
+  const extend = (segmentIndex, start, pieces) => {
+    const segment = segments[segmentIndex];
+    if (start + segment.length > words.length
+      || !segment.every((token, offset) => words[start + offset] === token)) {
+      return;
+    }
+    const end = start + segment.length;
+    const previous = pieces.at(-1);
+    const nextPieces = previous?.[1] === start
+      ? [...pieces.slice(0, -1), [previous[0], end]]
+      : [...pieces, [start, end]];
+    if (segmentIndex === segments.length - 1) {
+      occurrences.push(nextPieces);
+      return;
+    }
+    for (let gap = 0; gap <= GLOSSARY_GAP_MAX_WORDS && end + gap < words.length; gap += 1) {
+      if (gap > 0 && !glossaryGapIsValid(tokens, wordEntries, end, end + gap)) {
+        break;
+      }
+      extend(segmentIndex + 1, end + gap, nextPieces);
+    }
+  };
+  for (let start = 0; start < words.length; start += 1) {
+    extend(0, start, []);
+  }
+  return occurrences;
+}
+
 function sanitizeTermList(values) {
   return (Array.isArray(values) ? values : [])
     .map((value) => String(value ?? "").trim())
@@ -430,7 +501,7 @@ function glossaryDetailFields(term) {
   };
 }
 
-function buildLanguageGlossaryMatcher(entries, matchLanguage) {
+function buildLanguageGlossaryMatcher(entries, matchLanguage, { allowGaps = false } = {}) {
   if (!matchLanguage || !Array.isArray(entries)) {
     return null;
   }
@@ -439,7 +510,10 @@ function buildLanguageGlossaryMatcher(entries, matchLanguage) {
 
   for (const entry of entries) {
     for (const matchTerm of entry.matchTerms || []) {
-      const tokens = tokenizeGlossaryTerm(matchTerm, matchLanguage);
+      const gapSegments = allowGaps ? glossaryTermGapSegments(matchTerm, matchLanguage) : null;
+      // The trie matches a gapped variant's unsplit wording; split wordings are
+      // found separately from its segments.
+      const tokens = gapSegments ? gapSegments.flat() : tokenizeGlossaryTerm(matchTerm, matchLanguage);
       if (!glossaryTokensAreMatchable(tokens)) {
         continue;
       }
@@ -447,6 +521,9 @@ function buildLanguageGlossaryMatcher(entries, matchLanguage) {
       const key = tokens.join(" ");
       const existingCandidate = termMap.get(key);
       if (existingCandidate) {
+        if (gapSegments) {
+          existingCandidate.gapSegmentLists.push(gapSegments);
+        }
         appendOrderedUniqueTerms(
           existingCandidate.termIdsOrdered,
           existingCandidate.termIds,
@@ -552,6 +629,7 @@ function buildLanguageGlossaryMatcher(entries, matchLanguage) {
         noTranslation,
         noTranslationPosition: noTranslation?.position ?? null,
         noTranslationNote: noTranslation?.note ?? "",
+        gapSegmentLists: gapSegments ? [gapSegments] : [],
       };
       termMap.set(key, candidate);
     }
@@ -559,14 +637,18 @@ function buildLanguageGlossaryMatcher(entries, matchLanguage) {
 
   // termMap preserves first-seen insertion order, which fixes each merged
   // candidate's defensive ordinal tie-break in the compiled trie.
+  const candidates = Array.from(termMap.values());
   return {
     languageCode: matchLanguage,
     compiled: compileGlossaryTokenMatcher(
-      Array.from(termMap.values(), (candidate) => ({
+      candidates.map((candidate) => ({
         tokens: candidate.tokens,
         priorityLength: candidate.priorityLength,
         payload: candidate,
       })),
+    ),
+    gapped: candidates.flatMap((candidate, candidateIndex) =>
+      candidate.gapSegmentLists.map((segments) => ({ candidateIndex, segments })),
     ),
   };
 }
@@ -817,6 +899,15 @@ export function findLongestGlossaryMatches(text, matcher) {
   const { tokens, wordEntries } = tokenizedText;
   const normalizedWords = wordEntries.map((word) => word.normalized);
   const occurrences = discoverGlossaryTokenOccurrences(matcher.compiled, normalizedWords);
+  // A split occurrence claims its whole span, inserted words included, but only
+  // its pieces are matches.
+  for (const { candidateIndex, segments } of matcher.gapped ?? []) {
+    for (const pieces of findGappedGlossaryOccurrences(segments, tokens, wordEntries)) {
+      if (pieces.length > 1) {
+        occurrences.push({ candidateIndex, startWord: pieces[0][0], endWord: pieces.at(-1)[1], pieces });
+      }
+    }
+  }
   const accepted = selectGloballyLongestOccurrences(
     matcher.compiled,
     occurrences,
@@ -824,11 +915,14 @@ export function findLongestGlossaryMatches(text, matcher) {
   );
   return {
     tokens,
-    matches: accepted.map((occurrence) => ({
-      startTokenIndex: wordEntries[occurrence.startWord].tokenIndex,
-      endTokenIndex: wordEntries[occurrence.endWord - 1].tokenIndex,
-      candidate: matcher.compiled.candidates[occurrence.candidateIndex].payload,
-    })),
+    matches: accepted.flatMap((occurrence, occurrenceIndex) =>
+      (occurrence.pieces ?? [[occurrence.startWord, occurrence.endWord]]).map(([startWord, endWord]) => ({
+        startTokenIndex: wordEntries[startWord].tokenIndex,
+        endTokenIndex: wordEntries[endWord - 1].tokenIndex,
+        candidate: matcher.compiled.candidates[occurrence.candidateIndex].payload,
+        occurrenceIndex,
+      })),
+    ),
   };
 }
 
@@ -853,6 +947,32 @@ export function glossaryTermMatchesTokenSequence(text, term, languageCode) {
     }
   }
   return false;
+}
+
+// Target-text occurrences of glossary target forms, gaps included, with the
+// same longest-first selection as the editor's target underlines. Each
+// occurrence spans its inserted words; pieces are the form's own words.
+export function findGlossaryTargetFormOccurrences(text, forms, languageCode) {
+  const matcher = buildLanguageGlossaryMatcher(forms.map((form, index) => ({
+    termIds: [String(index)], sourceTerms: [], targetTerms: [], targetVariants: [],
+    translatorNotes: [], footnotes: [], originTerms: [], matchTerms: [form],
+  })), languageCode, { allowGaps: true });
+  const { tokens, matches } = findLongestGlossaryMatches(text, matcher);
+  const offsets = [0];
+  for (const token of tokens) offsets.push(offsets.at(-1) + token.value.length);
+  const occurrences = [];
+  for (const match of matches) {
+    const piece = { start: offsets[match.startTokenIndex], end: offsets[match.endTokenIndex + 1] };
+    const last = occurrences.at(-1);
+    if (last?.occurrenceIndex === match.occurrenceIndex) {
+      last.pieces.push(piece);
+      last.end = piece.end;
+      continue;
+    }
+    occurrences.push({ occurrenceIndex: match.occurrenceIndex, formIndexes: match.candidate.termIdsOrdered.map(Number),
+      start: piece.start, end: piece.end, pieces: [piece] });
+  }
+  return occurrences.map(({ occurrenceIndex: _occurrenceIndex, ...occurrence }) => occurrence);
 }
 
 function buildGlossaryTooltipText(candidate, glossaryModel) {
@@ -1164,7 +1284,7 @@ function buildRowTargetMatcher(sections, glossaryModel, targetTexts) {
     return null;
   }
 
-  return buildLanguageGlossaryMatcher(targetEntries, glossaryModel.targetLanguage.code);
+  return buildLanguageGlossaryMatcher(targetEntries, glossaryModel.targetLanguage.code, { allowGaps: true });
 }
 
 function rowTargetTexts(sections, glossaryModel) {
@@ -1174,6 +1294,11 @@ function rowTargetTexts(sections, glossaryModel) {
 }
 
 function textContainsGlossaryTerm(text, term, languageCode) {
+  const gapSegments = glossaryTermGapSegments(term, languageCode);
+  if (gapSegments) {
+    const { tokens, wordEntries } = tokenizeTextForHighlighting(text, languageCode);
+    return findGappedGlossaryOccurrences(gapSegments, tokens, wordEntries).length > 0;
+  }
   const tokens = tokenizeGlossaryTerm(term, languageCode);
   if (!glossaryTokensAreMatchable(tokens)) {
     return false;

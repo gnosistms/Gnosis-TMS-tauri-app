@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createStudioActivity, studioActivityItems, summarizeStudioActivity } from "./glossary-research-studio-activity.js";
+import { createStudioActivity, studioActivityItems, studioReviewOutcomes, summarizeStudioActivity } from "./glossary-research-studio-activity.js";
+import { studioResultPresentation } from "./glossary-research-studio-result.js";
 
 test("dictionary receipts identify a fallback edition without concealing genuine retrieval failures", () => {
   assert.equal(summarizeStudioActivity({ status: "found", language: "grc", edition: "en" }), "Looked up in the English Wiktionary edition.\nSource status: found.");
@@ -48,6 +49,35 @@ test("activity summaries are bounded source-derived results rather than prompts 
   assert(summary.length <= 1801);
   assert(!summary.includes("Never show"));
   assert.match(summarizeStudioActivity({ judgments: [{ genuine: true }, { genuine: false }, { genuine: null }] }), /1 genuine mentions; 1 unresolved; 3 checked/);
+});
+
+test("translation receipts preview only the count and expand to every translated paragraph", () => {
+  const rows = Array.from({ length: 15 }, (_, i) => ({ rowId: String(i + 1), translatedText: `Đáp: translated paragraph ${i + 1}. ${"Long text. ".repeat(60)}` }));
+  const summary = summarizeStudioActivity({ rows });
+  const formatted = studioResultPresentation(summary);
+  assert.equal(formatted.preview, "15 paragraphs translated.");
+  assert.equal(formatted.long, true);
+  for (let i = 1; i <= 15; i++) assert(formatted.html.includes(`Đáp: translated paragraph ${i}. `));
+  assert(formatted.html.includes(`${"Long text. ".repeat(59)}Long text.</p>`), "translations are not shortened");
+  assert(!formatted.details.includes("paragraphs translated"), "the expanded summary does not repeat the visible count");
+  for (let i = 1; i <= 15; i++) assert(formatted.details.includes(`Đáp: translated paragraph ${i}. `));
+});
+
+test("review receipts keep each paragraph's translation and verdicts until the review restarts", () => {
+  const trial = { translations: [{ paragraphId: "a", translation: "Uno" }, { paragraphId: "b", translation: "Dos" }, { paragraphId: "c", translation: "Tres" }],
+    choices: [{ paragraphId: "a", occurrenceId: "o0", passed: true, problem: "" }, { paragraphId: "a", occurrenceId: "o1", passed: false, problem: "Wrong meaning" },
+      { paragraphId: "b", occurrenceId: "o0", passed: true, problem: "", rendered: "dos" }] };
+  const review = studioReviewOutcomes(trial);
+  assert.deepEqual(review, [
+    { paragraphId: "a", translation: "Uno", occurrences: [{ occurrenceId: "o0", passed: true, problem: "" }, { occurrenceId: "o1", passed: false, problem: "Wrong meaning" }] },
+    { paragraphId: "b", translation: "Dos", occurrences: [{ occurrenceId: "o0", passed: true, problem: "" }] }]);
+  const study = { step: "9", activitySteps: {} };
+  const activity = createStudioActivity(study, () => {}, () => true);
+  activity.finish(["batch-0", "round-0", "assess"], "2 of 3 occurrences passed.", review);
+  const node = () => study.activitySteps["9"].items[0].children[0].children[0];
+  assert.deepEqual(node().review, review);
+  activity.start(["batch-0", "round-0", "assess", "operation:1"], "Reviewing again");
+  assert.equal(node().review, undefined);
 });
 
 test("forms checklists show original spelling from the start and merge legacy progress without changing saved data", () => {
@@ -106,4 +136,17 @@ test("an obsolete tracker cannot pause or overwrite a resumed tracker or an auxi
   assert.equal(study.activitySteps["8"].items.length, 1);
   resumed.done(["test"], { summary: "Current result" });
   assert.equal(study.activitySteps["8"].items[0].result, "Current result");
+});
+
+test("an error leaves no row running, and a smaller sample drops batch rows it no longer has", () => {
+  const study = { step: "9", activitySteps: {} };
+  const activity = createStudioActivity(study, () => {}, () => true);
+  activity.plan([{ id: "batch-0", label: "Batch 1 · of 98" }, { id: "batch-90", label: "Batch 7 · of 98" }, { id: "repair-pass-1", label: "Repair" }]);
+  activity.start(["repair-pass-1", "group-0"], "Repair group 1");
+  activity.stop();
+  const items = study.activitySteps["9"].items;
+  assert.deepEqual(items.map((item) => item.status), ["waiting", "waiting", "failed"]);
+  assert.equal(items[2].children[0].status, "failed");
+  activity.plan([{ id: "batch-0", label: "Batch 1 · of 73" }], [], true, "batch-");
+  assert.deepEqual(study.activitySteps["9"].items.map((item) => [item.id, item.label]), [["batch-0", "Batch 1 · of 73"], ["repair-pass-1", "Repair"]]);
 });

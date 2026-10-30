@@ -13,36 +13,39 @@ function study() {
   return s;
 }
 
-test("explicit empty results continue while missing results and meaningful findings stop", () => {
+test("steps that only report findings continue, while missing results and decisions stop", () => {
   const s = study();
+  const finding = { definition: "A finding" };
   for (const [step, empty, found] of [
-    ["2b", { entries: [] }, { entries: [{ sourceTerms: ["walk"] }] }],
-    ["3", { paragraphs: 3 }, { paragraphs: 0 }],
-    ["4.1", { meanings: [], dictionaryVersion: STUDIO_DICTIONARY_REVIEW_VERSION }, { meanings: [{ definition: "A finding" }] }],
-    ...["4.2", "4.4.1", "4.4.2", "4.4.4"].map((step) => [step, { meanings: [] }, { meanings: [{ definition: "A finding" }] }]),
+    ["4.1", { meanings: [], dictionaryVersion: STUDIO_DICTIONARY_REVIEW_VERSION }, { meanings: [finding], dictionaryVersion: STUDIO_DICTIONARY_REVIEW_VERSION }],
+    ...["4.2", "4.4.2", "4.4.4"].map((step) => [step, { meanings: [] }, { meanings: [finding] }]),
+    ["4.4.1", { meanings: [] }, { meanings: [finding], authorAssessments: [{ summary: "Chronology remains uncertain" }], evidence: { authors: [{ name: "Author A" }] } }],
     ["4.3", { parts: [] }, { parts: [{ text: "walk" }] }],
+    ["5", { compounds: [] }, { compounds: [{ phrase: "walk home", meaningId: "m1", specialMeaning: true, explanation: "Special meaning", paragraphIds: ["p"] }] }],
     ["7", { decisions: [] }, { decisions: [{ spelling: "đi" }] }],
   ]) {
     assert.equal(studioStepNeedsReview(s, step, empty), false, `${step}: empty`);
-    assert.equal(studioStepNeedsReview(s, step, found), true, `${step}: review`);
+    assert.equal(studioStepNeedsReview(s, step, found), false, `${step}: findings to read later`);
     assert.equal(studioStepNeedsReview(s, step, {}), true, `${step}: incomplete`);
   }
-  assert.equal(studioStepNeedsReview(s, "4.4.1", { meanings: [], authorAssessments: [{ summary: "Chronology remains uncertain" }] }), true);
-  assert.equal(studioStepNeedsReview(s, "4.1", { meanings: [], evidence: { status: "unreachable" } }), true);
+  assert.equal(studioStepNeedsReview(s, "3", { paragraphs: 3 }), false);
+  assert.equal(studioStepNeedsReview(s, "3", { paragraphs: 0 }), true, "no research paragraphs");
+  assert.equal(studioStepNeedsReview(s, "4.1", { meanings: [finding] }), true, "stale dictionary review");
+  assert.equal(studioStepNeedsReview(s, "4.1", { meanings: [], dictionaryVersion: STUDIO_DICTIONARY_REVIEW_VERSION, evidence: { status: "unreachable" } }), true);
   assert.equal(studioStepNeedsReview(s, "4.1", { meanings: [], dictionaryVersion: STUDIO_DICTIONARY_REVIEW_VERSION, evidence: { status: "not_found" } }), false);
+  assert.equal(studioStepNeedsReview(s, "2b", { entries: [] }), false);
+  assert.equal(studioStepNeedsReview(s, "2b", { entries: [{ sourceTerms: ["walk"] }] }), true, "existing entries need a choice");
+  assert.equal(studioStepNeedsReview(s, "2b", {}), true);
   s.relatedEntries = [{ termId: "old", sourceTerms: ["walk"] }];
   assert.equal(studioStepNeedsReview(s, "2b", { entries: [] }), true, "conflicting saved entry state requires review");
 });
 
-test("only qualifying split and compound proposals need review", () => {
+test("only qualifying split proposals need a choice", () => {
   const s = study();
   assert.equal(studioStepNeedsReview(s, "4.7", { proposals: [] }), false);
   const proposal = { forms: ["walk home"], meaningId: "m1" };
   assert.equal(studioStepNeedsReview(s, "4.7", { proposals: [proposal] }), true);
   assert.equal(studioStepNeedsReview(s, "4.7", { proposals: [{ ...proposal, forms: ["walk away"] }] }), false);
-  assert.equal(studioStepNeedsReview(s, "5", { compounds: [] }), false);
-  assert.equal(studioStepNeedsReview(s, "5", { compounds: [{ phrase: "walk home", meaningId: "m1", specialMeaning: true, paragraphIds: ["p"] }] }), false, "missing qualifying explanation is not a result to accept");
-  assert.equal(studioStepNeedsReview(s, "5", { compounds: [{ phrase: "walk home", meaningId: "m1", specialMeaning: true, explanation: "Special meaning", paragraphIds: ["p"] }] }), true);
 });
 
 test("scope and human reviews never auto-advance, including empty choices and final save", () => {

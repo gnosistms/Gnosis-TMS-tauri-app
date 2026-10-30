@@ -383,76 +383,82 @@ function renderRowTextStyleButtons(row, language) {
       data-editor-separator-button
       data-row-id="${escapeHtml(row.id)}"
       data-language-code="${escapeHtml(language.code)}"
+      aria-label="Insert separator"
       ${tooltipAttributes("Insert separator", { side: "top" })}
     >
-      <span class="translation-row-text-style-button__label">--</span>
+      <span class="translation-row-text-style-button__flourish" aria-hidden="true"></span>
     </button>
   `);
   }
 
+  // Two rows: the formatting styles on top with the save shortcut at the right,
+  // close to the text, then the inserts below.
   return `
     <div class="translation-row-text-style-actions">
-      <div class="translation-row-text-style-actions__group" role="radiogroup" aria-label="Text style">
-        ${EDITOR_ROW_TEXT_STYLE_OPTIONS.map((option) => {
-          const isSelected = editorRowTextStyleOptionValue(selectedTextStyle) === option.value;
-          // The List button keeps the row's list style (bullets, numbers, …).
-          const textStyle = isSelected ? selectedTextStyle : option.value;
-          return `
-          <button
-            class="translation-row-text-style-button${option.iconSvg ? " translation-row-text-style-button--icon" : ""}${isSelected ? " is-active" : ""}${textStyleChangeClass(language, option.value)}"
-            type="button"
-            role="radio"
-            data-action="set-editor-row-text-style"
-            data-editor-row-text-style-button
-            data-row-id="${escapeHtml(row.id)}"
-            data-language-code="${escapeHtml(language.code)}"
-            data-text-style="${escapeHtml(textStyle)}"
-            aria-checked="${isSelected ? "true" : "false"}"
-            ${option.iconSvg ? `aria-label="${escapeHtml(option.label)}"` : ""}
-            ${tooltipAttributes(option.tooltip, { side: "top" })}
-          >
-            ${option.iconSvg
-              ? `<span class="translation-row-text-style-button__icon">${option.iconSvg}</span>`
-              : `<span class="translation-row-text-style-button__label">${escapeHtml(option.label)}</span>`}
-          </button>
-        `;
-        }).join("")}
+      <div class="translation-row-text-style-actions__row translation-row-text-style-actions__row--styles">
+        <div class="translation-row-text-style-actions__group" role="radiogroup" aria-label="Text style">
+          ${EDITOR_ROW_TEXT_STYLE_OPTIONS.map((option) => {
+            const isSelected = editorRowTextStyleOptionValue(selectedTextStyle) === option.value;
+            // The List button keeps the row's list style (bullets, numbers, …).
+            const textStyle = isSelected ? selectedTextStyle : option.value;
+            return `
+            <button
+              class="translation-row-text-style-button${option.iconSvg ? " translation-row-text-style-button--icon" : ""}${isSelected ? " is-active" : ""}${textStyleChangeClass(language, option.value)}"
+              type="button"
+              role="radio"
+              data-action="set-editor-row-text-style"
+              data-editor-row-text-style-button
+              data-row-id="${escapeHtml(row.id)}"
+              data-language-code="${escapeHtml(language.code)}"
+              data-text-style="${escapeHtml(textStyle)}"
+              aria-checked="${isSelected ? "true" : "false"}"
+              ${option.iconSvg ? `aria-label="${escapeHtml(option.label)}"` : ""}
+              ${tooltipAttributes(option.tooltip, { side: "top" })}
+            >
+              ${option.iconSvg
+                ? `<span class="translation-row-text-style-button__icon">${option.iconSvg}</span>`
+                : `<span class="translation-row-text-style-button__label">${escapeHtml(option.label)}</span>`}
+            </button>
+          `;
+          }).join("")}
+        </div>
+        ${
+          inlineButtons.length > 0
+            ? `
+              <span class="translation-row-text-style-actions__separator" aria-hidden="true"></span>
+              <div class="translation-row-text-style-actions__group translation-row-text-style-actions__group--inline" aria-label="Inline formatting">
+                ${inlineButtons.map((button) => `
+                  <button
+                    class="translation-row-text-style-button translation-row-inline-style-button"
+                    type="button"
+                    data-action="toggle-editor-inline-style"
+                    data-editor-inline-style-button
+                    data-row-id="${escapeHtml(row.id)}"
+                    data-language-code="${escapeHtml(language.code)}"
+                    data-inline-style="${escapeHtml(button.style)}"
+                    aria-pressed="false"
+                    ${tooltipAttributes(button.tooltip, { side: "top" })}
+                  >
+                    <span class="translation-row-text-style-button__label">${escapeHtml(button.label)}</span>
+                  </button>
+                `).join("")}
+              </div>
+            `
+            : ""
+        }
+        <span class="translation-row-text-style-actions__hint">${isMacPlatform() ? "Command" : "Ctrl"} + S to save</span>
       </div>
-      ${
-        inlineButtons.length > 0
-          ? `
-            <span class="translation-row-text-style-actions__separator" aria-hidden="true"></span>
-            <div class="translation-row-text-style-actions__group translation-row-text-style-actions__group--inline" aria-label="Inline formatting">
-              ${inlineButtons.map((button) => `
-                <button
-                  class="translation-row-text-style-button translation-row-inline-style-button"
-                  type="button"
-                  data-action="toggle-editor-inline-style"
-                  data-editor-inline-style-button
-                  data-row-id="${escapeHtml(row.id)}"
-                  data-language-code="${escapeHtml(language.code)}"
-                  data-inline-style="${escapeHtml(button.style)}"
-                  aria-pressed="false"
-                  ${tooltipAttributes(button.tooltip, { side: "top" })}
-                >
-                  <span class="translation-row-text-style-button__label">${escapeHtml(button.label)}</span>
-                </button>
-              `).join("")}
-            </div>
-          `
-          : ""
-      }
-      ${
-        secondaryButtons.length > 0
-          ? `
-            <span class="translation-row-text-style-actions__separator" aria-hidden="true"></span>
-            <div class="translation-row-text-style-actions__group translation-row-text-style-actions__group--secondary">
-              ${secondaryButtons.join("")}
-            </div>
-          `
-          : ""
-      }
-      <span class="translation-row-text-style-actions__hint">${isMacPlatform() ? "Command" : "Ctrl"} + S to save</span>
+      <div class="translation-row-text-style-actions__row translation-row-text-style-actions__row--inserts">
+        ${
+          secondaryButtons.length > 0
+            ? `
+              <div class="translation-row-text-style-actions__group translation-row-text-style-actions__group--secondary" aria-label="Insert">
+                ${secondaryButtons.join("")}
+              </div>
+            `
+            : ""
+        }
+      </div>
     </div>
   `;
 }

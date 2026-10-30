@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { testMeanings, testCompleteEntry, assessTrial, translateTrial, trialGlossary } from "./glossary-research-studio-testing.js";
-import { newStudioStudy, deduplicatePassages, finalUsage, reviseAssignment, buildStudioDraft, meaningTrialsAreCurrent, entryTrialsAreCurrent } from "./glossary-research-studio-workflow.js";
+import { newStudioStudy, deduplicatePassages, finalUsage, reviseAssignment, buildStudioDraft, stableSignature, meaningTrialsAreCurrent, entryTrialsAreCurrent, studioGlossaryContext, studyAssignments, entryBatchSignature, currentStudioFinding, reviewStudioFinding } from "./glossary-research-studio-workflow.js";
 function fixture(size = 1) {
   const s = newStudioStudy({ term: "caminar", sourceLanguage: { code: "es", name: "Spanish" },
     targetLanguage: { code: "en", name: "English" } }, "test");
@@ -169,6 +169,132 @@ test("Vietnamese lexical phrase spans allow surrounding quantifiers and choose t
   assert.equal(strict.passed, false, "a detached quantifier must not silently replace words inside the confirmed form");
   assert.equal(strict.choices[0].passed, false);
   assert.equal(strict.choices[1].passed, true);
+});
+
+test("steps 8 and 9 translate with matching saved entries and skip occurrences a longer saved entry covers", async () => {
+  const s = fixture();
+  s.forms = [{ text: "antítesis" }];
+  s.passages = deduplicatePassages([{ id: "p0", text: "el batallar de las antítesis y otra antítesis" }], ["antítesis"]);
+  s.assignments = s.passages[0].occurrences.map((o) => ({ paragraphId: "p0", occurrenceId: o.id, meaningId: "m" }));
+  s.relatedEntries = [{ termId: "merged", sourceTerms: ["antitesis"] }];
+  s.queue = [{ id: "split-0", forms: ["por antítesis"], targetTerms: [] }];
+  const entries = [
+    { termId: "phrase", sourceTerms: ["batallar de las antítesis"], targetTerms: ["sự giằng co … giữa các mặt đối lập"], lifecycleState: "active", updatedAt: "x" },
+    { termId: "unrelated", sourceTerms: ["caballo"], targetTerms: ["ngựa"] },
+    { termId: "merged", sourceTerms: ["antitesis"], targetTerms: ["old"] },
+    { termId: "same-form", sourceTerms: ["antítesis"], targetTerms: ["old"] },
+    { termId: "queued", sourceTerms: ["por antítesis"], targetTerms: ["old"] },
+    { termId: "deleted", sourceTerms: ["otra antítesis"], targetTerms: ["old"], lifecycleState: "deleted" },
+  ];
+  const before = entryBatchSignature(s, s.passages, studyAssignments(s));
+  assert.equal(studyAssignments(s).length, 2);
+  s.glossaryContext = studioGlossaryContext(s, entries);
+  assert.deepEqual(s.glossaryContext, [{ termId: "phrase", sourceTerms: ["batallar de las antítesis"],
+    targetTerms: ["sự giằng co … giữa các mặt đối lập"], targetVariantNotes: [], notesToTranslators: "", footnote: "" }]);
+  assert.deepEqual(studyAssignments(s).map((a) => a.occurrenceId), ["o1"]);
+  assert.notEqual(entryBatchSignature(s, s.passages, studyAssignments(s)), before);
+  let payload;
+  await translateTrial(s, { run: async (kind, data) => { payload = data; return translations(kind, data); } }, s.passages, s.candidates, "9:context");
+  assert.deepEqual(payload.glossaryHints.map((h) => h.sourceTerm).sort(), ["antítesis", "batallar de las antítesis"]);
+});
+
+test("the initial candidate selection lists the selected and other candidates in the work list", async () => {
+  const s = fixture();
+  s.candidates = [
+    { id: "a", text: "walk", groupId: "g", meaningIds: ["m"], selected: true, retained: true, confirmed: false },
+    { id: "b", text: "walks", groupId: "g", meaningIds: ["m"], selected: true, retained: true, confirmed: false },
+    { id: "c", text: "stroll", meaningIds: ["m"], selected: true, retained: true, confirmed: false },
+  ];
+  const finished = [];
+  const scoped = (path) => ({ run: translations, forActivity: (id) => scoped([...path, id]),
+    finishActivity: (summary) => finished.push([path.join(" > "), summary]),
+    ask: async (question, data) => question.startsWith("Select one initial candidate") ? { candidateId: "g" }
+      : { choices: data.assignments.map((a) => ({ ...a, candidateId: "a", rendered: "walk", problem: "" })) } });
+  await testMeanings(s, scoped([]));
+  assert.deepEqual(finished.find(([path]) => path.includes("selecting an initial candidate")),
+    ["m > operation:Meaning 1 · 1 of 1 active meaning · selecting an initial candidate", "Selected: walk; walks\nOther candidates: stroll"]);
+});
+
+test("a step 9 repair that needs an unconfirmed translation stops with a decision and applies nothing", async () => {
+  const s = fixture();
+  s.candidates.push({ id: "s", text: "stroll", note: "old note", meaningIds: ["m"], selected: true, retained: true, confirmed: false });
+  const run = async (_kind, payload) => ({ rows: payload.rows.map((r) => ({ rowId: r.rowId, translatedText: "a stroll" })) });
+  const ask = async (question, data) => question.startsWith("Repair selection")
+    ? { order: data.candidates.map((c) => c.id), notes: [{ candidateId: "c", note: "changed" }], requiresBack: true, reason: "Stroll is needed." }
+    : { choices: data.assignments.map((a) => ({ ...a, candidateId: null, rendered: "stroll", problem: "No confirmed candidate" })) };
+  assert.deepEqual(await testCompleteEntry(s, { run, ask }), { pending: true });
+  assert.deepEqual(s.pendingDecision, { kind: "needs-form", reason: "Stroll is needed.", keys: ["9:0"],
+    offers: [{ candidateId: "s", text: "stroll", meaningId: "m", occurrences: 1 }] });
+  assert.equal(s.candidates[0].note, undefined);
+  assert.equal(s.candidates[1].confirmed, false);
+});
+
+test("the human can accept or ignore step 8 findings when repairs cannot make them pass", async () => {
+  const s = fixture(2); s.step = "8";
+  const reports = [];
+  const tools = { run: translations, ask: async (question, data) => {
+    if (question.startsWith("Report progress")) { reports.push(question); return { report: "Still failing." }; }
+    if (question.startsWith("Repair failed translations")) return {};
+    return choices(data, "Wrong sense");
+  } };
+  assert.deepEqual(await testMeanings(s, tools), { pending: true });
+  assert.equal(s.pendingDecision.kind, "progress");
+  assert.match(reports[0], /Write the report in English\. Refer to the meaning by its number/);
+  assert.equal(currentStudioFinding({ ...s, rounds: { "8:m": 6 } }, "p0", "o0"), null, "a finding from an earlier round is not current");
+  reviewStudioFinding(s, "accept", "p0", "o0");
+  assert.equal(s.tests["8:m"].passed, false);
+  reviewStudioFinding(s, "ignore", "p1", "o0");
+  assert.equal(s.tests["8:m"].passed, true);
+  assert.equal(meaningTrialsAreCurrent(s), true);
+});
+
+function splitFixture() {
+  const s = fixture(); s.scope.targetLanguage = { code: "vi", name: "Vietnamese" };
+  s.candidates = [{ id: "c", text: "sự giằng co giữa các mặt đối lập", meaningIds: ["m"], selected: true, retained: true, confirmed: true }];
+  return s;
+}
+const splitRendering = "sự giằng co dữ dội giữa các mặt đối lập";
+
+test("a confirmed form split by words that target grammar places inside it passes only when the reviewer passes it", async () => {
+  const s = splitFixture();
+  const assess = (translation, problem = "") => assessTrial(s, { ask: async (question, data) => {
+    assert.match(question, /split rendering is correct, not an error/);
+    return { choices: data.assignments.map((a) => ({ ...a, candidateId: "c", rendered: translation, problem })) };
+  } }, [{ paragraphId: "p0", source: s.passages[0].text, translation }], s.assignments, s.candidates, "9:0");
+  const passed = await assess(splitRendering);
+  assert.equal(passed.passed, true);
+  assert.equal(passed.choices[0].splitForm, "sự giằng co … giữa các mặt đối lập");
+  assert.deepEqual([passed.choices[0].targetStart, passed.choices[0].targetEnd], [0, splitRendering.length]);
+  assert.equal((await assess(splitRendering, "The source has no adjective here.")).passed, false);
+  for (const translation of ["sự giằng co một hai ba bốn năm giữa các mặt đối lập", "sự giằng co dữ dội; giữa các mặt đối lập", "sự giằng co dữ dội giữa các mặt khác"]) {
+    const result = await assess(translation);
+    assert.equal(result.passed, false, translation);
+    assert.equal(result.choices[0].splitForm, undefined, translation);
+  }
+});
+
+test("a passing split rendering puts a gap in the candidate and retests it in steps 8 and 9", async () => {
+  const s = splitFixture();
+  const run = async (_kind, payload) => ({ rows: payload.rows.map((r) => ({ rowId: r.rowId, translatedText: splitRendering })) });
+  const assessed = [];
+  const tools = { run, ask: async (_question, data) => {
+    assessed.push(data.candidates.map((c) => c.text));
+    return { choices: data.assignments.map((a) => ({ ...a, candidateId: "c", rendered: splitRendering, problem: "" })) };
+  } };
+  await testMeanings(s, tools);
+  assert.equal(s.candidates[0].text, "sự giằng co … giữa các mặt đối lập");
+  assert.deepEqual(assessed, [["sự giằng co giữa các mặt đối lập"], ["sự giằng co … giữa các mặt đối lập"]]);
+  assert.equal(s.tests["8:m"].passed, true);
+  assert.equal(s.tests["8:m"].choices[0].splitForm, undefined);
+  const report = (step) => Object.values(s.reports).find((r) => r.kind === "usage-notes" && r.step === step)?.summary;
+  assert.match(report("8"), /Changed "sự giằng co giữa các mặt đối lập" to "sự giằng co … giữa các mặt đối lập"/);
+
+  s.candidates[0].text = "sự giằng co giữa các mặt đối lập";
+  assert.deepEqual(await testCompleteEntry(s, tools), { complete: true, paragraphs: 1, occurrences: 1 });
+  assert.equal(s.candidates[0].text, "sự giằng co … giữa các mặt đối lập");
+  assert.deepEqual(buildStudioDraft(s).targetTerms, ["sự giằng co … giữa các mặt đối lập"]);
+  assert.match(report("9"), /Changed/);
+  assert.equal(entryTrialsAreCurrent(s), true);
 });
 
 test("human selection defaults reach assessment and repair in both phases and invalidate focused trials", async () => {
@@ -534,6 +660,44 @@ test("a stable pass pauses together for failed batches at their three-round limi
   assert.equal(s.entryValidation.phase, "awaiting-review");
 });
 
+// Each repair writes the next note version; the assessment fails more occurrences for worse versions.
+const worseningRepairs = (failuresByNote) => {
+  let version = 0;
+  return { run: translations, ask: async (question, data) => {
+    if (!question.startsWith("Assess")) return { order: ["c"], notes: [{ candidateId: "c", note: `v${++version}` }] };
+    const failed = failuresByNote[data.candidates[0].note ?? ""];
+    return { choices: data.assignments.map((a, i) => ({ ...a, candidateId: "c", rendered: "walk", problem: i < failed ? "wrong meaning" : "" })) };
+  } };
+};
+
+test("when repairs make the entry worse, the repair limit restores the best tested entry and its results", async () => {
+  const s = fixture(3);
+  const result = await testCompleteEntry(s, worseningRepairs({ "": 2, v1: 1, v2: 2, v3: 3 }));
+  assert.equal(result.pending, true); assert.equal(s.rounds["9:0"], 3);
+  assert.equal(s.candidates[0].note, "v1");
+  assert.equal(s.tests["9:0"].choices.filter((choice) => !choice.passed).length, 1);
+  assert.equal(s.tests["9:0"].signature, stableSignature(buildStudioDraft(s)), "the restored results belong to the restored entry");
+  assert.match(s.pendingDecision.report, /^Repairs after validation pass 2 made the results worse, so the entry from that pass has been restored \(2 of 3 occurrences passed\)\. Batch 1 still has failures/u);
+  assert.deepEqual(s.pendingDecision.keys, ["9:0"]);
+  assert.equal(s.testHistory.length, 4, "every tested version stays in the history");
+});
+
+test("the latest entry stays when no earlier version did better, and a human edit resets the comparison", async () => {
+  const s = fixture(3);
+  await testCompleteEntry(s, worseningRepairs({ "": 3, v1: 2, v2: 2, v3: 1 }));
+  assert.equal(s.candidates[0].note, "v3");
+  assert.doesNotMatch(s.pendingDecision.report, /restored/u);
+  const edited = fixture(3);
+  await assert.rejects(testCompleteEntry(edited, { run: translations, ask: async (question, data) => {
+    if (question.startsWith("Assess")) return { choices: data.assignments.map((a, i) => ({ ...a, candidateId: "c", rendered: "walk", problem: i < 1 ? "wrong meaning" : "" })) };
+    throw new Error("paused before repair");
+  } }), /paused before repair/);
+  assert.equal(edited.entryValidation.best.failed, 1);
+  edited.candidates[0].note = "Human guidance";
+  await testCompleteEntry(edited, worseningRepairs({ "Human guidance": 3, v1: 3, v2: 3, v3: 3 }));
+  assert.equal(edited.candidates[0].note, "v3", "the pre-edit entry is never restored over the human edit");
+});
+
 test("a coordinated repair replaces shared target notes consistently instead of appending obsolete duplicate guidance", async () => {
   const s = fixture(); s.candidates[0].note = "Older first condition";
   s.candidates.push({ ...s.candidates[0], id: "duplicate", note: "Obsolete conflicting condition" });
@@ -707,4 +871,17 @@ test("focused shortening sees and preserves other meanings that share the same v
     },
   }), /Stop after checking repair input/);
   assert(s.candidates.every((c) => c.note === "Movement on foot; also the established figurative sense."));
+});
+
+test("accepted translations and ignored paragraphs settle an entry batch without a repair round", async () => {
+  const s = fixture(2);
+  s.acceptedTranslations = { "p0:o0": ["walk"] };
+  s.ignoredTestParagraphIds = ["p1"];
+  let asks = 0;
+  const result = await testCompleteEntry(s, { run: translations, ask: async (_q, data) => { asks += 1; return choices(data, "The reviewer disagrees"); } });
+  assert.equal(result.complete, true);
+  assert.equal(asks, 1, "only the assessment ran");
+  assert.deepEqual(s.tests["9:0"].choices.map((c) => [c.override, c.reviewerPassed, c.problem]),
+    [["accepted", false, "The reviewer disagrees"], ["ignored", false, "The reviewer disagrees"]]);
+  assert.deepEqual(finalUsage(s), { c: { occurrences: 1, paragraphs: 1 } });
 });

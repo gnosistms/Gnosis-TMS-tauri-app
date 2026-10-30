@@ -7,18 +7,20 @@ import { selectedTeam } from "./glossary-shared.js";
 import { canWriteGlossaries } from "./permissions.js";
 import { resolveAiActionProviderAndModel } from "./ai-settings-flow.js";
 import { openGlossaryEditor, loadSelectedGlossaryEditorData } from "./glossary-editor-flow.js";
-import { openGlossaryTermEditor } from "./glossary-term-draft.js";
+import { openGlossaryTermEditor, openStudioEntryEditor } from "./glossary-term-draft.js";
 import { setStudioEditorHandler } from "./glossary-research-studio-editor-bridge.js";
 import { loadStudioHistory, loadStudioStudy, saveStudioStudy, deleteStudioStudy, studioGlossaryEntries, refreshStudioGlossary, exportStudioStudy } from "./glossary-research-studio-query.js";
 import { hydrateStudioStep, resolveStudioEvidence } from "./glossary-research-studio-evidence.js";
 import { createStudioTools } from "./glossary-research-studio-tools.js";
 import { studioStepNeedsReview } from "./glossary-research-studio-review.js";
 import { currentStudioRecommendation, recommendStudioStep, sourceSummaryMustBeSkipped, studioCanRecommendSkip, studioResearchStarted } from "./glossary-research-studio-recommendations.js";
+import { answerStudioAutoChoice, startStudioAutoChoice } from "./glossary-research-studio-auto-choice.js";
 import { prepareReadingTranslations, runResearchStage } from "./glossary-research-studio-stages.js";
 import { testMeanings, testCompleteEntry } from "./glossary-research-studio-testing.js";
-import { reviewCompoundReport, STUDIO_STEPS, STUDIO_DICTIONARY_REVIEW_VERSION, newStudioStudy, uniqueTexts, selectedForms, activeMeanings,
-  approveStep, stableSignature, stepSignature, stepSignatureMatches, stepIsReusable, buildStudioDraft, finalUsage, studioDependentSteps, clearStudioDependents,
-  collisionChanges, sourceCollisions, temporaryGlossaryTerms, uniqueSourceTexts, deduplicateSourceForms, applySplitReview, preferCandidate, reviseAssignment, studioContextRequest, applyStudioContext, entryTrialsAreCurrent, meaningTrialsAreCurrent, studioStepNumber } from "./glossary-research-studio-workflow.js";
+import { reviewCompoundReport, STUDIO_STEPS, STUDIO_DICTIONARY_REVIEW_VERSION, STUDIO_DEFAULT_BRANCH, newStudioStudy, uniqueTexts, selectedForms, activeMeanings,
+  approveStep, stableSignature, stepSignature, stepSignatureMatches, stepIsReusable, buildStudioDraft, finalUsage, studioDependentSteps, clearStudioDependents, startStudioReResearch,
+  collisionChanges, sourceCollisions, temporaryGlossaryTerms, uniqueSourceTexts, deduplicateSourceForms, applySplitReview, preferCandidate, reviseAssignment, studioContextRequest, applyStudioContext, entryTrialsAreCurrent, meaningTrialsAreCurrent, studioStepNumber,
+  meaningNumber, reviewStudioFinding, applyStudioEntryEdit, studioSingleWordCandidates, studioGlossaryContext } from "./glossary-research-studio-workflow.js";
 import { requestGlossaryTermWriteIntent, glossaryTermWriteScope, clearFailedGlossaryTermWrite } from "./glossary-term-write-coordinator.js";
 import { requireBrokerSession } from "./auth-flow.js";
 import { glossaryRepoDescriptor, syncSingleGlossaryForTeam, getGlossarySyncIssueMessage } from "./glossary-repo-flow.js";
@@ -80,7 +82,7 @@ async function visitStudioStep(step) {
 }
 export function studioView() {
   return state.glossaryResearchStudio ??= { study: null, history: [], busy: false,
-    message: "", error: "", modal: null, branch: "separate", mergeDestinations: {} };
+    message: "", error: "", modal: null, branch: STUDIO_DEFAULT_BRANCH, mergeDestinations: {} };
 }
 function currentScope() {
   const team = selectedTeam(); const editor = state.glossaryEditor;
@@ -204,6 +206,7 @@ export async function openStudio(render) {
   const view = studioView(); view.study = null; view.openingStudyId = null; view.error = ""; state.screen = "glossaryResearchStudio";
   view.reviewFrontier = null; view.revisiting = false; view.decisionStep = null;
   view.busy = false; view.message = "";
+  startAutoChoice();
   render();
   await guarded(async () => { view.history = await loadStudioHistory(currentScope()); });
 }
@@ -228,7 +231,7 @@ export async function newStudy({ term = "", projectId = null } = {}) {
   s.model = resolveAiActionProviderAndModel("research");
   s.translationRuntimeVersion = await translatorRuntimeVersion();
   if (generation !== operationGeneration) return;
-  studioView().openingStudyId = null; studioView().study = s; studioView().branch = "separate";
+  studioView().openingStudyId = null; studioView().study = s; studioView().branch = STUDIO_DEFAULT_BRANCH;
   studioView().reviewFrontier = null; studioView().revisiting = false; studioView().decisionStep = null;
   studioView().mergeDestinations = {}; studioView().hideDecision = false; studioView().modal = null;
   await persist(s); renderStudio();
@@ -255,7 +258,7 @@ export async function resumeStudy(id) {
     if (study.step === "4.7" && !study.splitProposals) study.splitProposals = study.queue.map((q) => ({
       id: q.id, forms: uniqueSourceTexts(q.forms, study.scope.sourceLanguage.code),
       meaningId: q.meaningId, targetTerms: q.targetTerms, selected: true }));
-    view.branch = study.branch ?? study.steps["2b"]?.approved?.branch ?? "separate";
+    view.branch = study.branch ?? study.steps["2b"]?.approved?.branch ?? STUDIO_DEFAULT_BRANCH;
     view.mergeDestinations = study.mergeDestinations ?? {};
     view.hideDecision = Boolean(study.pendingDecision && view.decisionStep && view.decisionStep !== study.step);
     view.modal = null; view.openingStudyId = null; renderStudio();
@@ -376,6 +379,7 @@ export async function runCurrentStage(fresh = false) {
       }
       view.busy = true; renderStudio();
       currentTools = toolsFor(s, timing);
+      if (["8", "9"].includes(s.step)) s.glossaryContext = studioGlossaryContext(s, studioGlossaryEntries(s.scope));
       const result = s.step === "8" ? await testMeanings(s, currentTools)
         : s.step === "9" ? await testCompleteEntry(s, currentTools)
           : await runResearchStage(s, currentTools, studioGlossaryEntries(s.scope));
@@ -387,6 +391,7 @@ export async function runCurrentStage(fresh = false) {
       s.error = ""; await persist(s);
     } catch (error) {
       timing.finish(error?.message === "Research paused." || generation !== operationGeneration ? "paused" : "failed");
+      if (error?.message !== "Research paused." && generation === operationGeneration) currentTools?.stopActivity?.();
       throw error;
     } finally { timing.finish("paused"); }
   }, s);
@@ -437,6 +442,19 @@ async function recommendCurrentStep(refresh = false) {
   }
 }
 
+// Choosing Run or Skip answers the question the pending recommendation asks, so
+// the request is cancelled and its late answer discarded.
+async function abandonRecommendation() {
+  const view = studioView();
+  if (!view.recommendationRequest) return;
+  view.recommendationRequest = null; view.recommendingStep = null;
+  operationGeneration += 1;
+  currentTiming?.finish("paused"); await currentTools?.cancel();
+  view.busy = false; view.message = "";
+}
+
+const STUDIO_SINGLE_WORD_SKIP = "There is one meaning and one candidate translation, so there is nothing to choose between. Step 9 tests that translation in the complete entry.";
+
 async function moveTo(s, step) {
   const generation = operationGeneration;
   const isCurrent = () => contextMatches(s) && generation === operationGeneration && state.screen === "glossaryResearchStudio";
@@ -471,6 +489,13 @@ async function moveTo(s, step) {
     const value = { skipped: true, reason: "Available for Samael Aun Weor only" };
     s.steps[step] = { value }; await approveStep(s, step, value); await persist(s);
     if (isCurrent()) await moveTo(s, "4.4.2");
+  } else if (step === "8" && studioSingleWordCandidates(s)) {
+    for (const candidate of studioSingleWordCandidates(s)) candidate.confirmed = true;
+    s.assignmentReviewPending = false;
+    const value = { skipped: true, reason: STUDIO_SINGLE_WORD_SKIP };
+    s.steps[step] = { ...s.steps[step], value };
+    await approveStep(s, step, value); await persist(s);
+    if (isCurrent()) await moveTo(s, "9");
   } else if (step === "4.4.4" && sourceSummaryMustBeSkipped(s)) {
     const value = { skipped: true, reason: "Both source branches were skipped" };
     s.steps[step] = { ...s.steps[step], value };
@@ -554,13 +579,7 @@ async function advanceStudioCheckpoint(s, generation) {
     value = { forms: s.forms };
   } else if (step === "2b" && s.relatedEntries.length) {
     if (studioView().branch === "merge") { await mergeOnly(s); return; }
-    if (studioView().branch === "research") {
-      const forms = uniqueSourceTexts([...s.scope.forms, ...s.relatedEntries.flatMap((e) => e.sourceTerms)], s.scope.sourceLanguage.code);
-      s.carriedTargets = s.relatedEntries.flatMap((e) => e.targetTerms.map((text, i) => ({ text, note: e.targetVariantNotes?.[i] ?? "", originTermId: e.termId })));
-      const changed = stableSignature(forms) !== stableSignature(s.scope.forms) || !s.reResearchStarted;
-      s.scope.forms = forms; s.reResearchStarted = true;
-      if (changed) { delete s.steps["2a"]; await moveTo(s, "2a"); return; }
-    }
+    if (studioView().branch === "research" && startStudioReResearch(s)) { await moveTo(s, "2a"); return; }
     value = { branch: studioView().branch, entries: s.relatedEntries };
   } else if (step === "4.1" && value?.dictionaryVersion !== STUDIO_DICTIONARY_REVIEW_VERSION) {
     throw new Error("Refresh dictionary research before continuing so capitalization variants are checked.");
@@ -596,9 +615,14 @@ async function advanceStudioCheckpoint(s, generation) {
     // Pruning/retention changes require a final test of the actual retained entry.
     const timing = createStudioStepTiming(s, step); currentTiming = timing;
     currentTools = toolsFor(s, timing); studioView().busy = true;
+    s.glossaryContext = studioGlossaryContext(s, studioGlossaryEntries(s.scope));
     let checked;
     try { checked = await testCompleteEntry(s, currentTools); timing.finish(checked.pending ? "awaiting-review" : "complete"); }
-    catch (error) { timing.finish(error?.message === "Research paused." ? "paused" : "failed"); throw error; }
+    catch (error) {
+      timing.finish(error?.message === "Research paused." ? "paused" : "failed");
+      if (error?.message !== "Research paused.") currentTools?.stopActivity?.();
+      throw error;
+    }
     if (!contextMatches(s) || generation !== operationGeneration) return;
     if (checked.pending) { s.step = "9"; await persist(s); return; }
     s.usage = finalUsage(s);
@@ -728,7 +752,60 @@ async function returnAfterEditor(event, origin, value) {
   } else await persist(s);
   if (visible) { state.screen = "glossaryResearchStudio"; renderStudio(); }
 }
-setStudioEditorHandler(returnAfterEditor);
+// Step 9's entry under test, edited in the term editor. A change replaces the stuck AI
+// repair question; Resume then validates the edited entry.
+function openEntryEditor(s, finding) {
+  if (studioView().busy || s.step !== "9") throw new Error("Pause research before editing the entry.");
+  const [paragraphId, occurrenceId] = finding.split(":").map(decodeURIComponent);
+  const meaningId = s.assignments.find((a) => a.paragraphId === paragraphId && a.occurrenceId === occurrenceId)?.meaningId;
+  const meanings = activeMeanings(s);
+  openStudioEntryEditor(renderStudio, buildStudioDraft(s), { studyId: s.id, meaningId,
+    sourceLanguage: s.scope.sourceLanguage, targetLanguage: s.scope.targetLanguage,
+    notice: `This edits the entry tested in step 9. The glossary is changed only when you save the entry in step 11. Source variants come from step 2a.${meanings.length > 1 && meanings.some((m) => m.id === meaningId) ? ` New translations are added to meaning ${meaningNumber(s, meaningId)}.` : ""}` });
+}
+
+async function saveEditedEntry(origin, edit) {
+  const s = studioView().study;
+  if (s?.id !== origin.studyId || !contextMatches(s) || studioView().busy || s.step !== "9") throw new Error("Pause research before editing the entry.");
+  const before = stableSignature(buildStudioDraft(s));
+  applyStudioEntryEdit(s, edit, origin.meaningId);
+  if (stableSignature(buildStudioDraft(s)) === before) return;
+  if (s.pendingDecision?.kind === "selection") { s.pendingDecision = null; s.status = "active"; studioView().hideDecision = false; }
+  await persist(s);
+}
+
+// The human's verdict on a step 9 finding. Once every batch in the stuck question
+// passes, the question no longer applies; current results then complete step 9
+// without new translations.
+async function reviewFinding(s, name) {
+  if (studioView().busy || !["8", "9"].includes(s.step)) throw new Error("Pause research before reviewing a finding.");
+  const action = name.slice("review-".length, name.indexOf(":"));
+  const [paragraphId, occurrenceId] = name.slice(name.indexOf(":") + 1).split(":").map(decodeURIComponent);
+  reviewStudioFinding(s, action, paragraphId, occurrenceId);
+  const d = s.pendingDecision;
+  if ((d?.kind === "selection" && (d.keys ?? [d.key]).every((key) => s.tests[key]?.passed))
+    || (d?.kind === "progress" && s.step === "8" && s.tests[`8:${progressMeaningId(d)}`]?.passed)) {
+    s.pendingDecision = null; s.status = "active"; studioView().hideDecision = false;
+  }
+  await persist(s);
+  const current = s.step === "8" ? meaningTrialsAreCurrent(s) : entryTrialsAreCurrent(s);
+  if (!s.pendingDecision && current && !s.steps[s.step]?.value?.complete) await runCurrentStage();
+  else renderStudio();
+}
+
+// Step 8's progress question is about one meaning; its report key starts with the meaning ID.
+const progressMeaningId = (decision) => String(decision.reportKey ?? "").split(":")[0];
+
+// Reviewing a stuck question yourself opens the first stuck batch's findings.
+function revealStudioFindings(keys) {
+  const details = [...(globalThis.document?.querySelectorAll?.("details[data-studio-disclosure]") ?? [])]
+    .find((element) => keys.includes(element.dataset.studioDisclosure));
+  if (!details) return;
+  details.open = true;
+  (details.querySelector(".studio-findings") ?? details).scrollIntoView({ block: "start" });
+}
+
+setStudioEditorHandler((event, origin, value) => event === "entry" ? saveEditedEntry(origin, value) : returnAfterEditor(event, origin, value));
 
 export async function backStudio() {
   const s = studioView().study; if (!s) { state.screen = "glossaryEditor"; renderStudio(); return; }
@@ -909,16 +986,45 @@ export function updateStudioInput(target) {
   }), 400);
 }
 
+// An unmatched occurrence gets one meaning: an existing one, or a new one typed
+// in. The choice starts on the AI's suggestion: the existing meaning it names,
+// or, in decisions saved before it named one, a definition it repeats.
+export const STUDIO_NEW_MEANING = "new";
+export function unmatchedMeaningChoice(s, decision = s.pendingDecision) {
+  const active = s.meanings.filter((m) => m.enabled !== false);
+  const chosen = s.decisionInput?.meaning;
+  if (chosen === STUDIO_NEW_MEANING || active.some((m) => m.id === chosen)) return chosen;
+  const named = decision?.recommendation?.meaningId;
+  if (active.some((m) => m.id === named)) return named;
+  const suggested = String(decision?.recommendation?.definition ?? "").trim().toLocaleLowerCase();
+  return active.find((m) => suggested && String(m.definition ?? "").trim().toLocaleLowerCase() === suggested)?.id ?? STUDIO_NEW_MEANING;
+}
+
 export async function resolveStudioDecision(action) {
   const s = studioView().study; const d = s.pendingDecision;
   if (!d) return;
   if (d.kind === "progress") {
-    if (action === "stop") { studioView().hideDecision = true; s.status = "paused"; await persist(s); return; }
+    if (action === "stop") {
+      studioView().hideDecision = true; s.status = "paused"; await persist(s);
+      if (s.step === "8") { renderStudio(); revealStudioFindings([`8:${progressMeaningId(d)}`]); }
+      return;
+    }
     s.reports[d.reportKey].continued = true;
   } else if (d.kind === "selection") {
-    if (action === "stop") { studioView().hideDecision = true; s.status = "paused"; await persist(s); return; }
+    if (action === "stop") {
+      studioView().hideDecision = true; s.status = "paused"; await persist(s);
+      renderStudio(); revealStudioFindings(d.keys ?? [d.key]); return;
+    }
     s.retryAllowances ??= {};
     for (const key of d.keys ?? [d.key]) s.retryAllowances[key] = (s.rounds[key] ?? d.rounds) + 3;
+  } else if (d.kind === "needs-form") {
+    if (action === "back") {
+      s.pendingDecision = null; s.status = "active"; studioView().hideDecision = false;
+      await persist(s); await visitStudioStep("8"); return;
+    }
+    const ids = new Set((d.offers ?? []).map((offer) => offer.candidateId));
+    if (!ids.size) throw new Error("There is no translation to confirm here. Go back to step 8.");
+    for (const c of s.candidates) if (ids.has(c.id)) c.confirmed = true;
   } else if (d.kind === "candidate") {
     if (action === "approve") {
       for (const c of s.candidates) if (c.groupId === d.groupId) c.temporary = false;
@@ -936,24 +1042,32 @@ export async function resolveStudioDecision(action) {
       s.excludedParagraphIds ??= []; s.excludedParagraphIds.push(d.paragraphId);
       s.assignments = s.assignments.filter((a) => a.paragraphId !== d.paragraphId);
     } else {
-      let id = s.decisionInput?.meaning;
-      if (action === "new") {
-        const definition = s.decisionInput?.definition || d.recommendation.definition;
+      let id = unmatchedMeaningChoice(s, d);
+      if (id === STUDIO_NEW_MEANING) {
+        const definition = (s.decisionInput?.definition ?? d.recommendation?.definition ?? "").trim();
+        if (!definition) throw new Error("Enter the new meaning.");
         id = `human-${s.meanings.length}`; s.meanings.push({ id, definition, enabled: true });
       }
-      if (!s.meanings.some((m) => m.id === id)) throw new Error("Select a definition.");
+      if (!s.meanings.some((m) => m.id === id)) throw new Error("Select a meaning.");
       const a = s.assignments.find((a) => a.paragraphId === d.paragraphId && a.occurrenceId === d.occurrenceId);
-      a.meaningId = id;
+      a.meaningId = id; a.humanChoice = true;
     }
   }
   s.pendingDecision = null; s.status = "active"; studioView().hideDecision = false;
   s.decisionInput = {}; await persist(s); await runCurrentStage();
 }
 
+// Unanswered AI advice is taken after a countdown, as if its button were clicked.
+const startAutoChoice = () => startStudioAutoChoice(studioView, (choice) => studioAction(`studio:${choice}`, renderStudio));
+
 export async function studioAction(action, render) {
   renderStudio = render;
   if (action === "open-glossary-research") { await openStudio(render); return true; }
   if (!action.startsWith("studio:")) return false;
+  startAutoChoice();
+  // Any action shows the translator is here, and the timer must not overtake a
+  // slow one such as leaving the studio, so pending advice waits for them.
+  answerStudioAutoChoice(studioView());
   if (action === "studio:export") { await exportCurrentResearch(); return true; }
   await guarded(async () => {
     const name = action.slice(7); const s = studioView().study;
@@ -968,7 +1082,7 @@ export async function studioAction(action, render) {
       delete s.reviewNavigation;
       studioView().reviewFrontier = STUDIO_STEPS.findIndex((item) => item.id === modal.step);
       studioView().revisiting = false; studioView().decisionStep = null; studioView().hideDecision = false;
-      studioView().branch = s.branch ?? "separate"; studioView().mergeDestinations = s.mergeDestinations ?? {};
+      studioView().branch = s.branch ?? STUDIO_DEFAULT_BRANCH; studioView().mergeDestinations = s.mergeDestinations ?? {};
       studioView().modal = modal.previousModal;
       await persist(s);
       await modal.operation(); render(); return;
@@ -987,8 +1101,9 @@ export async function studioAction(action, render) {
       const next = STUDIO_STEPS[STUDIO_STEPS.findIndex((item) => item.id === s.step) + 1];
       if (next && studioCanVisitStep(s, next.id)) { await visitStudioStep(next.id); return; }
     }
-    if (s && changesResearch && !studioView().busy && requestStudioRedo(() => studioAction(action, render))) return;
+    if (s && changesResearch && (!studioView().busy || studioView().recommendationRequest) && requestStudioRedo(() => studioAction(action, render))) return;
     if (s && changesResearch && !["run", "redo"].includes(name)) markStudioEdited(s);
+    if (s && ["run", "skip"].includes(name)) await abandonRecommendation();
     if (name === "new") await newStudy();
     else if (name.startsWith("visit:")) await visitStudioStep(name.slice(6));
     else if (name.startsWith("resume:")) await resumeStudy(name.slice(7));
@@ -1079,6 +1194,8 @@ export async function studioAction(action, render) {
     else if (name === "review-decision") { studioView().hideDecision = false; render(); }
     else if (name === "load-context") await loadSourceContext();
     else if (name.startsWith("view-source:")) await viewSourceParagraph(name.slice(12));
+    else if (/^review-(accept|ignore|undo):/u.test(name)) await reviewFinding(s, name);
+    else if (name.startsWith("edit-entry:")) openEntryEditor(s, name.slice("edit-entry:".length));
     else if (name.startsWith("review-assignment:")) {
       if (studioView().busy) throw new Error("Pause research before reviewing a meaning.");
       const [paragraphId, occurrenceId] = name.slice("review-assignment:".length).split(":").map(decodeURIComponent);

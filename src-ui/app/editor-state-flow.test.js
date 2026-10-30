@@ -8,7 +8,10 @@ import {
 } from "./editor-state-flow.js";
 import { selectedEditorPreviewLanguageCode } from "./editor-preview.js";
 import {
+  clearStoredEditorCollapsedLanguageCodes,
   clearStoredEditorPreviewLanguageCode,
+  loadStoredEditorCollapsedLanguageCodes,
+  saveStoredEditorCollapsedLanguageCodes,
   saveStoredEditorPreviewLanguageCode,
 } from "./editor-preferences.js";
 import { createEditorChapterState, createEditorHistoryState, state } from "./state.js";
@@ -271,6 +274,64 @@ test("applyEditorUiState restores stored preview language for the opened chapter
   } finally {
     clearStoredEditorPreviewLanguageCode(chapterId, login);
     setActiveStorageLogin(null);
+  }
+});
+
+test("applyEditorUiState restores stored hidden languages for the opened chapter only", () => {
+  const login = "collapsed-languages-state-flow";
+  setActiveStorageLogin(login);
+  clearStoredEditorCollapsedLanguageCodes("chapter-1", login);
+  clearStoredEditorCollapsedLanguageCodes("chapter-2", login);
+
+  try {
+    saveStoredEditorCollapsedLanguageCodes("chapter-2", new Set(["en"]), login);
+    const languages = [
+      { code: "es", name: "Spanish", role: "source" },
+      { code: "en", name: "English", role: "target" },
+      { code: "vi", name: "Vietnamese", role: "target" },
+    ];
+    const previousEditorChapter = {
+      ...createEditorChapterState(),
+      chapterId: "chapter-1",
+      collapsedLanguageCodes: new Set(["vi"]),
+    };
+
+    const opened = applyEditorUiState(
+      { chapterId: "chapter-2", languages, rows: [{ rowId: "row-1" }] },
+      previousEditorChapter,
+    );
+    assert.deepEqual([...opened.collapsedLanguageCodes], ["en"]);
+
+    const otherChapter = applyEditorUiState(
+      { chapterId: "chapter-1", languages, rows: [{ rowId: "row-1" }] },
+      opened,
+    );
+    assert.deepEqual([...otherChapter.collapsedLanguageCodes], []);
+
+    const afterRestart = applyEditorUiState(
+      { chapterId: "chapter-2", languages, rows: [{ rowId: "row-1" }] },
+      createEditorChapterState(),
+    );
+    assert.deepEqual([...afterRestart.collapsedLanguageCodes], ["en"]);
+  } finally {
+    clearStoredEditorCollapsedLanguageCodes("chapter-1", login);
+    clearStoredEditorCollapsedLanguageCodes("chapter-2", login);
+    setActiveStorageLogin(null);
+  }
+});
+
+test("stored hidden languages are cleared when a chapter shows every language again", () => {
+  const login = "collapsed-languages-clear";
+  const chapterId = "chapter-1";
+
+  try {
+    saveStoredEditorCollapsedLanguageCodes(chapterId, new Set(["en", "vi", "en", " "]), login);
+    assert.deepEqual([...loadStoredEditorCollapsedLanguageCodes(chapterId, login)], ["en", "vi"]);
+
+    saveStoredEditorCollapsedLanguageCodes(chapterId, new Set(), login);
+    assert.deepEqual([...loadStoredEditorCollapsedLanguageCodes(chapterId, login)], []);
+  } finally {
+    clearStoredEditorCollapsedLanguageCodes(chapterId, login);
   }
 });
 

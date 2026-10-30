@@ -1062,10 +1062,16 @@
 
 .translation-row-text-style-actions {
   display: none;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0 10px;
+}
+
+.translation-row-text-style-actions__row {
+  display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 6px;
-  padding: 8px 0 10px;
 }
 
 .translation-row-text-style-actions__group {
@@ -1175,9 +1181,14 @@
   height: 14px;
 }
 
-.translation-row-text-style-button--separator .translation-row-text-style-button__label {
-  font-size: 11px;
-  text-transform: lowercase;
+/* The separator button shows a small copy of the flourish it inserts. */
+.translation-row-text-style-button__flourish {
+  display: block;
+  width: 24px;
+  aspect-ratio: 1416 / 403;
+  background: currentColor;
+  -webkit-mask: url("../../src-tauri/src/project_import/chapter_editor/chapter_flourish.svg") center / contain no-repeat;
+  mask: url("../../src-tauri/src/project_import/chapter_editor/chapter_flourish.svg") center / contain no-repeat;
 }
 
 .translation-language-panel__field-highlight,
@@ -2591,7 +2602,8 @@
   display: flex;
 }
 
-.translation-language-panel__editor--style-changed:not(:focus-within) .translation-row-text-style-actions > :not([role="radiogroup"]) {
+.translation-language-panel__editor--style-changed:not(:focus-within) .translation-row-text-style-actions__row--styles > :not([role="radiogroup"]),
+.translation-language-panel__editor--style-changed:not(:focus-within) .translation-row-text-style-actions__row--inserts {
   display: none;
 }
 
