@@ -2331,6 +2331,30 @@ test("step9 collects a stable pass before one coordinated repair and finishes wi
   await expect(page.getByText(/Recheck pending · Translation batch/)).toHaveCount(0);
 });
 
+test("a step 9 repair that needs an unconfirmed translation asks to confirm it or go back to step 8", async ({ page }) => {
+  for (const [label, expected] of [["Confirm and retest", { step: "9", confirmed: true }], ["Go back to step 8", { step: "8", confirmed: false }]]) {
+    await mountEntryPassStudy(page, true);
+    await page.evaluate(async () => {
+      const { state } = await import(`/${"app"}/state.js`);
+      const { renderGlossaryResearchStudio } = await import(`/${"screens"}/glossary-research-studio.js`);
+      const s = state.glossaryResearchStudio.study;
+      s.candidates.push({ id: "c2", text: "dạo bước", meaningIds: ["m1"], selected: true, confirmed: false, retained: true });
+      s.pendingDecision = { kind: "needs-form", reason: "Dạo bước is needed.", keys: ["9:15"],
+        offers: [{ candidateId: "c2", text: "dạo bước", meaningId: "m1", occurrences: 2 }] };
+      document.querySelector("#app").innerHTML = renderGlossaryResearchStudio(state);
+    });
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByRole("heading")).toHaveText("A translation needs confirming");
+    await expect(dialog).toContainText("“dạo bước” for meaning 1: used in 2 failed occurrences but not confirmed.");
+    await expect(dialog).toContainText("Repair note: Dạo bước is needed.");
+    await dialog.getByRole("button", { name: label, exact: true }).click();
+    await expect.poll(() => page.evaluate(async () => {
+      const { state } = await import(`/${"app"}/state.js`); const s = state.glossaryResearchStudio.study;
+      return { step: s.step, confirmed: s.candidates.find((c) => c.id === "c2").confirmed, decision: s.pendingDecision?.kind === "needs-form" };
+    })).toEqual({ ...expected, decision: false });
+  }
+});
+
 test("Continue extends only the failed batches presented in a grouped three-round pause", async ({ page }) => {
   await mountEntryPassStudy(page, true);
   await expect(page.getByRole("dialog")).toContainText("Batches 2, 3");

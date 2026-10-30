@@ -65,17 +65,23 @@ export function createStudioActivity(study, changed, isCurrent) {
     if (!isCurrent() || !ownsRecord()) return;
     Object.assign(find(path), fields); changed();
   };
-  function plan(items, path = [], announce = true) {
+  // A prefix prunes rows with it that the plan no longer has, such as batches of an older, larger sample.
+  function plan(items, path = [], announce = true, prune = "") {
     if (!isCurrent() || !ownsRecord()) return;
+    if (prune) {
+      const parent = path.length ? find(path) : null; const siblings = parent ? parent.children ??= [] : record.items;
+      const kept = siblings.filter((node) => !node.id.startsWith(prune) || items.some((item) => item.id === node.id));
+      siblings.splice(0, siblings.length, ...kept);
+    }
     for (const { id, label, children } of items) {
       const node = find([...path, id]); node.label = label;
       if (children) plan(children, [...path, id], false);
     }
     if (announce) changed();
   }
-  function pause(nodes = record.items) {
+  function settle(status, nodes = record.items) {
     if (study.activitySteps[step] !== record) return;
-    for (const node of nodes) { if (node.status === "running") node.status = "paused"; pause(node.children); }
+    for (const node of nodes) { if (node.status === "running") node.status = status; settle(status, node.children); }
   }
   return { plan, update,
     start(path, label) {
@@ -87,7 +93,9 @@ export function createStudioActivity(study, changed, isCurrent) {
     done(path, result, reused = false) { update(path, { status: "complete", result: summarizeStudioActivity(result), reused, error: "" }); },
     finish(path, result, review) { update(path, { status: "complete", result: clip(result), error: "", ...(review ? { review } : {}) }); },
     fail(path, error) { update(path, { status: error?.message === "Research paused." ? "paused" : "failed", error: error?.message === "Research paused." ? "" : clip(error?.message ?? error, 400) }); },
-    pause() { pause(); changed(); },
+    pause() { settle("paused"); changed(); },
+    // An error ends the run, so nothing it left running is still working.
+    stop() { settle("failed"); changed(); },
   };
 }
 
@@ -108,7 +116,7 @@ export function studioStageActivities(s) {
     id: m.id, label: `Meaning ${(s.meanings ?? []).indexOf(m) + 1} · ${clip(m.definition ?? "", 110)}`,
   }));
   if (s.step === "9") {
-    const assignments = (s.assignments ?? []).filter((a) => !a.entryId || a.entryId === "original");
+    const assignments = studyAssignments(s);
     const count = (s.passages ?? []).filter((p) => assignments.some((a) => a.paragraphId === p.id)).length;
     return Array.from({ length: Math.ceil(count / 15) }, (_, i) => ({ id: `batch-${i * 15}`, label: `Batch ${i + 1} · paragraphs ${i * 15 + 1}–${Math.min(count, (i + 1) * 15)} of ${count}` }));
   }

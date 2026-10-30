@@ -137,3 +137,16 @@ test("an obsolete tracker cannot pause or overwrite a resumed tracker or an auxi
   resumed.done(["test"], { summary: "Current result" });
   assert.equal(study.activitySteps["8"].items[0].result, "Current result");
 });
+
+test("an error leaves no row running, and a smaller sample drops batch rows it no longer has", () => {
+  const study = { step: "9", activitySteps: {} };
+  const activity = createStudioActivity(study, () => {}, () => true);
+  activity.plan([{ id: "batch-0", label: "Batch 1 · of 98" }, { id: "batch-90", label: "Batch 7 · of 98" }, { id: "repair-pass-1", label: "Repair" }]);
+  activity.start(["repair-pass-1", "group-0"], "Repair group 1");
+  activity.stop();
+  const items = study.activitySteps["9"].items;
+  assert.deepEqual(items.map((item) => item.status), ["waiting", "waiting", "failed"]);
+  assert.equal(items[2].children[0].status, "failed");
+  activity.plan([{ id: "batch-0", label: "Batch 1 · of 73" }], [], true, "batch-");
+  assert.deepEqual(study.activitySteps["9"].items.map((item) => [item.id, item.label]), [["batch-0", "Batch 1 · of 73"], ["repair-pass-1", "Repair"]]);
+});

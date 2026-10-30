@@ -215,6 +215,20 @@ test("the initial candidate selection lists the selected and other candidates in
     ["m > operation:Meaning 1 · 1 of 1 active meaning · selecting an initial candidate", "Selected: walk; walks\nOther candidates: stroll"]);
 });
 
+test("a step 9 repair that needs an unconfirmed translation stops with a decision and applies nothing", async () => {
+  const s = fixture();
+  s.candidates.push({ id: "s", text: "stroll", note: "old note", meaningIds: ["m"], selected: true, retained: true, confirmed: false });
+  const run = async (_kind, payload) => ({ rows: payload.rows.map((r) => ({ rowId: r.rowId, translatedText: "a stroll" })) });
+  const ask = async (question, data) => question.startsWith("Repair selection")
+    ? { order: data.candidates.map((c) => c.id), notes: [{ candidateId: "c", note: "changed" }], requiresBack: true, reason: "Stroll is needed." }
+    : { choices: data.assignments.map((a) => ({ ...a, candidateId: null, rendered: "stroll", problem: "No confirmed candidate" })) };
+  assert.deepEqual(await testCompleteEntry(s, { run, ask }), { pending: true });
+  assert.deepEqual(s.pendingDecision, { kind: "needs-form", reason: "Stroll is needed.", keys: ["9:0"],
+    offers: [{ candidateId: "s", text: "stroll", meaningId: "m", occurrences: 1 }] });
+  assert.equal(s.candidates[0].note, undefined);
+  assert.equal(s.candidates[1].confirmed, false);
+});
+
 function splitFixture() {
   const s = fixture(); s.scope.targetLanguage = { code: "vi", name: "Vietnamese" };
   s.candidates = [{ id: "c", text: "sự giằng co giữa các mặt đối lập", meaningIds: ["m"], selected: true, retained: true, confirmed: true }];

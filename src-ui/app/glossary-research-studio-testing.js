@@ -354,6 +354,22 @@ export async function testMeanings(s, tools) {
 
 const ENTRY_REPAIR_QUESTION = "Repair selection by changing ONLY existing candidate notes and preference ordering. Preserve the human's general translator note and selection defaults; do not weaken them for stylistic variety or convenience. The term must preserve every confirmed candidate and meaning. A rendering must contain the complete confirmed target wording; a synonym or grammatical replacement inside that wording is not automatically the same confirmed form. Surrounding grammatical words may vary naturally. Do not authorize unlisted replacement wording in notes. If a new form is needed, set requiresBack=true for candidate review. Write reusable positive selection conditions for this term, without test references or corrections to unrelated vocabulary or sentences. Notes must stand alone for one visible target form: records with the same text are merged, so never refer to internal candidate roles, meaning IDs or another candidate with the same text. If candidate/meaning changes are required, say so instead of inventing replacements." + " Coordinate the repair across ALL supplied failed batches. Preserve conditions needed by passing occurrences. Other repair groups may follow before the next validation pass; do not optimize one failing passage by reversing guidance required elsewhere. The supplied trial includes complete failed-paragraph context, including passing occurrences in those paragraphs; sourceContexts provides their matching source neighbors. Preserve both meanings when one paragraph contains distinct uses. Give the repair rationale in researchSummary, separate from the usage notes. " + STUDIO_USAGE_NOTE_POLICY;
 
+// Unconfirmed candidates of a failed occurrence's meaning that its rendering used.
+export function studioUnconfirmedRenderings(study, trials) {
+  const offers = new Map();
+  for (const choice of trials.flatMap((trial) => trial.choices ?? [])) {
+    if (choice.passed || choice.candidateId || !choice.rendered) continue;
+    const meaningId = study.assignments.find((a) => a.paragraphId === choice.paragraphId && a.occurrenceId === choice.occurrenceId)?.meaningId;
+    for (const candidate of study.candidates.filter((c) => !c.confirmed && c.selected !== false && c.meaningIds.includes(meaningId)
+      && exactTargetOccurrences(choice.rendered, [c.text], study.scope.targetLanguage.code).length)) {
+      const key = `${candidate.id}:${meaningId}`;
+      const offer = offers.get(key) ?? { candidateId: candidate.id, text: candidate.text, meaningId, occurrences: 0 };
+      offer.occurrences += 1; offers.set(key, offer);
+    }
+  }
+  return [...offers.values()];
+}
+
 function selectionRepairGroups(study, failures, base) {
   const paragraphs = failures.flatMap(({ trial }) => {
     const failed = new Set(trial.choices.filter((choice) => !choice.passed).map((choice) => choice.paragraphId));
@@ -377,7 +393,6 @@ function selectionRepairGroups(study, failures, base) {
 }
 
 function applySelectionRepair(study, candidates, repair) {
-  if (repair.requiresBack) throw new Error(`Return to candidate or meaning review: ${repair.reason}`);
   if (repair.order?.length !== candidates.length || new Set(repair.order).size !== candidates.length
     || repair.order.some((id) => !candidates.some((candidate) => candidate.id === id))) throw new Error("Selection repair did not preserve all candidates.");
   const rank = new Map(repair.order.map((id, index) => [id, index]));
@@ -425,7 +440,7 @@ export async function testCompleteEntry(s, tools) {
         { id: "translate", label: "Translate with the complete glossary entry" },
         { id: "assess", label: "Review meaning selection and translation quality" },
       ] }],
-    })));
+    })), "batch-");
     const failures = [];
     const validateBatch = async (index) => {
       const batch = paragraphs.slice(index, index + 15);
@@ -507,8 +522,17 @@ export async function testCompleteEntry(s, tools) {
           occurrences: group.choices.length, paragraphs: group.translations.length,
           passed: group.choices.filter((choice) => choice.passed).length,
           failed: group.choices.filter((choice) => !choice.passed).length,
-        } } }, '{"order":["all existing candidate IDs"],"notes":[{"candidateId":"ID","note":"brief shared selection rule","longNoteReason":"report-only reason if longer guidance is essential"}],"requiresBack":false,"reason":"explanation if review is required","researchSummary":"report-only changes, evidence and explanation"}',
+        } } }, '{"order":["all existing candidate IDs"],"notes":[{"candidateId":"ID","note":"brief shared selection rule","longNoteReason":"report-only reason if longer guidance is essential"}],"requiresBack":false,"reason":"explanation in English if review is required","researchSummary":"report-only changes, evidence and explanation"}',
         `Coordinating entry repair · group ${index + 1} of ${groups.length} · ${failures.length} failed batches`);
+      // Step 9 cannot confirm forms, so a repair that needs one becomes the human's decision.
+      if (repair.requiresBack) {
+        s.pendingDecision = { kind: "needs-form", reason: repair.reason ?? "", keys: failures.map(({ key }) => key),
+          offers: studioUnconfirmedRenderings(s, failures.map(({ trial }) => trial)) };
+        s.entryValidation.phase = "awaiting-review";
+        branch(repairTools, `group-${index}`).finishActivity?.("This repair needs a translation that is not confirmed.");
+        repairTools.finishActivity?.("Stopped: a translation needs confirming before step 9 can continue.");
+        return { pending: true };
+      }
       applySelectionRepair(staged, currentCandidates, repair);
       recordUsageNoteRepair(staged, `9:${pass}:${index}`, "9", repair);
     }

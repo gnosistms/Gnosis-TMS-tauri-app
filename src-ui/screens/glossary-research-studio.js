@@ -402,6 +402,13 @@ function modal(s, view) {
       <label class="field"><span class="field__label">Meaning</span><select class="field__input" data-studio-decision="meaning">${s.meanings.filter((m) => m.enabled !== false).map((m) => `<option value="${e(m.id)}" ${choice === m.id ? "selected" : ""}>${meaningNumber(s, m.id)}. ${narrative(m.definition)}</option>`).join("")}<option value="${STUDIO_NEW_MEANING}" ${choice === STUDIO_NEW_MEANING ? "selected" : ""}>Enter new meaning below</option></select></label>
       ${choice === STUDIO_NEW_MEANING ? `<label class="field"><span class="field__label">New meaning</span><textarea class="field__textarea" data-studio-decision="definition">${e(s.decisionInput?.definition ?? decision.recommendation.definition)}</textarea></label>` : ""}`;
     actions = button("Drop this paragraph", "decision:drop") + primaryButton("Assign meaning", "studio:decision:assign");
+  } else if (decision?.kind === "needs-form") {
+    title = "A translation needs confirming";
+    const offers = decision.offers ?? [];
+    body = `<p>Step 9 can change only usage notes and preference order, so it cannot confirm a translation.</p>${offers.length
+      ? `<ul>${offers.map((offer) => `<li>“${e(offer.text)}” for meaning ${meaningNumber(s, offer.meaningId)}: used in ${quantity(offer.occurrences, "failed occurrence")} but not confirmed.</li>`).join("")}</ul><p>Confirm ${offers.length === 1 ? "it" : "them"} to retest the entry, or go back to step 8 to review the candidates.</p>`
+      : "<p>Go back to step 8 to review the candidates.</p>"}${decision.reason ? `<p>Repair note: ${narrative(decision.reason)}</p>` : ""}`;
+    actions = button("Go back to step 8", "decision:back") + (offers.length ? primaryButton("Confirm and retest", "studio:decision:confirm") : "");
   } else if (decision?.kind === "candidate") {
     title = "Review a new translation";
     body = `<p>Review the proposed forms and their selection conditions before adding them. You can leave an inflection out or adjust its note.</p>

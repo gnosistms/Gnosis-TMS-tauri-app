@@ -391,6 +391,7 @@ export async function runCurrentStage(fresh = false) {
       s.error = ""; await persist(s);
     } catch (error) {
       timing.finish(error?.message === "Research paused." || generation !== operationGeneration ? "paused" : "failed");
+      if (error?.message !== "Research paused." && generation === operationGeneration) currentTools?.stopActivity?.();
       throw error;
     } finally { timing.finish("paused"); }
   }, s);
@@ -617,7 +618,11 @@ async function advanceStudioCheckpoint(s, generation) {
     s.glossaryContext = studioGlossaryContext(s, studioGlossaryEntries(s.scope));
     let checked;
     try { checked = await testCompleteEntry(s, currentTools); timing.finish(checked.pending ? "awaiting-review" : "complete"); }
-    catch (error) { timing.finish(error?.message === "Research paused." ? "paused" : "failed"); throw error; }
+    catch (error) {
+      timing.finish(error?.message === "Research paused." ? "paused" : "failed");
+      if (error?.message !== "Research paused.") currentTools?.stopActivity?.();
+      throw error;
+    }
     if (!contextMatches(s) || generation !== operationGeneration) return;
     if (checked.pending) { s.step = "9"; await persist(s); return; }
     s.usage = finalUsage(s);
@@ -1000,6 +1005,14 @@ export async function resolveStudioDecision(action) {
     }
     s.retryAllowances ??= {};
     for (const key of d.keys ?? [d.key]) s.retryAllowances[key] = (s.rounds[key] ?? d.rounds) + 3;
+  } else if (d.kind === "needs-form") {
+    if (action === "back") {
+      s.pendingDecision = null; s.status = "active"; studioView().hideDecision = false;
+      await persist(s); await visitStudioStep("8"); return;
+    }
+    const ids = new Set((d.offers ?? []).map((offer) => offer.candidateId));
+    if (!ids.size) throw new Error("There is no translation to confirm here. Go back to step 8.");
+    for (const c of s.candidates) if (ids.has(c.id)) c.confirmed = true;
   } else if (d.kind === "candidate") {
     if (action === "approve") {
       for (const c of s.candidates) if (c.groupId === d.groupId) c.temporary = false;
