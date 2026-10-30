@@ -957,3 +957,28 @@ test("report-only note explanations are collapsed, escaped and kept out of edita
     assert(html.includes("Verified provenance and detailed reasoning."));
   } finally { state.glossaryResearchStudio = previous; }
 });
+
+test("an unanswered recommendation shows the countdown to the AI's choice, which the timer updates in place", () => {
+  const previous = state.glossaryResearchStudio;
+  try {
+    const s = newStudioStudy({ term: "mundo", sourceLanguage: { code: "es", name: "Spanish" },
+      targetLanguage: { code: "en", name: "English" } }, "auto-choice");
+    s.step = "4.3";
+    s.skipRecommendations = { "4.3": { contextKey: studioRecommendationKey(s), recommendation: "Skip", reason: "Because.", createdAt: "2026-10-30T10:00:00.000Z" } };
+    const view = { study: s, busy: false }; state.glossaryResearchStudio = view;
+    let html = renderGlossaryResearchStudio(state);
+    assert.match(html, /<div class="studio-auto-choice" data-studio-auto-choice style="--studio-auto-choice-left: 1">/u);
+    assert.match(html, /<p role="timer" data-studio-auto-choice-text>Skipping this step in 10 seconds unless you choose\.<\/p>/u);
+    assert(html.indexOf("data-studio-auto-choice") < html.indexOf("Show reasoning"), "the countdown precedes the reasoning");
+    view.autoChoice = { key: `${s.id}:4.3:2026-10-30T10:00:00.000Z`, choice: "skip", remaining: 2_500, at: 0, held: true };
+    html = renderGlossaryResearchStudio(state);
+    assert.match(html, /class="studio-auto-choice is-held" data-studio-auto-choice style="--studio-auto-choice-left: 0.25"/u);
+    assert(html.includes("Countdown paused while the reasoning is open."));
+    view.autoChoiceAnswered = view.autoChoice.key;
+    html = renderGlossaryResearchStudio(state);
+    assert(html.includes("AI recommendation: Skip it."));
+    assert(!html.includes("data-studio-auto-choice"), "answered advice no longer counts down");
+    delete view.autoChoiceAnswered; view.revisiting = true;
+    assert(!renderGlossaryResearchStudio(state).includes("data-studio-auto-choice"), "revisited steps wait for the translator");
+  } finally { state.glossaryResearchStudio = previous; }
+});

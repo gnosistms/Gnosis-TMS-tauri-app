@@ -14,6 +14,7 @@ import { hydrateStudioStep, resolveStudioEvidence } from "./glossary-research-st
 import { createStudioTools } from "./glossary-research-studio-tools.js";
 import { studioStepNeedsReview } from "./glossary-research-studio-review.js";
 import { currentStudioRecommendation, recommendStudioStep, sourceSummaryMustBeSkipped, studioCanRecommendSkip, studioResearchStarted } from "./glossary-research-studio-recommendations.js";
+import { answerStudioAutoChoice, startStudioAutoChoice } from "./glossary-research-studio-auto-choice.js";
 import { prepareReadingTranslations, runResearchStage } from "./glossary-research-studio-stages.js";
 import { testMeanings, testCompleteEntry } from "./glossary-research-studio-testing.js";
 import { reviewCompoundReport, STUDIO_STEPS, STUDIO_DICTIONARY_REVIEW_VERSION, STUDIO_DEFAULT_BRANCH, newStudioStudy, uniqueTexts, selectedForms, activeMeanings,
@@ -205,6 +206,7 @@ export async function openStudio(render) {
   const view = studioView(); view.study = null; view.openingStudyId = null; view.error = ""; state.screen = "glossaryResearchStudio";
   view.reviewFrontier = null; view.revisiting = false; view.decisionStep = null;
   view.busy = false; view.message = "";
+  startAutoChoice();
   render();
   await guarded(async () => { view.history = await loadStudioHistory(currentScope()); });
 }
@@ -1018,10 +1020,17 @@ export async function resolveStudioDecision(action) {
   s.decisionInput = {}; await persist(s); await runCurrentStage();
 }
 
+// Unanswered AI advice is taken after a countdown, as if its button were clicked.
+const startAutoChoice = () => startStudioAutoChoice(studioView, (choice) => studioAction(`studio:${choice}`, renderStudio));
+
 export async function studioAction(action, render) {
   renderStudio = render;
   if (action === "open-glossary-research") { await openStudio(render); return true; }
   if (!action.startsWith("studio:")) return false;
+  startAutoChoice();
+  // Any action shows the translator is here, and the timer must not overtake a
+  // slow one such as leaving the studio, so pending advice waits for them.
+  answerStudioAutoChoice(studioView());
   if (action === "studio:export") { await exportCurrentResearch(); return true; }
   await guarded(async () => {
     const name = action.slice(7); const s = studioView().study;

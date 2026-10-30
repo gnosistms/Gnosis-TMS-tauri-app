@@ -8,6 +8,7 @@ import { STUDIO_STEPS, STUDIO_DICTIONARY_REVIEW_VERSION, activeMeanings, meaning
 import { studioGlossaryEntries } from "../app/glossary-research-studio-query.js";
 import { studyAssignments } from "../app/glossary-research-studio-testing.js";
 import { currentStudioRecommendation, sourceSummaryMustBeSkipped, studioCanRecommendSkip, studioFormsResearchStarted, studioResearchStarted } from "../app/glossary-research-studio-recommendations.js";
+import { STUDIO_AUTO_CHOICE_MS, studioAutoChoiceCountdown, studioAutoChoiceText } from "../app/glossary-research-studio-auto-choice.js";
 
 const e = (value) => escapeHtml(value ?? "");
 const narrative = (value) => e(studioNarrativeText(value));
@@ -501,6 +502,13 @@ function activityProgress(s, view) {
     <p class="studio-work-announcement" role="status" aria-live="polite">${e(view.busy ? view.message || "Research in progress" : view.error ? "Research needs attention" : "Research progress saved")}</p>${list(items)}</section>`;
 }
 
+// The ticker in glossary-research-studio-auto-choice.js updates this in place.
+function autoChoiceCountdown(view) {
+  const countdown = studioAutoChoiceCountdown(view);
+  return countdown ? `<div class="studio-auto-choice${countdown.held ? " is-held" : ""}" data-studio-auto-choice style="--studio-auto-choice-left: ${countdown.remaining / STUDIO_AUTO_CHOICE_MS}">
+    <p role="timer" data-studio-auto-choice-text>${e(studioAutoChoiceText(countdown))}</p><span class="studio-auto-choice-bar" aria-hidden="true"></span></div>` : "";
+}
+
 function skipRecommendation(s, view) {
   if (!studioCanRecommendSkip(s.step) || ["complete", "merged", "cancelled"].includes(s.status)) return "";
   if (studioResearchStarted(s) || (view.busy && view.recommendingStep !== s.step)) return "";
@@ -510,7 +518,7 @@ function skipRecommendation(s, view) {
     <div class="studio-recommendation-heading"><h3>AI recommendation${recommendation && !working ? `: ${e(recommendation.recommendation)} it.` : ""}</h3>
     ${!view.busy && s.step !== "2a" ? button(recommendation ? "Refresh recommendation" : "Get AI recommendation", "recommend", { disabled: view.saving }) : ""}</div>
     ${working ? `<p class="studio-progress" role="status">${loadingSpinner({ key: "skip-recommendation", label: "Considering whether this research step would help" })}<span>Considering whether this research step would help…</span></p>`
-      : recommendation ? `<details class="studio-recommendation-reason" data-studio-disclosure="recommendation-reason"><summary class="text-link">Show reasoning</summary><p>${narrative(recommendation.reason)}</p></details>`
+      : recommendation ? `${autoChoiceCountdown(view)}<details class="studio-recommendation-reason" data-studio-disclosure="recommendation-reason"><summary class="text-link">Show reasoning</summary><p>${narrative(recommendation.reason)}</p></details>`
         : "<p>No current recommendation. You can request advice, run the research, or skip it.</p>"}
     ${s.step === "4.4.4" ? "<p>Skipping here discards the entire source-research branch. A confirmation will explain this before anything is skipped.</p>" : ""}
   </aside>`;

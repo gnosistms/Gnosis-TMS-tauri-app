@@ -2584,3 +2584,68 @@ test("completed meaning and entry tests do not offer comparison reruns", async (
   });
   expect(runs).toEqual([1, 1]);
 });
+
+test("unanswered advice is taken after a ten-second countdown, which waits while the reasoning is read", async ({ page }) => {
+  await page.clock.install();
+  await mountStudio(page);
+  await page.evaluate(() => { window.studioRecommendationAnswer = { recommendation: "Skip", reason: "The supplied forms already cover this entry." }; });
+  await page.getByRole("button", { name: "New research", exact: true }).click();
+  await page.getByLabel("Term to research").fill("walk");
+  await page.getByRole("listbox", { name: "Projects", exact: true }).selectOption("p1");
+  await page.getByRole("button", { name: "Begin research", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "AI recommendation: Skip it.", exact: true })).toBeVisible();
+  // Freeze time while the countdown runs; research itself polls with real timers.
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1_000));
+  const timer = page.locator(".studio-recommendation").getByRole("timer");
+  await expect(timer).toHaveText(/^Skipping this step in \d+ seconds? unless you choose\.$/u);
+  const seconds = async () => Number((await timer.textContent()).match(/\d+/u)?.[0]);
+  await page.clock.runFor(250);
+  const start = await seconds();
+  await page.clock.runFor(3_000);
+  expect(await seconds()).toBe(start - 3);
+  // The bar drains with the seconds shown (its CSS transition then catches up).
+  const left = await page.locator("[data-studio-auto-choice]").evaluate((element) => Number(element.style.getPropertyValue("--studio-auto-choice-left")));
+  expect(left * 10).toBeGreaterThan(start - 4);
+  expect(left * 10).toBeLessThanOrEqual(start - 3);
+  await expect.poll(() => page.locator(".studio-auto-choice-bar").evaluate((bar) =>
+    Math.abs(parseFloat(getComputedStyle(bar, "::before").width) / bar.clientWidth - Number(bar.parentElement.style.getPropertyValue("--studio-auto-choice-left"))) < .02)).toBe(true);
+  await page.screenshot({ path: "/tmp/gnosis-studio-auto-choice.png", fullPage: true });
+  await page.getByText("Show reasoning", { exact: true }).click();
+  await page.clock.runFor(60_000);
+  await expect(timer).toHaveText("Countdown paused while the reasoning is open.");
+  await expect(page.getByRole("heading", { name: "2a · List other forms and spellings", exact: true })).toBeVisible();
+  await page.getByText("Show reasoning", { exact: true }).click();
+  await page.clock.runFor(1_000);
+  expect(await seconds()).toBeGreaterThanOrEqual(start - 5);
+  await page.clock.runFor(10_000);
+  await page.clock.resume();
+  await expect(page.getByRole("heading", { name: "4.1 · Dictionary", exact: true })).toBeVisible();
+  const saved = await page.evaluate(async () => {
+    const s = (await import(`/${"app"}/state.js`)).state.glossaryResearchStudio.study;
+    return { status: s.steps["2a"].status, forms: s.forms.map((f) => f.text),
+      formsResearch: window.studioCalls.filter((c) => c.command === "start_glossary_studio_tool" && c.args.input.step === "2a").length };
+  });
+  expect(saved).toEqual({ status: "skipped", forms: ["walk"], formsResearch: 0 });
+});
+
+test("a translator's choice answers the advice, so a cancelled source-summary skip waits instead of counting down again", async ({ page }) => {
+  await mountStudio(page);
+  await page.evaluate(() => { window.studioRecommendationAnswer = { recommendation: "Skip", reason: "Nothing from the sources reaches the glossary." }; });
+  await page.getByRole("button", { name: "New research", exact: true }).click();
+  await page.evaluate(async () => {
+    const { state } = await import(`/${"app"}/state.js`);
+    const { approveStep } = await import(`/${"app"}/glossary-research-studio-workflow.js`);
+    const { renderGlossaryResearchStudio } = await import(`/${"screens"}/glossary-research-studio.js`);
+    const s = state.glossaryResearchStudio.study; s.step = "4.4.2";
+    await approveStep(s, "4.4.1", { summary: "Useful source finding.", meanings: [{ definition: "Move on foot" }] });
+    document.querySelector("#app").innerHTML = renderGlossaryResearchStudio(state);
+  });
+  await page.getByRole("button", { name: "Skip this step", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "4.4.3 · Source summary", exact: true })).toBeVisible();
+  await expect(page.getByRole("timer")).toContainText("Skipping this step in");
+  await page.getByRole("button", { name: "Skip this step", exact: true }).click();
+  await expect(page.getByRole("dialog")).toContainText("source research");
+  await page.getByRole("button", { name: "Don't skip", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "AI recommendation: Skip it.", exact: true })).toBeVisible();
+  await expect(page.getByRole("timer")).toHaveCount(0);
+});
