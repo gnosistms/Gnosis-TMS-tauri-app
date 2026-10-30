@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { testMeanings, testCompleteEntry, assessTrial, translateTrial, trialGlossary } from "./glossary-research-studio-testing.js";
-import { newStudioStudy, deduplicatePassages, finalUsage, reviseAssignment, buildStudioDraft, stableSignature, meaningTrialsAreCurrent, entryTrialsAreCurrent } from "./glossary-research-studio-workflow.js";
+import { newStudioStudy, deduplicatePassages, finalUsage, reviseAssignment, buildStudioDraft, stableSignature, meaningTrialsAreCurrent, entryTrialsAreCurrent, studioGlossaryContext, studyAssignments, entryBatchSignature } from "./glossary-research-studio-workflow.js";
 function fixture(size = 1) {
   const s = newStudioStudy({ term: "caminar", sourceLanguage: { code: "es", name: "Spanish" },
     targetLanguage: { code: "en", name: "English" } }, "test");
@@ -169,6 +169,33 @@ test("Vietnamese lexical phrase spans allow surrounding quantifiers and choose t
   assert.equal(strict.passed, false, "a detached quantifier must not silently replace words inside the confirmed form");
   assert.equal(strict.choices[0].passed, false);
   assert.equal(strict.choices[1].passed, true);
+});
+
+test("steps 8 and 9 translate with matching saved entries and skip occurrences a longer saved entry covers", async () => {
+  const s = fixture();
+  s.forms = [{ text: "antítesis" }];
+  s.passages = deduplicatePassages([{ id: "p0", text: "el batallar de las antítesis y otra antítesis" }], ["antítesis"]);
+  s.assignments = s.passages[0].occurrences.map((o) => ({ paragraphId: "p0", occurrenceId: o.id, meaningId: "m" }));
+  s.relatedEntries = [{ termId: "merged", sourceTerms: ["antitesis"] }];
+  s.queue = [{ id: "split-0", forms: ["por antítesis"], targetTerms: [] }];
+  const entries = [
+    { termId: "phrase", sourceTerms: ["batallar de las antítesis"], targetTerms: ["sự giằng co … giữa các mặt đối lập"], lifecycleState: "active", updatedAt: "x" },
+    { termId: "unrelated", sourceTerms: ["caballo"], targetTerms: ["ngựa"] },
+    { termId: "merged", sourceTerms: ["antitesis"], targetTerms: ["old"] },
+    { termId: "same-form", sourceTerms: ["antítesis"], targetTerms: ["old"] },
+    { termId: "queued", sourceTerms: ["por antítesis"], targetTerms: ["old"] },
+    { termId: "deleted", sourceTerms: ["otra antítesis"], targetTerms: ["old"], lifecycleState: "deleted" },
+  ];
+  const before = entryBatchSignature(s, s.passages, studyAssignments(s));
+  assert.equal(studyAssignments(s).length, 2);
+  s.glossaryContext = studioGlossaryContext(s, entries);
+  assert.deepEqual(s.glossaryContext, [{ termId: "phrase", sourceTerms: ["batallar de las antítesis"],
+    targetTerms: ["sự giằng co … giữa các mặt đối lập"], targetVariantNotes: [], notesToTranslators: "", footnote: "" }]);
+  assert.deepEqual(studyAssignments(s).map((a) => a.occurrenceId), ["o1"]);
+  assert.notEqual(entryBatchSignature(s, s.passages, studyAssignments(s)), before);
+  let payload;
+  await translateTrial(s, { run: async (kind, data) => { payload = data; return translations(kind, data); } }, s.passages, s.candidates, "9:context");
+  assert.deepEqual(payload.glossaryHints.map((h) => h.sourceTerm).sort(), ["antítesis", "batallar de las antítesis"]);
 });
 
 function splitFixture() {

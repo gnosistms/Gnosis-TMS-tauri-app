@@ -19,7 +19,7 @@ import { testMeanings, testCompleteEntry } from "./glossary-research-studio-test
 import { reviewCompoundReport, STUDIO_STEPS, STUDIO_DICTIONARY_REVIEW_VERSION, STUDIO_DEFAULT_BRANCH, newStudioStudy, uniqueTexts, selectedForms, activeMeanings,
   approveStep, stableSignature, stepSignature, stepSignatureMatches, stepIsReusable, buildStudioDraft, finalUsage, studioDependentSteps, clearStudioDependents, startStudioReResearch,
   collisionChanges, sourceCollisions, temporaryGlossaryTerms, uniqueSourceTexts, deduplicateSourceForms, applySplitReview, preferCandidate, reviseAssignment, studioContextRequest, applyStudioContext, entryTrialsAreCurrent, meaningTrialsAreCurrent, studioStepNumber,
-  meaningNumber, reviewStudioFinding, applyStudioEntryEdit, studioSingleWordCandidates } from "./glossary-research-studio-workflow.js";
+  meaningNumber, reviewStudioFinding, applyStudioEntryEdit, studioSingleWordCandidates, studioGlossaryContext } from "./glossary-research-studio-workflow.js";
 import { requestGlossaryTermWriteIntent, glossaryTermWriteScope, clearFailedGlossaryTermWrite } from "./glossary-term-write-coordinator.js";
 import { requireBrokerSession } from "./auth-flow.js";
 import { glossaryRepoDescriptor, syncSingleGlossaryForTeam, getGlossarySyncIssueMessage } from "./glossary-repo-flow.js";
@@ -377,6 +377,7 @@ export async function runCurrentStage(fresh = false) {
       }
       view.busy = true; renderStudio();
       currentTools = toolsFor(s, timing);
+      if (["8", "9"].includes(s.step)) s.glossaryContext = studioGlossaryContext(s, studioGlossaryEntries(s.scope));
       const result = s.step === "8" ? await testMeanings(s, currentTools)
         : s.step === "9" ? await testCompleteEntry(s, currentTools)
           : await runResearchStage(s, currentTools, studioGlossaryEntries(s.scope));
@@ -611,6 +612,7 @@ async function advanceStudioCheckpoint(s, generation) {
     // Pruning/retention changes require a final test of the actual retained entry.
     const timing = createStudioStepTiming(s, step); currentTiming = timing;
     currentTools = toolsFor(s, timing); studioView().busy = true;
+    s.glossaryContext = studioGlossaryContext(s, studioGlossaryEntries(s.scope));
     let checked;
     try { checked = await testCompleteEntry(s, currentTools); timing.finish(checked.pending ? "awaiting-review" : "complete"); }
     catch (error) { timing.finish(error?.message === "Research paused." ? "paused" : "failed"); throw error; }

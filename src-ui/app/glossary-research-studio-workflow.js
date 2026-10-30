@@ -286,13 +286,36 @@ export function temporaryGlossaryTerms(study) {
     sourceTerms: q.forms, targetTerms: q.targetTerms ?? [], targetVariantNotes: [] }))];
 }
 
+// Saved glossary entries that match the study's paragraphs. Steps 8 and 9
+// translate with them, as production does, and skip occurrences that a longer
+// saved entry covers. The study supersedes entries it replaces, merges or shares
+// a source form with; step 10b decides those collisions.
+export function studioGlossaryContext(study, entries) {
+  const language = study.scope.sourceLanguage.code;
+  const owned = new Set([...selectedForms(study), ...study.queue.flatMap((q) => q.forms)].map((form) => sourceFormKey(form, language)));
+  const related = new Set((study.relatedEntries ?? []).map((entry) => entry.termId));
+  const candidates = (Array.isArray(entries) ? entries : []).filter((entry) => entry?.termId && entry.lifecycleState !== "deleted"
+    && entry.termId !== study.savedTermId && !related.has(entry.termId) && Array.isArray(entry.sourceTerms)
+    && !entry.sourceTerms.some((form) => owned.has(sourceFormKey(form, language))))
+    .map(({ termId, sourceTerms, targetTerms, targetVariantNotes, notesToTranslators, footnote }) => ({ termId, sourceTerms,
+      targetTerms: targetTerms ?? [], targetVariantNotes: targetVariantNotes ?? [], notesToTranslators: notesToTranslators ?? "", footnote: footnote ?? "" }));
+  const model = buildEditorGlossaryModel({ sourceLanguage: { code: language }, targetLanguage: { code: "en" }, terms: candidates });
+  const matched = new Set(study.passages.flatMap((paragraph) => findLongestGlossaryMatches(paragraph.text, model?.sourceMatcher).matches
+    .flatMap((match) => match.candidate.termIdsOrdered)));
+  return candidates.filter((entry) => matched.has(entry.termId));
+}
+
+// Signature inputs for the saved entries, omitted when none match so older trials stay current.
+const glossaryContextSignature = (study) => study.glossaryContext?.length ? { glossaryContext: study.glossaryContext } : {};
+
 export function selectedForms(study) {
   return deduplicateSourceForms(study.forms, study.scope.sourceLanguage.code)
     .filter((f) => f.selected !== false).map((f) => f.text);
 }
 
 export function studyAssignments(study, meaningId) {
-  const terms = [{ termId: "original", sourceTerms: buildStudioDraft(study).sourceTerms, targetTerms: [] }, ...temporaryGlossaryTerms(study)];
+  const terms = [{ termId: "original", sourceTerms: buildStudioDraft(study).sourceTerms, targetTerms: [] }, ...temporaryGlossaryTerms(study),
+    ...(study.glossaryContext ?? [])];
   return study.assignments.filter((a) => (!a.entryId || a.entryId === "original")
     && (!meaningId || a.meaningId === meaningId)).filter((assignment) => {
     const paragraph = study.passages.find((p) => p.id === assignment.paragraphId);
@@ -308,7 +331,7 @@ export function meaningTrialSignature(study, meaningId, assignments = focusedSam
     meaning: study.meanings.find((meaning) => meaning.id === meaningId), model: study.model, generalNote: study.generalNote ?? "",
     sourceLanguage: study.scope.sourceLanguage, targetLanguage: study.scope.targetLanguage,
     translationRuntimeVersion: study.translationRuntimeVersion ?? null,
-    translationContractVersion: STUDIO_TRANSLATION_CONTRACT_VERSION });
+    translationContractVersion: STUDIO_TRANSLATION_CONTRACT_VERSION, ...glossaryContextSignature(study) });
 }
 
 // Step 8 chooses which candidates to confirm for each meaning. With one meaning and
@@ -332,7 +355,7 @@ export function meaningTrialsAreCurrent(study) {
 
 export function entryBatchSignature(study, paragraphs, assignments) {
   return stableSignature({ paragraphs, assignments, meanings: activeMeanings(study),
-    temporaryGlossary: temporaryGlossaryTerms(study), model: study.model,
+    temporaryGlossary: temporaryGlossaryTerms(study), ...glossaryContextSignature(study), model: study.model,
     translationRuntimeVersion: study.translationRuntimeVersion ?? null,
     translationContractVersion: STUDIO_TRANSLATION_CONTRACT_VERSION,
     sourceLanguage: study.scope.sourceLanguage, targetLanguage: study.scope.targetLanguage });

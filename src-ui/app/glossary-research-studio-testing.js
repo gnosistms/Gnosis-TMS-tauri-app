@@ -33,7 +33,7 @@ async function independentBatches(study, batches, run) {
 }
 
 export function trialGlossary(s, candidates) {
-  const terms = [{ termId: "original", ...buildStudioDraft(s, candidates) }, ...temporaryGlossaryTerms(s)];
+  const terms = [{ termId: "original", ...buildStudioDraft(s, candidates) }, ...temporaryGlossaryTerms(s), ...(s.glossaryContext ?? [])];
   return buildEditorGlossaryModel({ sourceLanguage: s.scope.sourceLanguage,
     targetLanguage: s.scope.targetLanguage, terms });
 }
