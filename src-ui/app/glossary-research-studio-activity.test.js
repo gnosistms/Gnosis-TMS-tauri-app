@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createStudioActivity, studioActivityItems, summarizeStudioActivity } from "./glossary-research-studio-activity.js";
+import { studioResultPresentation } from "./glossary-research-studio-result.js";
 
 test("dictionary receipts identify a fallback edition without concealing genuine retrieval failures", () => {
   assert.equal(summarizeStudioActivity({ status: "found", language: "grc", edition: "en" }), "Looked up in the English Wiktionary edition.\nSource status: found.");
@@ -48,6 +49,18 @@ test("activity summaries are bounded source-derived results rather than prompts 
   assert(summary.length <= 1801);
   assert(!summary.includes("Never show"));
   assert.match(summarizeStudioActivity({ judgments: [{ genuine: true }, { genuine: false }, { genuine: null }] }), /1 genuine mentions; 1 unresolved; 3 checked/);
+});
+
+test("translation receipts preview only the count and expand to every translated paragraph", () => {
+  const rows = Array.from({ length: 15 }, (_, i) => ({ rowId: String(i + 1), translatedText: `Đáp: translated paragraph ${i + 1}. ${"Long text. ".repeat(60)}` }));
+  const summary = summarizeStudioActivity({ rows });
+  const formatted = studioResultPresentation(summary);
+  assert.equal(formatted.preview, "15 paragraphs translated.");
+  assert.equal(formatted.long, true);
+  for (let i = 1; i <= 15; i++) assert(formatted.html.includes(`Đáp: translated paragraph ${i}. `));
+  assert(formatted.html.includes(`${"Long text. ".repeat(59)}Long text.</p>`), "translations are not shortened");
+  assert(!formatted.details.includes("paragraphs translated"), "the expanded summary does not repeat the visible count");
+  for (let i = 1; i <= 15; i++) assert(formatted.details.includes(`Đáp: translated paragraph ${i}. `));
 });
 
 test("forms checklists show original spelling from the start and merge legacy progress without changing saved data", () => {

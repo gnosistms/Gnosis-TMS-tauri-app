@@ -109,5 +109,8 @@ export function studioResultPresentation(text) {
     ?? content.find((block) => block.type !== "heading" && block.text)?.text ?? content[0]?.text ?? "").replace(/\s+/gu, " ").trim();
   const long = content.map((block) => block.text).join(" ").length > 300;
   const excerpt = previewText.length > 300 ? previewText.slice(0, 300).replace(/\s+\S*$/u, "") + "…" : previewText;
-  return { html: content.map((block) => block.html).join(""), preview: excerpt, long };
+  // The preview stays visible above the expanded report, so the report skips a first paragraph shown whole.
+  const shownWhole = long && content[0]?.type === "paragraph" && excerpt === previewText;
+  return { html: content.map((block) => block.html).join(""), preview: excerpt, long,
+    ...(shownWhole ? { details: content.slice(1).map((block) => block.html).join("") } : {}) };
 }

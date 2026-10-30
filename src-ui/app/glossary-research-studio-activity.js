@@ -20,7 +20,7 @@ export function summarizeStudioActivity(value) {
   }
   if (Array.isArray(value.assignments)) lines.push(`${value.assignments.length} occurrences assigned; ${value.assignments.filter((a) => !a.meaningId).length} need review.`);
   if (Array.isArray(value.choices)) lines.push(`${value.choices.length} occurrences reviewed; ${value.choices.filter((c) => c.problem).length} findings to review.`);
-  if (Array.isArray(value.rows)) lines.push(`${value.rows.length} paragraphs translated.`, ...value.rows.slice(0, 2).map((row) => clip(row.translatedText ?? "", 400)).filter(Boolean));
+  if (Array.isArray(value.rows)) lines.push(`${value.rows.length} paragraphs translated.`);
   if (Number.isInteger(value.population_distinct)) lines.push(`${value.population_distinct.toLocaleString()} matching paragraphs.`);
   else if (Array.isArray(value.items)) lines.push(`${value.items.length.toLocaleString()} paragraphs returned.`);
   if (Array.isArray(value.candidateIds)) lines.push(`${value.candidateIds.length} spellings need investigation.`);
@@ -30,7 +30,10 @@ export function summarizeStudioActivity(value) {
   if (value.originTerm) lines.push(`Original term: ${value.originTerm}.`);
   if (value.edition === "en" && value.language !== "en") lines.push("Looked up in the English Wiktionary edition.");
   if (value.status) lines.push(`Source status: ${value.status}.`);
-  return clip(lines.join("\n") || "Completed. Results are available in the research report.");
+  const summary = clip(lines.join("\n") || "Completed. Results are available in the research report.");
+  // The collapsed preview shows only the count; the expanded summary shows every translation in full.
+  const translations = Array.isArray(value.rows) ? value.rows.map((row) => String(row?.translatedText ?? "").trim()).filter(Boolean) : [];
+  return [summary, ...translations].join("\n\n");
 }
 
 export function createStudioActivity(study, changed, isCurrent) {
