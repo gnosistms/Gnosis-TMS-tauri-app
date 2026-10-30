@@ -1,4 +1,5 @@
 import { STUDIO_USAGE_NOTE_POLICY, applyUsageNoteRepairs, recordUsageNoteRepair } from "./glossary-research-studio-notes.js";
+import { studioReviewOutcomes } from "./glossary-research-studio-activity.js";
 import { focusedSample, exploratoryContext } from "./glossary-research-studio-sampling.js";
 import { buildEditorGlossaryModel, buildEditorAiTranslationGlossaryHints } from "./editor-glossary-highlighting.js";
 import { activeMeanings, meaningNumber, studioTrialRoundLabel, buildStudioDraft, draftCandidates, stableSignature, exactOccurrences, temporaryGlossaryTerms,
@@ -270,7 +271,7 @@ export async function testMeanings(s, tools) {
         await tools.checkpoint?.(`${label} · ${studioTrialRoundLabel(rounds)} · ${trial.passed ? "passed" : "reviewing failures"}`);
       }
       branch(roundTools, "translate").finishActivity?.(`${trial.translations.length} translated examples available${trial.retainedPassingParagraphs ? `; ${trial.retainedPassingParagraphs} retained from passing work` : ""}.`);
-      branch(roundTools, "assess").finishActivity?.(`${trial.choices.filter((c) => c.passed).length} of ${trial.choices.length} occurrences passed.`);
+      branch(roundTools, "assess").finishActivity?.(`${trial.choices.filter((c) => c.passed).length} of ${trial.choices.length} occurrences passed.`, studioReviewOutcomes(trial));
       roundTools.finishActivity?.(trial.passed ? "All occurrences passed." : `${trial.choices.filter((c) => !c.passed).length} occurrences need review.`);
       if (trial.passed) { meaningTools.finishActivity?.(`${trial.choices.length} occurrences passed in ${trial.translations.length} paragraphs; ${rounds} repair rounds.`); break; }
       if (rounds > 0 && rounds % 5 === 0 && await progressDecision(s, roundTools, meaning, rounds, trial)) return { pending: true };
@@ -396,7 +397,7 @@ export async function testCompleteEntry(s, tools) {
           `Entry validation pass ${pass} · paragraphs ${index + 1}–${index + batch.length} of ${paragraphs.length}`);
         trial = { ...assessment, phase: "9", signature, batchSignature, rounds, translations, assignmentRevision: s.assignmentRevision ?? 0 };
         s.tests[key] = trial; s.testHistory ??= []; s.testHistory.push(structuredClone(trial));
-        branch(roundTools, "assess").finishActivity?.(`${trial.choices.filter((choice) => choice.passed).length} of ${trial.choices.length} occurrences passed.`);
+        branch(roundTools, "assess").finishActivity?.(`${trial.choices.filter((choice) => choice.passed).length} of ${trial.choices.length} occurrences passed.`, studioReviewOutcomes(trial));
         roundTools.finishActivity?.(trial.passed ? "All occurrences passed." : "Findings collected for coordinated entry repair.");
         await tools.checkpoint?.(`Entry validation pass ${pass} · paragraphs ${index + 1}–${index + batch.length} · ${trial.passed ? "passed" : "findings collected; shared entry unchanged"}`);
       }

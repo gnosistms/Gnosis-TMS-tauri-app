@@ -36,6 +36,15 @@ export function summarizeStudioActivity(value) {
   return [summary, ...translations].join("\n\n");
 }
 
+// Each paragraph's translation and per-occurrence verdicts, for the work list's review outcome lists.
+export function studioReviewOutcomes(trial) {
+  return (trial.translations ?? []).flatMap((row) => {
+    const occurrences = (trial.choices ?? []).filter((c) => c.paragraphId === row?.paragraphId)
+      .map(({ occurrenceId, passed, problem }) => ({ occurrenceId, passed: Boolean(passed), problem: problem ?? "" }));
+    return occurrences.length ? [{ paragraphId: row.paragraphId, translation: row.translation ?? "", occurrences }] : [];
+  });
+}
+
 export function createStudioActivity(study, changed, isCurrent) {
   const step = study.step;
   const record = structuredClone(study.activitySteps?.[step] ?? { items: [] });
@@ -70,11 +79,12 @@ export function createStudioActivity(study, changed, isCurrent) {
   return { plan, update,
     start(path, label) {
       if (!isCurrent() || !ownsRecord()) return;
+      for (let n = 1; n <= path.length; n++) delete find(path.slice(0, n)).review;
       for (let n = 1; n < path.length; n++) Object.assign(find(path.slice(0, n)), { status: "running", result: "", error: "" });
       update(path, { label, status: "running", result: "", error: "" });
     },
     done(path, result, reused = false) { update(path, { status: "complete", result: summarizeStudioActivity(result), reused, error: "" }); },
-    finish(path, result) { update(path, { status: "complete", result: clip(result), error: "" }); },
+    finish(path, result, review) { update(path, { status: "complete", result: clip(result), error: "", ...(review ? { review } : {}) }); },
     fail(path, error) { update(path, { status: error?.message === "Research paused." ? "paused" : "failed", error: error?.message === "Research paused." ? "" : clip(error?.message ?? error, 400) }); },
     pause() { pause(); changed(); },
   };

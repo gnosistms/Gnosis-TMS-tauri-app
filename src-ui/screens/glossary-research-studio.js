@@ -404,6 +404,19 @@ function modal(s, view) {
   return `<div class="modal-backdrop"><section class="card modal-card studio-modal" role="dialog" aria-modal="true" aria-labelledby="studio-question" data-modal-dialog="studio-question" tabindex="-1"><div class="card__body stack"><h2 id="studio-question">${e(title)}</h2>${body}<div class="modal__actions">${actions}</div>${view.error ? `<p role="alert">${e(view.error)}</p>` : ""}</div></section></div>`;
 }
 
+function reviewOutcomeLists(review, key, s) {
+  return [["failed", "Translations that failed to use the correct meaning", false], ["passed", "Translations that used the correct meaning", true]].map(([id, label, passed]) => {
+    const rows = review.map((row) => ({ ...row, occurrences: (row.occurrences ?? []).filter((o) => o.passed === passed) })).filter((row) => row.occurrences.length);
+    const disclosure = `activity:${JSON.stringify(key)}:${id}`;
+    return `<details class="studio-review-outcomes" data-studio-disclosure="${e(disclosure)}"><summary>${label} (${rows.reduce((sum, row) => sum + row.occurrences.length, 0)})</summary>${rows.map((row) => {
+      const source = Array.isArray(s.passages) ? s.passages.find((p) => p.id === row.paragraphId) : null;
+      return `<section class="studio-entry">${source ? paragraph({ ...source, translation: row.translation, contextKey: `${disclosure}:${row.paragraphId}`,
+        highlightOccurrences: (source.occurrences ?? []).filter((o) => row.occurrences.some((r) => r.occurrenceId === o.id)) }, s)
+        : `<p lang="${e(s.scope.targetLanguage.code)}">${e(row.translation)}</p>`}${row.occurrences.filter((o) => o.problem).map((o) => `<p class="modal__error">${e(o.problem)}</p>`).join("")}</section>`;
+    }).join("") || "<p>None.</p>"}</details>`;
+  }).join("");
+}
+
 function activityProgress(s, view) {
   if (s.step === "2a" && !studioFormsResearchStarted(s) && (!view.busy || view.recommendingStep === s.step)) return "";
   const items = studioActivityItems(s);
@@ -437,6 +450,7 @@ function activityProgress(s, view) {
         ${completedCorpus ? `<p class="studio-work-result">We found ${quantity(corpusForms.length, "form")} used in ${corpusName}${corpusForms.length ? ":" : "."}</p>
           ${corpusForms.length ? `<ul class="studio-corpus-forms" aria-label="Forms found in the corpus">${corpusForms.map((form) => `<li>${e(form.text)} — ${e(form.paragraphCount.toLocaleString())} matching ${form.paragraphCount === 1 ? "paragraph" : "paragraphs"}</li>`).join("")}</ul>` : ""}`
           : formatted ? `${formatted.long ? `<p class="studio-work-result">${e(formatted.preview)}</p><details data-studio-disclosure="${e(`activity:${JSON.stringify(key)}`)}"><summary>${originalFindings ? "Read full findings" : "Read result summary"}</summary><div class="studio-work-result studio-report">${formatted.details ?? formatted.html}</div></details>` : `<div class="studio-work-result studio-report">${formatted.html}</div>`}${reused}` : ""}
+        ${Array.isArray(node.review) ? reviewOutcomeLists(node.review, key, s) : ""}
         ${sources ? `<details data-studio-disclosure="original-spelling-sources"><summary>Evidence and sources</summary>${sources}</details>` : ""}
         ${node.error || singleOperation?.error ? `<p class="studio-work-error">${e(node.error || singleOperation.error)}</p>` : ""}${completedCorpus && childList ? `<details data-studio-disclosure="forms-corpus-details"><summary>Check details</summary>${childList}</details>` : childList}</li>`;
     }).join("")}</ol>`;

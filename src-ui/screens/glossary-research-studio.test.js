@@ -130,6 +130,30 @@ test("related entries ask what to do about the research term", () => {
   } finally { state.glossaryResearchStudio = previous; }
 });
 
+test("a completed review lists failed and correct meaning choices in collapsed groups", () => {
+  const previous = state.glossaryResearchStudio;
+  try {
+    const study = newStudioStudy({ sourceLanguage: { code: "es", name: "Spanish" }, targetLanguage: { code: "en", name: "English" }, term: "gloria" }, "review");
+    study.step = "9";
+    study.passages = [{ id: "a", text: "La gloria y la gloria", occurrences: [{ id: "o0", start: 3, end: 9 }, { id: "o1", start: 15, end: 21 }], references: [] },
+      { id: "b", text: "Otra gloria", occurrences: [{ id: "o0", start: 5, end: 11 }], references: [] }];
+    const review = [{ paragraphId: "a", translation: "The glory and the <b>fame</b>", occurrences: [{ occurrenceId: "o0", passed: true, problem: "" }, { occurrenceId: "o1", passed: false, problem: "Used the wrong meaning" }] },
+      { paragraphId: "b", translation: "Another glory", occurrences: [{ occurrenceId: "o0", passed: true, problem: "" }] }];
+    study.activitySteps = { "9": { items: [{ id: "batch-0", label: "Batch 1", status: "complete", children: [{ id: "round-0", label: "initial test", status: "complete", children: [
+      { id: "assess", label: "Review meaning selection and translation quality", status: "complete", result: "2 of 3 occurrences passed.", review, children: [] }] }] }] } };
+    state.glossaryResearchStudio = { study, history: [], busy: false };
+    const html = renderGlossaryResearchStudio(state);
+    const failed = html.match(/<details class="studio-review-outcomes"[^>]*><summary>Translations that failed to use the correct meaning \(1\)<\/summary>([\s\S]*?)<\/details>/u);
+    const passed = html.match(/<details class="studio-review-outcomes"[^>]*><summary>Translations that used the correct meaning \(2\)<\/summary>/u);
+    assert(failed && passed);
+    assert.doesNotMatch(html, /<details class="studio-review-outcomes"[^>]*\sopen/u);
+    assert(failed[1].includes("Used the wrong meaning"));
+    assert(failed[1].includes("The glory and the &lt;b&gt;fame&lt;/b&gt;"));
+    assert(failed[1].includes("<mark>gloria</mark>"));
+    assert(!failed[1].includes("Another glory"));
+  } finally { state.glossaryResearchStudio = previous; }
+});
+
 test("optional dictionary research explains the action and cannot continue before a result", () => {
   const previous = state.glossaryResearchStudio;
   try {

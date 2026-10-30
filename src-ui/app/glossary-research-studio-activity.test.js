@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createStudioActivity, studioActivityItems, summarizeStudioActivity } from "./glossary-research-studio-activity.js";
+import { createStudioActivity, studioActivityItems, studioReviewOutcomes, summarizeStudioActivity } from "./glossary-research-studio-activity.js";
 import { studioResultPresentation } from "./glossary-research-studio-result.js";
 
 test("dictionary receipts identify a fallback edition without concealing genuine retrieval failures", () => {
@@ -61,6 +61,23 @@ test("translation receipts preview only the count and expand to every translated
   assert(formatted.html.includes(`${"Long text. ".repeat(59)}Long text.</p>`), "translations are not shortened");
   assert(!formatted.details.includes("paragraphs translated"), "the expanded summary does not repeat the visible count");
   for (let i = 1; i <= 15; i++) assert(formatted.details.includes(`Đáp: translated paragraph ${i}. `));
+});
+
+test("review receipts keep each paragraph's translation and verdicts until the review restarts", () => {
+  const trial = { translations: [{ paragraphId: "a", translation: "Uno" }, { paragraphId: "b", translation: "Dos" }, { paragraphId: "c", translation: "Tres" }],
+    choices: [{ paragraphId: "a", occurrenceId: "o0", passed: true, problem: "" }, { paragraphId: "a", occurrenceId: "o1", passed: false, problem: "Wrong meaning" },
+      { paragraphId: "b", occurrenceId: "o0", passed: true, problem: "", rendered: "dos" }] };
+  const review = studioReviewOutcomes(trial);
+  assert.deepEqual(review, [
+    { paragraphId: "a", translation: "Uno", occurrences: [{ occurrenceId: "o0", passed: true, problem: "" }, { occurrenceId: "o1", passed: false, problem: "Wrong meaning" }] },
+    { paragraphId: "b", translation: "Dos", occurrences: [{ occurrenceId: "o0", passed: true, problem: "" }] }]);
+  const study = { step: "9", activitySteps: {} };
+  const activity = createStudioActivity(study, () => {}, () => true);
+  activity.finish(["batch-0", "round-0", "assess"], "2 of 3 occurrences passed.", review);
+  const node = () => study.activitySteps["9"].items[0].children[0].children[0];
+  assert.deepEqual(node().review, review);
+  activity.start(["batch-0", "round-0", "assess", "operation:1"], "Reviewing again");
+  assert.equal(node().review, undefined);
 });
 
 test("forms checklists show original spelling from the start and merge legacy progress without changing saved data", () => {
