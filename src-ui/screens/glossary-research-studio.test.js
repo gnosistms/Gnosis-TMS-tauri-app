@@ -260,7 +260,7 @@ test("optional dictionary research explains the action and cannot continue befor
   } finally { state.glossaryResearchStudio = previous; }
 });
 
-test("the source-summary skip rule is not repeated on the internet source search", () => {
+test("the source-summary skip rule is not repeated on the internet source search or meaning review", () => {
   const previous = state.glossaryResearchStudio;
   try {
     const study = newStudioStudy({ sourceLanguage: { code: "es", name: "Spanish" }, targetLanguage: { code: "en", name: "English" }, term: "Mundo" }, "skip-rule");
@@ -270,6 +270,9 @@ test("the source-summary skip rule is not repeated on the internet source search
     assert(renderGlossaryResearchStudio(state).includes(rule));
     study.step = "4.4.2";
     assert(!renderGlossaryResearchStudio(state).includes(rule));
+    for (const id of ["4.4.1", "4.4.2"]) study.steps[id] = { status: "skipped", approved: { skipped: true } };
+    study.step = "4.5";
+    assert(!renderGlossaryResearchStudio(state).includes(rule), "applied rule");
   } finally { state.glossaryResearchStudio = previous; }
 });
 

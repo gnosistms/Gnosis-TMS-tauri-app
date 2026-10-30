@@ -852,7 +852,7 @@ test("English-source studio completes research, reuses previous-step results and
   await heading("4.4.2 · Internet sources");
   await page.getByRole("button", { name: "Skip this step", exact: true }).click();
   await heading("4.5 · Review meanings");
-  await expect(page.getByText(/source summary \(4.4.3\) is skipped automatically/)).toBeVisible();
+  await expect(page.getByText(/source summary \(4.4.3\) is skipped automatically/)).toHaveCount(0);
   await next(); await heading("4.6 · Assign meanings");
   await page.getByText("Show usage examples (3 paragraphs)").click();
   for (let i = 0; i < 3; i += 1) {

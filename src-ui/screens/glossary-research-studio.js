@@ -567,7 +567,7 @@ export function renderGlossaryResearchStudio(state) {
       <div class="studio-content">
       ${["complete", "merged", "cancelled"].includes(s.status) ? `<p role="status">Study ${e(s.status)}. All research remains saved.</p>` : ""}
       ${s.step !== "2a" ? skipRecommendation(s, view) : ""}
-      ${["4.4.1", "4.4.4"].includes(s.step) || (s.step === "4.5" && sourceSummaryMustBeSkipped(s)) ? `<p class="studio-step-rule">If both source searches are skipped, the source summary (4.4.3) is skipped automatically.${sourceSummaryMustBeSkipped(s) ? " This rule has been applied." : ""}</p>` : ""}
+      ${["4.4.1", "4.4.4"].includes(s.step) ? `<p class="studio-step-rule">If both source searches are skipped, the source summary (4.4.3) is skipped automatically.${sourceSummaryMustBeSkipped(s) ? " This rule has been applied." : ""}</p>` : ""}
       ${s.step === "2a" && !formsReview ? contentHtml : ""}
       ${s.step === "2a" ? skipRecommendation(s, view) : ""}
       ${activityProgress(s, view)}
