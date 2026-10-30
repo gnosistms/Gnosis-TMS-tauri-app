@@ -51,8 +51,13 @@ export function applyStudioContext(study, paragraphId, result) {
 }
 
 export function studioMatches(text, terms, languageCode = "es") {
-  const model = buildEditorGlossaryModel({ sourceLanguage: { code: languageCode },
-    targetLanguage: { code: "en" }, terms });
+  return studioModelMatches(text, studioMatchModel(terms, languageCode));
+}
+
+const studioMatchModel = (terms, languageCode) => buildEditorGlossaryModel({ sourceLanguage: { code: languageCode },
+  targetLanguage: { code: "en" }, terms });
+
+function studioModelMatches(text, model) {
   const { tokens, matches } = findLongestGlossaryMatches(text, model?.sourceMatcher);
   const offsets = [0];
   for (const token of tokens) offsets.push(offsets.at(-1) + token.value.length);
@@ -316,12 +321,18 @@ export function selectedForms(study) {
 export function studyAssignments(study, meaningId) {
   const terms = [{ termId: "original", sourceTerms: buildStudioDraft(study).sourceTerms, targetTerms: [] }, ...temporaryGlossaryTerms(study),
     ...(study.glossaryContext ?? [])];
+  // Renders call this several times per meaning, so build the model once and match each paragraph once.
+  const model = studioMatchModel(terms, study.scope.sourceLanguage.code);
+  const owned = new Map();
+  const ownedSpans = (paragraph) => {
+    if (!owned.has(paragraph.id)) owned.set(paragraph.id, studioModelMatches(paragraph.text, model).filter((match) => match.termIds.includes("original")));
+    return owned.get(paragraph.id);
+  };
   return study.assignments.filter((a) => (!a.entryId || a.entryId === "original")
     && (!meaningId || a.meaningId === meaningId)).filter((assignment) => {
     const paragraph = study.passages.find((p) => p.id === assignment.paragraphId);
     const occurrence = paragraph?.occurrences.find((o) => o.id === assignment.occurrenceId);
-    return paragraph && occurrence && studioMatches(paragraph.text, terms, study.scope.sourceLanguage.code)
-      .some((match) => match.termIds.includes("original") && match.start <= occurrence.start && match.end >= occurrence.end);
+    return paragraph && occurrence && ownedSpans(paragraph).some((match) => match.start <= occurrence.start && match.end >= occurrence.end);
   });
 }
 
