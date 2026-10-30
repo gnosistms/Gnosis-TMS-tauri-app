@@ -354,6 +354,18 @@ function applySelectionRepair(study, candidates, repair) {
   applyUsageNoteRepairs(study, candidates, repair.notes);
 }
 
+// Repairs can make the entry worse, so remember the complete validation pass with the
+// fewest failed occurrences (the latest on a tie). The repair limit falls back to it.
+function rememberBestEntry(s, keys, signature, basis) {
+  const trials = keys.map((key) => s.tests[key]);
+  if (trials.some((trial) => trial?.signature !== signature || !Array.isArray(trial.choices))) return;
+  const failed = trials.reduce((sum, trial) => sum + trial.choices.filter((choice) => !choice.passed).length, 0);
+  if (s.entryValidation.best && s.entryValidation.best.failed < failed) return;
+  s.entryValidation.best = { pass: s.entryValidation.pass, signature, basis, failed,
+    occurrences: trials.reduce((sum, trial) => sum + trial.choices.length, 0),
+    candidates: structuredClone(s.candidates), tests: Object.fromEntries(keys.map((key) => [key, structuredClone(s.tests[key])])) };
+}
+
 export async function testCompleteEntry(s, tools) {
   const assignments = studyAssignments(s);
   const paragraphs = s.passages.filter((paragraph) => assignments.some((assignment) => assignment.paragraphId === paragraph.id));
@@ -366,7 +378,13 @@ export async function testCompleteEntry(s, tools) {
     const signature = stableSignature(buildStudioDraft(s));
     const passInput = stableSignature({ signature, assignmentRevision: s.assignmentRevision ?? 0, batches: paragraphs.map((p) => p.id),
       rounds: Object.fromEntries(Object.entries(s.rounds).filter(([key]) => key.startsWith("9:"))) });
-    if (s.entryValidation?.input !== passInput) s.entryValidation = { pass: (s.entryValidation?.pass ?? 0) + 1, input: passInput, bootstrapPending: bootstrap };
+    const basis = stableSignature({ assignmentRevision: s.assignmentRevision ?? 0, batches: paragraphs.map((p) => p.id),
+      candidates: s.candidates.map((c) => stableSignature([c.id, c.text, c.meaningIds])).sort() });
+    const previous = s.entryValidation;
+    // Any change made outside the repair loop, such as a human edit, starts the best-entry comparison afresh.
+    const best = previous?.best?.basis === basis && [undefined, signature].includes(previous.expectedSignature) ? previous.best : undefined;
+    if (previous?.input !== passInput) s.entryValidation = { pass: (previous?.pass ?? 0) + 1, input: passInput, bootstrapPending: bootstrap };
+    Object.assign(s.entryValidation, { best, expectedSignature: signature });
     s.entryValidation.phase = "testing";
     const pass = s.entryValidation.pass;
     const candidates = draftCandidates(s);
@@ -405,18 +423,30 @@ export async function testCompleteEntry(s, tools) {
       return trial.passed ? [] : [{ key, trial, rounds }];
     };
     const indices = Array.from({ length: Math.ceil(paragraphs.length / 15) }, (_, i) => i * 15);
+    const keys = indices.map((index) => `9:${index}`);
+    let partial = false;
     if (bootstrap) {
       failures.push(...await validateBatch(indices.shift()));
-      if (failures.length) indices.length = 0;
+      if (failures.length) { partial = indices.length > 0; indices.length = 0; }
       else { bootstrap = false; s.entryValidation.bootstrapPending = false; }
     }
     failures.push(...await independentBatches(s, indices, validateBatch));
     if (!failures.length) { s.entryValidation.phase = "complete"; return { complete: true, paragraphs: paragraphs.length, occurrences: assignments.length }; }
-    const limited = failures.filter(({ key, rounds }) => rounds >= (s.retryAllowances?.[key] ?? 3));
+    if (!partial) rememberBestEntry(s, keys, signature, basis);
+    let limited = failures.filter(({ key, rounds }) => rounds >= (s.retryAllowances?.[key] ?? 3));
     if (limited.length) {
+      // The best entry is kept only while nothing beats it, so a different signature means repairs made it worse.
+      const best = s.entryValidation.best;
+      const restored = Boolean(best && best.signature !== signature);
+      if (restored) {
+        s.candidates = structuredClone(best.candidates);
+        for (const [key, trial] of Object.entries(best.tests)) s.tests[key] = structuredClone(trial);
+        s.entryValidation.expectedSignature = best.signature;
+        limited = Object.keys(best.tests).filter((key) => !s.tests[key].passed).map((key) => ({ key, trial: s.tests[key], rounds: s.rounds[key] ?? 0 }));
+      }
       const first = limited[0];
       s.pendingDecision = { kind: "selection", ...first, keys: limited.map((item) => item.key),
-        report: `${limited.length === 1 ? "Batch" : "Batches"} ${limited.map((item) => Number(item.key.slice(2)) / 15 + 1).join(", ")} still ${limited.length === 1 ? "has" : "have"} failures after the permitted repair rounds. Stop to review the findings, or continue these batches for three more repair rounds.` };
+        report: `${restored ? `Repairs after validation pass ${best.pass} made the results worse, so the entry from that pass has been restored (${best.occurrences - best.failed} of ${best.occurrences} occurrences passed). ` : ""}${limited.length === 1 ? "Batch" : "Batches"} ${limited.map((item) => Number(item.key.slice(2)) / 15 + 1).join(", ")} still ${limited.length === 1 ? "has" : "have"} failures after the permitted repair rounds. Stop to review the findings, or continue these batches for three more repair rounds.` };
       s.entryValidation.phase = "awaiting-review";
       return { pending: true };
     }
@@ -446,6 +476,7 @@ export async function testCompleteEntry(s, tools) {
     // Only a complete repair is committed. The next pass checks its final state.
     s.candidates = staged.candidates;
     s.reports = staged.reports;
+    s.entryValidation.expectedSignature = stableSignature(buildStudioDraft(s));
     for (const { key, rounds } of failures) s.rounds[key] = rounds + 1;
     repairTools.finishActivity?.(`Coordinated repair prepared for ${failures.length} failed batches. The next pass validates this entry.`);
     tools.reportProgress?.("Entry repair prepared; starting validation of the updated entry");

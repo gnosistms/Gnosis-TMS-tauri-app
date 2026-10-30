@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { testMeanings, testCompleteEntry, assessTrial, translateTrial, trialGlossary } from "./glossary-research-studio-testing.js";
-import { newStudioStudy, deduplicatePassages, finalUsage, reviseAssignment, buildStudioDraft, meaningTrialsAreCurrent, entryTrialsAreCurrent } from "./glossary-research-studio-workflow.js";
+import { newStudioStudy, deduplicatePassages, finalUsage, reviseAssignment, buildStudioDraft, stableSignature, meaningTrialsAreCurrent, entryTrialsAreCurrent } from "./glossary-research-studio-workflow.js";
 function fixture(size = 1) {
   const s = newStudioStudy({ term: "caminar", sourceLanguage: { code: "es", name: "Spanish" },
     targetLanguage: { code: "en", name: "English" } }, "test");
@@ -532,6 +532,44 @@ test("a stable pass pauses together for failed batches at their three-round limi
   assert.match(s.pendingDecision.report, /Batches 2, 3/);
   assert.equal(repairs, 0);
   assert.equal(s.entryValidation.phase, "awaiting-review");
+});
+
+// Each repair writes the next note version; the assessment fails more occurrences for worse versions.
+const worseningRepairs = (failuresByNote) => {
+  let version = 0;
+  return { run: translations, ask: async (question, data) => {
+    if (!question.startsWith("Assess")) return { order: ["c"], notes: [{ candidateId: "c", note: `v${++version}` }] };
+    const failed = failuresByNote[data.candidates[0].note ?? ""];
+    return { choices: data.assignments.map((a, i) => ({ ...a, candidateId: "c", rendered: "walk", problem: i < failed ? "wrong meaning" : "" })) };
+  } };
+};
+
+test("when repairs make the entry worse, the repair limit restores the best tested entry and its results", async () => {
+  const s = fixture(3);
+  const result = await testCompleteEntry(s, worseningRepairs({ "": 2, v1: 1, v2: 2, v3: 3 }));
+  assert.equal(result.pending, true); assert.equal(s.rounds["9:0"], 3);
+  assert.equal(s.candidates[0].note, "v1");
+  assert.equal(s.tests["9:0"].choices.filter((choice) => !choice.passed).length, 1);
+  assert.equal(s.tests["9:0"].signature, stableSignature(buildStudioDraft(s)), "the restored results belong to the restored entry");
+  assert.match(s.pendingDecision.report, /^Repairs after validation pass 2 made the results worse, so the entry from that pass has been restored \(2 of 3 occurrences passed\)\. Batch 1 still has failures/u);
+  assert.deepEqual(s.pendingDecision.keys, ["9:0"]);
+  assert.equal(s.testHistory.length, 4, "every tested version stays in the history");
+});
+
+test("the latest entry stays when no earlier version did better, and a human edit resets the comparison", async () => {
+  const s = fixture(3);
+  await testCompleteEntry(s, worseningRepairs({ "": 3, v1: 2, v2: 2, v3: 1 }));
+  assert.equal(s.candidates[0].note, "v3");
+  assert.doesNotMatch(s.pendingDecision.report, /restored/u);
+  const edited = fixture(3);
+  await assert.rejects(testCompleteEntry(edited, { run: translations, ask: async (question, data) => {
+    if (question.startsWith("Assess")) return { choices: data.assignments.map((a, i) => ({ ...a, candidateId: "c", rendered: "walk", problem: i < 1 ? "wrong meaning" : "" })) };
+    throw new Error("paused before repair");
+  } }), /paused before repair/);
+  assert.equal(edited.entryValidation.best.failed, 1);
+  edited.candidates[0].note = "Human guidance";
+  await testCompleteEntry(edited, worseningRepairs({ "Human guidance": 3, v1: 3, v2: 3, v3: 3 }));
+  assert.equal(edited.candidates[0].note, "v3", "the pre-edit entry is never restored over the human edit");
 });
 
 test("a coordinated repair replaces shared target notes consistently instead of appending obsolete duplicate guidance", async () => {
