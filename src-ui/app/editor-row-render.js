@@ -391,79 +391,76 @@ function renderRowTextStyleButtons(row, language) {
   `);
   }
 
+  // Two rows: the formatting styles on top, then the inserts with the save
+  // shortcut in the lower right.
   return `
     <div class="translation-row-text-style-actions">
-      <div class="translation-row-text-style-actions__group" role="radiogroup" aria-label="Text style">
-        ${EDITOR_ROW_TEXT_STYLE_OPTIONS.map((option) => {
-          const isSelected = editorRowTextStyleOptionValue(selectedTextStyle) === option.value;
-          // The List button keeps the row's list style (bullets, numbers, …).
-          const textStyle = isSelected ? selectedTextStyle : option.value;
-          return `
-          <button
-            class="translation-row-text-style-button${option.iconSvg ? " translation-row-text-style-button--icon" : ""}${isSelected ? " is-active" : ""}${textStyleChangeClass(language, option.value)}"
-            type="button"
-            role="radio"
-            data-action="set-editor-row-text-style"
-            data-editor-row-text-style-button
-            data-row-id="${escapeHtml(row.id)}"
-            data-language-code="${escapeHtml(language.code)}"
-            data-text-style="${escapeHtml(textStyle)}"
-            aria-checked="${isSelected ? "true" : "false"}"
-            ${option.iconSvg ? `aria-label="${escapeHtml(option.label)}"` : ""}
-            ${tooltipAttributes(option.tooltip, { side: "top" })}
-          >
-            ${option.iconSvg
-              ? `<span class="translation-row-text-style-button__icon">${option.iconSvg}</span>`
-              : `<span class="translation-row-text-style-button__label">${escapeHtml(option.label)}</span>`}
-          </button>
-        `;
-        }).join("")}
+      <div class="translation-row-text-style-actions__row translation-row-text-style-actions__row--styles">
+        <div class="translation-row-text-style-actions__group" role="radiogroup" aria-label="Text style">
+          ${EDITOR_ROW_TEXT_STYLE_OPTIONS.map((option) => {
+            const isSelected = editorRowTextStyleOptionValue(selectedTextStyle) === option.value;
+            // The List button keeps the row's list style (bullets, numbers, …).
+            const textStyle = isSelected ? selectedTextStyle : option.value;
+            return `
+            <button
+              class="translation-row-text-style-button${option.iconSvg ? " translation-row-text-style-button--icon" : ""}${isSelected ? " is-active" : ""}${textStyleChangeClass(language, option.value)}"
+              type="button"
+              role="radio"
+              data-action="set-editor-row-text-style"
+              data-editor-row-text-style-button
+              data-row-id="${escapeHtml(row.id)}"
+              data-language-code="${escapeHtml(language.code)}"
+              data-text-style="${escapeHtml(textStyle)}"
+              aria-checked="${isSelected ? "true" : "false"}"
+              ${option.iconSvg ? `aria-label="${escapeHtml(option.label)}"` : ""}
+              ${tooltipAttributes(option.tooltip, { side: "top" })}
+            >
+              ${option.iconSvg
+                ? `<span class="translation-row-text-style-button__icon">${option.iconSvg}</span>`
+                : `<span class="translation-row-text-style-button__label">${escapeHtml(option.label)}</span>`}
+            </button>
+          `;
+          }).join("")}
+        </div>
+        ${
+          inlineButtons.length > 0
+            ? `
+              <span class="translation-row-text-style-actions__separator" aria-hidden="true"></span>
+              <div class="translation-row-text-style-actions__group translation-row-text-style-actions__group--inline" aria-label="Inline formatting">
+                ${inlineButtons.map((button) => `
+                  <button
+                    class="translation-row-text-style-button translation-row-inline-style-button"
+                    type="button"
+                    data-action="toggle-editor-inline-style"
+                    data-editor-inline-style-button
+                    data-row-id="${escapeHtml(row.id)}"
+                    data-language-code="${escapeHtml(language.code)}"
+                    data-inline-style="${escapeHtml(button.style)}"
+                    aria-pressed="false"
+                    ${tooltipAttributes(button.tooltip, { side: "top" })}
+                  >
+                    <span class="translation-row-text-style-button__label">${escapeHtml(button.label)}</span>
+                  </button>
+                `).join("")}
+              </div>
+            `
+            : ""
+        }
       </div>
-      ${
-        inlineButtons.length > 0
-          ? `
-            <span class="translation-row-text-style-actions__separator" aria-hidden="true"></span>
-            <div class="translation-row-text-style-actions__group translation-row-text-style-actions__group--inline" aria-label="Inline formatting">
-              ${inlineButtons.map((button) => `
-                <button
-                  class="translation-row-text-style-button translation-row-inline-style-button"
-                  type="button"
-                  data-action="toggle-editor-inline-style"
-                  data-editor-inline-style-button
-                  data-row-id="${escapeHtml(row.id)}"
-                  data-language-code="${escapeHtml(language.code)}"
-                  data-inline-style="${escapeHtml(button.style)}"
-                  aria-pressed="false"
-                  ${tooltipAttributes(button.tooltip, { side: "top" })}
-                >
-                  <span class="translation-row-text-style-button__label">${escapeHtml(button.label)}</span>
-                </button>
-              `).join("")}
-            </div>
-          `
-          : ""
-      }
-      ${
-        secondaryButtons.length > 0
-          ? `
-            <span class="translation-row-text-style-actions__separator" aria-hidden="true"></span>
-            <div class="translation-row-text-style-actions__group translation-row-text-style-actions__group--secondary">
-              ${secondaryButtons.join("")}
-            </div>
-          `
-          : ""
-      }
+      <div class="translation-row-text-style-actions__row translation-row-text-style-actions__row--inserts">
+        ${
+          secondaryButtons.length > 0
+            ? `
+              <div class="translation-row-text-style-actions__group translation-row-text-style-actions__group--secondary" aria-label="Insert">
+                ${secondaryButtons.join("")}
+              </div>
+            `
+            : ""
+        }
+        <span class="translation-row-text-style-actions__hint">${isMacPlatform() ? "Command" : "Ctrl"} + S to save</span>
+      </div>
     </div>
   `;
-}
-
-// The save shortcut sits in the language header, beside the language name, and
-// shows only while this language's editor has focus (see translate.css).
-function renderEditorSaveHint(row, language) {
-  if (row?.canEdit !== true || language?.canEdit !== true || language?.showTiming === true || row.hasConflict) {
-    return "";
-  }
-  return `<span class="translation-language-panel__save-hint">${isMacPlatform() ? "Command" : "Ctrl"} + S to save</span>`;
 }
 
 function renderStaticEditorFieldTextHtml(language, options = {}) {
@@ -1357,7 +1354,6 @@ export function renderTranslationContentRow(
                         ${renderCollapseChevron(!isCollapsed, "translation-language-panel__chevron")}
                         <span class="translation-language-panel__label${language.hasConflict ? " translation-language-panel__label--conflict" : ""}">${escapeHtml(language.name)}</span>
                       </button>
-                      ${isCollapsed ? "" : renderEditorSaveHint(row, language)}
                       <div class="translation-language-panel__actions">
                         ${renderResearchMarkerButton(row.id, language)}
                         ${renderCommentsMarkerButton(row.id, language)}

@@ -196,17 +196,25 @@ test("renderTranslationContentRow places separator button after image upload whe
   assert.match(html, /class="translation-row-text-style-button__flourish"/);
 });
 
-test("renderTranslationContentRow puts the save hint in the language header, not the toolbar", () => {
+test("renderTranslationContentRow puts styles on the top toolbar row and inserts with the save hint below", () => {
   const html = renderTranslationContentRow({
     ...rowWithSection({
       canEdit: true,
       isTextEditorOpen: true,
+      showAddFootnoteButton: true,
+      showAddImageButtons: true,
     }),
     canEdit: true,
   });
 
-  assert.match(html, /translation-language-panel__save-hint">(Command|Ctrl) \+ S to save<\/span>\s*<div class="translation-language-panel__actions">/);
-  assert.doesNotMatch(html, /translation-row-text-style-actions__hint/);
+  const stylesRow = html.match(/translation-row-text-style-actions__row--styles">([\s\S]*?)<div class="translation-row-text-style-actions__row translation-row-text-style-actions__row--inserts">/)?.[1] ?? "";
+  const insertsRow = html.match(/translation-row-text-style-actions__row--inserts">([\s\S]*)$/)?.[1] ?? "";
+  assert.match(stylesRow, /data-editor-row-text-style-button/);
+  assert.match(stylesRow, /data-editor-inline-style-button/);
+  assert.doesNotMatch(stylesRow, /data-editor-footnote-button|data-editor-link-button|data-editor-image-button|data-editor-separator-button/);
+  assert.match(insertsRow, /data-editor-footnote-button[\s\S]*data-editor-link-button[\s\S]*data-editor-image-button[\s\S]*data-editor-separator-button/);
+  assert.match(insertsRow, /<\/div>\s*<span class="translation-row-text-style-actions__hint">(Command|Ctrl) \+ S to save<\/span>\s*<\/div>/);
+  assert.doesNotMatch(html, /translation-language-panel__save-hint/);
 });
 
 test("renderTranslationContentRow renders static separator markup as a line span", () => {

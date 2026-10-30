@@ -6387,11 +6387,21 @@ test.describe("editor regressions", () => {
     const field = await activateMainEditorField(page, rowId, "vi");
     await expect(field).toHaveValue(text);
     const saveShortcut = await editorSaveShortcut(page);
-    const saveHint = page.locator(
-      `[data-editor-language-panel][data-row-id="${rowId}"][data-language-code="vi"] .translation-language-panel__save-hint`,
+    const toolbar = page.locator(
+      `[data-editor-language-panel][data-row-id="${rowId}"][data-language-code="vi"] .translation-row-text-style-actions`,
     );
+    const saveHint = toolbar.locator(".translation-row-text-style-actions__row--inserts .translation-row-text-style-actions__hint");
     await expect(saveHint).toBeVisible();
     await expect(saveHint).toHaveText(saveShortcut === "Meta+s" ? "Command + S to save" : "Ctrl + S to save");
+    // Styles on the top row; inserts below with the save hint in the lower right.
+    const [toolbarBox, stylesBox, insertsBox, hintBox] = await Promise.all([
+      toolbar.boundingBox(),
+      toolbar.locator(".translation-row-text-style-actions__row--styles").boundingBox(),
+      toolbar.locator(".translation-row-text-style-actions__row--inserts").boundingBox(),
+      saveHint.boundingBox(),
+    ]);
+    expect(insertsBox.y).toBeGreaterThanOrEqual(stylesBox.y + stylesBox.height);
+    expect(Math.abs(hintBox.x + hintBox.width - (toolbarBox.x + toolbarBox.width))).toBeLessThan(2);
     await field.evaluate((element) => element.setSelectionRange(element.value.length, element.value.length));
     await page.keyboard.press("Enter");
     await page.keyboard.type("Third paragraph");
