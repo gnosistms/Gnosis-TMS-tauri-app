@@ -17,7 +17,7 @@ import { currentStudioRecommendation, recommendStudioStep, sourceSummaryMustBeSk
 import { prepareReadingTranslations, runResearchStage } from "./glossary-research-studio-stages.js";
 import { testMeanings, testCompleteEntry } from "./glossary-research-studio-testing.js";
 import { reviewCompoundReport, STUDIO_STEPS, STUDIO_DICTIONARY_REVIEW_VERSION, newStudioStudy, uniqueTexts, selectedForms, activeMeanings,
-  approveStep, stableSignature, stepSignature, stepSignatureMatches, stepIsReusable, buildStudioDraft, finalUsage, studioDependentSteps, clearStudioDependents,
+  approveStep, stableSignature, stepSignature, stepSignatureMatches, stepIsReusable, buildStudioDraft, finalUsage, studioDependentSteps, clearStudioDependents, startStudioReResearch,
   collisionChanges, sourceCollisions, temporaryGlossaryTerms, uniqueSourceTexts, deduplicateSourceForms, applySplitReview, preferCandidate, reviseAssignment, studioContextRequest, applyStudioContext, entryTrialsAreCurrent, meaningTrialsAreCurrent, studioStepNumber } from "./glossary-research-studio-workflow.js";
 import { requestGlossaryTermWriteIntent, glossaryTermWriteScope, clearFailedGlossaryTermWrite } from "./glossary-term-write-coordinator.js";
 import { requireBrokerSession } from "./auth-flow.js";
@@ -565,13 +565,7 @@ async function advanceStudioCheckpoint(s, generation) {
     value = { forms: s.forms };
   } else if (step === "2b" && s.relatedEntries.length) {
     if (studioView().branch === "merge") { await mergeOnly(s); return; }
-    if (studioView().branch === "research") {
-      const forms = uniqueSourceTexts([...s.scope.forms, ...s.relatedEntries.flatMap((e) => e.sourceTerms)], s.scope.sourceLanguage.code);
-      s.carriedTargets = s.relatedEntries.flatMap((e) => e.targetTerms.map((text, i) => ({ text, note: e.targetVariantNotes?.[i] ?? "", originTermId: e.termId })));
-      const changed = stableSignature(forms) !== stableSignature(s.scope.forms) || !s.reResearchStarted;
-      s.scope.forms = forms; s.reResearchStarted = true;
-      if (changed) { delete s.steps["2a"]; await moveTo(s, "2a"); return; }
-    }
+    if (studioView().branch === "research" && startStudioReResearch(s)) { await moveTo(s, "2a"); return; }
     value = { branch: studioView().branch, entries: s.relatedEntries };
   } else if (step === "4.1" && value?.dictionaryVersion !== STUDIO_DICTIONARY_REVIEW_VERSION) {
     throw new Error("Refresh dictionary research before continuing so capitalization variants are checked.");

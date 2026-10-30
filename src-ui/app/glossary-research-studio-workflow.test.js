@@ -1,5 +1,5 @@
 import test from "node:test";
-import { studioDependentSteps, clearStudioDependents } from "./glossary-research-studio-workflow.js";
+import { studioDependentSteps, clearStudioDependents, startStudioReResearch } from "./glossary-research-studio-workflow.js";
 import assert from "node:assert/strict";
 
 import { newStudioStudy, exactOccurrences, deduplicatePassages, researchSample,
@@ -381,4 +381,21 @@ test("revising source forms clears discovery outputs including skipped checkpoin
   for (const key of ["population", "passages", "meanings", "assignments", "candidates", "queue"]) assert.deepEqual(s[key], []);
   assert.deepEqual(s.skipRecommendations, {}); assert.deepEqual(s.steps["4.1"], { status: "undone" });
   assert.equal(s.steps["1"].status, "complete");
+});
+
+test("re-researching an exact existing entry reruns 2a once and then continues past 2b", () => {
+  const s = newStudioStudy({ ...scope, term: "mundo", forms: ["mundo"] }, "re-research");
+  const existing = { termId: "t", sourceTerms: ["mundo"], targetTerms: ["world"], targetVariantNotes: ["Usual"] };
+  s.step = "2b"; s.relatedEntries = [existing];
+  s.steps["2a"] = { status: "complete", approved: { forms: [] } };
+  s.steps["2b"] = { status: "awaiting-review", value: { entries: [existing] } };
+  assert.equal(startStudioReResearch(s), true);
+  assert.deepEqual(studioDependentSteps(s, "2a"), [], "rerunning 2a must not offer a redo that resets this choice");
+  assert.equal(s.steps["2a"], undefined);
+  assert.equal(s.branch, "research"); assert.equal(s.reResearchStarted, true);
+  assert.deepEqual(s.carriedTargets, [{ text: "world", note: "Usual", originTermId: "t" }]);
+  // 2a and 2b run again and find the same entry.
+  s.step = "2b"; s.relatedEntries = [existing];
+  assert.equal(startStudioReResearch(s), false);
+  assert.deepEqual(s.scope.forms, ["mundo"]);
 });

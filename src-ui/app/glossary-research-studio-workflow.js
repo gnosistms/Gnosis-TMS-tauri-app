@@ -138,6 +138,18 @@ export function clearStudioDependents(study, step) {
   if (study.steps[step]) study.steps[step].status = "awaiting-review";
 }
 
+// Re-research adds the related entries' forms and reruns 2a. Clearing 2b onward
+// first keeps 2a from offering a redo that would forget this choice and loop.
+export function startStudioReResearch(study) {
+  const forms = uniqueSourceTexts([...study.scope.forms, ...study.relatedEntries.flatMap((e) => e.sourceTerms)], study.scope.sourceLanguage.code);
+  const carriedTargets = study.relatedEntries.flatMap((e) => e.targetTerms.map((text, i) => ({ text, note: e.targetVariantNotes?.[i] ?? "", originTermId: e.termId })));
+  const rerunForms = stableSignature(forms) !== stableSignature(study.scope.forms) || !study.reResearchStarted;
+  if (rerunForms) { clearStudioDependents(study, "2a"); delete study.steps["2a"]; }
+  Object.assign(study, { carriedTargets, branch: "research", reResearchStarted: true });
+  study.scope.forms = forms;
+  return rerunForms;
+}
+
 export function stableSignature(value) {
   if (Array.isArray(value)) return `[${value.map(stableSignature).join(",")}]`;
   if (value && typeof value === "object") return `{${Object.keys(value).sort()
