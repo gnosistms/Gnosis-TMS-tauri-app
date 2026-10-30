@@ -406,7 +406,9 @@ test("redoing saved research warns before running tools and cancellation preserv
   await expect(page.locator('[data-action="studio:visit:9"]')).toContainText("✓");
   await page.getByRole("button", { name: "Redo this step", exact: true }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Continue", exact: true }).click();
-  await expect(page.locator('[data-action="studio:next"]')).toBeEnabled();
+  // The redone step only reports findings, so research continues past it.
+  await expect(page.getByRole("heading", { name: "4.3 · Word parts", exact: true })).toBeVisible();
+  await expect(page.locator('[data-action="studio:visit:4.2"]')).toHaveText("4.2 · Corpus meanings ✓");
   await expect(page.locator('[data-action="studio:visit:5"]')).toHaveText("5 · Compounds and phrases · undone");
   expect(await page.evaluate(() => window.studioCalls.slice(window.revisitCalls).some((c) => c.command === "start_glossary_studio_tool"))).toBe(true);
 });
@@ -843,7 +845,9 @@ test("English-source studio completes research, reuses previous-step results and
   expect(await page.evaluate(() => window.studioCalls.filter((c) => c.command === "start_glossary_studio_tool").length)).toBe(calls);
   await next(); await heading("4.1 · Dictionary");
   await page.getByRole("button", { name: "Skip this step", exact: true }).click();
-  await heading("4.2 · Corpus meanings"); await next(); await heading("4.3 · Word parts");
+  // Corpus meanings only reports findings, so research continues to word parts.
+  await heading("4.3 · Word parts");
+  await expect(page.locator('[data-action="studio:visit:4.2"]')).toHaveText("4.2 · Corpus meanings ✓");
   await page.getByRole("button", { name: "Skip this step", exact: true }).click();
   await heading("4.4.2 · Internet sources");
   await page.getByRole("button", { name: "Skip this step", exact: true }).click();
@@ -2447,13 +2451,14 @@ test("bibliography reads published references and performs no author-verificatio
     document.querySelector("#app").innerHTML = renderGlossaryResearchStudio(state);
   });
   await page.getByRole("button", { name: "Run this step", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Save and continue", exact: true })).toBeEnabled();
+  await expect(page.getByRole("heading", { name: "4.4.2 · Internet sources", exact: true })).toBeVisible();
   const calls = await page.evaluate(() => window.studioCalls.filter((c) => c.command === "start_glossary_studio_tool").map((c) => c.args.input));
   expect(calls.filter((c) => c.kind === "author")).toHaveLength(0);
-  expect(calls.filter((c) => c.kind === "ai")).toHaveLength(1);
+  expect(calls.filter((c) => c.kind === "ai" && c.step === "4.4.1")).toHaveLength(1);
   expect(calls.filter((c) => c.kind === "corpus" && c.payload.path === "/api/sample" && c.payload.params.kind === "samael")).toHaveLength(0);
   expect(calls.filter((c) => c.payload.params?.author_id === "author-a")).toHaveLength(0);
   expect(calls.filter((c) => c.payload.path === "/api/sample/source-books")).toHaveLength(2);
+  await page.locator('[data-action="studio:visit:4.4.1"]').click();
   await page.getByText("Sources and retrieval details", { exact: true }).click();
   await expect(page.getByText(/2 confirmed paragraphs.*3 corpus copies.*4 name\/title occurrences.*1 unresolved reference/)).toBeVisible();
   const saved = await page.evaluate(async () => (await import(`/${"app"}/state.js`)).state.glossaryResearchStudio.study.steps["4.4.1"].value.evidence.authors[0]);
