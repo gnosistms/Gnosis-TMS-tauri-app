@@ -154,6 +154,26 @@ test("a completed review lists failed and correct meaning choices in collapsed g
   } finally { state.glossaryResearchStudio = previous; }
 });
 
+test("completed validation batches fold their test details while running batches stay open", () => {
+  const previous = state.glossaryResearchStudio;
+  try {
+    const study = newStudioStudy({ sourceLanguage: { code: "es", name: "Spanish" }, targetLanguage: { code: "en", name: "English" }, term: "gloria" }, "fold");
+    study.step = "9";
+    const round = (status) => [{ id: "round-0", label: "initial test", status, children: [
+      { id: "translate", label: "Translate with the complete glossary entry", status, result: status === "complete" ? "15 paragraphs translated." : "", children: [] }] }];
+    study.activitySteps = { "9": { items: [
+      { id: "batch-0", label: "Batch 1 · paragraphs 1–15 of 30", status: "complete", result: "16 of 16 occurrences passed.", children: round("complete") },
+      { id: "batch-15", label: "Batch 2 · paragraphs 16–30 of 30", status: "running", children: round("running") }] } };
+    state.glossaryResearchStudio = { study, history: [], busy: true };
+    const html = renderGlossaryResearchStudio(state);
+    const done = html.match(/Batch 1 · paragraphs 1–15 of 30[\s\S]*?16 of 16 occurrences passed\.[\s\S]*?<details data-studio-disclosure="activity:\[&quot;batch-0&quot;\]:details"><summary>Test details<\/summary>([\s\S]*?)<\/details><\/li>/u);
+    assert(done, "the completed batch keeps its result visible and folds its rounds");
+    assert(done[1].includes("15 paragraphs translated."));
+    assert(!html.includes('activity:[&quot;batch-15&quot;]:details'), "the running batch is not folded");
+    assert(html.slice(html.indexOf("Batch 2 · paragraphs")).includes("Translate with the complete glossary entry"));
+  } finally { state.glossaryResearchStudio = previous; }
+});
+
 test("optional dictionary research explains the action and cannot continue before a result", () => {
   const previous = state.glossaryResearchStudio;
   try {

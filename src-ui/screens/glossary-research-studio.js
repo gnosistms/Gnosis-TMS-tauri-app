@@ -446,13 +446,16 @@ function activityProgress(s, view) {
         .filter((form) => Number.isInteger(form.paragraphCount) && form.paragraphCount > 0) : [];
       const corpusName = s.scope.corpus === "samael" ? "the Samael Aun Weor corpus" : "the selected projects";
       const childList = children.length && !singleOperation ? list(children, key) : "";
+      // Entry validation lists many batches; completed ones fold away so work in progress stays easy to find.
+      const foldedBatch = key.length === 1 && node.id.startsWith("batch-") && state === "complete";
       return `<li class="studio-work-item" data-work-state="${e(state)}"><div class="studio-work-heading">${state === "running" ? loadingSpinner({ key: `work-${JSON.stringify(key)}`, label: `In progress: ${node.label}` }) : `<span class="studio-work-icon" aria-hidden="true">${icon}</span>`}<span>${e(node.label)}</span><span class="studio-work-state">${e(({ complete: "Completed", waiting: "Waiting", running: "In progress", paused: "Paused", failed: "Needs attention" })[state])}</span></div>
         ${completedCorpus ? `<p class="studio-work-result">We found ${quantity(corpusForms.length, "form")} used in ${corpusName}${corpusForms.length ? ":" : "."}</p>
           ${corpusForms.length ? `<ul class="studio-corpus-forms" aria-label="Forms found in the corpus">${corpusForms.map((form) => `<li>${e(form.text)} — ${e(form.paragraphCount.toLocaleString())} matching ${form.paragraphCount === 1 ? "paragraph" : "paragraphs"}</li>`).join("")}</ul>` : ""}`
           : formatted ? `${formatted.long ? `<p class="studio-work-result">${e(formatted.preview)}</p><details data-studio-disclosure="${e(`activity:${JSON.stringify(key)}`)}"><summary>${originalFindings ? "Read full findings" : "Read result summary"}</summary><div class="studio-work-result studio-report">${formatted.details ?? formatted.html}</div></details>` : `<div class="studio-work-result studio-report">${formatted.html}</div>`}${reused}` : ""}
         ${Array.isArray(node.review) ? reviewOutcomeLists(node.review, key, s) : ""}
         ${sources ? `<details data-studio-disclosure="original-spelling-sources"><summary>Evidence and sources</summary>${sources}</details>` : ""}
-        ${node.error || singleOperation?.error ? `<p class="studio-work-error">${e(node.error || singleOperation.error)}</p>` : ""}${completedCorpus && childList ? `<details data-studio-disclosure="forms-corpus-details"><summary>Check details</summary>${childList}</details>` : childList}</li>`;
+        ${node.error || singleOperation?.error ? `<p class="studio-work-error">${e(node.error || singleOperation.error)}</p>` : ""}${completedCorpus && childList ? `<details data-studio-disclosure="forms-corpus-details"><summary>Check details</summary>${childList}</details>`
+          : foldedBatch && childList ? `<details data-studio-disclosure="${e(`activity:${JSON.stringify(key)}:details`)}"><summary>Test details</summary>${childList}</details>` : childList}</li>`;
     }).join("")}</ol>`;
   }
   function status(node) {
