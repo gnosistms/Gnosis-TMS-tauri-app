@@ -247,6 +247,19 @@ test("optional dictionary research explains the action and cannot continue befor
   } finally { state.glossaryResearchStudio = previous; }
 });
 
+test("the source-summary skip rule is not repeated on the internet source search", () => {
+  const previous = state.glossaryResearchStudio;
+  try {
+    const study = newStudioStudy({ sourceLanguage: { code: "es", name: "Spanish" }, targetLanguage: { code: "en", name: "English" }, term: "Mundo" }, "skip-rule");
+    state.glossaryResearchStudio = { study, busy: false };
+    const rule = "If both source searches are skipped, the source summary (4.4.3) is skipped automatically.";
+    study.step = "4.4.1";
+    assert(renderGlossaryResearchStudio(state).includes(rule));
+    study.step = "4.4.2";
+    assert(!renderGlossaryResearchStudio(state).includes(rule));
+  } finally { state.glossaryResearchStudio = previous; }
+});
+
 test("skip advice is escaped and advisory, stale advice is hidden, and the summary is numbered 4.4.3", () => {
   const previous = state.glossaryResearchStudio;
   try {
