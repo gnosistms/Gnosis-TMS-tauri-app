@@ -976,6 +976,17 @@ export function updateStudioInput(target) {
   }), 400);
 }
 
+// An unmatched occurrence gets one meaning: an existing one, or a new one typed
+// in. The choice starts on the AI's suggestion, which may repeat an existing one.
+export const STUDIO_NEW_MEANING = "new";
+export function unmatchedMeaningChoice(s, decision = s.pendingDecision) {
+  const active = s.meanings.filter((m) => m.enabled !== false);
+  const chosen = s.decisionInput?.meaning;
+  if (chosen === STUDIO_NEW_MEANING || active.some((m) => m.id === chosen)) return chosen;
+  const suggested = String(decision?.recommendation?.definition ?? "").trim().toLocaleLowerCase();
+  return active.find((m) => suggested && String(m.definition ?? "").trim().toLocaleLowerCase() === suggested)?.id ?? STUDIO_NEW_MEANING;
+}
+
 export async function resolveStudioDecision(action) {
   const s = studioView().study; const d = s.pendingDecision;
   if (!d) return;
@@ -1006,12 +1017,13 @@ export async function resolveStudioDecision(action) {
       s.excludedParagraphIds ??= []; s.excludedParagraphIds.push(d.paragraphId);
       s.assignments = s.assignments.filter((a) => a.paragraphId !== d.paragraphId);
     } else {
-      let id = s.decisionInput?.meaning;
-      if (action === "new") {
-        const definition = s.decisionInput?.definition || d.recommendation.definition;
+      let id = unmatchedMeaningChoice(s, d);
+      if (id === STUDIO_NEW_MEANING) {
+        const definition = (s.decisionInput?.definition ?? d.recommendation?.definition ?? "").trim();
+        if (!definition) throw new Error("Enter the new meaning.");
         id = `human-${s.meanings.length}`; s.meanings.push({ id, definition, enabled: true });
       }
-      if (!s.meanings.some((m) => m.id === id)) throw new Error("Select a definition.");
+      if (!s.meanings.some((m) => m.id === id)) throw new Error("Select a meaning.");
       const a = s.assignments.find((a) => a.paragraphId === d.paragraphId && a.occurrenceId === d.occurrenceId);
       a.meaningId = id;
     }

@@ -2,7 +2,7 @@ import { studioActivityItems } from "../app/glossary-research-studio-activity.js
 import { studioResultPresentation, studioNarrativeText } from "../app/glossary-research-studio-result.js";
 import { escapeHtml, primaryButton, secondaryButton, errorButton, actionNavButton, pageShell, loadingSpinner } from "../lib/ui.js";
 import { renderGlossaryTermEditorModal } from "./glossary-term-editor-modal.js";
-import { studioView, studioCanVisitStep } from "../app/glossary-research-studio-flow.js";
+import { studioView, studioCanVisitStep, STUDIO_NEW_MEANING, unmatchedMeaningChoice } from "../app/glossary-research-studio-flow.js";
 import { STUDIO_STEPS, STUDIO_DICTIONARY_REVIEW_VERSION, activeMeanings, meaningNumber, studioTrialRoundLabel, sourceCollisions, selectedForms, uniqueTexts, witnessedSplitForms, reviewCompoundReport, buildStudioDraft, stableSignature, studioSourceContext, studioContextRequest, meaningTrialSignature, meaningTrialsAreCurrent, entryBatchSignature, entryTrialsAreCurrent, studioStepNumber, studioStepStatusLabel,
   currentStudioFinding, studioReviewOverride } from "../app/glossary-research-studio-workflow.js";
 import { studioGlossaryEntries } from "../app/glossary-research-studio-query.js";
@@ -396,11 +396,12 @@ function modal(s, view) {
     actions = button("OK", "cancel-last");
   } else if (decision?.kind === "unmatched") {
     title = "Choose a meaning";
-    body = `<p>Review the highlighted occurrence of ${e(s.scope.term)}. Choose an existing definition, add a meaning, or remove the paragraph.</p>
+    const choice = unmatchedMeaningChoice(s, decision);
+    body = `<p>Review the highlighted occurrence of ${e(s.scope.term)}. Choose the meaning it has here, or drop this paragraph from the research.</p>
       ${paragraph({ ...decision.paragraph, highlightOccurrence: decision.paragraph.occurrences.find((o) => o.id === decision.occurrenceId), translation: decision.recommendation.translation }, s)}
-      <label class="field"><span class="field__label">Existing meaning</span><select class="field__input" data-studio-decision="meaning"><option value="">Select a definition</option>${s.meanings.filter((m) => m.enabled !== false).map((m) => `<option value="${e(m.id)}" ${s.decisionInput?.meaning === m.id ? "selected" : ""}>${meaningNumber(s, m.id)}. ${narrative(m.definition)}</option>`).join("")}</select></label>
-      <label class="field"><span class="field__label">New meaning</span><textarea class="field__textarea" data-studio-decision="definition">${e(s.decisionInput?.definition ?? decision.recommendation.definition)}</textarea></label>`;
-    actions = button("Drop this paragraph", "decision:drop") + button("Assign selected meaning", "decision:assign", { disabled: !s.decisionInput?.meaning }) + button("Add new meaning", "decision:new");
+      <label class="field"><span class="field__label">Meaning</span><select class="field__input" data-studio-decision="meaning">${s.meanings.filter((m) => m.enabled !== false).map((m) => `<option value="${e(m.id)}" ${choice === m.id ? "selected" : ""}>${meaningNumber(s, m.id)}. ${narrative(m.definition)}</option>`).join("")}<option value="${STUDIO_NEW_MEANING}" ${choice === STUDIO_NEW_MEANING ? "selected" : ""}>Enter new meaning below</option></select></label>
+      ${choice === STUDIO_NEW_MEANING ? `<label class="field"><span class="field__label">New meaning</span><textarea class="field__textarea" data-studio-decision="definition">${e(s.decisionInput?.definition ?? decision.recommendation.definition)}</textarea></label>` : ""}`;
+    actions = button("Drop this paragraph", "decision:drop") + primaryButton("Assign meaning", "studio:decision:assign");
   } else if (decision?.kind === "candidate") {
     title = "Review a new translation";
     body = `<p>Review the proposed forms and their selection conditions before adding them. You can leave an inflection out or adjust its note.</p>

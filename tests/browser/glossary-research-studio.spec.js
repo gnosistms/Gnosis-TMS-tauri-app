@@ -2654,3 +2654,38 @@ test("a translator's choice answers the advice, so a cancelled source-summary sk
   await expect(page.getByRole("heading", { name: "AI recommendation: Skip it.", exact: true })).toBeVisible();
   await expect(page.getByRole("timer")).toHaveCount(0);
 });
+
+test("an unmatched occurrence takes one meaning, existing or typed in, assigned with one button", async ({ page }) => {
+  await mountStudio(page);
+  await page.evaluate(async () => {
+    const { state } = await import(`/${"app"}/state.js`);
+    const { newStudioStudy, deduplicatePassages } = await import(`/${"app"}/glossary-research-studio-workflow.js`);
+    const { renderGlossaryResearchStudio } = await import(`/${"screens"}/glossary-research-studio.js`);
+    const s = newStudioStudy({ installationId: 7, teamId: "team", glossaryId: "g1", repoName: "glossary", term: "walk",
+      corpus: "projects", sourceLanguage: { code: "en", name: "English" }, targetLanguage: { code: "vi", name: "Vietnamese" } });
+    s.step = "4.6"; s.model = { providerId: "openai", modelId: "test" }; s.forms = [{ text: "walk" }];
+    s.passages = deduplicatePassages([{ id: "p0", text: "We went for a walk." }, { id: "p1", text: "I walk home." }], ["walk"], "en");
+    s.population = s.passages; s.meanings = [{ id: "m1", definition: "Di chuyển bằng chân" }];
+    s.assignments = s.passages.flatMap((p) => p.occurrences.map((o) => ({ paragraphId: p.id, occurrenceId: o.id, meaningId: p.id === "p0" ? null : "m1" })));
+    const unmatched = s.assignments.find((a) => !a.meaningId);
+    s.pendingDecision = { kind: "unmatched", ...unmatched, paragraph: s.passages[0], recommendation: { definition: "Cuộc đi dạo", translation: "Chúng tôi đi dạo." } };
+    state.glossaryResearchStudio.study = s;
+    document.querySelector("#app").innerHTML = renderGlossaryResearchStudio(state);
+  });
+  const dialog = page.getByRole("dialog");
+  const meaning = dialog.getByRole("combobox", { name: "Meaning", exact: true });
+  const typed = dialog.getByRole("textbox", { name: "New meaning", exact: true });
+  await expect(meaning).toHaveValue("new");
+  await expect(typed).toHaveValue("Cuộc đi dạo");
+  await expect(dialog.getByRole("button")).toHaveText(["Drop this paragraph", "Assign meaning"]);
+  await meaning.selectOption({ label: "1. Di chuyển bằng chân" });
+  await expect(typed).toHaveCount(0);
+  await meaning.selectOption({ label: "Enter new meaning below" });
+  await typed.fill("Một cuộc đi dạo");
+  await dialog.getByRole("button", { name: "Assign meaning", exact: true }).click();
+  await expect.poll(() => page.evaluate(async () => {
+    const s = (await import(`/${"app"}/state.js`)).state.glossaryResearchStudio.study;
+    const added = s.meanings.find((m) => m.definition === "Một cuộc đi dạo");
+    return { decision: s.pendingDecision?.kind ?? null, assigned: Boolean(added) && s.assignments.find((a) => a.paragraphId === "p0").meaningId === added.id };
+  })).toEqual({ decision: null, assigned: true });
+});

@@ -711,8 +711,19 @@ test("meaning decisions number enabled definitions and offer report-only senses 
     s.pendingDecision = { kind: "unmatched", paragraph: s.passages[0], paragraphId: "p", occurrenceId: "o0", recommendation: { definition: "New meaning", translation: "perceptible" } };
     html = renderGlossaryResearchStudio(state);
     assert(html.includes('value="b" >2. Sensory receptivity'));
-    assert(html.includes("Choose an existing definition"));
+    assert(html.includes("Choose the meaning it has here"));
     assert(!html.includes("does not match a listed meaning"));
+    // One choice: an existing meaning, or the AI's new one typed below. One button assigns it.
+    assert.match(html, /<option value="new" selected>Enter new meaning below<\/option><\/select>/u);
+    assert.match(html, /data-studio-decision="definition">New meaning<\/textarea>/u);
+    assert.match(html, /data-action="studio:decision:assign"[^>]*>\s*Assign meaning/u);
+    assert.doesNotMatch(html, /Assign selected meaning|Add new meaning|Select a definition|studio:decision:new/u);
+    s.decisionInput = { meaning: "b" };
+    html = renderGlossaryResearchStudio(state);
+    assert(html.includes('value="b" selected>2. Sensory receptivity'));
+    assert(!html.includes('data-studio-decision="definition"'), "the new-meaning box shows only for a new meaning");
+    s.decisionInput = {}; s.pendingDecision.recommendation.definition = "  perceptible ";
+    assert(renderGlossaryResearchStudio(state).includes('value="a" selected>1. Perceptible'), "the AI repeated an existing meaning");
   } finally { state.glossaryResearchStudio = previous; }
 });
 
