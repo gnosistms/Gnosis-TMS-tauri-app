@@ -242,9 +242,9 @@ function stepContent(s, state) {
         ${reviewing ? `${button("Add spelling or form", "add-form")}${s.forms.some((f) => !Number.isInteger(f.paragraphCount)) ? button("Recheck corpus evidence", "recheck-forms") : ""}` : ""}`;
     }
     case "2b": return !s.relatedEntries.length ? "<p>No related existing entries found.</p>" : `
-      <p>These entries may describe the same word or its forms.</p>${s.relatedEntries.map(entrySummary).join("")}
-      <label class="field"><span class="field__label">How would you like to proceed?</span><select class="field__input" data-studio-branch="true">
-      ${[["separate", "Research as a separate term"], ["research", "Re-research including existing forms and translations"], ["merge", "Merge source forms into existing entries and finish"]].map(([id, label]) => `<option value="${id}" ${view.branch === id ? "selected" : ""}>${label}</option>`).join("")}</select></label>
+      <p>The glossary entries below look like the same or similar to the one you are researching.</p>${s.relatedEntries.map(entrySummary).join("")}
+      <label class="field"><span class="field__label">What do you want to do about this?</span><select class="field__input" data-studio-branch="true">
+      ${[["separate", `Research ${s.scope.term} without looking at the existing glossary entries.`], ["research", `Research ${s.scope.term} taking the existing entries into account.`], ["merge", `Merge ${s.scope.term} into the list of source variants for one of the existing entries.`]].map(([id, label]) => `<option value="${id}" ${view.branch === id ? "selected" : ""}>${e(label)}</option>`).join("")}</select></label>
       ${view.branch === "merge" ? selectedForms(s).map((form) => `<label class="field"><span class="field__label">Add ${e(form)} to</span><select class="field__input" data-studio-merge="${e(form)}"><option value="">Select an entry</option>${s.relatedEntries.map((entry) => `<option value="${e(entry.termId)}" ${view.mergeDestinations[form] === entry.termId ? "selected" : ""}>${e(entry.sourceTerms.join(", "))}</option>`).join("")}</select></label>`).join("") : ""}`;
     case "3": return `<p>${s.passages.length} research paragraphs from ${s.populationCount ?? s.population?.length ?? 0} distinct matching paragraphs.</p>
       <details class="studio-entry"><summary>Review sample (${s.passages.length} paragraphs)</summary>${s.passages.map((p) => paragraph(p, s)).join("")}</details>`;

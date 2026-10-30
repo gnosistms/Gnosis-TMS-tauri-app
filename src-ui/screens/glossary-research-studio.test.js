@@ -111,6 +111,24 @@ test("an unfinished lookup does not claim there are no matching entries", () => 
   } finally { state.glossaryResearchStudio = previous; }
 });
 
+test("related entries ask what to do about the research term", () => {
+  const previous = state.glossaryResearchStudio;
+  try {
+    const study = newStudioStudy({ sourceLanguage: { code: "es", name: "Spanish" },
+      targetLanguage: { code: "en", name: "English" }, term: "<b>Mundo</b>" }, "related");
+    study.step = "2b";
+    study.relatedEntries = [{ termId: "t", sourceTerms: ["mundo"], targetTerms: ["world"], notesToTranslators: "" }];
+    state.glossaryResearchStudio = { study, busy: false, branch: "separate", mergeDestinations: {} };
+    const html = renderGlossaryResearchStudio(state);
+    assert(html.includes("The glossary entries below look like the same or similar to the one you are researching."));
+    assert(html.includes("What do you want to do about this?"));
+    assert(html.includes("Research &lt;b&gt;Mundo&lt;/b&gt; without looking at the existing glossary entries."));
+    assert(html.includes("Research &lt;b&gt;Mundo&lt;/b&gt; taking the existing entries into account."));
+    assert(html.includes("Merge &lt;b&gt;Mundo&lt;/b&gt; into the list of source variants for one of the existing entries."));
+    assert(!html.includes("<b>Mundo</b>"));
+  } finally { state.glossaryResearchStudio = previous; }
+});
+
 test("optional dictionary research explains the action and cannot continue before a result", () => {
   const previous = state.glossaryResearchStudio;
   try {
