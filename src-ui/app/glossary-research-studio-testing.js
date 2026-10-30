@@ -200,6 +200,14 @@ async function progressDecision(s, tools, meaning, rounds, trial) {
   return false;
 }
 
+// The answer is only an ID, so name the candidates in the work list instead.
+export function studioInitialSelectionSummary(candidates) {
+  const texts = (list) => [...new Set(list.map((c) => c.text))];
+  const selected = texts(candidates.filter((c) => c.confirmed));
+  const others = texts(candidates.filter((c) => !c.confirmed)).filter((text) => !selected.includes(text));
+  return [`Selected: ${selected.join("; ")}`, ...(others.length ? [`Other candidates: ${others.join("; ")}`] : [])].join("\n");
+}
+
 export async function testMeanings(s, tools) {
   const meanings = activeMeanings(s);
   tools.planActivity?.(meanings.map((meaning) => ({ id: meaning.id,
@@ -216,11 +224,13 @@ export async function testMeanings(s, tools) {
     let candidates = s.candidates.filter((c) => c.selected !== false && c.meaningIds.includes(meaning.id));
     if (!candidates.length) throw new Error("This meaning needs at least one translation candidate. Go Back to step 6.");
     if (!candidates.some((c) => c.confirmed)) {
+      const purpose = `${label} · selecting an initial candidate`;
       const result = await meaningTools.ask("Select one initial candidate word/group best suited to this definition. Inflections of the same word may be selected together. Return an existing group ID or candidate ID.",
-        { meaning: decisionMeaning(meaning), candidates: decisionCandidates(candidates), generalNote: s.generalNote ?? "" }, '{"candidateId":"existing ID"}', `${label} · selecting an initial candidate`);
+        { meaning: decisionMeaning(meaning), candidates: decisionCandidates(candidates), generalNote: s.generalNote ?? "" }, '{"candidateId":"existing ID"}', purpose);
       const initial = candidates.find((c) => c.id === result.candidateId || c.groupId === result.candidateId);
       if (!initial) throw new Error("Initial selection returned an unknown candidate.");
       for (const c of candidates) if (c.id === initial.id || (initial.groupId && c.groupId === initial.groupId)) c.confirmed = true;
+      branch(meaningTools, `operation:${purpose}`).finishActivity?.(studioInitialSelectionSummary(candidates));
     }
     while (true) {
       candidates = s.candidates.filter((c) => c.confirmed && c.selected !== false && c.meaningIds.includes(meaning.id));

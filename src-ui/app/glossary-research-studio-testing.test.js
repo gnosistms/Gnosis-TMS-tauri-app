@@ -198,6 +198,23 @@ test("steps 8 and 9 translate with matching saved entries and skip occurrences a
   assert.deepEqual(payload.glossaryHints.map((h) => h.sourceTerm).sort(), ["antítesis", "batallar de las antítesis"]);
 });
 
+test("the initial candidate selection lists the selected and other candidates in the work list", async () => {
+  const s = fixture();
+  s.candidates = [
+    { id: "a", text: "walk", groupId: "g", meaningIds: ["m"], selected: true, retained: true, confirmed: false },
+    { id: "b", text: "walks", groupId: "g", meaningIds: ["m"], selected: true, retained: true, confirmed: false },
+    { id: "c", text: "stroll", meaningIds: ["m"], selected: true, retained: true, confirmed: false },
+  ];
+  const finished = [];
+  const scoped = (path) => ({ run: translations, forActivity: (id) => scoped([...path, id]),
+    finishActivity: (summary) => finished.push([path.join(" > "), summary]),
+    ask: async (question, data) => question.startsWith("Select one initial candidate") ? { candidateId: "g" }
+      : { choices: data.assignments.map((a) => ({ ...a, candidateId: "a", rendered: "walk", problem: "" })) } });
+  await testMeanings(s, scoped([]));
+  assert.deepEqual(finished.find(([path]) => path.includes("selecting an initial candidate")),
+    ["m > operation:Meaning 1 · 1 of 1 active meaning · selecting an initial candidate", "Selected: walk; walks\nOther candidates: stroll"]);
+});
+
 function splitFixture() {
   const s = fixture(); s.scope.targetLanguage = { code: "vi", name: "Vietnamese" };
   s.candidates = [{ id: "c", text: "sự giằng co giữa các mặt đối lập", meaningIds: ["m"], selected: true, retained: true, confirmed: true }];
