@@ -2339,6 +2339,34 @@ test("Continue extends only the failed batches presented in a grouped three-roun
   expect(allowances).toEqual({ "9:15": 6, "9:30": 6 });
 });
 
+test("one meaning with one candidate word skips step 8 and tests the entry in step 9", async ({ page }) => {
+  await mountStudio(page);
+  await page.evaluate(async () => {
+    const { state } = await import(`/${"app"}/state.js`);
+    const { newStudioStudy, deduplicatePassages } = await import(`/${"app"}/glossary-research-studio-workflow.js`);
+    const { renderGlossaryResearchStudio } = await import(`/${"screens"}/glossary-research-studio.js`);
+    const s = newStudioStudy({ ...state.glossaryEditor, teamId: "team", installationId: 7, term: "walk", corpus: "projects" }, "single-word");
+    s.step = "7"; s.forms = [{ text: "walk" }]; s.meanings = [{ id: "m1", definition: "Move on foot" }];
+    s.passages = deduplicatePassages([{ id: "p1", text: "I walk home." }, { id: "p2", text: "We walk far." }], ["walk"], "en");
+    s.assignments = s.passages.map((p) => ({ paragraphId: p.id, occurrenceId: "o0", meaningId: "m1", entryId: "original" }));
+    s.candidates = [{ id: "c1", text: "đi bộ", note: "", meaningIds: ["m1"], groupId: "g1", selected: true, retained: true }];
+    s.steps["7"] = { value: { decisions: [] } };
+    state.glossaryResearchStudio.study = s;
+    document.querySelector("#app").innerHTML = renderGlossaryResearchStudio(state);
+  });
+  await page.getByRole("button", { name: "Save and continue", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "9 · Test complete entry", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Save and continue", exact: true })).toBeEnabled();
+  const result = await page.evaluate(async () => {
+    const { state } = await import(`/${"app"}/state.js`); const s = state.glossaryResearchStudio.study;
+    const calls = window.studioCalls.filter((c) => c.command === "start_glossary_studio_tool");
+    return { step8: s.steps["8"].status, confirmed: s.candidates[0].confirmed, meaningTests: Object.keys(s.tests).filter((key) => key.startsWith("8:")).length,
+      initialPicks: calls.filter((c) => c.args.input.payload.prompt?.includes("Select one initial")).length,
+      translations: calls.filter((c) => c.args.input.kind === "translate").length, entryPassed: s.tests["9:0"].passed };
+  });
+  expect(result).toEqual({ step8: "skipped", confirmed: true, meaningTests: 0, initialPicks: 0, translations: 1, entryPassed: true });
+});
+
 // The paused study with saved trials: batch 1 passed; batches 2 and 3 each fail one occurrence.
 async function mountReviewedEntryStudy(page) {
   await mountEntryPassStudy(page, true);

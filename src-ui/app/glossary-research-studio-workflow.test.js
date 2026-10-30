@@ -6,7 +6,7 @@ import { newStudioStudy, exactOccurrences, deduplicatePassages, researchSample,
   approveStep, stepIsReusable, validateAssignments, routeSplits, finalUsage,
   stableSignature, buildStudioDraft, collisionChanges, uniqueSourceTexts, deduplicateSourceForms,
   selectedForms, sourceCollisions, reviseAssignment, entryBatchSignature, applySplitReview, studioContextRequest, applyStudioContext, studioStepStatusLabel,
-  entryTrialsAreCurrent, reviewStudioFinding, applyStudioReviewOverrides, studioReviewOverride, applyStudioEntryEdit } from "./glossary-research-studio-workflow.js";
+  entryTrialsAreCurrent, reviewStudioFinding, applyStudioReviewOverrides, studioReviewOverride, applyStudioEntryEdit, studioSingleWordCandidates } from "./glossary-research-studio-workflow.js";
 
 const scope = { sourceLanguage: { code: "es" }, targetLanguage: { code: "en" } };
 
@@ -477,4 +477,18 @@ test("term editor changes keep every meaning translated and leave the study unch
   assert.throws(() => applyStudioEntryEdit(s, { targetTerms: ["antithesis"], targetVariantNotes: ["Logic."] }, "m1"), /Meaning 2 would have no translation/);
   assert.throws(() => applyStudioEntryEdit(s, { targetTerms: ["antithesis", ""], targetVariantNotes: [] }, "m1"), /empty translation/);
   assert.deepEqual([s.candidates, s.generalNote], [before, "General."]);
+});
+
+test("step 8 has nothing to choose only with one meaning and one candidate word", () => {
+  const s = newStudioStudy(scope, "single-word");
+  s.meanings = [{ id: "m" }, { id: "off", enabled: false }];
+  s.candidates = [{ id: "a", text: "walk", meaningIds: ["m"] }, { id: "x", text: "go", meaningIds: ["off"] }];
+  assert.deepEqual(studioSingleWordCandidates(s).map((c) => c.id), ["a"]);
+  s.candidates = [{ id: "a", text: "walk", groupId: "g", meaningIds: ["m"] }, { id: "b", text: "walked", groupId: "g", meaningIds: ["m"] },
+    { id: "c", text: "stroll", selected: false, meaningIds: ["m"] }];
+  assert.deepEqual(studioSingleWordCandidates(s).map((c) => c.id), ["a", "b"], "inflections of one word, ignoring an unselected word");
+  s.candidates.push({ id: "d", text: "stride", meaningIds: ["m"] });
+  assert.equal(studioSingleWordCandidates(s), null, "two words leave a choice");
+  s.candidates = [{ id: "a", text: "walk", meaningIds: ["m", "n"] }]; s.meanings.push({ id: "n" });
+  assert.equal(studioSingleWordCandidates(s), null, "two meanings are tested separately");
 });

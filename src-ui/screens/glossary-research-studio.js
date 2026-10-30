@@ -187,7 +187,8 @@ function testingReport(s, view, phase = s.step) {
         ${field(`Usage note for ${text}`, `candidates.${index}.note`, draft.targetVariantNotes[rank], { textarea: true, sharedNote: text, rows: 6, disabled: view.busy })}
         ${rank ? `<div class="studio-actions">${button("Prefer first", `candidate-first:${index}`, { disabled: view.busy })}${button("Prefer earlier", `candidate-up:${index}`, { disabled: view.busy })}</div>` : ""}</section>`;
     }).join("")}</details>`;
-  return `<p>${phase === "8" ? "Testing candidates separately for each meaning." : "Testing the complete entry without telling the translator which meaning applies."}</p>
+  const skipped = phase === "8" && s.steps["8"]?.status === "skipped" && (s.steps["8"].approved?.reason ?? s.steps["8"].value?.reason);
+  return `${skipped ? `<p>Skipped. ${e(skipped)}</p>` : ""}<p>${phase === "8" ? "Testing candidates separately for each meaning." : "Testing the complete entry without telling the translator which meaning applies."}</p>
     <p>This entry: ${quantity(assignments.length, "occurrence")} in ${quantity(paragraphCount, "paragraph")}. Full research sample: ${quantity(s.passages.length, "paragraph")}${recovered ? `, including ${quantity(recovered, "recovered example")}` : ""}.</p>${sourceSpellingNotice(assignments)}
     ${phase === "9" ? `<p>Each validation pass uses one unchanged entry across all batches. Findings are combined before shared notes or preferences are repaired.${s.entryValidation ? ` Current pass: ${s.entryValidation.pass}.` : ""}</p>` : ""}
     ${splitCount ? `<p>${quantity(splitCount, "occurrence")} will be tested separately with the queued split entries.</p>` : ""}${preview}

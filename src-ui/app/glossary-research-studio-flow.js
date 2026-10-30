@@ -19,7 +19,7 @@ import { testMeanings, testCompleteEntry } from "./glossary-research-studio-test
 import { reviewCompoundReport, STUDIO_STEPS, STUDIO_DICTIONARY_REVIEW_VERSION, STUDIO_DEFAULT_BRANCH, newStudioStudy, uniqueTexts, selectedForms, activeMeanings,
   approveStep, stableSignature, stepSignature, stepSignatureMatches, stepIsReusable, buildStudioDraft, finalUsage, studioDependentSteps, clearStudioDependents, startStudioReResearch,
   collisionChanges, sourceCollisions, temporaryGlossaryTerms, uniqueSourceTexts, deduplicateSourceForms, applySplitReview, preferCandidate, reviseAssignment, studioContextRequest, applyStudioContext, entryTrialsAreCurrent, meaningTrialsAreCurrent, studioStepNumber,
-  meaningNumber, reviewStudioFinding, applyStudioEntryEdit } from "./glossary-research-studio-workflow.js";
+  meaningNumber, reviewStudioFinding, applyStudioEntryEdit, studioSingleWordCandidates } from "./glossary-research-studio-workflow.js";
 import { requestGlossaryTermWriteIntent, glossaryTermWriteScope, clearFailedGlossaryTermWrite } from "./glossary-term-write-coordinator.js";
 import { requireBrokerSession } from "./auth-flow.js";
 import { glossaryRepoDescriptor, syncSingleGlossaryForTeam, getGlossarySyncIssueMessage } from "./glossary-repo-flow.js";
@@ -449,6 +449,8 @@ async function abandonRecommendation() {
   view.busy = false; view.message = "";
 }
 
+const STUDIO_SINGLE_WORD_SKIP = "There is one meaning and one candidate translation, so there is nothing to choose between. Step 9 tests that translation in the complete entry.";
+
 async function moveTo(s, step) {
   const generation = operationGeneration;
   const isCurrent = () => contextMatches(s) && generation === operationGeneration && state.screen === "glossaryResearchStudio";
@@ -483,6 +485,13 @@ async function moveTo(s, step) {
     const value = { skipped: true, reason: "Available for Samael Aun Weor only" };
     s.steps[step] = { value }; await approveStep(s, step, value); await persist(s);
     if (isCurrent()) await moveTo(s, "4.4.2");
+  } else if (step === "8" && studioSingleWordCandidates(s)) {
+    for (const candidate of studioSingleWordCandidates(s)) candidate.confirmed = true;
+    s.assignmentReviewPending = false;
+    const value = { skipped: true, reason: STUDIO_SINGLE_WORD_SKIP };
+    s.steps[step] = { ...s.steps[step], value };
+    await approveStep(s, step, value); await persist(s);
+    if (isCurrent()) await moveTo(s, "9");
   } else if (step === "4.4.4" && sourceSummaryMustBeSkipped(s)) {
     const value = { skipped: true, reason: "Both source branches were skipped" };
     s.steps[step] = { ...s.steps[step], value };

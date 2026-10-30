@@ -211,6 +211,19 @@ test("a stuck selection offers human review or three more AI rounds; progress qu
   } finally { state.glossaryResearchStudio = previous; }
 });
 
+test("a skipped step 8 says why it was skipped", () => {
+  const previous = state.glossaryResearchStudio;
+  try {
+    const study = newStudioStudy({ sourceLanguage: { code: "es", name: "Spanish" }, targetLanguage: { code: "en", name: "English" }, term: "gloria" }, "skipped-8");
+    study.step = "8";
+    study.steps["8"] = { status: "skipped", approved: { skipped: true, reason: "There is one meaning and one candidate translation." } };
+    state.glossaryResearchStudio = { study, history: [], busy: false };
+    assert(renderGlossaryResearchStudio(state).includes("<p>Skipped. There is one meaning and one candidate translation.</p>"));
+    study.steps["8"] = { status: "complete", approved: {} };
+    assert(!renderGlossaryResearchStudio(state).includes("Skipped."));
+  } finally { state.glossaryResearchStudio = previous; }
+});
+
 test("completed validation batches fold their test details while running batches stay open", () => {
   const previous = state.glossaryResearchStudio;
   try {

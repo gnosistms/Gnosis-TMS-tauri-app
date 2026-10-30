@@ -311,6 +311,16 @@ export function meaningTrialSignature(study, meaningId, assignments = focusedSam
     translationContractVersion: STUDIO_TRANSLATION_CONTRACT_VERSION });
 }
 
+// Step 8 chooses which candidates to confirm for each meaning. With one meaning and
+// one candidate word (its inflections share a group) there is nothing to choose, and
+// step 9 tests that word in the complete entry.
+export function studioSingleWordCandidates(study) {
+  const meanings = activeMeanings(study);
+  if (meanings.length !== 1) return null;
+  const candidates = study.candidates.filter((c) => c.selected !== false && c.meaningIds.includes(meanings[0].id));
+  return candidates.length && new Set(candidates.map((c) => c.groupId || c.text)).size === 1 ? candidates : null;
+}
+
 export function meaningTrialsAreCurrent(study) {
   const meanings = activeMeanings(study);
   return meanings.length > 0 && meanings.every((meaning) => {
