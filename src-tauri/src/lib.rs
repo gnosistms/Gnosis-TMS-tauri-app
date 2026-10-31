@@ -123,8 +123,8 @@ use crate::{
         export_gtms_chapter_file, extract_project_translation_text, find_gtms_editor_image_reuse,
         forget_gtms_pdf_font_approval, get_gtms_project_transfer_status, import_docx_to_gtms,
         import_html_to_gtms, import_project_book_image, import_project_files_to_gtms,
-        import_srt_to_gtms, import_txt_to_gtms, import_xlsx_to_gtms, initialize_gtms_project_repo,
-        insert_gtms_editor_row_after, insert_gtms_editor_row_before,
+        import_srt_to_gtms, import_txt_to_gtms, import_xlsx_to_gtms, initialize_export_image_cache,
+        initialize_gtms_project_repo, insert_gtms_editor_row_after, insert_gtms_editor_row_before,
         inspect_gtms_chapter_pdf_fonts, list_gtms_project_transfer_statuses,
         list_local_gtms_project_files, load_gtms_chapter_editor_data,
         load_gtms_editor_changed_after_my_edit, load_gtms_editor_field_history,
@@ -846,6 +846,7 @@ pub fn run() {
             let menu = build_app_menu(app.handle())?;
             let _ = app.set_menu(menu)?;
             initialize_git_runtime(app.handle());
+            initialize_export_image_cache(app.handle());
 
             #[cfg(target_os = "macos")]
             for label in ["main"] {
