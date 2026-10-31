@@ -40,9 +40,21 @@ test("every studio stage renders through the page shell for a non-Spanish source
       assert.doesNotMatch(html, /Research comparison|Rerun this step for comparison|studio:compare-run/, step.id);
       if (step.id === "2a") assert.doesNotMatch(html, /data-action="studio:recommend"/);
       assert(!html.includes("[object Object]"), step.id);
+      assert.match(html, /<p class="studio-step-description">[^<]+<\/p><\/header>/, step.id);
     }
     study.step = "1";
     assert(!renderGlossaryResearchStudio(state).includes('<option value="samael"'));
+  } finally { state.glossaryResearchStudio = previous; }
+});
+
+test("the step description escapes the research term", () => {
+  const previous = state.glossaryResearchStudio;
+  try {
+    const study = newStudioStudy({ sourceLanguage: { code: "es", name: "Spanish" },
+      targetLanguage: { code: "vi", name: "Vietnamese" }, term: "<b>perverso</b>" }, "description");
+    study.step = "4.6"; study.passages = [{ id: "p", text: "Un yo perverso", references: [] }];
+    state.glossaryResearchStudio = { study, history: [] };
+    assert(renderGlossaryResearchStudio(state).includes('<p class="studio-step-description">In a sample of 1 paragraph from the complete works of Samael Aun Weor, identify which meaning of &lt;b&gt;perverso&lt;/b&gt; is used.</p>'));
   } finally { state.glossaryResearchStudio = previous; }
 });
 
@@ -997,5 +1009,31 @@ test("an unanswered recommendation shows the countdown to the AI's choice, which
     assert(!html.includes("data-studio-auto-choice"), "answered advice no longer counts down");
     delete view.autoChoiceAnswered; view.revisiting = true;
     assert(!renderGlossaryResearchStudio(state).includes("data-studio-auto-choice"), "revisited steps wait for the translator");
+  } finally { state.glossaryResearchStudio = previous; }
+});
+
+test("a translation that fits no meaning shows the suggested meanings with their matching search results", () => {
+  const previous = state.glossaryResearchStudio;
+  try {
+    const study = newStudioStudy({ sourceLanguage: { code: "es", name: "Spanish" },
+      targetLanguage: { code: "vi", name: "Vietnamese" }, term: "perverso" }, "missing-meaning");
+    study.step = "6"; study.meanings = [{ id: "m1", definition: "Suy đồi" }];
+    study.passages = [{ id: "p", text: "Un yo perverso", occurrences: [{ id: "o0", start: 6, end: 14 }], references: [] }];
+    const outside = { id: "q", text: "Muy perverso y terco", occurrences: [{ id: "o0", start: 4, end: 12 }], references: [] };
+    study.pendingDecision = { kind: "missing-meaning", translations: ["cố chấp", "<b>x</b>"], searched: 150,
+      suggestions: [{ id: "s1", definition: "Ngoan cố trong điều sai", grammar: "", translations: ["cố chấp"], matches: [{ paragraphId: "p", occurrenceId: "o0" }, { paragraphId: "q", occurrenceId: "o0" }] },
+        { id: "s2", definition: "Unattested", grammar: "", translations: [], matches: [] }],
+      rejected: [{ translation: "<b>x</b>", reason: "Loose equivalent" }], paragraphs: [outside] };
+    state.glossaryResearchStudio = { study, history: [] };
+    const html = renderGlossaryResearchStudio(state);
+    assert(html.includes("<h2 id=\"studio-question\">Add a missing meaning?</h2>"));
+    assert(html.includes("“cố chấp”, “&lt;b&gt;x&lt;/b&gt;” fit none of the meanings of perverso."));
+    assert.match(html, /data-studio-decision="add:s1" checked>/); assert.match(html, /data-studio-decision="add:s2" >/);
+    assert(html.includes(">Ngoan cố trong điều sai</textarea>"));
+    assert(html.includes("<h3>2 matching search results</h3>"));
+    assert(html.includes("Un yo <mark") && html.includes("Muy <mark"), "sample and further search results are both shown");
+    assert(html.includes("No matching search results in the 150 paragraphs checked."));
+    assert(html.includes("Loose equivalent"));
+    assert(html.includes('data-action="studio:decision:skip"') && html.includes('data-action="studio:decision:add"'));
   } finally { state.glossaryResearchStudio = previous; }
 });

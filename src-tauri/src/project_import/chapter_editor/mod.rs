@@ -48,6 +48,7 @@ mod changed_after_my_edit;
 mod chapter_export;
 mod chapter_selection;
 mod epub_export;
+mod export_image_cache;
 mod git_conflicts;
 mod history;
 mod image_reuse;
@@ -90,6 +91,7 @@ pub(crate) use self::chapter_selection::{
     update_gtms_chapter_glossary_links_sync, update_gtms_chapter_language_selection_sync,
     update_gtms_chapter_languages_sync, update_gtms_chapter_workflow_status_sync,
 };
+pub(crate) use self::export_image_cache::initialize_export_image_cache;
 pub(crate) use self::git_conflicts::{
     clear_imported_editor_conflict_entry, list_imported_editor_conflict_refs,
     persist_imported_editor_conflict_entries, repo_has_imported_editor_conflicts,
