@@ -119,7 +119,7 @@ export function clearStudioDependents(study, step) {
   reset("4.6", { assignments: [], displayTranslations: {}, recoveryScanned: [], recoveryConsidered: 0,
     recoveryUnconfirmed: [], recoveryProfiles: null, excludedParagraphIds: [], contextIncludedIds: [], expandedContextIds: [] });
   reset("4.7", { splitProposals: [], queue: [] });
-  reset("6", { candidates: [], generalNote: "", footnote: "" });
+  reset("6", { candidates: [], generalNote: "", footnote: "", missingMeaningReview: null });
   for (const phase of ["8", "9"]) if (later.has(phase)) {
     for (const key of ["tests", "rounds", "reports", "retryAllowances"]) {
       study[key] = Object.fromEntries(Object.entries(study[key] ?? {}).filter(([id]) => !id.startsWith(`${phase}:`)));

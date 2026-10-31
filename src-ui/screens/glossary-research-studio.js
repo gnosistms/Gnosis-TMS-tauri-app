@@ -402,6 +402,28 @@ function modal(s, view) {
       <label class="field"><span class="field__label">Meaning</span><select class="field__input" data-studio-decision="meaning">${s.meanings.filter((m) => m.enabled !== false).map((m) => `<option value="${e(m.id)}" ${choice === m.id ? "selected" : ""}>${meaningNumber(s, m.id)}. ${narrative(m.definition)}</option>`).join("")}<option value="${STUDIO_NEW_MEANING}" ${choice === STUDIO_NEW_MEANING ? "selected" : ""}>Enter new meaning below</option></select></label>
       ${choice === STUDIO_NEW_MEANING ? `<label class="field"><span class="field__label">New meaning</span><textarea class="field__textarea" data-studio-decision="definition">${e(s.decisionInput?.definition ?? decision.recommendation.definition)}</textarea></label>` : ""}`;
     actions = button("Drop this paragraph", "decision:drop") + primaryButton("Assign meaning", "studio:decision:assign");
+  } else if (decision?.kind === "missing-meaning") {
+    const input = s.decisionInput ?? {};
+    const quoted = (texts) => texts.map((text) => `“${e(text)}”`).join(", ");
+    const paragraphs = new Map([...(decision.paragraphs ?? []), ...s.passages].map((p) => [p.id, p]));
+    const suggestions = decision.suggestions;
+    title = suggestions.length ? "Add a missing meaning?" : "Translations that fit no meaning";
+    body = `<p>${quoted(decision.translations)} ${decision.translations.length === 1 ? "fits" : "fit"} none of the meanings of ${e(s.scope.term)}. ${suggestions.length
+        ? `The AI suggests ${suggestions.length === 1 ? "this meaning" : "these meanings"}. Adding a meaning runs step 4.6 Assign meanings and the steps after it again.`
+        : "The AI suggests no meaning to add."} Translations whose meaning you don't add are left out.</p>
+      ${suggestions.map((m) => {
+        const groups = [...new Set(m.matches.map((a) => a.paragraphId))].map((id) => ({ p: paragraphs.get(id), ids: m.matches.filter((a) => a.paragraphId === id).map((a) => a.occurrenceId) })).filter(({ p }) => p);
+        return `<section class="studio-entry studio-suggested-meaning">
+          <label class="field__checkbox studio-check"><input type="checkbox" data-studio-decision="add:${e(m.id)}" ${input[`add:${m.id}`] ?? m.matches.length > 0 ? "checked" : ""}>Add this meaning</label>
+          <label class="field"><span class="field__label">Meaning</span><textarea class="field__textarea" rows="3" data-studio-decision="definition:${e(m.id)}">${e(input[`definition:${m.id}`] ?? m.definition)}</textarea></label>
+          ${m.translations.length ? `<p>Suggested by ${quoted(m.translations)}.</p>` : ""}
+          ${m.matches.length ? `<h3>${quantity(m.matches.length, "matching search result")}${m.matches.length >= 15 ? " (the search stops at 15)" : ""}</h3>
+            ${groups.map(({ p, ids }) => paragraph({ ...p, highlightOccurrences: p.occurrences.filter((o) => ids.includes(o.id)) }, s)).join("")}`
+            : `<p>No matching search results in the ${quantity(decision.searched, "paragraph")} checked.</p>`}
+        </section>`;
+      }).join("")}
+      ${decision.rejected.length ? `<section class="studio-entry"><h3>Not suggested as meanings</h3><ul>${decision.rejected.map((r) => `<li>${quoted([r.translation])}${r.reason ? ` · ${narrative(r.reason)}` : ""}</li>`).join("")}</ul></section>` : ""}`;
+    actions = button("Continue without adding", "decision:skip") + (suggestions.length ? primaryButton("Add selected meanings", "studio:decision:add") : "");
   } else if (decision?.kind === "needs-form") {
     title = "A translation needs confirming";
     const offers = decision.offers ?? [];

@@ -767,11 +767,20 @@ export async function runResearchStage(s, tools, entries) {
         '{"candidates":[{"id":"c1","text":"target form","meaningIds":["m1"],"groupId":"g1","note":"brief target-language selection rule, or empty","explanation":"report-only evidence and translation rationale","longNoteReason":"specific meaningful error prevented by exceptional length, or empty"}],"generalNote":"essential nonduplicated shared rule, or empty","generalNoteReason":"report-only justification if a longer shared rule is essential","researchSummary":"report-only provenance, citations, decisions and uncertainty","footnote":"optional verified reader footnote"}');
       const ids = activeMeanings(s).map((m) => m.id);
       const research = usageNoteResearch(result, array(result.candidates, "Translation candidates"));
-      s.candidates = result.candidates.map(({ explanation: _explanation, longNoteReason: _longNoteReason, ...c }, i) => {
-        if (!c.text?.trim() || !c.meaningIds?.length || c.meaningIds.some((id) => !ids.includes(id))) throw new Error("A candidate has missing or unknown meaning applicability.");
-        return { ...c, id: c.id || `candidate-${i}`, selected: true, confirmed: false, retained: true };
-      });
-      for (const old of s.carriedTargets) if (!s.candidates.some((c) => c.text === old.text)) s.candidates.push({ ...old, id: `carried-${s.candidates.length}`, meaningIds: ids, selected: true, confirmed: false, retained: true });
+      // Unknown meaning IDs are ignored. A translation left with no meaning
+      // is put to the researcher unless they already declined it.
+      const declined = new Set(s.missingMeaningReview?.declined ?? []);
+      const proposed = result.candidates.filter((c) => c.text?.trim() && !declined.has(c.text.trim()))
+        .map((c) => ({ ...c, meaningIds: (Array.isArray(c.meaningIds) ? c.meaningIds : []).filter((id) => ids.includes(id)) }));
+      const orphans = proposed.filter((c) => !c.meaningIds.length);
+      if (orphans.length) {
+        tools.planActivity?.([{ id: "missing", label: "Suggest meanings for translations that fit none" }]);
+        await suggestMissingMeanings(s, branch(tools, "missing"), orphans);
+        return { pending: true };
+      }
+      s.candidates = proposed.map(({ explanation: _explanation, longNoteReason: _longNoteReason, ...c }, i) =>
+        ({ ...c, id: c.id || `candidate-${i}`, selected: true, confirmed: false, retained: true }));
+      for (const old of s.carriedTargets) if (!s.candidates.some((c) => c.text === old.text) && !declined.has(old.text)) s.candidates.push({ ...old, id: `carried-${s.candidates.length}`, meaningIds: ids, selected: true, confirmed: false, retained: true });
       if (!s.generalNote?.trim() && typeof result.generalNote === "string") s.generalNote = result.generalNote;
       if (!s.footnote?.trim() && typeof result.footnote === "string") s.footnote = result.footnote;
       return { candidates: s.candidates, generalNote: s.generalNote ?? "", footnote: s.footnote ?? "", proposalSample: proposalView.samples, research };
@@ -802,6 +811,61 @@ export async function runResearchStage(s, tools, entries) {
     }
     default: return {};
   }
+}
+
+// Translations that fit no meaning can reveal a meaning the research missed.
+// The AI suggests the missing meanings, and up to 15 matching occurrences are
+// found for each: first in the research sample, then in further corpus paragraphs.
+const SUGGESTED_MEANING_MATCHES = 15;
+async function suggestMissingMeanings(s, tools, orphans) {
+  const meanings = decisionMeanings(activeMeanings(s));
+  const translations = orphans.map(({ text, note, explanation }) => ({ text: text.trim(), note: note ?? "", explanation: explanation ?? "" }));
+  const texts = translations.map((t) => t.text);
+  const reply = await tools.ask("Some proposed translations fit none of the existing meanings of the researched source term. Decide for each whether it reveals a genuine additional meaning of the source term that the existing meanings lack. Suggest the fewest additional meanings: combine translations that express the same meaning, and never repeat or merely narrow an existing meaning. Put a translation that fits no genuine meaning of the source term, such as a loose or mistaken equivalent, in rejected with a brief reason in the target language. For each suggested meaning, also give up to six short source-language context clues for finding paragraphs that use it, without the researched word itself or generic stop words." + definitionRule,
+    { term: s.scope.term, forms: selectedForms(s), meanings, translations },
+    '{"meanings":[{"definition":"concise target-language definition","grammar":"grammatical uses","translations":["supplied translation"],"clues":["source-language clue"]}],"rejected":[{"translation":"supplied translation","reason":"brief target-language reason"}]}',
+    "Suggesting meanings for translations that fit none");
+  const suggestions = array(reply.meanings, "Suggested meanings").filter((m) => String(m?.definition ?? "").trim()).map((m, i) => ({
+    id: `s${i + 1}`, definition: m.definition.trim(), grammar: typeof m.grammar === "string" ? m.grammar : "",
+    translations: uniqueTexts((Array.isArray(m.translations) ? m.translations : []).map(String)).filter((t) => texts.includes(t)),
+    clues: (Array.isArray(m.clues) ? m.clues : []).filter((c) => typeof c === "string").slice(0, 6), matches: [] }));
+  const suggested = new Set(suggestions.flatMap((m) => m.translations));
+  const reasons = new Map((Array.isArray(reply.rejected) ? reply.rejected : []).map((r) => [String(r?.translation ?? "").trim(), String(r?.reason ?? "")]));
+  const rejected = texts.filter((t) => !suggested.has(t)).map((translation) => ({ translation, reason: reasons.get(translation) ?? "" }));
+  const found = new Map(); let searched = 0;
+  const open = () => suggestions.filter((m) => m.matches.length < SUGGESTED_MEANING_MATCHES);
+  async function check(batch) {
+    const id = `batch-${searched}`; const label = `Check paragraphs ${searched + 1}–${searched + batch.length} for suggested meanings`;
+    tools.planActivity?.([{ id, label }]);
+    const work = branch(tools, id); const wanted = open();
+    const result = await work.ask("Check EACH supplied occurrence of the researched word. Return the occurrences where the word has one of the suggested meanings rather than one of the existing meanings. Compare with all definitions so a broad or merely related use is not matched. Return matches only for clearly supported occurrences, and an empty list when none fits.",
+      { meanings, suggestedMeanings: wanted.map(({ id, definition, grammar }) => ({ id, definition, grammar })), paragraphs: decisionParagraphs(batch, s) },
+      '{"matches":[{"meaningId":"suggested meaning ID","paragraphId":"supplied ID","occurrenceId":"supplied occurrence ID"}]}', label);
+    const seen = new Set(suggestions.flatMap((m) => m.matches.map((a) => `${a.paragraphId}:${a.occurrenceId}`)));
+    let added = 0;
+    for (const { meaningId, paragraphId, occurrenceId } of Array.isArray(result.matches) ? result.matches : []) {
+      const meaning = wanted.find((m) => m.id === meaningId); const paragraph = batch.find((p) => p.id === paragraphId);
+      const key = `${paragraphId}:${occurrenceId}`;
+      if (!meaning || meaning.matches.length >= SUGGESTED_MEANING_MATCHES || seen.has(key) || !paragraph?.occurrences.some((o) => o.id === occurrenceId)) continue;
+      seen.add(key); meaning.matches.push({ paragraphId, occurrenceId }); added++;
+      if (!s.passages.some((p) => p.id === paragraphId)) found.set(paragraphId, paragraph);
+    }
+    searched += batch.length;
+    work.finishActivity?.(`${batch.length} paragraphs checked; ${added} matching ${added === 1 ? "occurrence" : "occurrences"} found.`);
+    await tools.checkpoint?.(`Checked ${searched} paragraphs for suggested meanings`);
+  }
+  for (let offset = 0; open().length && offset < s.passages.length; offset += 50) await check(s.passages.slice(offset, offset + 50));
+  if (open().length) {
+    if (s.sampling?.version === 2) await prepareRecoveryPopulation(s, tools);
+    else await tools.evidence?.("population");
+    const sampled = new Set(s.passages.map((p) => p.id));
+    const pool = rankRecoveryParagraphs((s.population ?? []).filter((p) => !sampled.has(p.id)),
+      open().map((m) => ({ meaningId: m.id, clues: m.clues })), s.scope.seed).slice(0, 200);
+    for (let offset = 0; open().length && offset < pool.length; offset += 50) await check(pool.slice(offset, offset + 50));
+  }
+  tools.finishActivity?.(`${suggestions.length} ${suggestions.length === 1 ? "meaning" : "meanings"} suggested; ${searched} paragraphs checked.`);
+  s.pendingDecision = { kind: "missing-meaning", translations: texts, rejected, searched,
+    suggestions: suggestions.map(({ clues: _clues, ...m }) => m), paragraphs: [...found.values()] };
 }
 
 export async function assignMeanings(s, tools) {

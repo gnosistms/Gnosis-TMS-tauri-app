@@ -365,7 +365,8 @@ export async function runCurrentStage(fresh = false) {
       const record = s.steps[step];
       const matches = await stepSignatureMatches(s, step, record?.generatedSignature);
       if (!contextMatches(s) || generation !== operationGeneration || s.step !== step) return;
-      if (!fresh && matches && record.value && !s.pendingDecision
+      // A stored pending value waited on a decision, so the stage runs again.
+      if (!fresh && matches && record.value && !record.value.pending && !s.pendingDecision
         && !["4.6", "8", "9"].includes(step)) { hydrateResult(s, step, record.value); timing.finish("reused"); return; }
       if (["8", "9"].includes(step) && s.comparisonStartSignatures?.[step] !== signature) {
         if (s.comparisonStarts?.[step]) {
@@ -1052,6 +1053,26 @@ export async function resolveStudioDecision(action) {
       const a = s.assignments.find((a) => a.paragraphId === d.paragraphId && a.occurrenceId === d.occurrenceId);
       a.meaningId = id; a.humanChoice = true;
     }
+  } else if (d.kind === "missing-meaning") {
+    const input = s.decisionInput ?? {};
+    const chosen = d.suggestions.filter((m) => input[`add:${m.id}`] ?? m.matches.length > 0);
+    if (action === "add") {
+      if (!chosen.length) throw new Error("Select a meaning to add.");
+      const definitions = chosen.map((m) => String(input[`definition:${m.id}`] ?? m.definition).trim());
+      if (definitions.some((definition) => !definition)) throw new Error("Enter each meaning you add.");
+      chosen.forEach((m, i) => s.meanings.push({ id: `human-${s.meanings.length}`, definition: definitions[i], grammar: m.grammar, enabled: true }));
+      // Matches outside the sample join it, as 4.6 adds missing-meaning examples.
+      const sampled = new Set(s.passages.map((p) => p.id));
+      const witnesses = (d.paragraphs ?? []).filter((p) => !sampled.has(p.id) && chosen.some((m) => m.matches.some((a) => a.paragraphId === p.id)));
+      s.passages = [...s.passages, ...witnesses.map((p) => ({ ...p, recovered: true }))];
+      // A new meaning can change any assignment, so 4.6 and the steps after it run again.
+      clearStudioDependents(s, "4.5");
+      await approveStep(s, "4.5", { meanings: s.meanings.map(({ splitOff: _splitOff, unused: _unused, ...meaning }) => meaning) });
+      s.missingMeaningReview = { declined: d.translations.filter((text) => !chosen.some((m) => m.translations.includes(text))) };
+      s.status = "active"; studioView().hideDecision = false;
+      await persist(s); await moveTo(s, "4.6"); return;
+    }
+    s.missingMeaningReview = { declined: [...(s.missingMeaningReview?.declined ?? []), ...d.translations] };
   }
   s.pendingDecision = null; s.status = "active"; studioView().hideDecision = false;
   s.decisionInput = {}; await persist(s); await runCurrentStage();

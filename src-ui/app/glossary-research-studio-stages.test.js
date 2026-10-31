@@ -1119,3 +1119,45 @@ test("spelling identification uses unique forms, while verified changes apply to
   }, run: async () => ({ docs: [] }) }, []);
   assert.deepEqual(s.candidates.map((c) => c.text), ["Name", "Name"]); assert.equal(result.decisions.length, 1);
 });
+
+test("a translation that fits no meaning asks for a missing meaning and finds up to 15 matching search results", async () => {
+  const s = study(); s.step = "6";
+  s.passages = deduplicatePassages(Array.from({ length: 60 }, (_, i) => ({ id: `p${i}`, text: `marche ${i}` })), ["marche"], "fr");
+  s.population = deduplicatePassages(Array.from({ length: 100 }, (_, i) => ({ id: `q${i}`, text: `marche ${i}` })), ["marche"], "fr");
+  s.meanings = [{ id: "m1", definition: "Walk" }];
+  s.assignments = s.passages.map((p) => ({ paragraphId: p.id, occurrenceId: "o0", meaningId: "m1" }));
+  const checked = [];
+  const result = await runResearchStage(s, { evidence: async () => {}, ask: async (question, data) => {
+    if (question.startsWith("Some proposed translations")) {
+      assert.deepEqual(data.translations.map((t) => t.text), ["stubborn"]);
+      assert(question.includes("Do not frame a definition by who uses the word"));
+      return { meanings: [{ definition: "Obstinate", grammar: "adjective", translations: ["stubborn", "unknown"], clues: ["obstiné"] }], rejected: [] };
+    }
+    if (question.startsWith("Check EACH supplied occurrence")) {
+      checked.push(data.paragraphs.map((p) => p.id));
+      return { matches: [...data.paragraphs.filter((p) => Number(p.id.slice(1)) % 7 === 0).map((p) => ({ meaningId: "s1", paragraphId: p.id, occurrenceId: "o0" })),
+        { meaningId: "ghost", paragraphId: data.paragraphs[0].id, occurrenceId: "o0" }] };
+    }
+    return { candidates: [{ text: "walk", meaningIds: ["m1"] }, { text: "stubborn", meaningIds: [] }, { text: "stroll", meaningIds: ["m1", "ghost"] }] };
+  } }, []);
+  assert.deepEqual(result, { pending: true }); assert.deepEqual(s.candidates, []);
+  const d = s.pendingDecision;
+  assert.equal(d.kind, "missing-meaning"); assert.deepEqual(d.translations, ["stubborn"]); assert.deepEqual(d.rejected, []);
+  assert.deepEqual(d.suggestions.map(({ id, definition, translations }) => ({ id, definition, translations })), [{ id: "s1", definition: "Obstinate", translations: ["stubborn"] }]);
+  assert.equal(d.suggestions[0].matches.length, 15);
+  assert.equal(checked.length, 3, "two sample batches, then one batch beyond the sample");
+  assert(checked[2].every((id) => id.startsWith("q")));
+  assert.equal(d.paragraphs.length, 6); assert(d.paragraphs.every((p) => p.id.startsWith("q")));
+});
+
+test("declined translations, including carried ones, are left out and step 6 completes", async () => {
+  const s = study(); s.step = "6";
+  s.passages = deduplicatePassages([{ id: "p0", text: "marche" }], ["marche"], "fr");
+  s.meanings = [{ id: "m1", definition: "Walk" }];
+  s.assignments = [{ paragraphId: "p0", occurrenceId: "o0", meaningId: "m1" }];
+  s.missingMeaningReview = { declined: ["stubborn"] };
+  s.carriedTargets = [{ text: "stubborn", note: "", originTermId: "t" }, { text: "old", note: "", originTermId: "t" }];
+  const result = await runResearchStage(s, { ask: async () => ({ candidates: [{ text: "walk", meaningIds: ["m1"] }, { text: "stubborn", meaningIds: [] }, { text: "stroll", meaningIds: ["m1", "ghost"] }] }) }, []);
+  assert.equal(result.pending, undefined); assert.equal(s.pendingDecision, null);
+  assert.deepEqual(s.candidates.map((c) => [c.text, c.meaningIds]), [["walk", ["m1"]], ["stroll", ["m1"]], ["old", ["m1"]]]);
+});
