@@ -101,6 +101,8 @@
 
 .studio-step-header h2 { margin: 0; font-size: 1.25rem; letter-spacing: var(--heading-letter-spacing); }
 .studio-step-header p { margin: 0; font-size: .8125rem; color: var(--muted); }
+/* Full width, so it wraps onto its own line under the title. */
+.studio-step-header .studio-step-description { flex-basis: 100%; font-size: .9375rem; line-height: 1.5; color: var(--text); }
 
 .studio-content {
   flex: 1;

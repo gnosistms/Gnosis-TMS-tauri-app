@@ -40,9 +40,21 @@ test("every studio stage renders through the page shell for a non-Spanish source
       assert.doesNotMatch(html, /Research comparison|Rerun this step for comparison|studio:compare-run/, step.id);
       if (step.id === "2a") assert.doesNotMatch(html, /data-action="studio:recommend"/);
       assert(!html.includes("[object Object]"), step.id);
+      assert.match(html, /<p class="studio-step-description">[^<]+<\/p><\/header>/, step.id);
     }
     study.step = "1";
     assert(!renderGlossaryResearchStudio(state).includes('<option value="samael"'));
+  } finally { state.glossaryResearchStudio = previous; }
+});
+
+test("the step description escapes the research term", () => {
+  const previous = state.glossaryResearchStudio;
+  try {
+    const study = newStudioStudy({ sourceLanguage: { code: "es", name: "Spanish" },
+      targetLanguage: { code: "vi", name: "Vietnamese" }, term: "<b>perverso</b>" }, "description");
+    study.step = "4.6"; study.passages = [{ id: "p", text: "Un yo perverso", references: [] }];
+    state.glossaryResearchStudio = { study, history: [] };
+    assert(renderGlossaryResearchStudio(state).includes('<p class="studio-step-description">In a sample of 1 paragraph from the complete works of Samael Aun Weor, identify which meaning of &lt;b&gt;perverso&lt;/b&gt; is used.</p>'));
   } finally { state.glossaryResearchStudio = previous; }
 });
 

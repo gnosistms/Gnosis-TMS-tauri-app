@@ -6,6 +6,7 @@ import { studioView, studioCanVisitStep, STUDIO_NEW_MEANING, unmatchedMeaningCho
 import { STUDIO_STEPS, STUDIO_DICTIONARY_REVIEW_VERSION, activeMeanings, meaningNumber, studioTrialRoundLabel, sourceCollisions, selectedForms, uniqueTexts, witnessedSplitForms, reviewCompoundReport, buildStudioDraft, stableSignature, studioSourceContext, studioContextRequest, meaningTrialSignature, meaningTrialsAreCurrent, entryBatchSignature, entryTrialsAreCurrent, studioStepNumber, studioStepStatusLabel,
   currentStudioFinding, studioReviewOverride } from "../app/glossary-research-studio-workflow.js";
 import { studioGlossaryEntries } from "../app/glossary-research-studio-query.js";
+import { studioStepDescription } from "../app/glossary-research-studio-step-descriptions.js";
 import { studyAssignments } from "../app/glossary-research-studio-testing.js";
 import { currentStudioRecommendation, sourceSummaryMustBeSkipped, studioCanRecommendSkip, studioFormsResearchStarted, studioResearchStarted } from "../app/glossary-research-studio-recommendations.js";
 import { STUDIO_AUTO_CHOICE_MS, studioAutoChoiceCountdown, studioAutoChoiceText } from "../app/glossary-research-studio-auto-choice.js";
@@ -573,7 +574,7 @@ export function renderGlossaryResearchStudio(state) {
       const status = studioStepStatusLabel(s.steps[st.id]);
       return `<li ${st.id === s.step ? 'aria-current="step"' : ""}><button type="button" class="studio-step-link" data-action="studio:visit:${e(st.id)}" ${studioCanVisitStep(s, st.id) ? "" : "disabled"} ${st.id === s.step ? 'aria-current="step"' : ""}>${e(studioStepNumber(st.id))} · ${e(st.label)}${status ? status === "✓" ? " ✓" : ` · ${e(status)}` : ""}</button></li>`;
     }).join("")}</ol>${Object.values(s.steps).some((record) => record.status === "stale") ? "<p>Needs review: earlier inputs changed. Saved results remain available.</p>" : ""}</aside>
-      <section class="studio-main"><header class="studio-step-header"><h2>${e(studioStepNumber(step.id))} · ${e(step.label)}</h2><p>${e(s.scope.sourceLanguage.name)} → ${e(s.scope.targetLanguage.name)}</p></header>
+      <section class="studio-main"><header class="studio-step-header"><h2>${e(studioStepNumber(step.id))} · ${e(step.label)}</h2><p>${e(s.scope.sourceLanguage.name)} → ${e(s.scope.targetLanguage.name)}</p><p class="studio-step-description">${e(studioStepDescription(s, step.id))}</p></header>
       <div class="studio-content">
       ${["complete", "merged", "cancelled"].includes(s.status) ? `<p role="status">Study ${e(s.status)}. All research remains saved.</p>` : ""}
       ${s.step !== "2a" ? skipRecommendation(s, view) : ""}
