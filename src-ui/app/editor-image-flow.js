@@ -44,7 +44,9 @@ import { updateEditorChapterRow } from "./editor-state-flow.js";
 
 const IMAGE_FILE_ACCEPT =
   ".jpg,.jpeg,.png,.gif,.svg,.webp,.avif,.bmp,.ico,.apng,image/jpeg,image/png,image/gif,image/svg+xml,image/webp,image/avif,image/bmp,image/x-icon";
-const TRANSLATE_MAIN_BOTTOM_PIN_TOLERANCE_PX = 80;
+// Activating the last row opens its two-row editing toolbar, which alone adds
+// about 80px below the fold; the tolerance must still count that as the bottom.
+const TRANSLATE_MAIN_BOTTOM_PIN_TOLERANCE_PX = 120;
 export const EDITOR_IMAGE_CAPTION_ENRICHED_EVENT = "editor-image-caption-enriched";
 
 let editorImageCaptionListenerPromise = null;

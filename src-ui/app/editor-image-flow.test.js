@@ -232,8 +232,12 @@ function installEditorFixture() {
 
 // The reuse lookup (and the upload hash) settle on later event-loop turns, so
 // wait for the write command instead of counting microtasks.
-async function waitForInvoke(command) {
-  for (let turn = 0; turn < 50 && !invokeLog.some((entry) => entry.command === command); turn += 1) {
+// A fixed number of turns was too few on slow CI runners, where the file read
+// before the upload can take longer; wait by time and fail if it never comes.
+async function waitForInvoke(command, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!invokeLog.some((entry) => entry.command === command)) {
+    assert.ok(Date.now() < deadline, `${command} was not invoked within ${timeoutMs}ms`);
     await new Promise((resolve) => setImmediate(resolve));
   }
 }

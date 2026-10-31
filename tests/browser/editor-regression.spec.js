@@ -2696,7 +2696,7 @@ test.describe("editor regressions", () => {
     await expect(lastField).toBeVisible();
 
     const beforeMetrics = await readTranslateScrollMetrics(page);
-    expect(beforeMetrics.bottomGap).toBeLessThan(80);
+    expect(beforeMetrics.bottomGap).toBeLessThan(120);
 
     const uploadButton = page.locator(
       '[data-action="open-editor-image-upload"][data-row-id="fixture-row-0080"][data-language-code="vi"]',
@@ -2750,7 +2750,7 @@ test.describe("editor regressions", () => {
     await expect(lastField).toBeVisible();
 
     const beforeMetrics = await readTranslateScrollMetrics(page);
-    expect(beforeMetrics.bottomGap).toBeLessThan(80);
+    expect(beforeMetrics.bottomGap).toBeLessThan(120);
 
     await page.locator(
       '[data-action="open-editor-image-upload"][data-row-id="fixture-row-0080"][data-language-code="vi"]',
