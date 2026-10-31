@@ -386,21 +386,41 @@ test("revising source forms clears discovery outputs including skipped checkpoin
   assert.equal(s.steps["1"].status, "complete");
 });
 
-test("re-researching an exact existing entry reruns 2a once and then continues past 2b", () => {
+test("re-researching an existing entry whose forms 2a already listed continues past 2b without rerunning 2a", () => {
   const s = newStudioStudy({ ...scope, term: "mundo", forms: ["mundo"] }, "re-research");
-  const existing = { termId: "t", sourceTerms: ["mundo"], targetTerms: ["world"], targetVariantNotes: ["Usual"] };
+  // 2a discovered "mundos" and the researcher left it unchecked.
+  s.forms = [{ text: "mundo", selected: true }, { text: "mundos", selected: false }];
+  const existing = { termId: "t", sourceTerms: ["Mundo", "mundos"], targetTerms: ["world"], targetVariantNotes: ["Usual"] };
   s.step = "2b"; s.relatedEntries = [existing];
-  s.steps["2a"] = { status: "complete", approved: { forms: [] } };
+  const reviewed = { status: "complete", approved: { forms: s.forms } };
+  s.steps["2a"] = reviewed;
+  s.steps["2b"] = { status: "awaiting-review", value: { entries: [existing] } };
+  assert.equal(startStudioReResearch(s), false);
+  assert.equal(s.steps["2a"], reviewed);
+  assert.deepEqual(s.scope.forms, ["mundo"], "the scope stays unchanged so 2a is not marked stale");
+  assert.deepEqual(s.forms, [{ text: "mundo", selected: true }, { text: "mundos", selected: false }]);
+  assert.equal(s.branch, "research");
+  assert.deepEqual(s.carriedTargets, [{ text: "world", note: "Usual", originTermId: "t" }]);
+});
+
+test("re-researching an existing entry with a form 2a has not listed reruns 2a once and then continues past 2b", () => {
+  const s = newStudioStudy({ ...scope, term: "mundo", forms: ["mundo"] }, "re-research");
+  s.forms = [{ text: "mundo", selected: true }];
+  const existing = { termId: "t", sourceTerms: ["mundo", "mundial"], targetTerms: ["world"], targetVariantNotes: ["Usual"] };
+  s.step = "2b"; s.relatedEntries = [existing];
+  s.steps["2a"] = { status: "complete", approved: { forms: s.forms } };
   s.steps["2b"] = { status: "awaiting-review", value: { entries: [existing] } };
   assert.equal(startStudioReResearch(s), true);
   assert.deepEqual(studioDependentSteps(s, "2a"), [], "rerunning 2a must not offer a redo that resets this choice");
   assert.equal(s.steps["2a"], undefined);
-  assert.equal(s.branch, "research"); assert.equal(s.reResearchStarted, true);
+  assert.deepEqual(s.scope.forms, ["mundo", "mundial"]);
+  assert.equal(s.branch, "research");
   assert.deepEqual(s.carriedTargets, [{ text: "world", note: "Usual", originTermId: "t" }]);
   // 2a and 2b run again and find the same entry.
+  s.forms = [{ text: "mundo", selected: true }, { text: "mundial", selected: true }];
   s.step = "2b"; s.relatedEntries = [existing];
   assert.equal(startStudioReResearch(s), false);
-  assert.deepEqual(s.scope.forms, ["mundo"]);
+  assert.deepEqual(s.scope.forms, ["mundo", "mundial"]);
 });
 
 function reviewedStudy() {

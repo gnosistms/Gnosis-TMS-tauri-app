@@ -113,7 +113,7 @@ export function clearStudioDependents(study, step) {
   }
   const reset = (owner, values) => { if (later.has(owner)) Object.assign(study, values); };
   reset("2a", { forms: [], formDiscovery: null, origin: null });
-  reset("2b", { relatedEntries: [], carriedTargets: [], branch: STUDIO_DEFAULT_BRANCH, mergeDestinations: {}, reResearchStarted: false });
+  reset("2b", { relatedEntries: [], carriedTargets: [], branch: STUDIO_DEFAULT_BRANCH, mergeDestinations: {} });
   reset("3", { population: [], populationCount: null, populationFingerprint: null, passages: [], sampling: null });
   reset("4.5", { meanings: [] });
   reset("4.6", { assignments: [], displayTranslations: {}, recoveryScanned: [], recoveryConsidered: 0,
@@ -145,16 +145,23 @@ export function clearStudioDependents(study, step) {
   if (study.steps[step]) study.steps[step].status = "awaiting-review";
 }
 
-// Re-research adds the related entries' forms and reruns 2a. Clearing 2b onward
-// first keeps 2a from offering a redo that would forget this choice and loop.
+// Re-research reruns 2a only when a related entry has a source form 2a has not
+// listed. 2a's search depends only on the scope, so without new forms a rerun
+// would repeat it unchanged; a listed form keeps the researcher's selection.
+// Clearing 2b onward first keeps 2a from offering a redo that would forget
+// this choice and loop.
 export function startStudioReResearch(study) {
-  const forms = uniqueSourceTexts([...study.scope.forms, ...study.relatedEntries.flatMap((e) => e.sourceTerms)], study.scope.sourceLanguage.code);
+  const language = study.scope.sourceLanguage.code;
+  const listed = new Set([study.scope.term, ...study.scope.forms, ...study.forms.map((f) => f.text)].map((text) => sourceFormKey(text, language)));
+  const added = uniqueSourceTexts(study.relatedEntries.flatMap((e) => e.sourceTerms), language)
+    .filter((text) => !listed.has(sourceFormKey(text, language)));
   const carriedTargets = study.relatedEntries.flatMap((e) => e.targetTerms.map((text, i) => ({ text, note: e.targetVariantNotes?.[i] ?? "", originTermId: e.termId })));
-  const rerunForms = stableSignature(forms) !== stableSignature(study.scope.forms) || !study.reResearchStarted;
-  if (rerunForms) { clearStudioDependents(study, "2a"); delete study.steps["2a"]; }
-  Object.assign(study, { carriedTargets, branch: "research", reResearchStarted: true });
-  study.scope.forms = forms;
-  return rerunForms;
+  if (added.length) {
+    clearStudioDependents(study, "2a"); delete study.steps["2a"];
+    study.scope.forms = [...study.scope.forms, ...added];
+  }
+  Object.assign(study, { carriedTargets, branch: "research" });
+  return added.length > 0;
 }
 
 export function stableSignature(value) {
