@@ -514,7 +514,8 @@ test("meaning consolidation uses curated senses without resurrecting excluded ra
   s.steps["4.1"] = { approved: { meanings: [{ definition: "Planet", evidence: [{ url: "https://example.org/mundo" }] }],
     summary: "An unrelated surname was excluded", evidence: { native: { extract: "Unrelated surname" } } } };
   await runResearchStage(s, {
-    ask: async (_question, data) => {
+    ask: async (question, data) => {
+      assert(question.includes("Do not frame a definition by who uses the word"));
       assert.equal(data.term, "marche");
       assert.equal(data.sourceMeanings[0].definition, "Planet");
       assert.equal(data.sourceMeanings[0].evidence, undefined);
@@ -940,6 +941,7 @@ test("dictionary review uses a small form-diverse sample and preserves full dict
     run: async () => fullDictionary,
     ask: async (question, data) => {
       assert(question.includes("only dictionary senses"));
+      assert(question.includes("Do not frame a definition by who uses the word"));
       assert.equal(data.examples.length, 3);
       assert.deepEqual(data.examples.map((p) => p.text.split(" ")[0]), ["walk", "walked", "walking"]);
       assert(data.examples.every((p) => p.contextBefore[0] === "Complete context"));
@@ -958,6 +960,7 @@ test("corpus meaning discovery reuses bounded document-diverse full paragraphs w
     run: () => { throw new Error("No additional retrieval needed"); },
     ask: async (question, data) => {
       assert(question.includes("bounded sample"));
+      assert(question.includes("Do not frame a definition by who uses the word"));
       assert.equal(data.forms.length, 2); assert(data.forms.every((f) => f.paragraphIds.length === 8));
       assert.equal(new Set(data.paragraphs.map((p) => p.id)).size, data.paragraphs.length);
       assert(data.paragraphs.length <= 16);
