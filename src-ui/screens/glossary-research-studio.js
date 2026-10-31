@@ -288,9 +288,7 @@ function stepContent(s, state) {
     }
     case "6": {
       const preference = uniqueTexts(s.candidates.filter((c) => c.selected !== false && c.meaningIds.length).map((c) => c.text));
-      return `<p>Select translations for each meaning. Expand Usage notes and editing to change wording, notes, preference, or inflections.</p>
-        <p>Keep usage notes brief. Include extra detail only when it prevents a meaningful translation error; keep research explanations in the report below.</p>
-        ${usageNoteReport([value?.research], "candidate-note-research")}
+      return `${usageNoteReport([value?.research], "candidate-note-research")}
         <details class="studio-entry studio-entry-settings" data-studio-disclosure="candidate-entry-settings"><summary>Entry notes and preference</summary>
           <div class="studio-preference"><h3>Current candidate preference</h3><ol>${preference.map((text) => `<li>${e(text)}</li>`).join("")}</ol></div>
           ${field("General translator note", "generalNote", s.generalNote ?? "", { textarea: true })}${field("Footnote", "footnote", s.footnote ?? "", { textarea: true })}
