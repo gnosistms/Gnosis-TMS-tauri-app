@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { testMeanings, testCompleteEntry, assessTrial, translateTrial, trialGlossary } from "./glossary-research-studio-testing.js";
+import { testMeanings, testCompleteEntry, assessTrial, translateTrial, trialGlossary, STUDIO_UNCONFIRMED_RENDERING, studioNeedsFormOffer, studioTranslationChoices, approveStudioCandidate, rejectStudioCandidate } from "./glossary-research-studio-testing.js";
 import { newStudioStudy, deduplicatePassages, finalUsage, reviseAssignment, buildStudioDraft, stableSignature, meaningTrialsAreCurrent, entryTrialsAreCurrent, studioGlossaryContext, studyAssignments, entryBatchSignature, currentStudioFinding, reviewStudioFinding } from "./glossary-research-studio-workflow.js";
 function fixture(size = 1) {
   const s = newStudioStudy({ term: "caminar", sourceLanguage: { code: "es", name: "Spanish" },
@@ -224,9 +224,49 @@ test("a step 9 repair that needs an unconfirmed translation stops with a decisio
     : { choices: data.assignments.map((a) => ({ ...a, candidateId: null, rendered: "stroll", problem: "No confirmed candidate" })) };
   assert.deepEqual(await testCompleteEntry(s, { run, ask }), { pending: true });
   assert.deepEqual(s.pendingDecision, { kind: "needs-form", reason: "Stroll is needed.", keys: ["9:0"],
-    offers: [{ candidateId: "s", text: "stroll", meaningId: "m", occurrences: 1 }] });
+    offers: [{ candidateId: "s", text: "stroll", meaningId: "m", occurrences: 1, refs: [{ paragraphId: s.assignments[0].paragraphId, occurrenceId: s.assignments[0].occurrenceId }] }] });
   assert.equal(s.candidates[0].note, undefined);
   assert.equal(s.candidates[1].confirmed, false);
+});
+
+test("a needs-form offer shows its sentence with the unapproved word highlighted, filled in for older decisions", () => {
+  const s = fixture();
+  s.candidates.push({ id: "s", text: "stroll", meaningIds: ["m"], selected: true, retained: true, confirmed: false });
+  s.tests["9:0"] = { translations: [{ paragraphId: "p0", translation: "a stroll 0" }],
+    choices: [{ paragraphId: "p0", occurrenceId: "o0", candidateId: null, rendered: "stroll", passed: false, problem: STUDIO_UNCONFIRMED_RENDERING }] };
+  const offer = studioNeedsFormOffer(s, { keys: ["9:0"], offers: [{ candidateId: "s", text: "stroll", meaningId: "m", occurrences: 1 }] });
+  assert.deepEqual(offer.sentences.map((x) => [x.paragraphId, x.occurrenceIds, x.targetSpans.map((t) => [t.start, t.end])]), [["p0", ["o0"], [[2, 8]]]]);
+});
+
+test("approving or rejecting a translation affects only the tested meaning", () => {
+  const s = fixture();
+  s.meanings.push({ id: "n", definition: "other" });
+  s.candidates.push({ id: "s", text: "stroll", meaningIds: ["m", "n"], selected: true, retained: true, confirmed: false },
+    { id: "w", text: "wander", meaningIds: ["n"], selected: true, retained: true, confirmed: false });
+  const approved = approveStudioCandidate(s, "s", "m");
+  assert.deepEqual([approved.id, approved.meaningIds, approved.confirmed], ["s-m", ["m"], true]);
+  assert.deepEqual([s.candidates[1].meaningIds, s.candidates[1].confirmed], [["n"], false]);
+  approveStudioCandidate(s, "c", "n");
+  assert.deepEqual(s.candidates[0].meaningIds, ["m", "n"]);
+  rejectStudioCandidate(s, "w", "n");
+  assert.deepEqual([s.candidates.at(-1).meaningIds, s.candidates.at(-1).selected], [[], false]);
+  // Approved for the meaning first, then other approved ones, then unapproved candidates.
+  s.candidates.push({ id: "x", text: "amble", meaningIds: ["n"], selected: true, retained: true, confirmed: true });
+  assert.deepEqual(studioTranslationChoices(s, { text: "stroll", meaningId: "n" }).map((c) => [c.text, c.approved]),
+    [["walk", true], ["amble", true], ["wander", false]]);
+});
+
+test("step 9 repairs receive the translations the human preferred", async () => {
+  const s = fixture();
+  s.translationPreferences = [{ paragraphId: "p0", occurrenceId: "o0", meaningId: "m", rejectedWording: "stroll", preferredWording: "walk" }];
+  let repairInput;
+  const run = async (_kind, payload) => ({ rows: payload.rows.map((r) => ({ rowId: r.rowId, translatedText: "a stroll" })) });
+  const ask = async (question, data) => {
+    if (!question.startsWith("Repair selection")) return { choices: data.assignments.map((a) => ({ ...a, candidateId: null, rendered: "stroll", problem: "" })) };
+    repairInput = data; return { order: data.candidates.map((c) => c.id), notes: [], requiresBack: true, reason: "" };
+  };
+  await testCompleteEntry(s, { run, ask });
+  assert.deepEqual(repairInput.humanPreferences, s.translationPreferences);
 });
 
 test("the human can accept or ignore step 8 findings when repairs cannot make them pass", async () => {

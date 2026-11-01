@@ -2373,27 +2373,58 @@ test("step9 collects a stable pass before one coordinated repair and finishes wi
   await expect(page.getByText(/Recheck pending · Translation batch/)).toHaveCount(0);
 });
 
-test("a step 9 repair that needs an unconfirmed translation asks to confirm it or go back to step 8", async ({ page }) => {
-  for (const [label, expected] of [["Confirm and retest", { step: "9", confirmed: true }], ["Go back to step 8", { step: "8", confirmed: false }]]) {
-    await mountEntryPassStudy(page, true);
-    await page.evaluate(async () => {
-      const { state } = await import(`/${"app"}/state.js`);
-      const { renderGlossaryResearchStudio } = await import(`/${"screens"}/glossary-research-studio.js`);
-      const s = state.glossaryResearchStudio.study;
-      s.candidates.push({ id: "c2", text: "dạo bước", meaningIds: ["m1"], selected: true, confirmed: false, retained: true });
-      s.pendingDecision = { kind: "needs-form", reason: "Dạo bước is needed.", keys: ["9:15"],
-        offers: [{ candidateId: "c2", text: "dạo bước", meaningId: "m1", occurrences: 2 }] };
-      document.querySelector("#app").innerHTML = renderGlossaryResearchStudio(state);
-    });
+async function mountNeedsFormDecision(page) {
+  await mountEntryPassStudy(page, true);
+  await page.evaluate(async () => {
+    const { state } = await import(`/${"app"}/state.js`);
+    const { renderGlossaryResearchStudio } = await import(`/${"screens"}/glossary-research-studio.js`);
+    const s = state.glossaryResearchStudio.study;
+    s.meanings.push({ id: "m2", definition: "Pass time" });
+    s.candidates.push({ id: "c2", text: "dạo bước", meaningIds: ["m1", "m2"], selected: true, confirmed: false, retained: true },
+      { id: "c3", text: "tản bộ", meaningIds: ["m2"], selected: true, confirmed: false, retained: true });
+    s.tests["9:15"] = { translations: [{ paragraphId: "p15", translation: "Tôi dạo bước 15." }],
+      choices: [{ paragraphId: "p15", occurrenceId: "o0", candidateId: null, rendered: "dạo bước", passed: false, problem: "The wording used is not a confirmed translation for this meaning" }] };
+    s.pendingDecision = { kind: "needs-form", reason: "Dạo bước is needed.", keys: ["9:15"],
+      offers: [{ candidateId: "c2", text: "dạo bước", meaningId: "m1", occurrences: 1 }] };
+    document.querySelector("#app").innerHTML = renderGlossaryResearchStudio(state);
+  });
+}
+const needsFormResult = (page) => page.evaluate(async () => {
+  const { state } = await import(`/${"app"}/state.js`); const s = state.glossaryResearchStudio.study;
+  return { step: s.step, decision: s.pendingDecision?.kind ?? null, preferences: s.translationPreferences ?? [],
+    candidates: s.candidates.map((c) => [c.text, c.meaningIds, Boolean(c.confirmed)]) };
+});
+
+test("a step 9 repair that needs an unapproved translation asks to add it for the tested meaning only", async ({ page }) => {
+  await mountNeedsFormDecision(page);
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("heading", { level: 2 })).toHaveText("Add “dạo bước” to the approved translations?");
+  await expect(dialog).toContainText("In the sentence below, the AI translated walk as “dạo bước”. “dạo bước” isn’t an approved translation yet.");
+  await expect(dialog.locator("mark")).toHaveText(["walk", "dạo bước"]);
+  await dialog.getByRole("button", { name: "Yes, add “dạo bước”", exact: true }).click();
+  await expect.poll(() => needsFormResult(page)).toMatchObject({ step: "9", decision: null,
+    candidates: [["đi bộ", ["m1"], true], ["dạo bước", ["m2"], false], ["dạo bước", ["m1"], true], ["tản bộ", ["m2"], false]] });
+});
+
+test("rejecting an unapproved translation asks which translation to use instead", async ({ page }) => {
+  for (const [choice, typed, expected] of [
+    ["đi bộ", "", [["đi bộ", ["m1"], true], ["dạo bước", ["m2"], false], ["tản bộ", ["m2"], false]]],
+    ["tản bộ (not yet approved)", "", [["đi bộ", ["m1"], true], ["dạo bước", ["m2"], false], ["tản bộ", ["m2"], false], ["tản bộ", ["m1"], true]]],
+    ["Add another translation…", "bách bộ", [["đi bộ", ["m1"], true], ["dạo bước", ["m2"], false], ["tản bộ", ["m2"], false], ["bách bộ", ["m1"], true]]],
+  ]) {
+    await mountNeedsFormDecision(page);
     const dialog = page.getByRole("dialog");
-    await expect(dialog.getByRole("heading")).toHaveText("A translation needs confirming");
-    await expect(dialog).toContainText("“dạo bước” for meaning 1: used in 2 failed occurrences but not confirmed.");
-    await expect(dialog).toContainText("Repair note: Dạo bước is needed.");
-    await dialog.getByRole("button", { name: label, exact: true }).click();
-    await expect.poll(() => page.evaluate(async () => {
-      const { state } = await import(`/${"app"}/state.js`); const s = state.glossaryResearchStudio.study;
-      return { step: s.step, confirmed: s.candidates.find((c) => c.id === "c2").confirmed, decision: s.pendingDecision?.kind === "needs-form" };
-    })).toEqual({ ...expected, decision: false });
+    await dialog.getByRole("button", { name: "No, find a different word", exact: true }).click();
+    await expect(dialog.getByRole("heading", { level: 2 })).toHaveText("Choose a translation of “walk”");
+    await expect(dialog).toContainText("You said that “dạo bước” is not a good translation of walk in the sentence below.");
+    const select = dialog.getByLabel("Please select the translation you prefer");
+    await expect(select).toHaveValue("c1");
+    await select.selectOption({ label: choice });
+    if (typed) await dialog.getByLabel("New translation").fill(typed);
+    await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+    const preferred = typed || choice.replace(" (not yet approved)", "");
+    await expect.poll(() => needsFormResult(page)).toMatchObject({ step: "9", decision: null, candidates: expected,
+      preferences: [{ paragraphId: "p15", occurrenceId: "o0", meaningId: "m1", rejectedWording: "dạo bước", preferredWording: preferred }] });
   }
 });
 

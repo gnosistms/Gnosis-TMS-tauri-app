@@ -172,7 +172,7 @@ export async function assessTrial(s, tools, translations, assignments, candidate
     if (span) claim(choice.paragraphId, span);
     return { ...choice, ...(splitForm ? { splitForm } : {}), preservedSourceSpelling: false, passed: Boolean(candidate && span && quoted && !choice.problem),
       targetStart: span?.start, targetEnd: span?.end,
-      problem: choice.problem || (!candidate ? "No confirmed candidate for this meaning" : !span ? "Confirmed target form is not present at a distinct target span" : !quoted ? "The quoted rendering does not identify the confirmed target form" : "") };
+      problem: choice.problem || (!candidate ? STUDIO_UNCONFIRMED_RENDERING :!span ? "Confirmed target form is not present at a distinct target span" : !quoted ? "The quoted rendering does not identify the confirmed target form" : "") };
   });
   // The human's accepted translations and ignored paragraphs outrank the reviewer.
   const reviewed = applyStudioReviewOverrides(s, { choices, translations });
@@ -352,7 +352,66 @@ export async function testMeanings(s, tools) {
   return { complete: true, candidates: s.candidates };
 }
 
-const ENTRY_REPAIR_QUESTION = "Repair selection by changing ONLY existing candidate notes and preference ordering. Preserve the human's general translator note and selection defaults; do not weaken them for stylistic variety or convenience. The term must preserve every confirmed candidate and meaning. A rendering must contain the complete confirmed target wording; a synonym or grammatical replacement inside that wording is not automatically the same confirmed form. Surrounding grammatical words may vary naturally. Do not authorize unlisted replacement wording in notes. If a new form is needed, set requiresBack=true for candidate review. Write reusable positive selection conditions for this term, without test references or corrections to unrelated vocabulary or sentences. Notes must stand alone for one visible target form: records with the same text are merged, so never refer to internal candidate roles, meaning IDs or another candidate with the same text. If candidate/meaning changes are required, say so instead of inventing replacements." + " Coordinate the repair across ALL supplied failed batches. Preserve conditions needed by passing occurrences. Other repair groups may follow before the next validation pass; do not optimize one failing passage by reversing guidance required elsewhere. The supplied trial includes complete failed-paragraph context, including passing occurrences in those paragraphs; sourceContexts provides their matching source neighbors. Preserve both meanings when one paragraph contains distinct uses. Give the repair rationale in researchSummary, separate from the usage notes. " + STUDIO_USAGE_NOTE_POLICY;
+const ENTRY_REPAIR_QUESTION = "Repair selection by changing ONLY existing candidate notes and preference ordering. Preserve the human's general translator note and selection defaults; do not weaken them for stylistic variety or convenience. The term must preserve every confirmed candidate and meaning. A rendering must contain the complete confirmed target wording; a synonym or grammatical replacement inside that wording is not automatically the same confirmed form. Surrounding grammatical words may vary naturally. Do not authorize unlisted replacement wording in notes. If a new form is needed, set requiresBack=true for candidate review. Write reusable positive selection conditions for this term, without test references or corrections to unrelated vocabulary or sentences. Notes must stand alone for one visible target form: records with the same text are merged, so never refer to internal candidate roles, meaning IDs or another candidate with the same text. If candidate/meaning changes are required, say so instead of inventing replacements." + " Coordinate the repair across ALL supplied failed batches. Preserve conditions needed by passing occurrences. Other repair groups may follow before the next validation pass; do not optimize one failing passage by reversing guidance required elsewhere. The supplied trial includes complete failed-paragraph context, including passing occurrences in those paragraphs; sourceContexts provides their matching source neighbors. Preserve both meanings when one paragraph contains distinct uses. humanPreferences lists occurrences where the human rejected a wording and chose the translation to use instead; write notes so those contexts select the preferred translation. Give the repair rationale in researchSummary, separate from the usage notes. " + STUDIO_USAGE_NOTE_POLICY;
+
+// The grader's failure when the reviewer accepted the wording but it is not a confirmed
+// translation of the occurrence's meaning (which may still have other confirmed ones).
+export const STUDIO_UNCONFIRMED_RENDERING = "The wording used is not a confirmed translation for this meaning";
+
+// The unapproved word a needs-form decision asks about next, with the sentences that
+// used it. Decisions saved before offers kept refs are filled in from their trials.
+export function studioNeedsFormOffer(study, decision) {
+  const offer = decision?.offers?.[0];
+  if (!offer) return null;
+  const trials = (decision.keys ?? []).map((key) => study.tests[key]).filter(Boolean);
+  const refs = offer.refs ?? studioUnconfirmedRenderings(study, trials)
+    .find((o) => o.candidateId === offer.candidateId && o.meaningId === offer.meaningId)?.refs ?? [];
+  const sentences = [...new Set(refs.map((r) => r.paragraphId))].map((paragraphId) => {
+    const translation = trials.flatMap((t) => t.translations ?? []).find((t) => t.paragraphId === paragraphId)?.translation ?? "";
+    return { paragraphId, translation, occurrenceIds: refs.filter((r) => r.paragraphId === paragraphId).map((r) => r.occurrenceId),
+      targetSpans: exactTargetOccurrences(translation, [offer.text], study.scope.targetLanguage.code) };
+  });
+  return { ...offer, refs, sentences };
+}
+
+export const STUDIO_NEW_TRANSLATION = "new";
+
+// Translations the human can prefer over a rejected word: those approved for the
+// meaning first, then other approved ones, then unapproved candidates.
+export function studioTranslationChoices(study, offer) {
+  const rank = (c) => c.confirmed && c.retained !== false ? c.meaningIds.includes(offer.meaningId) ? 0 : 1 : 2;
+  const seen = new Set([offer.text.toLocaleLowerCase()]);
+  return study.candidates.map((c, index) => ({ c, index })).sort((a, b) => rank(a.c) - rank(b.c) || a.index - b.index)
+    .filter(({ c }) => c.text?.trim() && !seen.has(c.text.toLocaleLowerCase()) && seen.add(c.text.toLocaleLowerCase()))
+    .map(({ c }) => ({ id: c.id, text: c.text, approved: rank(c) < 2 }));
+}
+
+// Approval covers one meaning: an unapproved candidate with other meanings is split so
+// those meanings stay unapproved.
+export function approveStudioCandidate(study, candidateId, meaningId) {
+  const index = study.candidates.findIndex((c) => c.id === candidateId);
+  const candidate = study.candidates[index];
+  if (!candidate) throw new Error("That translation is no longer in this research.");
+  if (candidate.confirmed && candidate.retained !== false) {
+    if (!candidate.meaningIds.includes(meaningId)) candidate.meaningIds.push(meaningId);
+    candidate.selected = true; return candidate;
+  }
+  const others = candidate.meaningIds.filter((id) => id !== meaningId);
+  if (!others.length) return Object.assign(candidate, { meaningIds: [meaningId], confirmed: true, selected: true, retained: true });
+  candidate.meaningIds = others;
+  let id = `${candidate.id}-${meaningId}`;
+  while (study.candidates.some((c) => c.id === id)) id += "-approved";
+  const approved = { ...structuredClone(candidate), id, meaningIds: [meaningId], confirmed: true, selected: true, retained: true };
+  study.candidates.splice(index + 1, 0, approved);
+  return approved;
+}
+
+export function rejectStudioCandidate(study, candidateId, meaningId) {
+  const candidate = study.candidates.find((c) => c.id === candidateId);
+  if (!candidate) return;
+  candidate.meaningIds = candidate.meaningIds.filter((id) => id !== meaningId);
+  if (!candidate.meaningIds.length) candidate.selected = false;
+}
 
 // Unconfirmed candidates of a failed occurrence's meaning that its rendering used.
 export function studioUnconfirmedRenderings(study, trials) {
@@ -363,8 +422,9 @@ export function studioUnconfirmedRenderings(study, trials) {
     for (const candidate of study.candidates.filter((c) => !c.confirmed && c.selected !== false && c.meaningIds.includes(meaningId)
       && exactTargetOccurrences(choice.rendered, [c.text], study.scope.targetLanguage.code).length)) {
       const key = `${candidate.id}:${meaningId}`;
-      const offer = offers.get(key) ?? { candidateId: candidate.id, text: candidate.text, meaningId, occurrences: 0 };
-      offer.occurrences += 1; offers.set(key, offer);
+      const offer = offers.get(key) ?? { candidateId: candidate.id, text: candidate.text, meaningId, occurrences: 0, refs: [] };
+      offer.occurrences += 1; offer.refs.push({ paragraphId: choice.paragraphId, occurrenceId: choice.occurrenceId });
+      offers.set(key, offer);
     }
   }
   return [...offers.values()];
@@ -510,7 +570,8 @@ export async function testCompleteEntry(s, tools) {
     // on Resume without more calls, and all prior trials stay available.
     const staged = { ...s, candidates: structuredClone(s.candidates), reports: { ...s.reports } };
     const base = { candidates: decisionCandidates(candidates), generalNote: s.generalNote ?? "", meanings: activeMeanings(s).map(decisionMeaning),
-      failedBatches: failures.map(({ key, rounds }) => ({ batch: Number(key.slice(2)) / 15 + 1, repairRounds: rounds })) };
+      failedBatches: failures.map(({ key, rounds }) => ({ batch: Number(key.slice(2)) / 15 + 1, repairRounds: rounds })),
+      humanPreferences: s.translationPreferences ?? [] };
     const groups = selectionRepairGroups(s, failures, base);
     const repairTools = branch(tools, `repair-pass-${pass}`);
     tools.planActivity?.([{ id: `repair-pass-${pass}`, label: `Coordinated repair after validation pass ${pass}`, children:
