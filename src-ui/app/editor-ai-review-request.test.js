@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import {
   buildEditorAiReviewBatchRequest,
   buildEditorAiReviewRequest,
+  editorAiReviewContentFingerprint,
+  normalizeEditorAiReviewMode,
 } from "./editor-ai-review-request.js";
 
 function row(id, es, vi) {
@@ -162,4 +164,64 @@ test("AI Review requests preserve structured target and source footnote markers"
   });
   assert.deepEqual(grammar.rows[0].footnotes, request.footnotes);
   assert.deepEqual(grammar.rows[0].sourceFootnotes, []);
+});
+
+test("AI Review clarity requests carry the target text and target-only context, never the source", () => {
+  const state = chapterState();
+  const single = buildEditorAiReviewRequest({
+    chapterState: state,
+    row: state.rows[2],
+    sourceLanguageCode: "es",
+    targetLanguageCode: "vi",
+    providerId: "openai",
+    modelId: "gpt-5.5",
+    reviewMode: "clarity",
+  });
+
+  assert.equal(single.reviewMode, "clarity");
+  assert.equal(single.rowId, "r2");
+  assert.equal(single.latestTranslation, "Hai");
+  assert.equal(single.sourceText, "");
+  assert.deepEqual(single.glossaryHints, []);
+  assert.deepEqual(single.alternateLanguageTexts, []);
+  assert.deepEqual(single.rowWindow.map((entry) => entry.targetText), ["Khong", "Mot", "Hai", "Ba"]);
+
+  const batch = buildEditorAiReviewBatchRequest({
+    chapterState: state,
+    rows: [state.rows[1], state.rows[2]],
+    sourceLanguageCode: "es",
+    targetLanguageCode: "vi",
+    providerId: "openai",
+    modelId: "gpt-5.5",
+    reviewMode: "clarity",
+  });
+
+  assert.equal(batch.reviewMode, "clarity");
+  assert.deepEqual(batch.rows.map((r) => r.sourceText), ["", ""]);
+  assert.deepEqual(batch.contextBefore.map((entry) => entry.targetText), ["Khong"]);
+  assert.deepEqual(batch.contextAfter.map((entry) => entry.targetText), ["Ba"]);
+  assert.deepEqual(batch.glossaryHints, []);
+  assert.equal(batch.subtitleCues, undefined);
+});
+
+test("normalizeEditorAiReviewMode keeps the three AI Review modes", () => {
+  assert.equal(normalizeEditorAiReviewMode("clarity"), "clarity");
+  assert.equal(normalizeEditorAiReviewMode(" meaning "), "meaning");
+  assert.equal(normalizeEditorAiReviewMode("other"), "grammar");
+});
+
+test("editorAiReviewContentFingerprint changes with the text, footnotes, and caption only", () => {
+  const base = row("r1", "Uno", "Mot");
+  const fingerprint = editorAiReviewContentFingerprint(base, "vi");
+
+  assert.equal(typeof fingerprint, "string");
+  assert.equal(editorAiReviewContentFingerprint({ ...base }, "vi"), fingerprint);
+  assert.equal(editorAiReviewContentFingerprint({ ...base, fields: { es: "Otro", vi: "Mot" } }, "vi"), fingerprint);
+  assert.notEqual(editorAiReviewContentFingerprint({ ...base, fields: { es: "Uno", vi: "Mot." } }, "vi"), fingerprint);
+  assert.notEqual(editorAiReviewContentFingerprint({ ...base, imageCaptions: { vi: "Anh" } }, "vi"), fingerprint);
+  // Moving text between sections is a change.
+  assert.notEqual(
+    editorAiReviewContentFingerprint({ ...base, fields: { vi: "" }, imageCaptions: { vi: "Mot" } }, "vi"),
+    fingerprint,
+  );
 });

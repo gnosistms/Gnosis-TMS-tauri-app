@@ -707,6 +707,7 @@ pub(super) fn editor_row_from_stored_row_file(
             .and_then(|guidance| guidance.context.clone()),
         comment_count: row.editor_comments.len(),
         comments_revision: row.editor_comments_revision,
+        ai_clarity_fingerprints: ai_clarity_fingerprints(&row.editor_comments),
         source_row_number: row.origin.source_row_number,
         review_state: row.status.review_state,
         lifecycle_state: row.lifecycle.state,

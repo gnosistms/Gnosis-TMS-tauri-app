@@ -544,6 +544,7 @@ pub(super) fn create_inserted_editor_row(
         context: None,
         comment_count: 0,
         comments_revision: 0,
+        ai_clarity_fingerprints: BTreeMap::new(),
         source_row_number: 0,
         review_state: "unreviewed".to_string(),
         lifecycle_state: "active".to_string(),

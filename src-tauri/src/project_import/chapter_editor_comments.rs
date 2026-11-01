@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 
 use serde::{Deserialize, Serialize};
@@ -78,6 +79,8 @@ pub(crate) struct DeleteEditorRowCommentResponse {
     comments_revision: u64,
     comment_count: usize,
     comments: Vec<EditorRowComment>,
+    /// Deleting an AI Review clarity comment lets a repeat run check the row again.
+    ai_clarity_fingerprints: BTreeMap<String, String>,
     chapter_base_commit_sha: Option<String>,
 }
 
@@ -98,7 +101,22 @@ pub(super) struct StoredEditorComment {
     author_name: String,
     body: String,
     created_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ai_review: Option<StoredAiReviewCommentMeta>,
 }
+
+/// Marks a comment written by AI Review. `content_fingerprint` identifies the
+/// row content (computed by the frontend) the comment was written about, so a
+/// repeat run can skip rows nobody has edited since.
+#[derive(Clone, Deserialize, Serialize)]
+struct StoredAiReviewCommentMeta {
+    kind: String,
+    language_code: String,
+    content_fingerprint: String,
+}
+
+const AI_REVIEW_COMMENT_AUTHOR_NAME: &str = "AI Review";
+const AI_REVIEW_CLARITY_COMMENT_KIND: &str = "clarity";
 
 #[derive(Deserialize)]
 struct StoredEditorCommentsRowFile {
@@ -169,6 +187,7 @@ pub(super) fn save_gtms_editor_row_comment_sync(
         author_name: author.name,
         body,
         created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        ai_review: None,
     };
     let comments_revision = append_editor_comment(&mut row_value, &comment)?;
     let updated_row_file: StoredEditorCommentsRowFile = serde_json::from_value(row_value.clone())
@@ -279,6 +298,7 @@ pub(super) fn delete_gtms_editor_row_comment_sync(
         row_id: input.row_id,
         comments_revision,
         comment_count: updated_row_file.editor_comments.len(),
+        ai_clarity_fingerprints: ai_clarity_fingerprints(&updated_row_file.editor_comments),
         comments: sort_editor_row_comments(updated_row_file.editor_comments),
         chapter_base_commit_sha: current_repo_head_sha(&repo_path),
     })
@@ -349,6 +369,56 @@ fn signed_in_editor_comment_author(app: &AppHandle) -> Result<SignedInEditorComm
         .to_string();
 
     Ok(SignedInEditorCommentAuthor { login, name })
+}
+
+/// The login AI Review comments are stored under: the person running the
+/// review, so the author-only delete rule lets them remove the comment.
+pub(super) fn ai_review_comment_author_login(app: &AppHandle) -> Result<String, String> {
+    Ok(signed_in_editor_comment_author(app)?.login)
+}
+
+/// Appends an AI Review comment explaining why part of the row's
+/// `language_code` content is hard to understand.
+pub(super) fn append_ai_review_clarity_comment(
+    row_value: &mut Value,
+    author_login: &str,
+    language_code: &str,
+    body: &str,
+    content_fingerprint: &str,
+) -> Result<u64, String> {
+    let comment = StoredEditorComment {
+        comment_id: uuid::Uuid::now_v7().to_string(),
+        author_login: author_login.to_string(),
+        author_name: AI_REVIEW_COMMENT_AUTHOR_NAME.to_string(),
+        body: body.trim().to_string(),
+        created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        ai_review: Some(StoredAiReviewCommentMeta {
+            kind: AI_REVIEW_CLARITY_COMMENT_KIND.to_string(),
+            language_code: language_code.to_string(),
+            content_fingerprint: content_fingerprint.to_string(),
+        }),
+    };
+    append_editor_comment(row_value, &comment)
+}
+
+/// Language code -> content fingerprint of the row's latest AI Review clarity
+/// comment for that language.
+pub(super) fn ai_clarity_fingerprints(
+    comments: &[StoredEditorComment],
+) -> BTreeMap<String, String> {
+    comments
+        .iter()
+        .filter_map(|comment| comment.ai_review.as_ref())
+        .filter(|meta| {
+            meta.kind == AI_REVIEW_CLARITY_COMMENT_KIND && !meta.language_code.trim().is_empty()
+        })
+        .map(|meta| {
+            (
+                meta.language_code.trim().to_string(),
+                meta.content_fingerprint.clone(),
+            )
+        })
+        .collect()
 }
 
 fn ensure_editor_comments_defaults(
@@ -445,8 +515,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        append_editor_comment, delete_editor_comment, StoredEditorComment,
-        StoredEditorCommentsRowFile,
+        ai_clarity_fingerprints, append_ai_review_clarity_comment, append_editor_comment,
+        delete_editor_comment, StoredEditorComment, StoredEditorCommentsRowFile,
     };
 
     #[test]
@@ -477,6 +547,7 @@ mod tests {
             author_name: "The Octocat".to_string(),
             body: "Check this".to_string(),
             created_at: "2026-04-13T09:12:33Z".to_string(),
+            ai_review: None,
         };
 
         let next_revision =
@@ -488,6 +559,84 @@ mod tests {
             row_value["editor_comments"].as_array().map(Vec::len),
             Some(1)
         );
+        // Human comments keep the stored shape they had before AI Review comments.
+        assert!(row_value["editor_comments"][0].get("ai_review").is_none());
+    }
+
+    #[test]
+    fn ai_review_clarity_comment_records_author_language_and_fingerprint() {
+        let mut row_value = json!({
+          "editor_comments_revision": 4,
+          "editor_comments": [{
+            "comment_id": "comment-1",
+            "author_login": "octocat",
+            "author_name": "The Octocat",
+            "body": "Check this",
+            "created_at": "2026-04-13T09:12:33Z"
+          }]
+        });
+
+        let next_revision = append_ai_review_clarity_comment(
+            &mut row_value,
+            "translator",
+            "vi",
+            "  Cụm \"tâm ấy\" không rõ chỉ điều gì.  ",
+            "fp-1",
+        )
+        .expect("AI comment append should succeed");
+
+        assert_eq!(next_revision, 5);
+        let stored = &row_value["editor_comments"][1];
+        assert_eq!(stored["author_login"], json!("translator"));
+        assert_eq!(stored["author_name"], json!("AI Review"));
+        assert_eq!(
+            stored["body"],
+            json!("Cụm \"tâm ấy\" không rõ chỉ điều gì.")
+        );
+        assert_eq!(
+            stored["ai_review"],
+            json!({ "kind": "clarity", "language_code": "vi", "content_fingerprint": "fp-1" })
+        );
+    }
+
+    #[test]
+    fn ai_clarity_fingerprints_keep_the_latest_comment_per_language() {
+        let row: StoredEditorCommentsRowFile = serde_json::from_value(json!({
+          "editor_comments_revision": 4,
+          "editor_comments": [
+            {
+              "comment_id": "c1", "author_login": "a", "author_name": "AI Review",
+              "body": "old", "created_at": "2026-11-01T00:00:00Z",
+              "ai_review": { "kind": "clarity", "language_code": "vi", "content_fingerprint": "old" }
+            },
+            {
+              "comment_id": "c2", "author_login": "a", "author_name": "A",
+              "body": "human", "created_at": "2026-11-01T00:00:01Z"
+            },
+            {
+              "comment_id": "c3", "author_login": "a", "author_name": "AI Review",
+              "body": "new", "created_at": "2026-11-01T00:00:02Z",
+              "ai_review": { "kind": "clarity", "language_code": "vi", "content_fingerprint": "new" }
+            },
+            {
+              "comment_id": "c4", "author_login": "a", "author_name": "AI Review",
+              "body": "es", "created_at": "2026-11-01T00:00:03Z",
+              "ai_review": { "kind": "clarity", "language_code": "es", "content_fingerprint": "es-fp" }
+            },
+            {
+              "comment_id": "c5", "author_login": "a", "author_name": "AI Review",
+              "body": "other kind", "created_at": "2026-11-01T00:00:04Z",
+              "ai_review": { "kind": "other", "language_code": "de", "content_fingerprint": "x" }
+            }
+          ]
+        }))
+        .expect("row should deserialize");
+
+        let fingerprints = ai_clarity_fingerprints(&row.editor_comments);
+
+        assert_eq!(fingerprints.len(), 2);
+        assert_eq!(fingerprints.get("vi").map(String::as_str), Some("new"));
+        assert_eq!(fingerprints.get("es").map(String::as_str), Some("es-fp"));
     }
 
     #[test]

@@ -102,6 +102,10 @@ pub struct AiReviewRequest {
     pub target_language_history: Vec<AiAssistantTargetLanguageHistoryEntry>,
     #[serde(default)]
     pub row_window: Vec<AiAssistantRowWindowEntry>,
+    /// The reviewed row's id within `row_window`; the clarity review uses it to
+    /// split the window into the rows before and after.
+    #[serde(default)]
+    pub row_id: String,
     #[serde(default)]
     pub installation_id: Option<i64>,
 }
@@ -116,6 +120,10 @@ pub struct AiReviewResponse {
     pub suggested_image_caption: String,
     #[serde(default)]
     pub reviewed: Option<bool>,
+    /// Clarity review only: why part of the row is hard to understand, in the
+    /// target language. Empty when the row reads clearly.
+    #[serde(default)]
+    pub comment: String,
     #[serde(default)]
     pub prompt_text: String,
 }
@@ -442,6 +450,9 @@ pub struct AiReviewBatchRowResult {
     #[serde(default)]
     pub suggested_image_caption: String,
     pub reviewed: bool,
+    /// Clarity review only; see `AiReviewResponse::comment`.
+    #[serde(default)]
+    pub comment: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

@@ -1,6 +1,10 @@
 import { escapeHtml, loadingPrimaryButton, secondaryButton } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
 import {
+  EDITOR_AI_REVIEW_MODE_CLARITY,
+  normalizeEditorAiReviewMode,
+} from "../app/editor-ai-review-request.js";
+import {
   renderBatchLanguageProgressBars,
   renderBatchOverallProgress,
 } from "./editor-batch-progress.js";
@@ -17,33 +21,29 @@ function renderError(modal) {
     : "";
 }
 
+const REVIEW_MODE_OPTIONS = [
+  { value: "grammar", label: "Check spelling and grammar only" },
+  { value: EDITOR_AI_REVIEW_MODE_CLARITY, label: "Identify parts that are difficult to understand" },
+  { value: "meaning", label: "Also check the meaning against the source text" },
+];
+
 function renderModeOptions(modal, disabled) {
-  const selectedMode = modal?.reviewMode === "meaning" ? "meaning" : "grammar";
+  const selectedMode = normalizeEditorAiReviewMode(modal?.reviewMode);
+  const options = REVIEW_MODE_OPTIONS.map((option, index) => `
+      <label class="field__checkbox ai-translate-all-modal__language">
+        <input
+          type="radio"
+          name="editor-ai-review-all-mode"
+          data-editor-ai-review-all-mode
+          ${index === 0 ? "data-modal-initial-focus" : ""}
+          value="${option.value}"
+          ${selectedMode === option.value ? "checked" : ""}
+          ${disabled ? "disabled" : ""}
+        />
+        <span>${escapeHtml(option.label)}</span>
+      </label>`).join("");
   return `
-    <div class="ai-translate-all-modal__language-list" role="radiogroup" aria-label="AI review mode">
-      <label class="field__checkbox ai-translate-all-modal__language">
-        <input
-          type="radio"
-          name="editor-ai-review-all-mode"
-          data-editor-ai-review-all-mode
-          data-modal-initial-focus
-          value="grammar"
-          ${selectedMode === "grammar" ? "checked" : ""}
-          ${disabled ? "disabled" : ""}
-        />
-        <span>Check spelling and grammar only</span>
-      </label>
-      <label class="field__checkbox ai-translate-all-modal__language">
-        <input
-          type="radio"
-          name="editor-ai-review-all-mode"
-          data-editor-ai-review-all-mode
-          value="meaning"
-          ${selectedMode === "meaning" ? "checked" : ""}
-          ${disabled ? "disabled" : ""}
-        />
-        <span>Also check the meaning against the source text</span>
-      </label>
+    <div class="ai-translate-all-modal__language-list" role="radiogroup" aria-label="AI review mode">${options}
     </div>
   `;
 }
@@ -166,6 +166,10 @@ function renderFilterEnabledModal(modal) {
     ? `<p class="modal__supporting"><strong>${completedCount} of ${totalCount}</strong> unreviewed translation${totalCount === 1 ? "" : "s"} ${completedCount === 1 ? "was" : "were"} reviewed in this run.</p>`
     : "";
 
+  if (normalizeEditorAiReviewMode(modal?.reviewMode) === EDITOR_AI_REVIEW_MODE_CLARITY) {
+    return renderClarityFinishedModal(modal, progressLine);
+  }
+
   // A run that ended on an error must never present the success copy — with
   // a provider outage every call can fail in seconds and nothing is
   // reviewed, which previously still showed "AI Review is finished".
@@ -219,6 +223,80 @@ function renderFilterEnabledModal(modal) {
               modalCancel: true,
               modalInitialFocus: true,
             })}
+          </div>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderClarityFinishedModal(modal, progressLine) {
+  const flaggedCount = Number(modal?.flaggedCount) || 0;
+  const okButton = loadingPrimaryButton({
+    label: "Ok",
+    loadingLabel: "Ok",
+    action: "dismiss-editor-ai-review-all-filter",
+    isLoading: false,
+    modalDefault: true,
+    modalCancel: true,
+    modalInitialFocus: true,
+  });
+  const flaggedLine = `<p class="modal__supporting">The AI found <strong>${flaggedCount}</strong> translation${flaggedCount === 1 ? "" : "s"} with parts that are difficult to understand. It did not change any text.</p>`;
+
+  if (modal?.error) {
+    return `
+    <div class="modal-backdrop">
+      <section class="card modal-card modal-card--compact modal-card--ai-translate-all" role="dialog" aria-modal="true" aria-labelledby="editor-ai-review-stopped-modal-title" data-modal-dialog="editor-ai-review:stopped" tabindex="-1">
+        <div class="card__body modal-card__body ai-translate-all-modal">
+          <p class="card__eyebrow">AI REVIEW</p>
+          <h2 class="modal__title" id="editor-ai-review-stopped-modal-title">AI Review stopped</h2>
+          ${renderError(modal)}
+          ${progressLine}
+          ${flaggedLine}
+          <p class="modal__supporting">Translations the AI found difficult to understand are marked with the red &quot;please check&quot; (?) status and have a comment from AI Review, and the Please check filter is enabled so you can find them. Run the check again to continue &mdash; it skips translations it already commented on unless their text has changed.</p>
+          <div class="modal__actions">
+            ${okButton}
+          </div>
+        </div>
+      </section>
+    </div>
+  `;
+  }
+
+  if (flaggedCount === 0) {
+    return `
+    <div class="modal-backdrop">
+      <section class="card modal-card modal-card--compact modal-card--ai-translate-all" role="dialog" aria-modal="true" aria-labelledby="editor-ai-review-finished-modal-title" data-modal-dialog="editor-ai-review:finished" tabindex="-1">
+        <div class="card__body modal-card__body ai-translate-all-modal">
+          <p class="card__eyebrow">AI REVIEW</p>
+          <h2 class="modal__title" id="editor-ai-review-finished-modal-title">Nothing difficult to understand</h2>
+          <p class="modal__supporting">The AI found no parts that are difficult to understand in the translations it checked, and it did not change any text.</p>
+          ${progressLine}
+          <div class="modal__actions">
+            ${okButton}
+          </div>
+        </div>
+      </section>
+    </div>
+  `;
+  }
+
+  return `
+    <div class="modal-backdrop">
+      <section class="card modal-card modal-card--compact modal-card--ai-translate-all" role="dialog" aria-modal="true" aria-labelledby="editor-ai-review-finished-modal-title" data-modal-dialog="editor-ai-review:finished" tabindex="-1">
+        <div class="card__body modal-card__body ai-translate-all-modal">
+          <p class="card__eyebrow">AI REVIEW</p>
+          <h2 class="modal__title" id="editor-ai-review-finished-modal-title">Please check filter enabled</h2>
+          <p class="modal__supporting">AI Review is finished, and the Please check filter is now enabled. Where part of a translation is difficult to understand, the AI set the red &quot;please check&quot; (?) status and wrote a comment explaining the problem.</p>
+          ${flaggedLine}
+          ${progressLine}
+          <ul class="modal__list">
+            <li>Open the comments for each translation to read the AI's explanation.</li>
+            <li>When you're done with a translation, click the [?] button to remove the &quot;please check&quot; status. You can delete the AI's comment too.</li>
+          </ul>
+          <p class="modal__supporting">If you run this check again, it skips translations it already commented on unless their text has changed.</p>
+          <div class="modal__actions">
+            ${okButton}
           </div>
         </div>
       </section>

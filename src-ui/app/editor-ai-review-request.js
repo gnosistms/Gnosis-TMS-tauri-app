@@ -13,8 +13,14 @@ import { editorFootnotesPlainText } from "./editor-utils.js";
 import { languageBaseCode } from "./editor-language-utils.js";
 import { srtLinguisticRow } from "./editor-srt-grouping.js";
 
+// "clarity" is AI Review All's "Identify parts that are difficult to
+// understand": target text only, flags and comments, never edits.
+// See plans/ai-review-clarity-flags-plan.md.
+export const EDITOR_AI_REVIEW_MODE_CLARITY = "clarity";
+
 export function normalizeEditorAiReviewMode(value) {
-  return String(value ?? "").trim() === "meaning" ? "meaning" : "grammar";
+  const mode = String(value ?? "").trim();
+  return mode === "meaning" || mode === EDITOR_AI_REVIEW_MODE_CLARITY ? mode : "grammar";
 }
 
 export function readEditorReviewRowFieldText(row, languageCode) {
@@ -47,6 +53,31 @@ export function readEditorReviewRowImageCaption(row, languageCode) {
   return typeof row?.imageCaptions?.[languageCode] === "string"
     ? row.imageCaptions[languageCode]
     : String(row?.imageCaptions?.[languageCode] ?? "");
+}
+
+// cyrb53: a fast, well-mixed 53-bit string hash.
+function hashString(value) {
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    h1 = Math.imul(h1 ^ code, 2654435761);
+    h2 = Math.imul(h2 ^ code, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16);
+}
+
+// Identifies the content an AI Review clarity comment was written about, so a
+// repeat run skips rows nobody has edited since. Rust stores and returns it
+// unchanged; it is only ever compared with values from this function.
+export function editorAiReviewContentFingerprint(row, languageCode) {
+  return hashString([
+    readEditorReviewRowFieldText(row, languageCode),
+    readEditorReviewRowFootnote(row, languageCode),
+    readEditorReviewRowImageCaption(row, languageCode),
+  ].join("\u0000"));
 }
 
 function normalizeReviewLanguageLabel(language, fallbackCode = "") {
@@ -153,6 +184,7 @@ export function buildEditorAiReviewRequest({
   installationId = null,
 }) {
   const normalizedReviewMode = normalizeEditorAiReviewMode(reviewMode);
+  const clarity = normalizedReviewMode === EDITOR_AI_REVIEW_MODE_CLARITY;
   const rowId = rowIdentity(row);
   const sourceLanguage = editorReviewLanguageByCode(chapterState, sourceLanguageCode);
   const targetLanguage = editorReviewLanguageByCode(chapterState, targetLanguageCode);
@@ -161,11 +193,13 @@ export function buildEditorAiReviewRequest({
     providerId,
     modelId,
     reviewMode: normalizedReviewMode,
+    // Splits the clarity context window into the rows before and after.
+    ...(clarity ? { rowId } : {}),
     text: latestTranslation,
     latestTranslation,
     footnotes: readEditorReviewRowFootnotes(row, targetLanguageCode),
     imageCaption: readEditorReviewRowImageCaption(row, targetLanguageCode),
-    sourceText: readEditorReviewRowFieldText(row, sourceLanguageCode),
+    sourceText: clarity ? "" : readEditorReviewRowFieldText(row, sourceLanguageCode),
     sourceFootnotes: normalizedReviewMode === "meaning"
       ? readEditorReviewRowFootnotes(row, sourceLanguageCode)
       : [],
@@ -184,9 +218,13 @@ export function buildEditorAiReviewRequest({
     alternateLanguageTexts: normalizedReviewMode === "meaning"
       ? buildEditorAiReviewAlternateLanguageTexts(chapterState, row, sourceLanguageCode, targetLanguageCode)
       : [],
+    // The clarity window is sized and filled from the target text: its reader
+    // never sees the source.
     rowWindow: normalizedReviewMode === "meaning"
       ? buildRowSourceContextWindow(chapterState, rowId, sourceLanguageCode, targetLanguageCode)
-      : [],
+      : clarity
+        ? buildRowSourceContextWindow(chapterState, rowId, targetLanguageCode, targetLanguageCode)
+        : [],
     targetLanguageHistory: normalizedReviewMode === "meaning" && Array.isArray(targetLanguageHistory)
       ? targetLanguageHistory
       : [],
@@ -210,6 +248,7 @@ export function buildEditorAiReviewBatchRequest({
 }) {
   const normalizedReviewMode = normalizeEditorAiReviewMode(reviewMode);
   const meaning = normalizedReviewMode === "meaning";
+  const clarity = normalizedReviewMode === EDITOR_AI_REVIEW_MODE_CLARITY;
   const rowList = Array.isArray(rows) ? rows : [];
   const sourceLanguage = editorReviewLanguageByCode(chapterState, sourceLanguageCode);
   const targetLanguage = editorReviewLanguageByCode(chapterState, targetLanguageCode);
@@ -243,12 +282,15 @@ export function buildEditorAiReviewBatchRequest({
     )
     : [];
 
-  const { contextBefore, contextAfter } = meaning && rowList.length > 0
+  // Clarity context is sized and filled from the target text (see the single-row
+  // request above).
+  const contextLanguageCode = clarity ? targetLanguageCode : sourceLanguageCode;
+  const { contextBefore, contextAfter } = (meaning || clarity) && rowList.length > 0
     ? buildBatchSourceContext(
       chapterState,
       rowIdentity(rowList[0]),
       rowIdentity(rowList[rowList.length - 1]),
-      sourceLanguageCode,
+      contextLanguageCode,
       targetLanguageCode,
     )
     : { contextBefore: [], contextAfter: [] };

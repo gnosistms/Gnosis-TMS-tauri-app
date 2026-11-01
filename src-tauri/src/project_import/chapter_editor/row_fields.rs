@@ -1619,6 +1619,15 @@ pub(crate) fn apply_gtms_editor_ai_review_result_sync(
         "please-check",
         input.please_check,
     )?;
+    if !input.comment.trim().is_empty() {
+        append_ai_review_clarity_comment(
+            &mut row_value,
+            &ai_review_comment_author_login(app)?,
+            &input.language_code,
+            &input.comment,
+            &input.comment_fingerprint,
+        )?;
+    }
 
     let updated_row_json = serde_json::to_string_pretty(&row_value).map_err(|error| {
         format!(
@@ -1686,6 +1695,9 @@ pub(crate) fn apply_gtms_editor_ai_review_result_sync(
         reviewed,
         please_check,
         marker_integrity_rejected,
+        comment_count: updated_row_file.editor_comments.len(),
+        comments_revision: updated_row_file.editor_comments_revision,
+        ai_clarity_fingerprints: ai_clarity_fingerprints(&updated_row_file.editor_comments),
         last_update: load_latest_row_version_metadata(&repo_path, &relative_row_json)?,
         chapter_base_commit_sha: current_repo_head_sha(&repo_path),
     })
@@ -1712,6 +1724,12 @@ pub(crate) fn apply_gtms_editor_ai_review_results_batch_sync(
         &input.chapter_id,
     )?;
 
+    // Looked up once: every AI Review comment in the batch has the same author.
+    let comment_author_login = if input.rows.iter().any(|row| !row.comment.trim().is_empty()) {
+        Some(ai_review_comment_author_login(app)?)
+    } else {
+        None
+    };
     let mut rows_by_id = BTreeMap::new();
     for row in input.rows {
         let row_id = row.row_id.trim().to_string();
@@ -1788,6 +1806,18 @@ pub(crate) fn apply_gtms_editor_ai_review_results_batch_sync(
             "please-check",
             review_row.please_check,
         )?;
+        if let Some(author_login) = comment_author_login
+            .as_deref()
+            .filter(|_| !review_row.comment.trim().is_empty())
+        {
+            append_ai_review_clarity_comment(
+                &mut edit.value,
+                author_login,
+                &input.language_code,
+                &review_row.comment,
+                &review_row.comment_fingerprint,
+            )?;
+        }
 
         let relative_path = edit.relative_path.clone();
         let (_, row_file) = finish_editable_row_file(
@@ -1858,6 +1888,9 @@ pub(crate) fn apply_gtms_editor_ai_review_results_batch_sync(
             reviewed: pending.reviewed,
             please_check: pending.please_check,
             marker_integrity_rejected: pending.marker_integrity_rejected,
+            comment_count: pending.row_file.editor_comments.len(),
+            comments_revision: pending.row_file.editor_comments_revision,
+            ai_clarity_fingerprints: ai_clarity_fingerprints(&pending.row_file.editor_comments),
             last_update: load_latest_row_version_metadata(&repo_path, &pending.relative_path)?,
         });
     }

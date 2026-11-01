@@ -26,7 +26,10 @@ use crate::repo_layout_metadata::{
 };
 
 use super::{
-    chapter_editor_comments::StoredEditorComment,
+    chapter_editor_comments::{
+        ai_clarity_fingerprints, ai_review_comment_author_login, append_ai_review_clarity_comment,
+        StoredEditorComment,
+    },
     project_git::{
         ensure_gitattributes, ensure_repo_exists, ensure_valid_git_repo, find_chapter_path_by_id,
         git_output, git_output_with_stdin, local_repo_root, read_json_file, repo_relative_path,
@@ -449,6 +452,11 @@ pub(crate) struct ApplyEditorAiReviewResultInput {
     suggested_image_caption: String,
     reviewed: bool,
     please_check: bool,
+    /// AI Review clarity comment to append in the same commit; empty for none.
+    #[serde(default)]
+    comment: String,
+    #[serde(default)]
+    comment_fingerprint: String,
     #[serde(default)]
     ai_model: String,
 }
@@ -465,6 +473,10 @@ pub(crate) struct ApplyEditorAiReviewResultsBatchRowInput {
     suggested_image_caption: String,
     reviewed: bool,
     please_check: bool,
+    #[serde(default)]
+    comment: String,
+    #[serde(default)]
+    comment_fingerprint: String,
 }
 
 #[derive(Deserialize)]
@@ -654,6 +666,9 @@ pub(crate) struct ApplyEditorAiReviewResultResponse {
     reviewed: bool,
     please_check: bool,
     marker_integrity_rejected: bool,
+    comment_count: usize,
+    comments_revision: u64,
+    ai_clarity_fingerprints: BTreeMap<String, String>,
     last_update: Option<EditorRowVersionMetadata>,
     chapter_base_commit_sha: Option<String>,
 }
@@ -668,6 +683,9 @@ pub(crate) struct ApplyEditorAiReviewResultsBatchRowResult {
     reviewed: bool,
     please_check: bool,
     marker_integrity_rejected: bool,
+    comment_count: usize,
+    comments_revision: u64,
+    ai_clarity_fingerprints: BTreeMap<String, String>,
     last_update: Option<EditorRowVersionMetadata>,
 }
 
@@ -880,6 +898,10 @@ struct EditorRow {
     context: Option<String>,
     comment_count: usize,
     comments_revision: u64,
+    /// Language code -> content fingerprint of the latest AI Review clarity
+    /// comment, so a repeat run skips rows unchanged since they were flagged.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    ai_clarity_fingerprints: BTreeMap<String, String>,
     source_row_number: usize,
     review_state: String,
     lifecycle_state: String,
