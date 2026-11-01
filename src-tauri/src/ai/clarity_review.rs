@@ -14,7 +14,7 @@ use super::{
 };
 use crate::ai::types::{
     AiAssistantRowWindowEntry, AiPromptOutputFormat, AiReviewBatchRequest, AiReviewBatchRowResult,
-    AiReviewRequest, AiReviewResponse,
+    AiReviewGlossaryTerm, AiReviewRequest, AiReviewResponse,
 };
 
 pub(super) const CLARITY_REVIEW_MODE: &str = "clarity";
@@ -44,6 +44,37 @@ fn clarity_guidance(target_label: &str) -> [String; 3] {
             "Comment rule:\nFor a flagged row, write a short comment in {target_label} for the translator: quote the words that are unclear, say what makes them hard to understand, and if there are competing readings, name them. If the unclear part is in a footnote or the image caption, say so. Do not suggest a rewritten version. Use one to three sentences. For a row that reads clearly, return an empty comment."
         ),
     ]
+}
+
+/// The rule and the term list for the glossary terms the editor underlines in
+/// the text, or `None` when there are none. Technical glossary terms alone made
+/// the model flag otherwise clear rows.
+fn glossary_terms_sections(
+    target_label: &str,
+    terms: &[AiReviewGlossaryTerm],
+) -> Option<[String; 2]> {
+    let values = terms
+        .iter()
+        .filter(|term| !term.target_term.trim().is_empty())
+        .map(|term| {
+            json!({
+                "sourceTerm": term.source_term.trim(),
+                "targetTerm": term.target_term.trim(),
+            })
+        })
+        .collect::<Vec<_>>();
+    if values.is_empty() {
+        return None;
+    }
+    Some([
+        format!(
+            "Glossary terms rule:\nEach entry in <glossary_terms> pairs a term in the original text with the approved {target_label} glossary term the translation uses for it. The translator is required to use these terms. A row's use of one of them is not, on its own, a reason to flag it, even when the term is technical, specialised, or unfamiliar to a general reader. Flag such a row only when it would still be hard to understand for a reader who knows what the glossary terms mean."
+        ),
+        format!(
+            "<glossary_terms format=\"json\">\n{}\n</glossary_terms>",
+            serde_json::Value::Array(values)
+        ),
+    ])
 }
 
 fn format_target_context(entries: &[AiAssistantRowWindowEntry]) -> String {
@@ -96,12 +127,20 @@ pub(super) fn build_clarity_review_prompt(request: &AiReviewRequest) -> String {
         None => (&request.row_window[..0], &request.row_window[..0]),
     };
 
+    let glossary_terms = glossary_terms_sections(&target_label, &request.glossary_terms);
+
     let mut sections = vec![clarity_response_contract().to_string()];
     sections.extend(clarity_guidance(&target_label));
+    if let Some([rule, _]) = &glossary_terms {
+        sections.push(rule.clone());
+    }
     sections.push(format!(
         "<languages>\ntarget: {}\n</languages>",
         format_language_ref(&request.target_language, target_code)
     ));
+    if let Some([_, list]) = glossary_terms {
+        sections.push(list);
+    }
     push_context(
         &mut sections,
         "context_before",
@@ -134,8 +173,13 @@ pub(super) fn build_clarity_review_batch_prompt(request: &AiReviewBatchRequest) 
     };
     let target_label = target_language_label(&request.target_language, target_code);
 
+    let glossary_terms = glossary_terms_sections(&target_label, &request.glossary_terms);
+
     let mut sections = vec![clarity_batch_response_contract().to_string()];
     sections.extend(clarity_guidance(&target_label));
+    if let Some([rule, _]) = &glossary_terms {
+        sections.push(rule.clone());
+    }
     sections.push(
         "Rows rule:\nThe rows in <rows_to_check> are consecutive and form one continuous text. Read them together with the context rows, judge each row in that context, and flag the row that contains the unclear words."
             .to_string(),
@@ -144,6 +188,9 @@ pub(super) fn build_clarity_review_batch_prompt(request: &AiReviewBatchRequest) 
         "<languages>\ntarget: {}\n</languages>",
         format_language_ref(&request.target_language, target_code)
     ));
+    if let Some([_, list]) = glossary_terms {
+        sections.push(list);
+    }
     push_context(
         &mut sections,
         "context_before",
@@ -334,6 +381,7 @@ mod tests {
             source_language: "English".to_string(),
             target_language: "Vietnamese".to_string(),
             glossary_hints: vec![],
+            glossary_terms: vec![],
             qa_hints: vec![],
             alternate_language_texts: vec![],
             target_language_history: vec![],
@@ -367,6 +415,59 @@ mod tests {
     }
 
     #[test]
+    fn prompts_list_underlined_glossary_terms_and_say_they_are_not_enough_to_flag() {
+        let mut request = clarity_request();
+        let prompt = build_clarity_review_prompt(&request);
+        assert!(!prompt.contains("Glossary terms rule:"));
+        assert!(!prompt.contains("<glossary_terms"));
+
+        request.glossary_terms = vec![
+            AiReviewGlossaryTerm {
+                source_term: "astral plane".to_string(),
+                target_term: "cõi tinh tú".to_string(),
+            },
+            AiReviewGlossaryTerm {
+                source_term: "unused".to_string(),
+                target_term: "  ".to_string(),
+            },
+        ];
+        let prompt = build_clarity_review_prompt(&request);
+
+        assert!(prompt.contains("Glossary terms rule:\nEach entry in <glossary_terms> pairs a term in the original text with the approved Vietnamese glossary term"));
+        assert!(prompt.contains("is not, on its own, a reason to flag it"));
+        assert!(prompt.contains(
+            "<languages>\ntarget: Vietnamese (vi)\n</languages>\n\n<glossary_terms format=\"json\">\n[{\"sourceTerm\":\"astral plane\",\"targetTerm\":\"cõi tinh tú\"}]\n</glossary_terms>"
+        ));
+        assert!(!prompt.contains("unused"));
+
+        let batch = AiReviewBatchRequest {
+            provider_id: AiProviderId::OpenAi,
+            model_id: "gpt-5.4".to_string(),
+            review_mode: Some("clarity".to_string()),
+            source_language_code: "en".to_string(),
+            target_language_code: "vi".to_string(),
+            language_code: "vi".to_string(),
+            source_language: "English".to_string(),
+            target_language: "Vietnamese".to_string(),
+            glossary_hints: vec![],
+            glossary_terms: request.glossary_terms.clone(),
+            context_before: vec![],
+            context_after: vec![],
+            rows: vec![],
+            subtitle_cues: false,
+            sentence_group: false,
+            sentence_source_text: String::new(),
+            sentence_target_text: String::new(),
+            installation_id: None,
+        };
+        let prompt = build_clarity_review_batch_prompt(&batch);
+        assert!(prompt.contains("Glossary terms rule:"));
+        assert!(
+            prompt.contains("[{\"sourceTerm\":\"astral plane\",\"targetTerm\":\"cõi tinh tú\"}]")
+        );
+    }
+
+    #[test]
     fn single_prompt_omits_context_when_the_row_is_not_in_the_window() {
         let mut request = clarity_request();
         request.row_id = "missing".to_string();
@@ -390,6 +491,7 @@ mod tests {
             source_language: "English".to_string(),
             target_language: "Vietnamese".to_string(),
             glossary_hints: vec![],
+            glossary_terms: vec![],
             context_before: vec![window_entry("r0", "Đoạn trước")],
             context_after: vec![window_entry("r9", "")],
             rows: vec![
@@ -467,6 +569,7 @@ mod tests {
             source_language: String::new(),
             target_language: "Vietnamese".to_string(),
             glossary_hints: vec![],
+            glossary_terms: vec![],
             context_before: vec![],
             context_after: vec![],
             rows: ["r1", "r2", "r3"]

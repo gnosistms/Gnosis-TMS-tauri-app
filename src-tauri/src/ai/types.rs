@@ -94,6 +94,9 @@ pub struct AiReviewRequest {
     pub target_language: String,
     #[serde(default)]
     pub glossary_hints: Vec<AiTranslationGlossaryHint>,
+    /// Clarity review only: the glossary terms underlined in the row.
+    #[serde(default)]
+    pub glossary_terms: Vec<AiReviewGlossaryTerm>,
     #[serde(default)]
     pub qa_hints: Vec<AiReviewQaHint>,
     #[serde(default)]
@@ -126,6 +129,18 @@ pub struct AiReviewResponse {
     pub comment: String,
     #[serde(default)]
     pub prompt_text: String,
+}
+
+/// A glossary term the editor underlines in the target text, with the source
+/// wording underlined for it. The clarity review is told that using one is not,
+/// on its own, a reason to flag a row.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiReviewGlossaryTerm {
+    #[serde(default)]
+    pub source_term: String,
+    #[serde(default)]
+    pub target_term: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -418,6 +433,9 @@ pub struct AiReviewBatchRequest {
     pub target_language: String,
     #[serde(default)]
     pub glossary_hints: Vec<AiTranslationGlossaryHint>,
+    /// Clarity review only: the glossary terms underlined in the rows.
+    #[serde(default)]
+    pub glossary_terms: Vec<AiReviewGlossaryTerm>,
     #[serde(default)]
     pub context_before: Vec<AiAssistantRowWindowEntry>,
     #[serde(default)]

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { buildEditorGlossaryModel } from "./editor-glossary-highlighting.js";
 import {
   buildEditorAiReviewBatchRequest,
   buildEditorAiReviewRequest,
@@ -202,6 +203,47 @@ test("AI Review clarity requests carry the target text and target-only context, 
   assert.deepEqual(batch.contextAfter.map((entry) => entry.targetText), ["Ba"]);
   assert.deepEqual(batch.glossaryHints, []);
   assert.equal(batch.subtitleCues, undefined);
+});
+
+test("AI Review clarity requests list the glossary terms underlined in the rows", () => {
+  const state = chapterState();
+  state.glossary = {
+    matcherModel: buildEditorGlossaryModel({
+      glossaryId: "g1",
+      sourceLanguage: { code: "es", name: "Spanish" },
+      targetLanguage: { code: "vi", name: "Vietnamese" },
+      terms: [
+        { termId: "t1", sourceTerms: ["Uno"], targetTerms: ["Mot", "Mot-alt"] },
+        { termId: "t2", sourceTerms: ["Dos"], targetTerms: ["Hai"] },
+        { termId: "t3", sourceTerms: ["Tres"], targetTerms: ["Bon"] },
+      ],
+    }),
+  };
+  state.rows[2].fields = { es: "Dos y uno", vi: "Hai va Mot" };
+  const request = (overrides) => ({
+    chapterState: state,
+    sourceLanguageCode: "es",
+    targetLanguageCode: "vi",
+    providerId: "openai",
+    modelId: "gpt-5.5",
+    reviewMode: "clarity",
+    ...overrides,
+  });
+
+  assert.deepEqual(buildEditorAiReviewRequest(request({ row: state.rows[1] })).glossaryTerms, [
+    { sourceTerm: "Uno", targetTerm: "Mot" },
+  ]);
+  // Batch terms are deduplicated across rows, ignoring case; "Tres" is not
+  // underlined in the target, so it is not listed.
+  assert.deepEqual(
+    buildEditorAiReviewBatchRequest(request({ rows: state.rows.slice(1) })).glossaryTerms,
+    [
+      { sourceTerm: "Uno", targetTerm: "Mot" },
+      { sourceTerm: "Dos", targetTerm: "Hai" },
+    ],
+  );
+  assert.equal("glossaryTerms" in buildEditorAiReviewRequest(request({ row: state.rows[1], reviewMode: "meaning" })), false);
+  assert.equal("glossaryTerms" in buildEditorAiReviewBatchRequest(request({ rows: state.rows, reviewMode: "grammar" })), false);
 });
 
 test("normalizeEditorAiReviewMode keeps the three AI Review modes", () => {

@@ -15,7 +15,14 @@ text.
   existing two options are unchanged.
 - **Input.** The target-language sections (text, footnotes, image caption)
   plus neighbouring target-language rows as read-only context. No source text,
-  glossary, QA hints, history, or reference translations.
+  QA hints, history, or reference translations.
+- **Glossary terms (added 2026-11-01).** Testing showed rows flagged only for
+  containing technical terms. The request now lists the glossary matches the
+  editor underlines in the target text: for each, the source wording
+  underlined in the source and the target variant underlined in the target
+  (not the other variants). The prompt says using a listed term is not, on its
+  own, a reason to flag a row; flag only what would still be unclear to a
+  reader who knows the terms.
 - **Clear rows are untouched.** No reviewed mark, no please-check change, no
   commit. They were not checked for spelling or grammar, so marking them
   reviewed would hide them from later reviews.
@@ -51,6 +58,9 @@ button never passes it.
   rows. Batch context comes from `context_before` / `context_after` target
   text; single-row context comes from `row_window`, split at the new
   `AiReviewRequest.row_id`.
+- `AiReviewRequest` / `AiReviewBatchRequest` gain `glossary_terms`
+  (`{sourceTerm, targetTerm}`). When non-empty, the clarity prompts add a
+  "Glossary terms rule" and a `<glossary_terms format="json">` block.
 - Responses use `AiPromptOutputFormat::JsonSchema` (strict schemas: single
   `{comment}`, batch `{rows:[{rowId, comment}]}`), so no new enum variant.
 - `AiReviewResponse` and `AiReviewBatchRowResult` gain `comment` (serde
@@ -80,6 +90,9 @@ button never passes it.
   - Batches only join rows that are adjacent in the chapter, so each batch is
     continuous text and its context rows are its true neighbours.
   - No history or QA-hint loading.
+  - `glossaryTerms` come from `editorRowGlossaryTermPairs` (highlight cache
+    module), which uses the same direct/derived glossary models as the
+    editor's underlines; batches deduplicate them across rows.
   - Rows with an empty comment are counted as done with no write. Rows with a
     comment are applied with `pleaseCheck: true`, `reviewed: false`, empty
     suggestions, and the comment + fingerprint.

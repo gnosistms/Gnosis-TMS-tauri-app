@@ -1392,6 +1392,54 @@ export function buildEditorRowGlossaryHighlights(sections, glossaryModel, { incl
   return highlights;
 }
 
+// The glossary terms underlined in one target section, each paired with the
+// source wording underlined for it: the same matches as the highlights above,
+// as text. A split target variant is joined with " … ", as glossaries write it.
+export function buildEditorRowGlossaryTermPairs(sections, glossaryModel, targetSectionCode) {
+  const normalizedSections = Array.isArray(sections) ? sections : [];
+  const targetSection = normalizedSections.find((section) => section?.code === targetSectionCode);
+  if (
+    !glossaryModel?.sourceMatcher
+    || !targetSection
+    || !sectionMatchesLanguage(targetSection, glossaryModel.targetLanguage?.code)
+  ) {
+    return [];
+  }
+
+  const targetMatcher = buildRowTargetMatcher(
+    normalizedSections,
+    glossaryModel,
+    rowTargetTexts(normalizedSections, glossaryModel),
+  );
+  const { tokens, matches } = findLongestGlossaryMatches(
+    extractInlineMarkupBaseText(targetSection.text ?? ""),
+    targetMatcher,
+  );
+  const occurrences = new Map();
+  for (const match of matches) {
+    const occurrence = occurrences.get(match.occurrenceIndex) ?? { candidate: match.candidate, pieces: [] };
+    occurrence.pieces.push(buildMatchedGlossarySegment(tokens, match));
+    occurrences.set(match.occurrenceIndex, occurrence);
+  }
+
+  const pairs = [];
+  const seen = new Set();
+  for (const { candidate, pieces } of occurrences.values()) {
+    const targetTerm = pieces.filter(Boolean).join(" … ");
+    if (!targetTerm) {
+      continue;
+    }
+    for (const sourceTerm of orderedCandidateValues(candidate, "sourceTermsOrdered", "sourceTerms")) {
+      const key = `${sourceTerm}\u0000${targetTerm}`.toLocaleLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        pairs.push({ sourceTerm, targetTerm });
+      }
+    }
+  }
+  return pairs;
+}
+
 export function buildEditorRowSourceGlossaryHighlights(sections, glossaryModel) {
   const highlights = new Map();
   if (!glossaryModel?.sourceMatcher) {

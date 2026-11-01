@@ -9,6 +9,7 @@ import {
   subtitleCuePositions,
 } from "./editor-ai-batch-request.js";
 import { editorFootnotesForAiReview } from "./editor-footnotes.js";
+import { editorRowGlossaryTermPairs } from "./editor-glossary-highlight-cache.js";
 import { editorFootnotesPlainText } from "./editor-utils.js";
 import { languageBaseCode } from "./editor-language-utils.js";
 import { srtLinguisticRow } from "./editor-srt-grouping.js";
@@ -78,6 +79,23 @@ export function editorAiReviewContentFingerprint(row, languageCode) {
     readEditorReviewRowFootnote(row, languageCode),
     readEditorReviewRowImageCaption(row, languageCode),
   ].join("\u0000"));
+}
+
+// The glossary terms underlined in the rows' target text, so the clarity
+// review does not flag a row merely for using approved terminology.
+function clarityGlossaryTerms(chapterState, rows, targetLanguageCode) {
+  const terms = [];
+  const seen = new Set();
+  for (const row of rows) {
+    for (const term of editorRowGlossaryTermPairs(row, targetLanguageCode, chapterState)) {
+      const key = `${term.sourceTerm}\u0000${term.targetTerm}`.toLocaleLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        terms.push(term);
+      }
+    }
+  }
+  return terms;
 }
 
 function normalizeReviewLanguageLabel(language, fallbackCode = "") {
@@ -214,6 +232,7 @@ export function buildEditorAiReviewRequest({
     glossaryHints: normalizedReviewMode === "meaning"
       ? buildEditorAiReviewGlossaryHints(chapterState, row, sourceLanguageCode, targetLanguageCode)
       : [],
+    ...(clarity ? { glossaryTerms: clarityGlossaryTerms(chapterState, [row], targetLanguageCode) } : {}),
     qaHints: Array.isArray(qaHints) ? qaHints : [],
     alternateLanguageTexts: normalizedReviewMode === "meaning"
       ? buildEditorAiReviewAlternateLanguageTexts(chapterState, row, sourceLanguageCode, targetLanguageCode)
@@ -305,6 +324,7 @@ export function buildEditorAiReviewBatchRequest({
     sourceLanguage: normalizeReviewLanguageLabel(sourceLanguage, sourceLanguageCode),
     targetLanguage: normalizeReviewLanguageLabel(targetLanguage, targetLanguageCode),
     glossaryHints,
+    ...(clarity ? { glossaryTerms: clarityGlossaryTerms(chapterState, rowList, targetLanguageCode) } : {}),
     contextBefore,
     contextAfter,
     rows: rowInputs,
