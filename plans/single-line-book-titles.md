@@ -25,3 +25,20 @@ Vellum element titles are one line; the title-page subhead keeps its break.
 
 Validation: 160 native export tests, 3,245 frontend tests and 26 workflow tests
 pass; strict all-target Clippy, Rust formatting and ESLint pass.
+
+## Follow-up: EPUB title page (2026-10-31)
+
+The EPUB title page kept the typed break (`Hôn Nhân<br/>Hoàn Hảo` in the HNHH
+export), and in Apple Books its headings sat left-aligned with the publisher
+logo stretched across the page.
+
+- The EPUB title page now joins its title and subtitle onto one line too: in a
+  reflowable book the reader wraps them for its own screen. Author and translator
+  lines keep their breaks. The PDF and Vellum title pages keep the typed breaks.
+- `.title h1` and `.title h2` set `text-align:center` themselves; readers' heading
+  rules beat the alignment they would inherit from the section.
+- The title-page image is capped at 7em × 4em (auto width and height), about the
+  PDF's 1.105in × 0.595in logo box. Measured in Playwright WebKit and Chromium:
+  the percentage-sized caduceus SVG (4:3) renders 85×64 px at 16px text, and 4:1
+  and 1:3 rasters keep their ratios; small rasters are not enlarged. `object-fit`
+  is avoided because older readers lack it.

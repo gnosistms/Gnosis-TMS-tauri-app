@@ -6,6 +6,7 @@ import { studioView, studioCanVisitStep, STUDIO_NEW_MEANING, unmatchedMeaningCho
 import { STUDIO_STEPS, STUDIO_DICTIONARY_REVIEW_VERSION, activeMeanings, meaningNumber, studioTrialRoundLabel, sourceCollisions, selectedForms, uniqueTexts, witnessedSplitForms, reviewCompoundReport, buildStudioDraft, stableSignature, studioSourceContext, studioContextRequest, meaningTrialSignature, meaningTrialsAreCurrent, entryBatchSignature, entryTrialsAreCurrent, studioStepNumber, studioStepStatusLabel,
   currentStudioFinding, studioReviewOverride } from "../app/glossary-research-studio-workflow.js";
 import { studioGlossaryEntries } from "../app/glossary-research-studio-query.js";
+import { studioStepDescription } from "../app/glossary-research-studio-step-descriptions.js";
 import { studyAssignments } from "../app/glossary-research-studio-testing.js";
 import { currentStudioRecommendation, sourceSummaryMustBeSkipped, studioCanRecommendSkip, studioFormsResearchStarted, studioResearchStarted } from "../app/glossary-research-studio-recommendations.js";
 import { STUDIO_AUTO_CHOICE_MS, studioAutoChoiceCountdown, studioAutoChoiceText } from "../app/glossary-research-studio-auto-choice.js";
@@ -287,9 +288,7 @@ function stepContent(s, state) {
     }
     case "6": {
       const preference = uniqueTexts(s.candidates.filter((c) => c.selected !== false && c.meaningIds.length).map((c) => c.text));
-      return `<p>Select translations for each meaning. Expand Usage notes and editing to change wording, notes, preference, or inflections.</p>
-        <p>Keep usage notes brief. Include extra detail only when it prevents a meaningful translation error; keep research explanations in the report below.</p>
-        ${usageNoteReport([value?.research], "candidate-note-research")}
+      return `${usageNoteReport([value?.research], "candidate-note-research")}
         <details class="studio-entry studio-entry-settings" data-studio-disclosure="candidate-entry-settings"><summary>Entry notes and preference</summary>
           <div class="studio-preference"><h3>Current candidate preference</h3><ol>${preference.map((text) => `<li>${e(text)}</li>`).join("")}</ol></div>
           ${field("General translator note", "generalNote", s.generalNote ?? "", { textarea: true })}${field("Footnote", "footnote", s.footnote ?? "", { textarea: true })}
@@ -403,6 +402,28 @@ function modal(s, view) {
       <label class="field"><span class="field__label">Meaning</span><select class="field__input" data-studio-decision="meaning">${s.meanings.filter((m) => m.enabled !== false).map((m) => `<option value="${e(m.id)}" ${choice === m.id ? "selected" : ""}>${meaningNumber(s, m.id)}. ${narrative(m.definition)}</option>`).join("")}<option value="${STUDIO_NEW_MEANING}" ${choice === STUDIO_NEW_MEANING ? "selected" : ""}>Enter new meaning below</option></select></label>
       ${choice === STUDIO_NEW_MEANING ? `<label class="field"><span class="field__label">New meaning</span><textarea class="field__textarea" data-studio-decision="definition">${e(s.decisionInput?.definition ?? decision.recommendation.definition)}</textarea></label>` : ""}`;
     actions = button("Drop this paragraph", "decision:drop") + primaryButton("Assign meaning", "studio:decision:assign");
+  } else if (decision?.kind === "missing-meaning") {
+    const input = s.decisionInput ?? {};
+    const quoted = (texts) => texts.map((text) => `“${e(text)}”`).join(", ");
+    const paragraphs = new Map([...(decision.paragraphs ?? []), ...s.passages].map((p) => [p.id, p]));
+    const suggestions = decision.suggestions;
+    title = suggestions.length ? "Add a missing meaning?" : "Translations that fit no meaning";
+    body = `<p>${quoted(decision.translations)} ${decision.translations.length === 1 ? "fits" : "fit"} none of the meanings of ${e(s.scope.term)}. ${suggestions.length
+        ? `The AI suggests ${suggestions.length === 1 ? "this meaning" : "these meanings"}. Adding a meaning runs step 4.6 Assign meanings and the steps after it again.`
+        : "The AI suggests no meaning to add."} Translations whose meaning you don't add are left out.</p>
+      ${suggestions.map((m) => {
+        const groups = [...new Set(m.matches.map((a) => a.paragraphId))].map((id) => ({ p: paragraphs.get(id), ids: m.matches.filter((a) => a.paragraphId === id).map((a) => a.occurrenceId) })).filter(({ p }) => p);
+        return `<section class="studio-entry studio-suggested-meaning">
+          <label class="field__checkbox studio-check"><input type="checkbox" data-studio-decision="add:${e(m.id)}" ${input[`add:${m.id}`] ?? m.matches.length > 0 ? "checked" : ""}>Add this meaning</label>
+          <label class="field"><span class="field__label">Meaning</span><textarea class="field__textarea" rows="3" data-studio-decision="definition:${e(m.id)}">${e(input[`definition:${m.id}`] ?? m.definition)}</textarea></label>
+          ${m.translations.length ? `<p>Suggested by ${quoted(m.translations)}.</p>` : ""}
+          ${m.matches.length ? `<h3>${quantity(m.matches.length, "matching search result")}${m.matches.length >= 15 ? " (the search stops at 15)" : ""}</h3>
+            ${groups.map(({ p, ids }) => paragraph({ ...p, highlightOccurrences: p.occurrences.filter((o) => ids.includes(o.id)) }, s)).join("")}`
+            : `<p>No matching search results in the ${quantity(decision.searched, "paragraph")} checked.</p>`}
+        </section>`;
+      }).join("")}
+      ${decision.rejected.length ? `<section class="studio-entry"><h3>Not suggested as meanings</h3><ul>${decision.rejected.map((r) => `<li>${quoted([r.translation])}${r.reason ? ` · ${narrative(r.reason)}` : ""}</li>`).join("")}</ul></section>` : ""}`;
+    actions = button("Continue without adding", "decision:skip") + (suggestions.length ? primaryButton("Add selected meanings", "studio:decision:add") : "");
   } else if (decision?.kind === "needs-form") {
     title = "A translation needs confirming";
     const offers = decision.offers ?? [];
@@ -573,7 +594,7 @@ export function renderGlossaryResearchStudio(state) {
       const status = studioStepStatusLabel(s.steps[st.id]);
       return `<li ${st.id === s.step ? 'aria-current="step"' : ""}><button type="button" class="studio-step-link" data-action="studio:visit:${e(st.id)}" ${studioCanVisitStep(s, st.id) ? "" : "disabled"} ${st.id === s.step ? 'aria-current="step"' : ""}>${e(studioStepNumber(st.id))} · ${e(st.label)}${status ? status === "✓" ? " ✓" : ` · ${e(status)}` : ""}</button></li>`;
     }).join("")}</ol>${Object.values(s.steps).some((record) => record.status === "stale") ? "<p>Needs review: earlier inputs changed. Saved results remain available.</p>" : ""}</aside>
-      <section class="studio-main"><header class="studio-step-header"><h2>${e(studioStepNumber(step.id))} · ${e(step.label)}</h2><p>${e(s.scope.sourceLanguage.name)} → ${e(s.scope.targetLanguage.name)}</p></header>
+      <section class="studio-main"><header class="studio-step-header"><h2>${e(studioStepNumber(step.id))} · ${e(step.label)}</h2><p>${e(s.scope.sourceLanguage.name)} → ${e(s.scope.targetLanguage.name)}</p><p class="studio-step-description">${e(studioStepDescription(s, step.id))}</p></header>
       <div class="studio-content">
       ${["complete", "merged", "cancelled"].includes(s.status) ? `<p role="status">Study ${e(s.status)}. All research remains saved.</p>` : ""}
       ${s.step !== "2a" ? skipRecommendation(s, view) : ""}

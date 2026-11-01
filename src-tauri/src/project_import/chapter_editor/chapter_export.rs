@@ -2790,10 +2790,17 @@ pub(super) fn download_public_image_bytes(url: &str) -> Option<Vec<u8>> {
 pub(super) fn download_public_image_bytes_detailed(
     url: &str,
 ) -> Result<Vec<u8>, PublicImageDownloadError> {
+    // Every export format downloads through here, so they share the originals.
+    if let Some(data) = super::export_image_cache::cached_download(url, MAX_EXPORT_IMAGE_BYTES) {
+        return Ok(data);
+    }
     let mut last_error = None;
     for attempt in 0..2 {
         match download_public_image_bytes_once(url) {
-            Ok(data) => return Ok(data),
+            Ok(data) => {
+                super::export_image_cache::remember_download(url, &data);
+                return Ok(data);
+            }
             Err(error) if attempt == 0 && error.is_retryable() => {
                 last_error = Some(error);
                 std::thread::sleep(Duration::from_millis(200));

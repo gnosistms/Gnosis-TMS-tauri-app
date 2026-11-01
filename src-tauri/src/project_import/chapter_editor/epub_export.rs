@@ -8,6 +8,7 @@ use super::chapter_export::{
 use super::list_style::{list_items, list_kind, render_list_html};
 use scraper::{ElementRef, Html, Node};
 use std::{
+    borrow::Cow,
     collections::BTreeSet,
     fmt::Write as _,
     fs,
@@ -25,7 +26,10 @@ const MAX_IMAGE_BYTES: u64 = 25 * 1024 * 1024;
 const MAX_IMAGE_PIXELS: u64 = 4_000_000;
 const JPEG_QUALITY: u8 = 90;
 const IMAGE_WORKERS: usize = 6;
-const STYLES: &str = "body{font-family:serif;line-height:1.5;margin:1em;}h1,h2{line-height:1.2;break-after:avoid;}blockquote{margin:1em 2em;}.quote-attribution{display:block;text-align:right;font-style:normal;}.indented{margin-inline-start:2em;}.centered,.title{text-align:center;}figure{text-align:center;break-inside:avoid;}img{max-width:100%;height:auto;}figcaption{margin-top:.5em;}.missing-image{border:1px solid;padding:.5em;font-size:.9em;}.footnote{font-size:.9em;}hr{width:30%;margin:1.5em auto;}.noteref{vertical-align:super;font-size:.75em;}";
+// Readers' own heading rules beat inherited alignment, so title headings set it.
+// The publisher logo fits about the PDF's 1.105in x 0.595in box; auto width and
+// height with both maxima keep its ratio without object-fit, which old readers lack.
+const STYLES: &str = "body{font-family:serif;line-height:1.5;margin:1em;}h1,h2{line-height:1.2;break-after:avoid;}blockquote{margin:1em 2em;}.quote-attribution{display:block;text-align:right;font-style:normal;}.indented{margin-inline-start:2em;}.centered,.title,.title h1,.title h2{text-align:center;}figure{text-align:center;break-inside:avoid;}img{max-width:100%;height:auto;}.title img{max-width:7em;max-height:4em;}figcaption{margin-top:.5em;}.missing-image{border:1px solid;padding:.5em;font-size:.9em;}.footnote{font-size:.9em;}hr{width:30%;margin:1.5em auto;}.noteref{vertical-align:super;font-size:.75em;}";
 
 struct Section {
     document: ExportDocument,
@@ -471,12 +475,6 @@ fn section_body(
                     ));
                     continue;
                 }
-                let mut text = inline(text, &anchor_notes, &mut referenced);
-                for note in &anchor_notes {
-                    if !referenced.contains(&note.index) {
-                        text.push_str(&noteref(note, &mut referenced));
-                    }
-                }
                 let (tag, class) = match export_text_style(Some(text_style)).as_str() {
                     "heading1" | "chapter_heading" => ("h1", ""),
                     "heading2" => ("h2", ""),
@@ -485,6 +483,18 @@ fn section_body(
                     "centered" => ("p", "centered"),
                     _ => ("p", ""),
                 };
+                // Title-page breaks lay out the printed page; a reader wraps its own lines.
+                let text = if section.kind == "title" && tag.starts_with('h') {
+                    Cow::Owned(single_line_title(text))
+                } else {
+                    Cow::Borrowed(text.as_str())
+                };
+                let mut text = inline(&text, &anchor_notes, &mut referenced);
+                for note in &anchor_notes {
+                    if !referenced.contains(&note.index) {
+                        text.push_str(&noteref(note, &mut referenced));
+                    }
+                }
                 let _ = write!(
                     body,
                     "<{tag} id=\"block-{index}\" class=\"{class}\">{text}</{tag}>"

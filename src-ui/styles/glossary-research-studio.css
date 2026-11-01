@@ -101,6 +101,8 @@
 
 .studio-step-header h2 { margin: 0; font-size: 1.25rem; letter-spacing: var(--heading-letter-spacing); }
 .studio-step-header p { margin: 0; font-size: .8125rem; color: var(--muted); }
+/* Full width, so it wraps onto its own line under the title. */
+.studio-step-header .studio-step-description { flex-basis: 100%; font-size: .9375rem; line-height: 1.5; color: var(--text); }
 
 .studio-content {
   flex: 1;
@@ -135,6 +137,34 @@
   -webkit-line-clamp: unset;
 }
 .studio-check { display: inline-flex; margin: 8px 0; }
+/* Drawn here rather than by the platform: macOS WebKit paints a checked
+   native checkbox gray while the window is inactive and does not always
+   repaint it on reactivation, so one list could mix orange and gray boxes. */
+.studio-check input {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  flex-shrink: 0;
+  border: 1px solid var(--muted);
+  border-radius: 4px;
+  background: var(--surface-strong);
+  cursor: pointer;
+}
+.studio-check input::after {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 1.5px;
+  width: 4px;
+  height: 9px;
+  border-right: 2px solid transparent;
+  border-bottom: 2px solid transparent;
+  transform: rotate(45deg);
+}
+.studio-check input:checked { border-color: var(--accent-strong); background: var(--accent); }
+.studio-check input:checked::after { border-color: var(--accent-text); }
+.studio-check input:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
+.studio-check input:disabled { cursor: not-allowed; opacity: 0.5; }
 /* Step 10a: the usage count sits under its translation, aligned past the
    18px checkbox and 12px gap of .field__checkbox. The browser's own checkbox
    margin differs between engines, so it is removed here, and a long

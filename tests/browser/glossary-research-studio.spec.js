@@ -108,7 +108,10 @@ async function mountStudio(page) {
           else if (prompt.includes("Build the meaning inventory")) value = { meanings: [{ id: "m1", definition: "Di chuyển bằng chân", grammar: "verb", sourceIds: evidence.sourceMeanings.map((m) => m.sourceId) }], excludedSources: [] };
           else if (prompt.includes("Assign a meaning to EACH")) value = { paragraphMeanings: evidence.paragraphs.map((p) => ({ paragraphId: p.id, meaningIds: p.occurrences.map(() => "m1") })) };
           else if (prompt.includes("Find source expressions")) value = { splits: [] };
-          else if (args.input.step === "6") value = { candidates: [{ id: "c1", text: "đi bộ", meaningIds: ["m1"], groupId: "g1", note: "Di chuyển bằng chân" }] };
+          else if (prompt.includes("Some proposed translations fit none")) value = { meanings: [{ definition: "Bướng bỉnh", grammar: "adjective", translations: ["cứng đầu"], clues: [] }], rejected: [] };
+          else if (prompt.includes("Check EACH supplied occurrence")) value = { matches: evidence.paragraphs.slice(0, 1).map((p) => ({ meaningId: evidence.suggestedMeanings[0].id, paragraphId: p.id, occurrenceId: p.occurrences[0].id })) };
+          else if (args.input.step === "6") value = { candidates: [{ id: "c1", text: "đi bộ", meaningIds: ["m1"], groupId: "g1", note: "Di chuyển bằng chân" },
+            ...(window.studioOrphanTranslation ? [{ id: "c2", text: "cứng đầu", meaningIds: [], groupId: "g2", note: "" }] : [])] };
           else if (prompt.includes("Which supplied target forms")) value = { candidateIds: [] };
           else if (prompt.includes("Select one initial")) value = { candidateId: "c1" };
           else if (prompt.includes("Assess EACH")) value = { choices: evidence.assignments.map((a) => ({ ...a, candidateId: "c1", rendered: "đi bộ",
@@ -411,6 +414,45 @@ test("redoing saved research warns before running tools and cancellation preserv
   await expect(page.locator('[data-action="studio:visit:4.2"]')).toHaveText("4.2 · Corpus meanings ✓");
   await expect(page.locator('[data-action="studio:visit:5"]')).toHaveText("5 · Compounds and phrases · undone");
   expect(await page.evaluate(() => window.studioCalls.slice(window.revisitCalls).some((c) => c.command === "start_glossary_studio_tool"))).toBe(true);
+});
+
+async function redoStepSixWithOrphanTranslation(page) {
+  await mountStudio(page); await seedRevisitStudy(page);
+  await page.evaluate(() => { window.studioOrphanTranslation = true; });
+  await page.locator('[data-action="studio:visit:6"]').click();
+  await page.getByRole("button", { name: "Redo this step", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Continue", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("heading", { name: "Add a missing meaning?", exact: true })).toBeVisible();
+  await expect(dialog).toContainText("“cứng đầu” fits none of the meanings of walk.");
+  await expect(dialog.getByRole("textbox", { name: "Meaning", exact: true })).toHaveValue("Bướng bỉnh");
+  await expect(dialog.getByRole("heading", { name: "1 matching search result", exact: true })).toBeVisible();
+  await expect(dialog.getByRole("checkbox", { name: "Add this meaning", exact: true })).toBeChecked();
+  return dialog;
+}
+
+test("a translation that fits no meaning can add a suggested meaning, which reruns 4.6", async ({ page }) => {
+  const dialog = await redoStepSixWithOrphanTranslation(page);
+  await dialog.getByRole("textbox", { name: "Meaning", exact: true }).fill("Bướng bỉnh, cố chấp");
+  await dialog.getByRole("button", { name: "Add selected meanings", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "4.6 · Assign meanings", exact: true })).toBeVisible();
+  await expect(page.locator('[data-action="studio:visit:6"]')).toContainText("undone");
+  expect(await page.evaluate(async () => {
+    const s = (await import(`/${"app"}/state.js`)).state.glossaryResearchStudio.study;
+    return { meanings: s.meanings.map((m) => m.definition), approved: s.steps["4.5"].approved.meanings.map((m) => m.definition),
+      declined: s.missingMeaningReview.declined, decision: s.pendingDecision };
+  })).toEqual({ meanings: ["Move on foot", "Bướng bỉnh, cố chấp"], approved: ["Move on foot", "Bướng bỉnh, cố chấp"], declined: [], decision: null });
+});
+
+test("a translation that fits no meaning can be left out, and step 6 completes without it", async ({ page }) => {
+  const dialog = await redoStepSixWithOrphanTranslation(page);
+  await dialog.getByRole("button", { name: "Continue without adding", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.getByRole("list", { name: "Translations for meaning 1", exact: true })).toHaveText("đi bộ");
+  expect(await page.evaluate(async () => {
+    const s = (await import(`/${"app"}/state.js`)).state.glossaryResearchStudio.study;
+    return { candidates: s.candidates.map((c) => c.text), meanings: s.meanings.length, declined: s.missingMeaningReview.declined };
+  })).toEqual({ candidates: ["đi bộ"], meanings: 1, declined: ["cứng đầu"] });
 });
 
 test("research export uses the save picker, shared tooltip and selected JSON path", async ({ page }) => {

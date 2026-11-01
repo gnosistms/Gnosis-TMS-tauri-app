@@ -300,13 +300,17 @@ fn epub_book_preserves_order_numbering_metadata_and_live_contents() {
 }
 
 #[test]
-fn epub_titles_outside_the_title_page_are_single_line() {
+fn epub_titles_are_single_line_even_on_the_title_page() {
     let mut doc = document("Project name", vec![]);
     doc.book_parts = vec![
         part(
             "title",
             "The Long\nRoad Home",
-            vec![paragraph("heading1", "The Long\nRoad Home")],
+            vec![
+                paragraph("heading1", "The <em>Long \nRoad</em> Home"),
+                paragraph("heading2", "A Tale\u{2028}of Return"),
+                paragraph("centered", "First Author\nSecond Author"),
+            ],
         ),
         part(
             "chapter",
@@ -319,7 +323,13 @@ fn epub_titles_outside_the_title_page_are_single_line() {
     assert!(file(&files, "EPUB/nav.xhtml").contains(">The Long Road Home</a>"));
     let title_page = file(&files, "EPUB/section-1.xhtml");
     assert!(title_page.contains("<title>The Long Road Home</title>"));
-    assert!(title_page.contains("The Long<br/>Road Home"));
+    // Its breaks lay out the printed page; a reader wraps the headings itself.
+    assert!(title_page.contains(">The <em>Long Road</em> Home</h1>"));
+    assert!(title_page.contains(">A Tale of Return</h2>"));
+    assert!(title_page.contains(">First Author<br/>Second Author</p>"));
+    let styles = file(&files, "EPUB/styles.css");
+    assert!(styles.contains(".title h1,.title h2{text-align:center;}"));
+    assert!(styles.contains(".title img{max-width:7em;max-height:4em;}"));
     // Without a title-page title, the ebook keeps the project's name.
     doc.book_parts[0].item.title.clear();
     assert!(file(&unpack(&doc), "EPUB/package.opf").contains("<dc:title>Project name</dc:title>"));
