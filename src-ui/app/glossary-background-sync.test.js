@@ -221,6 +221,7 @@ const {
 } = await import("./glossary-term-write-coordinator.js");
 const { queryClient, teamKeys } = await import("./query-client.js");
 const { createNavigationActions } = await import("./actions/navigation-actions.js");
+const { createGlossaryActions } = await import("./actions/glossary-actions.js");
 const { createGlossaryEditorQueryOptions } = await import("./glossary-editor-query.js");
 const { createQaListEditorQueryOptions } = await import("./qa-list-editor-query.js");
 const { applyQaListEditorPayload } = await import("./qa-list-shared.js");
@@ -1526,6 +1527,90 @@ for (const context of ["missing summary", "local summary without identity"]) {
     assert.equal(state.glossaryEditor.terms[0].footnote, "Updated footnote only.");
   });
 }
+
+// Opens term-1 by double-clicking it in chapter-1, as the chapter editor does.
+async function openTermFromChapter({ failSave = false } = {}) {
+  installGlossaryEditorFixture();
+  const terms = cloneValue(state.glossaryEditor.terms);
+  const glossary = cloneValue(state.glossaries[0]);
+  state.glossaryEditor = createGlossaryEditorState();
+  state.selectedGlossaryId = null;
+  state.screen = "translate";
+  state.selectedChapterId = "chapter-1";
+  state.projects = [{ id: "project-1", chapters: [{
+    id: "chapter-1",
+    linkedGlossary: { glossaryId: glossary.id, repoName: glossary.repoName },
+  }] }];
+  invokeHandler = async (command, payload) => {
+    if (command === "load_gtms_glossary_editor_data") return {
+      glossaryId: glossary.id, title: glossary.title, terms,
+      lifecycleState: "active", termCount: terms.length,
+    };
+    if (command === "sync_gtms_glossary_editor_repo") return {
+      changedTermIds: [], insertedTermIds: [], deletedTermIds: [],
+    };
+    if (command === "upsert_gtms_glossary_term") {
+      if (failSave) throw new Error("Disk full.");
+      return { term: glossaryTerm(payload.input) };
+    }
+    if (command === "sync_gtms_glossary_repos") return [];
+    return null;
+  };
+  await createNavigationActions(() => {})("open-editor-glossary-term:term-1");
+  await flushAsyncWork();
+  assert.equal(state.screen, "glossaryEditor");
+  assert.equal(state.glossaryTermEditor.isOpen, true);
+  assert.equal(state.glossaryTermEditor.returnToEditor, true);
+}
+
+test("cancelling a term window opened from the chapter goes back to the chapter", async () => {
+  await openTermFromChapter();
+  await createGlossaryActions(() => {})("cancel-glossary-term-editor");
+  assert.equal(state.glossaryTermEditor.isOpen, false);
+  assert.equal(state.screen, "translate");
+});
+
+test("saving a term window opened from the chapter goes back to the chapter while the save runs", async () => {
+  await openTermFromChapter();
+  state.glossaryTermEditor.footnote = "Saved from the chapter.";
+  await createGlossaryActions(() => {})("submit-glossary-term-editor");
+  assert.equal(state.glossaryTermEditor.isOpen, false);
+  assert.equal(state.screen, "translate");
+  await waitForGlossaryTermWrites();
+  const saved = invokeLog.filter(entry => entry.command === "upsert_gtms_glossary_term");
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].payload.input.footnote, "Saved from the chapter.");
+});
+
+test("a save that fails after returning to the chapter says so there", async () => {
+  await openTermFromChapter({ failSave: true });
+  const notices = [];
+  const render = () => { if (state.statusBadges.left?.text) notices.push(state.statusBadges.left.text); };
+  await createGlossaryActions(render)("submit-glossary-term-editor");
+  await waitForGlossaryTermWrites();
+  assert.equal(state.screen, "translate");
+  assert.ok(notices.includes("Could not save a term in Fixture Glossary. Reopen that glossary to retry."), notices.join(" | "));
+});
+
+test("a save that cannot start keeps the chapter's term window open on the glossary page", async () => {
+  await openTermFromChapter();
+  state.glossaryTermEditor.sourceTerms = [""];
+  await createGlossaryActions(() => {})("submit-glossary-term-editor");
+  assert.equal(state.glossaryTermEditor.isOpen, true);
+  assert.equal(state.glossaryTermEditor.error, "Enter at least one source term.");
+  assert.equal(state.screen, "glossaryEditor");
+});
+
+test("a term window opened on the glossary page stays on the glossary page when it closes", async () => {
+  installGlossaryEditorFixture();
+  state.selectedChapterId = "chapter-1";
+  await createGlossaryActions(() => {})("edit-glossary-term:term-1");
+  assert.equal(state.glossaryTermEditor.isOpen, true);
+  assert.notEqual(state.glossaryTermEditor.returnToEditor, true);
+  await createGlossaryActions(() => {})("cancel-glossary-term-editor");
+  assert.equal(state.glossaryTermEditor.isOpen, false);
+  assert.equal(state.screen, "glossaryEditor");
+});
 
 for (const [kind, queryOptions, command] of [
   ["glossary", createGlossaryEditorQueryOptions, "list_local_gnosis_glossary_metadata_records"],
