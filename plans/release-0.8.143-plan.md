@@ -9,6 +9,9 @@
    option and its glossary-term context, and two step 9 questions about
    unapproved and other-meaning translations. The branch already contains
    v0.8.142, so no merge of main is needed.
+   Two redundancy commits made on `claude/release-0.8.140` after the cut
+   (identical footnote text as candidates, and the duplicate-marker crash
+   fix) were cherry-picked onto `claude/release-0.8.143` before merging.
 2. Synchronize npm, Tauri, Cargo, both lockfiles, and bundled notice versions to
    0.8.143. Add versioned notes.
 3. Validate version agreement, locked Cargo metadata, formatting, tests, and lint.
