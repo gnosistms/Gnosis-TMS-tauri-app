@@ -476,6 +476,10 @@ fn contexts(text: &str, notes: &[row_fields::ParsedFootnoteEntry]) -> BTreeMap<u
     let mut start = 0;
     let mut result = BTreeMap::new();
     for (offset, length, marker) in boundaries {
+        // Several entries can share one marker, and so one boundary.
+        if offset < start {
+            continue;
+        }
         result.insert(marker, visible[start..offset].trim().to_string());
         start = offset + length;
     }
@@ -1276,6 +1280,15 @@ mod tests {
         let legacy = contexts("Legacy anchor", &notes[..1]);
         assert_eq!(legacy[&1], "Legacy anchor");
         assert_eq!(marker_offset(r"escaped \[1] real[1]", 1), Some(17));
+        let repeated = [(1, "one"), (1, "see also"), (2, "two")].map(|(marker, text)| {
+            row_fields::ParsedFootnoteEntry {
+                marker,
+                text: text.into(),
+            }
+        });
+        let values = contexts("First[1] next phrase[2]", &repeated);
+        assert_eq!(values[&1], "First");
+        assert_eq!(values[&2], "next phrase");
     }
 
     fn stored_row() -> StoredRowFile {
