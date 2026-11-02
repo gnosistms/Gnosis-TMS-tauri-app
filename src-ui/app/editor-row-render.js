@@ -318,7 +318,7 @@ function renderRowTextStyleButtons(row, language) {
         data-language-code="${escapeHtml(language.code)}"
         ${tooltipAttributes("Add footnote", { side: "top" })}
       >
-        <span class="translation-row-text-style-button__label" aria-hidden="true">*</span>
+        <span class="translation-row-text-style-button__label" aria-hidden="true">[1]</span>
       </button>
     `);
   }
