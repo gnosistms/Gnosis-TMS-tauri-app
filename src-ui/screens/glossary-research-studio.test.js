@@ -224,6 +224,38 @@ test("a stuck selection offers human review or three more AI rounds; step 8 prog
   } finally { state.glossaryResearchStudio = previous; }
 });
 
+test("a word approved for another meaning asks whether it covers this meaning, the sentence has the other meaning, or it is wrong", () => {
+  const previous = state.glossaryResearchStudio;
+  try {
+    const study = newStudioStudy({ sourceLanguage: { code: "es", name: "Spanish" }, targetLanguage: { code: "en", name: "English" }, term: "caminar" }, "other-meaning");
+    study.step = "9";
+    study.meanings = [{ id: "m", definition: "Move on foot" }, { id: "n", definition: "Walk <slowly>" }];
+    study.passages = [{ id: "p0", text: "caminar 0", occurrences: [{ id: "o0", start: 0, end: 7 }] }];
+    study.tests["9:0"] = { translations: [{ paragraphId: "p0", translation: "a stroll 0" }],
+      choices: [{ paragraphId: "p0", occurrenceId: "o0", candidateId: "x", rendered: "stroll", passed: false }] };
+    study.pendingDecision = { kind: "other-meaning", keys: ["9:0"], offers: [{ candidateId: "x", text: "stroll", meaningId: "m", otherMeaningIds: ["n"],
+      occurrences: 1, refs: [{ paragraphId: "p0", occurrenceId: "o0" }] }] };
+    state.glossaryResearchStudio = { study, history: [], busy: false };
+    let html = renderGlossaryResearchStudio(state);
+    assert(html.includes("Use “stroll” for meaning 1 too?"));
+    assert(html.includes("“stroll” is approved for meaning 2 (“Walk &lt;slowly&gt;”), but this sentence has meaning 1 (“Move on foot”). The reviewer found that “stroll” fits here."));
+    assert(html.includes("<mark>caminar</mark> 0") && html.includes("a <mark>stroll</mark> 0"));
+    assert(html.includes("If the sentence really has meaning 2, moving it there retests the meanings in step 8."));
+    assert.match(html, /data-action="studio:decision:reject"[^>]*>\s*No, find a different word/u);
+    assert.match(html, /data-action="studio:decision:move"[^>]*>\s*It has meaning 2/u);
+    assert.match(html, /data-action="studio:decision:confirm"[^>]*>\s*Yes, use “stroll” for meaning 1/u);
+    assert(!html.includes('data-studio-decision="otherMeaning"'));
+    study.meanings.push({ id: "q", definition: "Pace" });
+    study.pendingDecision.offers[0].otherMeaningIds = ["n", "q"];
+    study.decisionInput = { otherMeaning: "q" };
+    html = renderGlossaryResearchStudio(state);
+    assert.match(html, /data-studio-decision="otherMeaning"[\s\S]*<option value="q" selected>3\. Pace<\/option>/u);
+    assert.match(html, /data-action="studio:decision:move"[^>]*>\s*It has the selected meaning/u);
+    study.decisionInput = { stage: "choose" };
+    assert(renderGlossaryResearchStudio(state).includes("You said that “stroll” is not a good translation of <em>caminar</em> in the sentence below."));
+  } finally { state.glossaryResearchStudio = previous; }
+});
+
 test("a skipped step 8 says why it was skipped", () => {
   const previous = state.glossaryResearchStudio;
   try {

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { testMeanings, testCompleteEntry, assessTrial, translateTrial, trialGlossary, STUDIO_UNCONFIRMED_RENDERING, studioNeedsFormOffer, studioTranslationChoices, approveStudioCandidate, rejectStudioCandidate } from "./glossary-research-studio-testing.js";
+import { testMeanings, testCompleteEntry, assessTrial, translateTrial, trialGlossary, STUDIO_UNCONFIRMED_RENDERING, studioNeedsFormOffer, studioTranslationChoices, approveStudioCandidate, rejectStudioCandidate, studioOtherMeaningRenderings, regradeStudioEntryTrials } from "./glossary-research-studio-testing.js";
 import { newStudioStudy, deduplicatePassages, finalUsage, reviseAssignment, buildStudioDraft, stableSignature, meaningTrialsAreCurrent, entryTrialsAreCurrent, studioGlossaryContext, studyAssignments, entryBatchSignature, currentStudioFinding, reviewStudioFinding } from "./glossary-research-studio-workflow.js";
 function fixture(size = 1) {
   const s = newStudioStudy({ term: "caminar", sourceLanguage: { code: "es", name: "Spanish" },
@@ -267,6 +267,77 @@ test("step 9 repairs receive the translations the human preferred", async () => 
   };
   await testCompleteEntry(s, { run, ask });
   assert.deepEqual(repairInput.humanPreferences, s.translationPreferences);
+});
+
+// "stroll" is approved only for meaning n; every occurrence has meaning m.
+function otherMeaningFixture(size = 1) {
+  const s = fixture(size);
+  s.meanings.push({ id: "n", definition: "leisurely walk" });
+  s.candidates.push({ id: "x", text: "stroll", meaningIds: ["n"], selected: true, retained: true, confirmed: true });
+  return s;
+}
+const strolls = async (_k, payload) => ({ rows: payload.rows.map((r) => ({ rowId: r.rowId, translatedText: "a stroll" })) });
+const strollChoices = (data, problem = "") => ({ choices: data.assignments.map((a) => ({ ...a, candidateId: "x", rendered: "stroll", problem })) });
+
+test("the reviewer may name another meaning's record of wording that is confirmed for this meaning too", async () => {
+  const s = fixture();
+  s.meanings.push({ id: "n", definition: "other" });
+  s.candidates.push({ id: "c2", text: "walk", meaningIds: ["n"], selected: true, retained: true, confirmed: true });
+  const result = await testCompleteEntry(s, { run: translations,
+    ask: async (_q, data) => ({ choices: data.assignments.map((a) => ({ ...a, candidateId: "c2", rendered: "walk", problem: "" })) }) });
+  assert.equal(result.complete, true);
+  assert.deepEqual(s.tests["9:0"].choices.map((c) => [c.candidateId, c.passed]), [["c", true]]);
+});
+
+test("step 9 asks about a word approved for another meaning that the reviewer found right, before any repair", async () => {
+  const s = otherMeaningFixture(); const questions = [];
+  const ask = async (q, data) => { questions.push(q); return q.startsWith("Repair selection") ? { order: data.candidates.map((c) => c.id), notes: [] } : strollChoices(data); };
+  assert.deepEqual(await testCompleteEntry(s, { run: strolls, ask }), { pending: true });
+  assert.equal(questions.filter((q) => q.startsWith("Repair selection")).length, 0);
+  assert(questions[0].includes("candidate listed only for other meanings"));
+  assert.deepEqual(s.pendingDecision, { kind: "other-meaning", keys: ["9:0"], offers: [{ candidateId: "x", text: "stroll", meaningId: "m",
+    otherMeaningIds: ["n"], occurrences: 1, refs: [{ paragraphId: "p0", occurrenceId: "o0" }] }] });
+  assert.equal(s.entryValidation.phase, "awaiting-review");
+});
+
+test("only reviewer-accepted approved words of another meaning become questions", () => {
+  const s = otherMeaningFixture(4);
+  s.candidates.push({ id: "w", text: "wander", meaningIds: ["n"], selected: true, retained: true, confirmed: false });
+  s.translationPreferences = [{ paragraphId: "p2", occurrenceId: "o0", meaningId: "m", rejectedWording: "stroll", preferredWording: "walk" }];
+  const failed = (paragraphId, rendered, problem = STUDIO_UNCONFIRMED_RENDERING) => ({ paragraphId, occurrenceId: "o0", candidateId: null, rendered, passed: false, problem });
+  const trial = { choices: [failed("p0", "stroll"), failed("p1", "stroll", "A stroll is leisurely; this walk is urgent"),
+    failed("p2", "stroll"), failed("p3", "wander")] };
+  assert.deepEqual(studioOtherMeaningRenderings(s, [trial]).map((o) => [o.text, o.refs.map((r) => r.paragraphId)]), [["stroll", ["p0"]]]);
+});
+
+test("approving the word for the meaning grades the saved answers again, and step 9 completes without new calls", async () => {
+  const s = otherMeaningFixture();
+  await testCompleteEntry(s, { run: strolls, ask: async (_q, data) => strollChoices(data) });
+  approveStudioCandidate(s, "x", "m");
+  regradeStudioEntryTrials(s, s.pendingDecision.keys);
+  s.pendingDecision = null;
+  let calls = 0;
+  const result = await testCompleteEntry(s, { run: async () => { calls += 1; }, ask: async () => { calls += 1; } });
+  assert.equal(result.complete, true);
+  assert.equal(calls, 0);
+  assert.deepEqual(s.tests["9:0"].choices.map((c) => [c.candidateId, c.passed, c.problem, c.targetStart, c.targetEnd]), [["x", true, "", 2, 8]]);
+  assert.equal(entryTrialsAreCurrent(s), true);
+  assert.deepEqual(finalUsage(s).x, { occurrences: 1, paragraphs: 1 });
+});
+
+test("a word of another meaning that the human rejected, or the reviewer judged wrong, goes to repair", async () => {
+  for (const [problem, preferences] of [["", [{ paragraphId: "p0", occurrenceId: "o0", meaningId: "m", rejectedWording: "stroll", preferredWording: "walk" }]],
+    ["A stroll is leisurely; this walk is urgent", undefined]]) {
+    const s = otherMeaningFixture(); s.translationPreferences = preferences;
+    let repairInput;
+    const ask = async (q, data) => {
+      if (!q.startsWith("Repair selection")) return strollChoices(data, problem);
+      repairInput ??= data; return { order: data.candidates.map((c) => c.id), notes: [] };
+    };
+    await testCompleteEntry(s, { run: strolls, ask });
+    assert.equal(s.pendingDecision.kind, "selection");
+    assert.deepEqual(repairInput.humanPreferences, preferences ?? []);
+  }
 });
 
 test("the human can accept or ignore step 8 findings when repairs cannot make them pass", async () => {

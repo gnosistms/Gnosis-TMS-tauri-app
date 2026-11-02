@@ -2428,6 +2428,60 @@ test("rejecting an unapproved translation asks which translation to use instead"
   }
 });
 
+// "dạo bước" is approved for meaning 2 only; the reviewer found it right for p15's meaning 1.
+async function mountOtherMeaningDecision(page) {
+  await mountEntryPassStudy(page, true);
+  await page.evaluate(async () => {
+    const { state } = await import(`/${"app"}/state.js`);
+    const { renderGlossaryResearchStudio } = await import(`/${"screens"}/glossary-research-studio.js`);
+    const s = state.glossaryResearchStudio.study;
+    s.meanings.push({ id: "m2", definition: "Pass time" });
+    s.candidates.push({ id: "c2", text: "dạo bước", meaningIds: ["m2"], selected: true, confirmed: true, retained: true });
+    s.tests["9:15"] = { phase: "9", translations: [{ paragraphId: "p15", translation: "Tôi dạo bước 15." }],
+      choices: [{ paragraphId: "p15", occurrenceId: "o0", candidateId: "c2", rendered: "dạo bước", passed: false, problem: "The wording used is not a confirmed translation for this meaning" }] };
+    s.pendingDecision = { kind: "other-meaning", keys: ["9:15"],
+      offers: [{ candidateId: "c2", text: "dạo bước", meaningId: "m1", otherMeaningIds: ["m2"], occurrences: 1, refs: [{ paragraphId: "p15", occurrenceId: "o0" }] }] };
+    document.querySelector("#app").innerHTML = renderGlossaryResearchStudio(state);
+  });
+}
+const otherMeaningResult = (page) => page.evaluate(async () => {
+  const { state } = await import(`/${"app"}/state.js`); const s = state.glossaryResearchStudio.study;
+  return { step: s.step, decision: s.pendingDecision?.kind ?? null, preferences: s.translationPreferences ?? [], pending: Boolean(s.assignmentReviewPending),
+    meaning: s.assignments.find((a) => a.paragraphId === "p15").meaningId, candidates: s.candidates.map((c) => [c.text, c.meaningIds, Boolean(c.confirmed)]) };
+});
+
+test("a word approved for another meaning that fits can be approved for this meaning too", async ({ page }) => {
+  await mountOtherMeaningDecision(page);
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("heading", { level: 2 })).toHaveText("Use “dạo bước” for meaning 1 too?");
+  await expect(dialog).toContainText("“dạo bước” is approved for meaning 2 (“Pass time”), but this sentence has meaning 1 (“Move on foot”). The reviewer found that “dạo bước” fits here.");
+  await expect(dialog.locator("mark")).toHaveText(["walk", "dạo bước"]);
+  await dialog.getByRole("button", { name: "Yes, use “dạo bước” for meaning 1", exact: true }).click();
+  await expect.poll(() => otherMeaningResult(page)).toMatchObject({ step: "9", decision: null, preferences: [],
+    candidates: [["đi bộ", ["m1"], true], ["dạo bước", ["m2", "m1"], true]] });
+});
+
+test("a sentence where a word of another meaning fits can move to that meaning", async ({ page }) => {
+  await mountOtherMeaningDecision(page);
+  await page.getByRole("dialog").getByRole("button", { name: "It has meaning 2", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Retest meanings", exact: true })).toBeVisible();
+  await expect.poll(() => otherMeaningResult(page)).toMatchObject({ decision: null, pending: true, meaning: "m2",
+    candidates: [["đi bộ", ["m1"], true], ["dạo bước", ["m2"], true]] });
+});
+
+test("rejecting a word of another meaning keeps it for that meaning and records the preferred translation", async ({ page }) => {
+  await mountOtherMeaningDecision(page);
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: "No, find a different word", exact: true }).click();
+  await expect(dialog).toContainText("You said that “dạo bước” is not a good translation of walk in the sentence below.");
+  await expect(dialog.getByLabel("Please select the translation you prefer")).toHaveValue("c1");
+  await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect.poll(() => otherMeaningResult(page)).toMatchObject({ step: "9", decision: null,
+    candidates: [["đi bộ", ["m1"], true], ["dạo bước", ["m2"], true]],
+    preferences: [{ paragraphId: "p15", occurrenceId: "o0", meaningId: "m1", rejectedWording: "dạo bước", preferredWording: "đi bộ" }] });
+});
+
 test("Continue extends only the failed batches presented in a grouped three-round pause", async ({ page }) => {
   await mountEntryPassStudy(page, true);
   await expect(page.getByRole("dialog")).toContainText("Batches 2, 3");
