@@ -7,7 +7,7 @@ import { STUDIO_STEPS, STUDIO_DICTIONARY_REVIEW_VERSION, activeMeanings, meaning
   currentStudioFinding, studioReviewOverride } from "../app/glossary-research-studio-workflow.js";
 import { studioGlossaryEntries } from "../app/glossary-research-studio-query.js";
 import { studioStepDescription } from "../app/glossary-research-studio-step-descriptions.js";
-import { studyAssignments } from "../app/glossary-research-studio-testing.js";
+import { studyAssignments, studioNeedsFormOffer, studioTranslationChoices, STUDIO_NEW_TRANSLATION } from "../app/glossary-research-studio-testing.js";
 import { currentStudioRecommendation, sourceSummaryMustBeSkipped, studioCanRecommendSkip, studioFormsResearchStarted, studioResearchStarted } from "../app/glossary-research-studio-recommendations.js";
 import { STUDIO_AUTO_CHOICE_MS, studioAutoChoiceCountdown, studioAutoChoiceText } from "../app/glossary-research-studio-auto-choice.js";
 
@@ -343,6 +343,70 @@ function stepContent(s, state) {
   }
 }
 
+// Marks spans in text; overlapping spans keep the earlier one.
+function marked(text, spans) {
+  let offset = 0; let html = "";
+  for (const span of [...spans].sort((a, b) => a.start - b.start)) {
+    if (span.start < offset || span.end > text.length) continue;
+    html += `${e(text.slice(offset, span.start))}<mark>${e(text.slice(span.start, span.end))}</mark>`;
+    offset = span.end;
+  }
+  return html + e(text.slice(offset));
+}
+
+// The sentence pair a needs-form question is about, both sides highlighted.
+function needsFormSentences(s, offer) {
+  return offer.sentences.map((sentence) => {
+    const source = s.passages.find((p) => p.id === sentence.paragraphId);
+    const text = source?.text ?? source?.source ?? "";
+    const spans = (source?.occurrences ?? []).filter((o) => sentence.occurrenceIds.includes(o.id));
+    return `<article class="studio-passage">
+      <p class="field__label">${e(s.scope.sourceLanguage.name)} text</p><p lang="${e(s.scope.sourceLanguage.code)}">${marked(text, spans)}</p>
+      <p class="field__label">${e(s.scope.targetLanguage.name)} text</p><p lang="${e(s.scope.targetLanguage.code)}">${marked(sentence.translation, sentence.targetSpans)}</p></article>`;
+  }).join("");
+}
+
+// The reviewer found a word approved for another meaning right in these sentences: the
+// human says whether it covers this meaning too, whether the sentences have the other
+// meaning, or that it is wrong here after all.
+function otherMeaningQuestion(s, offer, { word, term, below }) {
+  const others = offer.otherMeaningIds;
+  const named = (id) => `meaning ${meaningNumber(s, id)} (“${e(s.meanings.find((m) => m.id === id)?.definition ?? "")}”)`;
+  const one = offer.sentences.length === 1;
+  const own = meaningNumber(s, offer.meaningId);
+  const chosen = others.includes(s.decisionInput?.otherMeaning) ? s.decisionInput.otherMeaning : others[0];
+  const target = others.length > 1 ? "the selected meaning" : `meaning ${meaningNumber(s, others[0])}`;
+  return { title: `Use “${offer.text}” for meaning ${own} too?`,
+    body: `<p>In ${below}, the AI translated ${term} as ${word}. ${word} is approved for ${others.map(named).join(" and ")}, but ${one ? "this sentence has" : "these sentences have"} ${named(offer.meaningId)}. The reviewer found that ${word} fits here.</p>${needsFormSentences(s, offer)}
+      ${others.length > 1 ? `<label class="field"><span class="field__label">Meaning ${one ? "the sentence" : "the sentences"} may have instead</span><select class="field__input" data-studio-decision="otherMeaning">${others.map((id) => `<option value="${e(id)}" ${chosen === id ? "selected" : ""}>${meaningNumber(s, id)}. ${e(s.meanings.find((m) => m.id === id)?.definition ?? "")}</option>`).join("")}</select></label>` : ""}
+      <p>If ${one ? "the sentence really has" : "the sentences really have"} ${target}, moving ${one ? "it" : "them"} there retests the meanings in step 8.</p>`,
+    actions: button("No, find a different word", "decision:reject") + button(`${one ? "It has" : "They have"} ${target}`, "decision:move")
+      + primaryButton(`Yes, use “${offer.text}” for meaning ${own}`, "studio:decision:confirm") };
+}
+
+function needsFormDialog(s, decision) {
+  const offer = studioNeedsFormOffer(s, decision);
+  const word = offer && `“${e(offer.text)}”`;
+  const term = `<em>${e(s.scope.term)}</em>`;
+  const below = offer?.sentences.length === 1 ? "the sentence below" : "the sentences below";
+  if (!offer) return { title: "A translation needs confirming",
+    body: `<p>Step 9 can change only usage notes and preference order. Go back to step 8 to review the candidates.</p>${decision.reason ? `<details><summary>Repair note</summary><p>${narrative(decision.reason)}</p></details>` : ""}`,
+    actions: primaryButton("Go back to step 8", "studio:decision:back") };
+  if (s.decisionInput?.stage === "choose") {
+    const choices = studioTranslationChoices(s, offer);
+    const choice = s.decisionInput.translation ?? choices[0]?.id ?? STUDIO_NEW_TRANSLATION;
+    return { title: `Choose a translation of “${s.scope.term}”`,
+      body: `<p>You said that ${word} is not a good translation of ${term} in ${below}.</p>${needsFormSentences(s, offer)}
+        <label class="field"><span class="field__label">Please select the translation you prefer</span><select class="field__input" data-studio-decision="translation">${choices.map((c) => `<option value="${e(c.id)}" ${choice === c.id ? "selected" : ""}>${e(c.text)}${c.approved ? "" : " (not yet approved)"}</option>`).join("")}<option value="${STUDIO_NEW_TRANSLATION}" ${choice === STUDIO_NEW_TRANSLATION ? "selected" : ""}>Add another translation…</option></select></label>
+        ${choice === STUDIO_NEW_TRANSLATION ? `<label class="field"><span class="field__label">New translation</span><input class="field__input" data-studio-decision="newTranslation" value="${e(s.decisionInput.newTranslation)}" data-modal-initial-focus></label>` : ""}`,
+      actions: button("Back", "decision:ask") + primaryButton("Continue", "studio:decision:choose") };
+  }
+  if (decision.kind === "other-meaning") return otherMeaningQuestion(s, offer, { word, term, below });
+  return { title: `Add “${offer.text}” to the approved translations?`,
+    body: `<p>In ${below}, the AI translated ${term} as ${word}. ${word} isn’t an approved translation yet.</p>${needsFormSentences(s, offer)}`,
+    actions: button("No, find a different word", "decision:reject") + primaryButton(`Yes, add “${offer.text}”`, "studio:decision:confirm") };
+}
+
 function modal(s, view) {
   const decision = view.hideDecision ? null : s?.pendingDecision; const m = view.modal;
   if (!m && view.hideDecision) return "";
@@ -424,13 +488,8 @@ function modal(s, view) {
       }).join("")}
       ${decision.rejected.length ? `<section class="studio-entry"><h3>Not suggested as meanings</h3><ul>${decision.rejected.map((r) => `<li>${quoted([r.translation])}${r.reason ? ` · ${narrative(r.reason)}` : ""}</li>`).join("")}</ul></section>` : ""}`;
     actions = button("Continue without adding", "decision:skip") + (suggestions.length ? primaryButton("Add selected meanings", "studio:decision:add") : "");
-  } else if (decision?.kind === "needs-form") {
-    title = "A translation needs confirming";
-    const offers = decision.offers ?? [];
-    body = `<p>Step 9 can change only usage notes and preference order, so it cannot confirm a translation.</p>${offers.length
-      ? `<ul>${offers.map((offer) => `<li>“${e(offer.text)}” for meaning ${meaningNumber(s, offer.meaningId)}: used in ${quantity(offer.occurrences, "failed occurrence")} but not confirmed.</li>`).join("")}</ul><p>Confirm ${offers.length === 1 ? "it" : "them"} to retest the entry, or go back to step 8 to review the candidates.</p>`
-      : "<p>Go back to step 8 to review the candidates.</p>"}${decision.reason ? `<p>Repair note: ${narrative(decision.reason)}</p>` : ""}`;
-    actions = button("Go back to step 8", "decision:back") + (offers.length ? primaryButton("Confirm and retest", "studio:decision:confirm") : "");
+  } else if (decision?.kind === "needs-form" || decision?.kind === "other-meaning") {
+    ({ title, body, actions } = needsFormDialog(s, decision));
   } else if (decision?.kind === "candidate") {
     title = "Review a new translation";
     body = `<p>Review the proposed forms and their selection conditions before adding them. You can leave an inflection out or adjust its note.</p>

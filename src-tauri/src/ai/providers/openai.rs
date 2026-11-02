@@ -755,6 +755,7 @@ pub(crate) fn normalize_review_response(body: &str) -> Result<AiReviewResponse, 
         suggested_footnotes: Vec::new(),
         suggested_image_caption: String::new(),
         reviewed: None,
+        comment: String::new(),
         prompt_text: String::new(),
     })
 }

@@ -302,7 +302,9 @@ export async function saveEditorGlossaryEntry(render) {
   const current = readyEntry();
   if (!current?.targetTerm.trim()) return;
   const prefill = { sourceTerms: [current.sourceTerm.trim()], targetTerms: [current.targetTerm.trim()] };
-  if (await openChapterGlossary(render, current)) await openGlossaryTermEditor(render, null, { prefill });
+  if (await openChapterGlossary(render, current)) {
+    await openGlossaryTermEditor(render, null, { prefill, returnToEditor: true });
+  }
 }
 
 export async function researchEditorGlossaryEntry(render) {

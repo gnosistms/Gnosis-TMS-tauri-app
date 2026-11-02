@@ -1,4 +1,5 @@
 import { addSiblingFromTermEditor, removeSiblingFromTermEditor } from "../glossary-term-siblings.js";
+import { handleNavigation } from "../navigation.js";
 import { state } from "../state.js";
 import { showNoticeBadge } from "../status-feedback.js";
 import { getGlossaryWritePolicy } from "../resource-write-policy.js";
@@ -63,12 +64,25 @@ function parseVariantAction(action) {
   };
 }
 
+// A term window the chapter editor opened goes back to the chapter once it
+// closes (cancelled, or its save started); the glossary page behind it was
+// never the person's choice. A window that stays open stays put.
+async function closeGlossaryTermEditorFrom(render, close) {
+  const returnToEditor = state.glossaryTermEditor?.returnToEditor === true;
+  await close();
+  if (returnToEditor && !state.glossaryTermEditor?.isOpen
+    && state.screen === "glossaryEditor" && state.selectedChapterId) {
+    await handleNavigation("translate", render);
+  }
+}
+
 export function createGlossaryActions(render) {
   const exactActions = {
     "cancel-glossary-permanent-deletion": () => cancelGlossaryPermanentDeletion(render),
     "cancel-glossary-import": () => cancelGlossaryImportModal(render),
     "cancel-glossary-rename": () => cancelGlossaryRename(render),
-    "cancel-glossary-term-editor": () => cancelGlossaryTermEditor(render),
+    "cancel-glossary-term-editor": () =>
+      closeGlossaryTermEditorFrom(render, () => cancelGlossaryTermEditor(render)),
     "cancel-glossary-creation": () => cancelGlossaryCreation(render),
     "open-new-glossary": () => openGlossaryCreation(render),
     "close-glossary-old-layout-discard": () => closeGlossaryOldLayoutDiscard(render),
@@ -246,7 +260,8 @@ export function createGlossaryActions(render) {
     }
 
     if (action === "submit-glossary-term-editor") {
-      await runWithImmediateLoading(event, "Saving...", () => submitGlossaryTermEditor(render));
+      await closeGlossaryTermEditorFrom(render, () =>
+        runWithImmediateLoading(event, "Saving...", () => submitGlossaryTermEditor(render)));
       return true;
     }
     if (action === "submit-glossary-creation") {

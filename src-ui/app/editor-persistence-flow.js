@@ -2012,7 +2012,9 @@ export async function persistEditorRowsBatch(render, items, operations = {}, opt
         if (options.srtGroupResults) throw new Error("Resolve the subtitle conflict before saving the group.");
         continue;
       }
-      const input = { rowId, fields: {}, footnotes: {}, imageCaptions: {}, attributions: {}, baseAttributions: {} };
+      // Base maps go only with what is saved: the backend three-way merges any
+      // row that carries one, even an empty one.
+      const input = { rowId, fields: {}, footnotes: {}, imageCaptions: {}, attributions: {} };
       if (options.srtGroupResults) input.baseFields = {};
       // The snapshot keeps state-format values (footnote entries are structured
       // in state but legacy-serialized on the wire) so the persisted-state
@@ -2050,6 +2052,7 @@ export async function persistEditorRowsBatch(render, items, operations = {}, opt
           || row.attributions[languageCode] !== row.persistedAttributions?.[languageCode])) {
           input.attributions[languageCode] = row.attributions[languageCode];
           snapshot.attributions[languageCode] = row.attributions[languageCode];
+          input.baseAttributions ??= {};
           input.baseAttributions[languageCode] = row.baseAttributions?.[languageCode] ?? row.persistedAttributions?.[languageCode] ?? "";
         }
       }

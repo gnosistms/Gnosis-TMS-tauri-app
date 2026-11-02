@@ -6,6 +6,7 @@ import {
   buildEditorDerivedGlossaryModel,
   buildEditorGlossaryModel,
   buildEditorRowGlossaryHighlights,
+  buildEditorRowGlossaryTermPairs,
   buildEditorRowSourceGlossaryHighlights,
   findGlossaryTargetFormOccurrences,
   findLongestGlossaryMatches,
@@ -165,6 +166,31 @@ test("a gap in a target variant lets target grammar insert words that modify the
   for (const target of ["sự giằng co một hai ba bốn năm giữa các mặt đối lập", "sự giằng co dữ dội; giữa các mặt đối lập"]) {
     assert.match(highlights(target).get("es")?.html ?? "", /glossary-match-error/, target);
   }
+});
+
+test("glossary term pairs are the underlined source wording and target variant actually used", () => {
+  const model = buildEditorGlossaryModel(glossaryPayload({
+    terms: [
+      { termId: "t1", sourceTerms: ["sala", "salas"], targetTerms: ["phong", "gian"] },
+      { termId: "t2", sourceTerms: ["batallar de las antítesis"],
+        targetTerms: ["sự giằng co … giữa các mặt đối lập"] },
+      { termId: "t3", sourceTerms: ["meditacion"], targetTerms: ["thien"] },
+    ],
+  }));
+  const sections = [
+    { code: "es", text: "Las <b>Salas</b> y el batallar de las antítesis; meditacion." },
+    { code: "vi", text: "Các <b>gian</b> và sự giằng co dữ dội giữa các mặt đối lập, gian." },
+  ];
+
+  // Only the variant in the target is listed, once; "meditacion" has no
+  // target match, so nothing is underlined for it in the target.
+  assert.deepEqual(buildEditorRowGlossaryTermPairs(sections, model, "vi"), [
+    { sourceTerm: "Salas", targetTerm: "gian" },
+    { sourceTerm: "batallar de las antítesis", targetTerm: "sự giằng co … giữa các mặt đối lập" },
+  ]);
+  assert.deepEqual(buildEditorRowGlossaryTermPairs(sections, model, "es"), []);
+  assert.deepEqual(buildEditorRowGlossaryTermPairs(sections, model, "fr"), []);
+  assert.deepEqual(buildEditorRowGlossaryTermPairs(sections, null, "vi"), []);
 });
 
 test("only a standalone ellipsis between words is a gap, and source terms never have gaps", () => {

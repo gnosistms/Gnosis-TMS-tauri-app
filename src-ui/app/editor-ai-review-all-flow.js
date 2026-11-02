@@ -13,8 +13,10 @@ import {
   hasPendingEditorWrites,
 } from "./editor-persistence-flow.js";
 import {
+  EDITOR_AI_REVIEW_MODE_CLARITY,
   buildEditorAiReviewBatchRequest,
   buildEditorAiReviewRequest,
+  editorAiReviewContentFingerprint,
   editorReviewLanguageByCode,
   normalizeEditorAiReviewMode,
   readEditorReviewRowFieldText,
@@ -34,6 +36,7 @@ import {
 import { createAiBatchPool, runWithTransientAiRetry } from "./editor-ai-batch-pool.js";
 import { loadAssistantTargetLanguageHistory } from "./editor-ai-assistant-flow.js";
 import { loadEditorAiReviewQaHints } from "./editor-ai-qa.js";
+import { loadActiveEditorRowComments } from "./editor-comments-flow.js";
 import {
   cloneRowFields,
   cloneRowFieldStates,
@@ -75,11 +78,37 @@ function reviewableTranslationRows(chapterState, languageCode = selectedEditorRe
   );
 }
 
-function buildEditorAiReviewAllWork(chapterState) {
+// A clarity check skips rows that already have an AI clarity comment written
+// about their current content.
+function rowHasCurrentClarityComment(row, languageCode) {
+  const fingerprint = row?.aiClarityFingerprints?.[languageCode];
+  return typeof fingerprint === "string"
+    && fingerprint !== ""
+    && fingerprint === editorAiReviewContentFingerprint(row, languageCode);
+}
+
+function buildEditorAiReviewAllWork(chapterState, reviewMode = "grammar") {
   const languageCode = selectedEditorReviewTargetLanguageCode(chapterState);
+  const clarity = normalizeEditorAiReviewMode(reviewMode) === EDITOR_AI_REVIEW_MODE_CLARITY;
   return reviewableTranslationRows(chapterState, languageCode)
     .filter((row) => row.fieldStates?.[languageCode]?.reviewed !== true)
+    .filter((row) => !clarity || !rowHasCurrentClarityComment(row, languageCode))
     .map((row) => ({ rowId: row.rowId, languageCode }));
+}
+
+// Position of each live row in the chapter, so clarity batches only join rows
+// that follow each other and read as one continuous text.
+function chapterRowPositions(chapterState) {
+  const positions = new Map();
+  let position = 0;
+  for (const row of Array.isArray(chapterState?.rows) ? chapterState.rows : []) {
+    if (!row?.rowId || row.lifecycleState === "deleted") {
+      continue;
+    }
+    positions.set(row.rowId, position);
+    position += 1;
+  }
+  return positions;
 }
 
 function buildEditorAiReviewAllCounts(chapterState) {
@@ -176,6 +205,18 @@ function applyReviewResultToRow(row, languageCode, payload) {
       ...cloneRowFieldStates(row.persistedFieldStates),
       [languageCode]: nextFieldState,
     },
+    ...(Number.isInteger(payload?.commentCount)
+      ? {
+        commentCount: payload.commentCount,
+        commentsRevision: Number.isInteger(payload?.commentsRevision)
+          ? payload.commentsRevision
+          : row.commentsRevision,
+        aiClarityFingerprints:
+          payload?.aiClarityFingerprints && typeof payload.aiClarityFingerprints === "object"
+            ? { ...payload.aiClarityFingerprints }
+            : {},
+      }
+      : {}),
     lastUpdate: payload?.lastUpdate ?? row.lastUpdate ?? null,
     saveStatus: "idle",
     saveError: "",
@@ -223,28 +264,60 @@ function safeReviewSuggestionsForRow(row, languageCode, reviewPayload) {
   };
 }
 
+function clarityCommentFor(reviewPayload) {
+  return String(reviewPayload?.comment ?? "").trim();
+}
+
+// A clarity check never edits: a flagged row gets please-check plus the AI's
+// comment, tied to the content the AI read. The single-row path records that
+// content's fingerprint when it calls the AI (`sentFingerprint`); batch results
+// are only applied while the row still matches what was sent.
+function claritySuggestionsForRow(row, languageCode, reviewPayload) {
+  return {
+    suggestedText: "",
+    suggestedFootnotes: [],
+    suggestedImageCaption: "",
+    reviewed: false,
+    pleaseCheck: true,
+    markerIntegrityRejected: false,
+    comment: clarityCommentFor(reviewPayload),
+    commentFingerprint: reviewPayload?.sentFingerprint
+      ?? editorAiReviewContentFingerprint(row, languageCode),
+  };
+}
+
 // The closing dialog must reflect what actually happened: a run that ended
 // on a provider failure previously showed the plain "AI Review is finished"
 // copy with zero rows reviewed (field case 2026-07-25, OpenAI outage). The
 // error and progress ride along so the renderer can show a stopped state.
-function enablePleaseCheckFilterAndShowModal(error = "", progress = null) {
+function enablePleaseCheckFilterAndShowModal(error = "", progress = null, reviewMode = "grammar") {
   if (!state.editorChapter?.chapterId) {
     return;
   }
+  const normalizedReviewMode = normalizeEditorAiReviewMode(reviewMode);
+  const flaggedCount = progress?.flaggedCount ?? 0;
+  // A clarity check that flagged nothing has no rows to show.
+  const enableFilter = Boolean(error)
+    || normalizedReviewMode !== EDITOR_AI_REVIEW_MODE_CLARITY
+    || flaggedCount > 0;
   const filters = normalizeEditorChapterFilterState(state.editorChapter.filters);
   state.editorChapter = {
     ...state.editorChapter,
-    filters: {
-      ...filters,
-      rowFilterMode: EDITOR_ROW_FILTER_MODE_PLEASE_CHECK,
-    },
+    filters: enableFilter
+      ? {
+        ...filters,
+        rowFilterMode: EDITOR_ROW_FILTER_MODE_PLEASE_CHECK,
+      }
+      : filters,
     aiReviewAllModal: {
       ...createEditorAiReviewAllModalState(),
       isOpen: true,
       step: "filter-enabled",
       error,
+      reviewMode: normalizedReviewMode,
       completedCount: progress?.completedCount ?? 0,
       totalCount: progress?.totalCount ?? 0,
+      flaggedCount,
     },
   };
 }
@@ -366,8 +439,8 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
   const runId = activeReviewAllRunId + 1;
   activeReviewAllRunId = runId;
   const initialCounts = buildEditorAiReviewAllCounts(editorChapter);
-  const initialWork = buildEditorAiReviewAllWork(editorChapter);
   const initialReviewMode = normalizeEditorAiReviewMode(editorChapter.aiReviewAllModal?.reviewMode);
+  const initialWork = buildEditorAiReviewAllWork(editorChapter, initialReviewMode);
   applyEditorAiReviewAllModal({
     isOpen: true,
     step: "reviewing",
@@ -407,7 +480,7 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
   }
 
   const counts = buildEditorAiReviewAllCounts(state.editorChapter);
-  const work = buildEditorAiReviewAllWork(state.editorChapter);
+  const work = buildEditorAiReviewAllWork(state.editorChapter, initialReviewMode);
   if (!counts.languageCode || work.length === 0) {
     applyEditorAiReviewAllModal({
       step: "configure",
@@ -417,7 +490,9 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
       totalTranslationCount: counts.totalTranslationCount,
       totalCount: 0,
       languageProgress: buildLanguageProgress(counts.languageCode, 0),
-      error: "There are no unreviewed translations to review.",
+      error: initialReviewMode === EDITOR_AI_REVIEW_MODE_CLARITY && counts.totalCount > 0
+        ? "Every unreviewed translation was already checked, and none has changed since."
+        : "There are no unreviewed translations to review.",
     });
     render?.();
     return;
@@ -460,11 +535,13 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
   }
 
   const reviewMode = normalizeEditorAiReviewMode(state.editorChapter.aiReviewAllModal?.reviewMode);
+  const clarity = reviewMode === EDITOR_AI_REVIEW_MODE_CLARITY;
   const sourceLanguageCode = selectedEditorReviewSourceLanguageCode(state.editorChapter);
   const targetLanguageCode = counts.languageCode;
   let completedCount = 0;
+  let flaggedCount = 0;
   let started = false;
-  const runProgress = () => ({ completedCount, totalCount: work.length });
+  const runProgress = () => ({ completedCount, totalCount: work.length, flaggedCount });
   applyEditorAiReviewAllModal({
     isOpen: true,
     step: "reviewing",
@@ -494,11 +571,49 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
       })
       : [];
 
+  // Clarity rows that read clearly are counted but left untouched: no flag,
+  // no commit.
+  const countClearRows = (count) => {
+    if (count <= 0) {
+      return;
+    }
+    completedCount += count;
+    applyEditorAiReviewAllModal({
+      step: "reviewing",
+      status: "loading",
+      completedCount,
+      totalCount: work.length,
+      languageProgress: buildLanguageProgress(targetLanguageCode, work.length, completedCount),
+    });
+    render?.({ scope: "translate-ai-review-all-modal" });
+  };
+
+  // A clarity comment added to the row open in the comments pane shows there
+  // at once.
+  const refreshCommentsPaneForRows = (rowIds) => {
+    if (
+      clarity
+      && state.editorChapter.sidebarTab === "comments"
+      && rowIds.includes(state.editorChapter.activeRowId)
+    ) {
+      loadActiveEditorRowComments(render);
+    }
+  };
+
+  const suggestionsForRow = (row, reviewPayload) =>
+    clarity
+      ? claritySuggestionsForRow(row, targetLanguageCode, reviewPayload)
+      : safeReviewSuggestionsForRow(row, targetLanguageCode, reviewPayload);
+
   // Writes one review result (from a batch row or a single-row call). Returns
   // "chapter-changed" (caller must stop the run) or "ok".
   const applyReviewOutcome = async (item, reviewPayload) => {
+    if (clarity && !clarityCommentFor(reviewPayload)) {
+      countClearRows(1);
+      return "ok";
+    }
     const currentRow = findEditorRowById(item.rowId, state.editorChapter);
-    const suggestions = safeReviewSuggestionsForRow(currentRow, targetLanguageCode, reviewPayload);
+    const suggestions = suggestionsForRow(currentRow, reviewPayload);
     if (suggestions.markerIntegrityRejected) {
       reportBackendNonfatalError({
         operation: "ai-review",
@@ -518,6 +633,8 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
         suggestedImageCaption: suggestions.suggestedImageCaption,
         reviewed: suggestions.reviewed,
         pleaseCheck: suggestions.pleaseCheck,
+        comment: suggestions.comment ?? "",
+        commentFingerprint: suggestions.commentFingerprint ?? "",
         aiModel: modelId,
       },
     }, { render, actionKind: "sharedWrite", rowId: item.rowId });
@@ -547,8 +664,12 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
     ) {
       loadActiveEditorFieldHistory(render);
     }
+    refreshCommentsPaneForRows([item.rowId]);
 
     completedCount += 1;
+    if (clarity) {
+      flaggedCount += 1;
+    }
     applyEditorAiReviewAllModal({
       step: "reviewing",
       status: "loading",
@@ -565,14 +686,18 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
   // and one git commit. One commit per row starves interactive saves in the
   // write path on long runs (same failure mode AI Translate All had before its
   // grouped save). Returns "chapter-changed" or "ok".
-  const applyReviewOutcomesBatch = async (entries) => {
+  const applyReviewOutcomesBatch = async (resultEntries) => {
+    const entries = clarity
+      ? resultEntries.filter(({ reviewPayload }) => clarityCommentFor(reviewPayload))
+      : resultEntries;
+    countClearRows(resultEntries.length - entries.length);
     if (entries.length === 0) {
       return "ok";
     }
     let markerIntegrityRejected = false;
     const rows = entries.map(({ item, reviewPayload }) => {
       const currentRow = findEditorRowById(item.rowId, state.editorChapter);
-      const suggestions = safeReviewSuggestionsForRow(currentRow, targetLanguageCode, reviewPayload);
+      const suggestions = suggestionsForRow(currentRow, reviewPayload);
       markerIntegrityRejected ||= suggestions.markerIntegrityRejected;
       return {
         rowId: item.rowId,
@@ -581,6 +706,9 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
         suggestedImageCaption: suggestions.suggestedImageCaption,
         reviewed: suggestions.reviewed,
         pleaseCheck: suggestions.pleaseCheck,
+        ...(clarity
+          ? { comment: suggestions.comment, commentFingerprint: suggestions.commentFingerprint }
+          : {}),
       };
     });
     if (markerIntegrityRejected) {
@@ -647,8 +775,12 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
     ) {
       loadActiveEditorFieldHistory(render);
     }
+    refreshCommentsPaneForRows(appliedRowIds);
 
     completedCount += appliedRowIds.length;
+    if (clarity) {
+      flaggedCount += appliedRowIds.length;
+    }
     applyEditorAiReviewAllModal({
       step: "reviewing",
       status: "loading",
@@ -689,7 +821,8 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
       preloadedHistory && preloadedHistory.targetText === latestTranslation
         ? preloadedHistory.history
         : await loadHistoryForItem(item, latestTranslation);
-    const qaHintsByRowId = await loadEditorAiReviewQaHints({
+    // QA-entry notes ask for corrections, which a clarity check never makes.
+    const qaHintsByRowId = clarity ? new Map() : await loadEditorAiReviewQaHints({
       targetLanguageCode,
       rows: [{
         rowId: item.rowId,
@@ -718,7 +851,10 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
     if (!isReviewActive()) {
       return "abort";
     }
-    return tools.inApplyLane(() => applyReviewOutcome(item, reviewPayload));
+    const outcomePayload = clarity
+      ? { ...reviewPayload, sentFingerprint: editorAiReviewContentFingerprint(row, targetLanguageCode) }
+      : reviewPayload;
+    return tools.inApplyLane(() => applyReviewOutcome(item, outcomePayload));
   };
 
   const reviewBatch = async (batch, tools) => {
@@ -763,7 +899,7 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
       }
     }
 
-    const qaHintsByRowId = await loadEditorAiReviewQaHints({
+    const qaHintsByRowId = clarity ? new Map() : await loadEditorAiReviewQaHints({
       targetLanguageCode,
       rows: liveItems.map((entry) => ({
         rowId: entry.item.rowId,
@@ -926,13 +1062,17 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
         .map((row) => [row.rowId, row]),
     );
     // Subtitle cues are reviewed in stretches of adjacent rows so the review
-    // sees words Translate All moved between neighbouring cues.
-    const cuePositions = subtitleCuePositions(state.editorChapter);
+    // sees words Translate All moved between neighbouring cues. A clarity
+    // check batches only adjacent rows of any chapter, so each batch reads as
+    // continuous text with its true neighbours as context.
+    const adjacentPositions = clarity
+      ? chapterRowPositions(state.editorChapter)
+      : subtitleCuePositions(state.editorChapter);
     const batches = chunkTranslateAllWork(work, {
-      ...(cuePositions
+      ...(adjacentPositions
         ? {
           continuesBatch: (previousItem, item) =>
-            cuesAreAdjacent(cuePositions, previousItem.rowId, item.rowId),
+            cuesAreAdjacent(adjacentPositions, previousItem.rowId, item.rowId),
         }
         : {}),
       sourceTokensForItem: (item) =>
@@ -963,7 +1103,7 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
     }
     if (outcome === "abort") {
       if (started) {
-        enablePleaseCheckFilterAndShowModal("", runProgress());
+        enablePleaseCheckFilterAndShowModal("", runProgress(), reviewMode);
         render?.();
       }
       return;
@@ -971,7 +1111,7 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (started) {
-      enablePleaseCheckFilterAndShowModal(message, runProgress());
+      enablePleaseCheckFilterAndShowModal(message, runProgress(), reviewMode);
       showNoticeBadge(message || "AI Review failed.", render);
       render?.();
       return;
@@ -987,12 +1127,12 @@ export async function confirmEditorAiReviewAll(render, operations = {}) {
 
   if (activeReviewAllRunId !== runId) {
     if (started) {
-      enablePleaseCheckFilterAndShowModal("", runProgress());
+      enablePleaseCheckFilterAndShowModal("", runProgress(), reviewMode);
       render?.();
     }
     return;
   }
-  enablePleaseCheckFilterAndShowModal("", runProgress());
+  enablePleaseCheckFilterAndShowModal("", runProgress(), reviewMode);
   render?.();
 }
 

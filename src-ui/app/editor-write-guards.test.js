@@ -118,6 +118,7 @@ const {
   confirmEditorUnreviewAll,
   collapseEmptyEditorFootnote,
   flushDirtyEditorRows,
+  persistEditorRowsBatch,
   resolveEditorRowConflict,
   toggleEditorRowFieldMarker,
   updateEditorRowTextStyle,
@@ -2433,4 +2434,61 @@ test("a style save recovers its expired native session before committing once", 
   assert.equal(state.editorChapter.rows[0].textStyle, "heading1");
   assert.equal(state.editorChapter.rows[0].persistedTextStyle, "heading1");
   assert.equal(state.editorChapter.rows[0].textStyleSaveState.error, "");
+});
+
+test("a Translate All batch save sends only the translated language and no empty base maps", async () => {
+  installEditorFixture();
+  state.editorChapter = {
+    ...state.editorChapter,
+    languages: [{ code: "es", name: "Spanish" }, { code: "vi", name: "Vietnamese" }],
+    rows: normalizeEditorRows([
+      {
+        rowId: "row-1",
+        textStyle: "paragraph",
+        fields: { es: "hola", vi: "" },
+      },
+      {
+        rowId: "row-2",
+        textStyle: "quote",
+        fields: { es: "cita", vi: "" },
+        attributions: { es: "Autor", vi: "Tác giả" },
+      },
+    ]),
+  };
+  updateEditorChapterRow("row-1", (row) => ({ ...row, fields: { ...row.fields, vi: "xin chào" } }));
+  updateEditorChapterRow("row-2", (row) => ({ ...row, fields: { ...row.fields, vi: "trích dẫn" } }));
+  invokeHandler = async (command, payload = {}) => {
+    if (command === "update_gtms_editor_row_fields_batch") {
+      return {
+        rowIds: payload.input?.rows?.map((row) => row.rowId) ?? [],
+        wordCounts: {},
+        chapterBaseCommitSha: "head-ai",
+        rows: [],
+        conflicts: [],
+      };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const saved = await persistEditorRowsBatch(
+    () => {},
+    [{ rowId: "row-1", languageCode: "vi" }, { rowId: "row-2", languageCode: "vi" }],
+    { updateEditorChapterRow, applyEditorSelectionsToProjectState },
+    { commitMessage: "AI translate 2 rows to Vietnamese", waitForDurable: true },
+  );
+
+  assert.equal(saved, true);
+  assert.deepEqual(invokeLog.map((entry) => entry.command), ["update_gtms_editor_row_fields_batch"]);
+  const [plainRow, quoteRow] = invokeLog[0].payload.input.rows;
+  // The source is never sent, so the backend has nothing to clear it with.
+  assert.deepEqual(plainRow.fields, { vi: "xin chào" });
+  // An empty base map would push the row into the backend's three-way merge.
+  assert.equal("baseAttributions" in plainRow, false);
+  assert.equal("baseFields" in plainRow, false);
+  // A saved attribution still carries its base for conflict detection.
+  assert.deepEqual(quoteRow.fields, { vi: "trích dẫn" });
+  assert.deepEqual(quoteRow.attributions, { vi: "Tác giả" });
+  assert.deepEqual(quoteRow.baseAttributions, { vi: "Tác giả" });
+  assert.equal(state.editorChapter.rows[0].fields.es, "hola");
+  assert.equal(state.editorChapter.rows[0].persistedFields.vi, "xin chào");
 });

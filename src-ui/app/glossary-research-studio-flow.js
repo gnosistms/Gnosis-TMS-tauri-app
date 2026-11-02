@@ -16,7 +16,7 @@ import { studioStepNeedsReview } from "./glossary-research-studio-review.js";
 import { currentStudioRecommendation, recommendStudioStep, sourceSummaryMustBeSkipped, studioCanRecommendSkip, studioResearchStarted } from "./glossary-research-studio-recommendations.js";
 import { answerStudioAutoChoice, startStudioAutoChoice } from "./glossary-research-studio-auto-choice.js";
 import { prepareReadingTranslations, runResearchStage } from "./glossary-research-studio-stages.js";
-import { testMeanings, testCompleteEntry } from "./glossary-research-studio-testing.js";
+import { testMeanings, testCompleteEntry, studioNeedsFormOffer, studioTranslationChoices, approveStudioCandidate, rejectStudioCandidate, regradeStudioEntryTrials, STUDIO_NEW_TRANSLATION } from "./glossary-research-studio-testing.js";
 import { reviewCompoundReport, STUDIO_STEPS, STUDIO_DICTIONARY_REVIEW_VERSION, STUDIO_DEFAULT_BRANCH, newStudioStudy, uniqueTexts, selectedForms, activeMeanings,
   approveStep, stableSignature, stepSignature, stepSignatureMatches, stepIsReusable, buildStudioDraft, finalUsage, studioDependentSteps, clearStudioDependents, startStudioReResearch,
   collisionChanges, sourceCollisions, temporaryGlossaryTerms, uniqueSourceTexts, deduplicateSourceForms, applySplitReview, preferCandidate, reviseAssignment, studioContextRequest, applyStudioContext, entryTrialsAreCurrent, meaningTrialsAreCurrent, studioStepNumber,
@@ -1018,14 +1018,55 @@ export async function resolveStudioDecision(action) {
     }
     s.retryAllowances ??= {};
     for (const key of d.keys ?? [d.key]) s.retryAllowances[key] = (s.rounds[key] ?? d.rounds) + 3;
-  } else if (d.kind === "needs-form") {
+  } else if (d.kind === "needs-form" || d.kind === "other-meaning") {
     if (action === "back") {
       s.pendingDecision = null; s.status = "active"; studioView().hideDecision = false;
       await persist(s); await visitStudioStep("8"); return;
     }
-    const ids = new Set((d.offers ?? []).map((offer) => offer.candidateId));
-    if (!ids.size) throw new Error("There is no translation to confirm here. Go back to step 8.");
-    for (const c of s.candidates) if (ids.has(c.id)) c.confirmed = true;
+    const offer = studioNeedsFormOffer(s, d);
+    if (!offer) throw new Error("There is no translation to confirm here. Go back to step 8.");
+    // No first asks which translation to use instead; Back returns to the question.
+    if (action === "reject" || action === "ask") {
+      s.decisionInput = action === "reject" ? { stage: "choose" } : {};
+      await persist(s); renderStudio(); return;
+    }
+    // The sentences have the meaning the word is approved for. As in the findings' meaning
+    // review, step 9 then waits for Retest meanings.
+    if (action === "move" && d.kind === "other-meaning") {
+      const meaningId = offer.otherMeaningIds.includes(s.decisionInput?.otherMeaning) ? s.decisionInput.otherMeaning : offer.otherMeaningIds[0];
+      if (!meaningId) throw new Error("Select a meaning.");
+      await hydrateStudioStep(s, "4.6");
+      if (!contextMatches(s) || s.pendingDecision !== d) return;
+      for (const ref of offer.refs) await reviseAssignment(s, ref.paragraphId, ref.occurrenceId, meaningId);
+      s.decisionInput = {}; studioView().hideDecision = false;
+      await persist(s); renderStudio(); return;
+    }
+    if (action === "confirm") {
+      approveStudioCandidate(s, offer.candidateId, offer.meaningId);
+      // The entry the translator sees is unchanged, so its saved answers are graded again.
+      if (d.kind === "other-meaning") regradeStudioEntryTrials(s, d.keys);
+    } else if (action === "choose") {
+      const input = s.decisionInput ?? {};
+      const choice = input.translation ?? studioTranslationChoices(s, offer)[0]?.id ?? STUDIO_NEW_TRANSLATION;
+      const typed = String(input.newTranslation ?? "").trim();
+      const existing = choice === STUDIO_NEW_TRANSLATION
+        ? s.candidates.find((c) => c.text?.trim().toLocaleLowerCase() === typed.toLocaleLowerCase())
+        : s.candidates.find((c) => c.id === choice);
+      if (choice === STUDIO_NEW_TRANSLATION && !typed) throw new Error("Type the translation to add.");
+      if (choice !== STUDIO_NEW_TRANSLATION && !existing) throw new Error("Select a translation.");
+      if (existing?.id === offer.candidateId) throw new Error(`Choose a translation other than “${offer.text}”.`);
+      rejectStudioCandidate(s, offer.candidateId, offer.meaningId);
+      const id = existing?.id ?? `human-translation-${s.candidates.length}`;
+      if (!existing) s.candidates.push({ id, text: typed, note: "", meaningIds: [offer.meaningId], confirmed: true, selected: true, retained: true });
+      const preferred = approveStudioCandidate(s, id, offer.meaningId).text;
+      s.translationPreferences = [...(s.translationPreferences ?? []), ...offer.refs.map((ref) => ({ ...ref,
+        meaningId: offer.meaningId, rejectedWording: offer.text, preferredWording: preferred }))];
+    } else return;
+    // Each unapproved word is asked about in turn before step 9 continues.
+    if (d.offers.length > 1) {
+      d.offers = d.offers.slice(1); s.decisionInput = {};
+      await persist(s); renderStudio(); return;
+    }
   } else if (d.kind === "candidate") {
     if (action === "approve") {
       for (const c of s.candidates) if (c.groupId === d.groupId) c.temporary = false;

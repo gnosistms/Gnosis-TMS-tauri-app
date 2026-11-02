@@ -9,6 +9,7 @@ import {
   normalizeEditorSidebarTab,
 } from "./editor-comments.js";
 import {
+  applyEditorCommentDeleteSucceeded,
   applyEditorCommentSaveSucceeded,
   applyEditorCommentsLoaded,
   applyEditorRowCommentSeen,
@@ -151,4 +152,28 @@ test("normalizeEditorSidebarTab keeps known tabs, maps translate to assistant, a
   assert.equal(normalizeEditorSidebarTab("review"), "review");
   assert.equal(normalizeEditorSidebarTab("duplicates"), "review");
   assert.equal(normalizeEditorSidebarTab("something-else"), "review");
+});
+
+test("deleting a comment updates the row's AI clarity fingerprints; saving one keeps them", () => {
+  const chapterState = {
+    ...createEditorChapterState(),
+    chapterId: "chapter-1",
+    rows: [{ rowId: "row-1", commentCount: 2, commentsRevision: 4, aiClarityFingerprints: { vi: "fp" } }],
+  };
+
+  const saved = applyEditorCommentSaveSucceeded(chapterState, "row-1", {
+    commentCount: 3,
+    commentsRevision: 5,
+    comments: [],
+  });
+  assert.deepEqual(saved.rows[0].aiClarityFingerprints, { vi: "fp" });
+
+  const deleted = applyEditorCommentDeleteSucceeded(chapterState, "row-1", {
+    commentCount: 1,
+    commentsRevision: 5,
+    comments: [],
+    aiClarityFingerprints: {},
+  });
+  assert.equal(deleted.rows[0].commentCount, 1);
+  assert.deepEqual(deleted.rows[0].aiClarityFingerprints, {});
 });

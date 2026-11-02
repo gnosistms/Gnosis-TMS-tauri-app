@@ -294,6 +294,12 @@ export function applyEditorRowCommentSummary(chapterState, rowId, summary) {
 
   const commentCount = Number.parseInt(String(summary?.commentCount ?? ""), 10);
   const commentsRevision = Number.parseInt(String(summary?.commentsRevision ?? ""), 10);
+  // Only delete responses carry fingerprints: removing an AI Review clarity
+  // comment lets a repeat clarity check look at the row again.
+  const aiClarityFingerprints =
+    summary?.aiClarityFingerprints && typeof summary.aiClarityFingerprints === "object"
+      ? { aiClarityFingerprints: { ...summary.aiClarityFingerprints } }
+      : {};
   return {
     ...chapterState,
     rows: chapterState.rows.map((row) =>
@@ -302,6 +308,7 @@ export function applyEditorRowCommentSummary(chapterState, rowId, summary) {
           ...row,
           commentCount: Number.isInteger(commentCount) && commentCount >= 0 ? commentCount : 0,
           commentsRevision: Number.isInteger(commentsRevision) && commentsRevision >= 0 ? commentsRevision : 0,
+          ...aiClarityFingerprints,
         }
         : row
     ),

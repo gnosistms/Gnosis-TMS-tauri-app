@@ -1,4 +1,7 @@
-import { buildEditorRowGlossaryHighlights } from "./editor-glossary-highlighting.js";
+import {
+  buildEditorRowGlossaryHighlights,
+  buildEditorRowGlossaryTermPairs,
+} from "./editor-glossary-highlighting.js";
 import { resolveHighlightableEditorDerivedGlossaryEntry } from "./editor-derived-glossary-state.js";
 import { isCustomHtmlRowTextStyle } from "./editor-row-text-style.js";
 import {
@@ -175,6 +178,23 @@ function buildMergedEditorRowGlossaryHighlights(sections, glossaryModel, derived
   }
 
   return highlightMap;
+}
+
+// The glossary term pairs underlined in a row's `languageCode` text, from the
+// same glossary as its highlights: the direct glossary, or the derived one when
+// the direct glossary underlines nothing there.
+export function editorRowGlossaryTermPairs(row, languageCode, chapterState = state.editorChapter) {
+  row = srtLinguisticRow(row, chapterState);
+  const sections = buildEditorRowSections(row, chapterState);
+  const glossaryModel = chapterState?.glossary?.matcherModel ?? null;
+  const directPairs = buildEditorRowGlossaryTermPairs(sections, glossaryModel, languageCode);
+  if (directPairs.length > 0) {
+    return directPairs;
+  }
+  const derivedModel = groupDerivedMatcher(row, chapterState) ?? resolveHighlightableEditorDerivedGlossaryEntry(
+    chapterState, row?.rowId ?? "", row,
+  )?.matcherModel ?? null;
+  return buildEditorRowGlossaryTermPairs(sections, derivedModel, languageCode);
 }
 
 export function editorRowHasGlossaryError(row, chapterState = state.editorChapter) {

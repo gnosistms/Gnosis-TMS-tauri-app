@@ -452,6 +452,8 @@ async function runGlossaryTermSaveIntent(render, intent) {
 
 // options.prefill ({ sourceTerms, targetTerms }) starts a new term with text
 // already entered, e.g. from text highlighted in the chapter editor.
+// options.returnToEditor: the chapter editor opened this window, so closing it
+// goes back there (see actions/glossary-actions.js).
 export async function openGlossaryTermEditor(render, termId = null, options = {}) {
   const team = selectedTeam();
   const glossary = selectedGlossary();
@@ -485,6 +487,7 @@ export async function openGlossaryTermEditor(render, termId = null, options = {}
     ? { sourceTerms: options.prefill.sourceTerms ?? [], targetTerms: options.prefill.targetTerms ?? [] }
     : null;
   state.glossaryTermEditor = createGlossaryTermEditorModalState(term ?? prefill);
+  if (options.returnToEditor === true) state.glossaryTermEditor.returnToEditor = true;
   // A prefilled source term may already be in the glossary; mark it at once.
   if (prefill) refreshGlossaryTermDuplicateFeedback();
   render();
@@ -876,7 +879,9 @@ export async function submitGlossaryTermEditor(render, { awaitCompletion = false
         return;
       }
       restoreFailedGlossaryTermSave(render, intent, errorMessage);
-      if (!glossarySaveContextMatches(intent)) {
+      // Off the glossary page (back in the chapter editor, say) the failed draft
+      // cannot reopen, so say so. A caller awaiting the result reports it itself.
+      if (!glossarySaveContextMatches(intent) || (!awaitCompletion && state.screen !== "glossaryEditor")) {
         showNoticeBadge(`Could not save a term in ${intent.value?.glossary?.title || "the glossary"}. Reopen that glossary to retry.`, render);
       }
     },

@@ -94,6 +94,9 @@ pub struct AiReviewRequest {
     pub target_language: String,
     #[serde(default)]
     pub glossary_hints: Vec<AiTranslationGlossaryHint>,
+    /// Clarity review only: the glossary terms underlined in the row.
+    #[serde(default)]
+    pub glossary_terms: Vec<AiReviewGlossaryTerm>,
     #[serde(default)]
     pub qa_hints: Vec<AiReviewQaHint>,
     #[serde(default)]
@@ -102,6 +105,10 @@ pub struct AiReviewRequest {
     pub target_language_history: Vec<AiAssistantTargetLanguageHistoryEntry>,
     #[serde(default)]
     pub row_window: Vec<AiAssistantRowWindowEntry>,
+    /// The reviewed row's id within `row_window`; the clarity review uses it to
+    /// split the window into the rows before and after.
+    #[serde(default)]
+    pub row_id: String,
     #[serde(default)]
     pub installation_id: Option<i64>,
 }
@@ -116,8 +123,24 @@ pub struct AiReviewResponse {
     pub suggested_image_caption: String,
     #[serde(default)]
     pub reviewed: Option<bool>,
+    /// Clarity review only: why part of the row is hard to understand, in the
+    /// target language. Empty when the row reads clearly.
+    #[serde(default)]
+    pub comment: String,
     #[serde(default)]
     pub prompt_text: String,
+}
+
+/// A glossary term the editor underlines in the target text, with the source
+/// wording underlined for it. The clarity review is told that using one is not,
+/// on its own, a reason to flag a row.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AiReviewGlossaryTerm {
+    #[serde(default)]
+    pub source_term: String,
+    #[serde(default)]
+    pub target_term: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -410,6 +433,9 @@ pub struct AiReviewBatchRequest {
     pub target_language: String,
     #[serde(default)]
     pub glossary_hints: Vec<AiTranslationGlossaryHint>,
+    /// Clarity review only: the glossary terms underlined in the rows.
+    #[serde(default)]
+    pub glossary_terms: Vec<AiReviewGlossaryTerm>,
     #[serde(default)]
     pub context_before: Vec<AiAssistantRowWindowEntry>,
     #[serde(default)]
@@ -442,6 +468,9 @@ pub struct AiReviewBatchRowResult {
     #[serde(default)]
     pub suggested_image_caption: String,
     pub reviewed: bool,
+    /// Clarity review only; see `AiReviewResponse::comment`.
+    #[serde(default)]
+    pub comment: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

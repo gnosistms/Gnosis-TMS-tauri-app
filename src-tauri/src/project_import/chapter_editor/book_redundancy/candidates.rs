@@ -88,9 +88,17 @@ pub(super) fn count_words(book_texts: &[String]) -> WordFrequencies {
         words,
     }
 }
+/// Notes the AI may split but never merge with another group's notes. Edges are
+/// the pairs that linked them: neighboring reversed contexts or identical bodies.
+#[derive(Debug, Default, PartialEq)]
+pub(super) struct CandidateGroup {
+    pub members: Vec<usize>,
+    pub edges: Vec<(usize, usize)>,
+}
 /// Reverse punctuation-stripped contexts, sort, then compare ONLY neighbors.
 /// Matching adjacent notes chain into candidate groups for semantic splitting.
-pub(super) fn groups(notes: &[Occurrence], frequency: &WordFrequencies) -> Vec<Vec<usize>> {
+/// Identical bodies also link notes whose contexts end differently.
+pub(super) fn groups(notes: &[Occurrence], frequency: &WordFrequencies) -> Vec<CandidateGroup> {
     if notes.len() < 2 {
         return Vec::new();
     }
@@ -106,7 +114,7 @@ pub(super) fn groups(notes: &[Occurrence], frequency: &WordFrequencies) -> Vec<V
         .collect::<Vec<_>>();
     let mut order = (0..notes.len()).collect::<Vec<_>>();
     order.sort_by(|&a, &b| reversed[a].cmp(&reversed[b]));
-    let mut result = Vec::new();
+    let mut chains = Vec::new();
     let mut chain = Vec::new();
     for adjacent in order.windows(2) {
         let (a, b) = (adjacent[0], adjacent[1]);
@@ -123,20 +131,78 @@ pub(super) fn groups(notes: &[Occurrence], frequency: &WordFrequencies) -> Vec<V
             }
             chain.push(b);
         } else if chain.len() > 1 {
-            result.push(std::mem::take(&mut chain));
+            chains.push(std::mem::take(&mut chain));
         }
     }
     if chain.len() > 1 {
-        result.push(chain);
+        chains.push(chain);
     }
+    // Bucket conservatively normalized bodies: linear, no pairwise comparisons.
+    // A note with nothing before its marker has no anchor a group could quote.
+    let mut bodies = HashMap::<String, Vec<usize>>::new();
+    for (index, note) in notes.iter().enumerate() {
+        if !contexts[index].is_empty() {
+            bodies
+                .entry(normalized(&note.text))
+                .or_default()
+                .push(index);
+        }
+    }
+    let mut identical = bodies
+        .into_values()
+        .filter(|ids| ids.len() > 1)
+        .collect::<Vec<_>>();
+    identical.sort();
+    let edges = chains
+        .iter()
+        .chain(&identical)
+        .flat_map(|ids| ids.windows(2).map(|edge| (edge[0], edge[1])));
+    let result = components(notes.len(), edges);
     #[cfg(debug_assertions)]
     eprintln!(
-        "[book redundancy] {} notes: {} neighbor comparisons including normalization/sort {:?}",
+        "[book redundancy] {} notes: {} neighbor comparisons and {} identical-body sets including normalization/sort {:?}",
         notes.len(),
         notes.len() - 1,
+        identical.len(),
         phase.elapsed()
     );
     result
+}
+/// Join edges into disjoint groups. Each group keeps its edges in discovery
+/// order, so a context chain stays together when batches are cut.
+fn components(count: usize, edges: impl Iterator<Item = (usize, usize)>) -> Vec<CandidateGroup> {
+    fn root(parent: &mut [usize], mut id: usize) -> usize {
+        while parent[id] != id {
+            parent[id] = parent[parent[id]];
+            id = parent[id];
+        }
+        id
+    }
+    let mut parent = (0..count).collect::<Vec<_>>();
+    let mut seen = HashSet::new();
+    let mut unique = Vec::new();
+    for (a, b) in edges {
+        if seen.insert((a.min(b), a.max(b))) {
+            let (left, right) = (root(&mut parent, a), root(&mut parent, b));
+            parent[left] = right;
+            unique.push((a, b));
+        }
+    }
+    let mut positions = HashMap::new();
+    let mut placed = HashSet::new();
+    let mut groups: Vec<CandidateGroup> = Vec::new();
+    for (a, b) in unique {
+        let position = *positions.entry(root(&mut parent, a)).or_insert_with(|| {
+            groups.push(CandidateGroup::default());
+            groups.len() - 1
+        });
+        let group = &mut groups[position];
+        group
+            .members
+            .extend([a, b].into_iter().filter(|&id| placed.insert(id)));
+        group.edges.push((a, b));
+    }
+    groups
 }
 
 pub(super) fn near(a: &str, b: &str) -> bool {
@@ -199,7 +265,7 @@ pub(super) fn near(a: &str, b: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn find_groups(notes: &[Occurrence], texts: &[String]) -> Vec<Vec<usize>> {
+    fn find_groups(notes: &[Occurrence], texts: &[String]) -> Vec<CandidateGroup> {
         groups(notes, &count_words(texts))
     }
     fn note(id: usize, context: &str, body: &str) -> Occurrence {
@@ -233,10 +299,10 @@ mod tests {
         let found = find_groups(&notes, &texts);
         assert_eq!(found.len(), 1);
         assert_eq!(
-            found[0].iter().copied().collect::<BTreeSet<_>>(),
+            found[0].members.iter().copied().collect::<BTreeSet<_>>(),
             BTreeSet::from([0, 2, 3])
         );
-        assert_eq!(found[0].windows(2).count(), 2);
+        assert_eq!(found[0].edges.len(), 2);
         assert!(find_groups(&[], &[]).is_empty());
         assert!(find_groups(&notes[..1], &texts).is_empty());
     }
@@ -272,31 +338,67 @@ mod tests {
             assert!(
                 !found
                     .iter()
-                    .any(|group| group.contains(&0) && group.contains(&1)),
+                    .any(|group| group.members.contains(&0) && group.members.contains(&1)),
                 "common {common}"
             );
             assert!(
                 found
                     .iter()
-                    .any(|group| group.contains(&2) && group.contains(&3)),
+                    .any(|group| group.members.contains(&2) && group.members.contains(&3)),
                 "distinct {distinct}"
             );
         }
     }
     #[test]
-    fn body_matches_do_not_trigger_a_separate_all_pairs_search() {
+    fn identical_bodies_link_different_words_without_near_body_search() {
         let body =
             "This is a sufficiently long explanation to qualify for near duplicate comparison.";
+        let similar = body.replace("long", "full");
         let notes = vec![
             note(0, "one unique referent", body),
-            note(1, "a different anchor", body),
+            note(1, "a different anchor", &body.replace(' ', "  ")),
+            note(2, "another phrase", &similar),
+            note(3, "", body),
         ];
         let texts = notes
             .iter()
             .map(|note| note.context.clone())
             .collect::<Vec<_>>();
-        assert!(find_groups(&notes, &texts).is_empty());
-        assert!(near(body, &body.replace("long", "full")));
+        assert_eq!(
+            find_groups(&notes, &texts),
+            vec![CandidateGroup {
+                members: vec![0, 1],
+                edges: vec![(0, 1)],
+            }]
+        );
+        assert!(near(body, &similar));
+    }
+    #[test]
+    fn context_and_body_matches_join_one_group() {
+        let notes = vec![
+            note(0, "First dependent origination", "Pratītyasamutpāda."),
+            note(1, "Second dependent origination", "Arising in dependence."),
+            note(2, "the twelve links", "Pratītyasamutpāda."),
+            note(3, "Other term", "other"),
+        ];
+        let texts = notes
+            .iter()
+            .map(|note| note.context.clone())
+            .collect::<Vec<_>>();
+        let found = find_groups(&notes, &texts);
+        assert_eq!(found.len(), 1);
+        assert_eq!(
+            found[0].members.iter().copied().collect::<BTreeSet<_>>(),
+            BTreeSet::from([0, 1, 2])
+        );
+        assert_eq!(
+            found[0]
+                .edges
+                .iter()
+                .map(|&(a, b)| (a.min(b), a.max(b)))
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([(0, 1), (0, 2)])
+        );
     }
     #[test]
     fn near_threshold_and_unicode() {

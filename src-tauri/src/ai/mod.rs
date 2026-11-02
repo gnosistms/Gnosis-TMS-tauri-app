@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod assistant_cache_eval;
+mod clarity_review;
 #[cfg(test)]
 mod effort_eval;
 pub(crate) mod glossary_matcher;
@@ -56,6 +57,7 @@ fn normalize_review_mode(request: &AiReviewRequest) -> Option<&str> {
     match request.review_mode.as_deref().unwrap_or("").trim() {
         "grammar" => Some("grammar"),
         "meaning" => Some("meaning"),
+        clarity_review::CLARITY_REVIEW_MODE => Some(clarity_review::CLARITY_REVIEW_MODE),
         _ => None,
     }
 }
@@ -173,6 +175,9 @@ fn validate_review_suggestions(
 
 pub(crate) fn build_review_prompt(request: &AiReviewRequest) -> String {
     if let Some(review_mode) = normalize_review_mode(request) {
+        if review_mode == clarity_review::CLARITY_REVIEW_MODE {
+            return clarity_review::build_clarity_review_prompt(request);
+        }
         let latest_translation = request
             .latest_translation
             .as_deref()
@@ -350,6 +355,7 @@ fn parse_review_structured_response(
                 suggested_footnotes: parsed.suggested_footnotes,
                 suggested_image_caption: parsed.suggested_image_caption,
                 reviewed: Some(parsed.reviewed),
+                comment: String::new(),
                 prompt_text: String::new(),
             });
         }
@@ -729,6 +735,9 @@ fn sentence_group_review_output_rule() -> &'static str {
 pub(crate) fn build_review_batch_prompt(request: &AiReviewBatchRequest) -> String {
     let review_mode = match request.review_mode.as_deref().unwrap_or("").trim() {
         "meaning" => "meaning",
+        clarity_review::CLARITY_REVIEW_MODE => {
+            return clarity_review::build_clarity_review_batch_prompt(request);
+        }
         _ => "grammar",
     };
 
@@ -937,6 +946,7 @@ fn parse_review_batch_response(text: &str) -> Result<Vec<AiReviewBatchRowResult>
                         suggested_footnotes: row.suggested_footnotes,
                         suggested_image_caption: row.suggested_image_caption,
                         reviewed,
+                        comment: String::new(),
                     })
                 })
                 .collect());
@@ -1079,16 +1089,32 @@ pub(crate) fn run_ai_review_batch(
 
     let api_key = load_ai_provider_api_key(app, request.provider_id, request.installation_id)?;
     let prompt = build_review_batch_prompt(&request);
+    let clarity =
+        request.review_mode.as_deref().map(str::trim) == Some(clarity_review::CLARITY_REVIEW_MODE);
     let response = providers::run_prompt(
         &AiPromptRequest {
             provider_id: request.provider_id,
             model_id: request.model_id.clone(),
             prompt: prompt.clone(),
-            output_format: AiPromptOutputFormat::ReviewBatchJson,
+            output_format: if clarity {
+                clarity_review::clarity_batch_output_format()
+            } else {
+                AiPromptOutputFormat::ReviewBatchJson
+            },
             prompt_blocks: None,
         },
         &api_key,
     )?;
+
+    if clarity {
+        let (rows, unknown_row_ids) =
+            clarity_review::parse_clarity_review_batch_response(&response.text, &request)?;
+        return Ok(AiReviewBatchResponse {
+            rows,
+            prompt_text: prompt,
+            unknown_row_ids,
+        });
+    }
 
     let allowed: HashSet<String> = request
         .rows
@@ -2482,16 +2508,23 @@ pub(crate) fn run_ai_review(
             provider_id: request.provider_id,
             model_id: request.model_id.clone(),
             prompt: prompt.clone(),
-            output_format: if structured_review_mode.is_some() {
-                AiPromptOutputFormat::ReviewJson
-            } else {
-                AiPromptOutputFormat::Text
+            output_format: match structured_review_mode {
+                Some(clarity_review::CLARITY_REVIEW_MODE) => {
+                    clarity_review::clarity_output_format()
+                }
+                Some(_) => AiPromptOutputFormat::ReviewJson,
+                None => AiPromptOutputFormat::Text,
             },
             prompt_blocks: None,
         },
         &api_key,
     )?;
 
+    if structured_review_mode == Some(clarity_review::CLARITY_REVIEW_MODE) {
+        let mut parsed = clarity_review::parse_clarity_review_response(&response.text)?;
+        parsed.prompt_text = prompt;
+        return Ok(parsed);
+    }
     if structured_review_mode.is_some() {
         let mut parsed =
             parse_review_structured_response(&response.text, text_to_review, &request.footnotes)?;
@@ -2504,6 +2537,7 @@ pub(crate) fn run_ai_review(
         suggested_footnotes: Vec::new(),
         suggested_image_caption: String::new(),
         reviewed: None,
+        comment: String::new(),
         prompt_text: prompt,
     })
 }
@@ -2867,10 +2901,12 @@ mod tests {
             source_language: String::new(),
             target_language: String::new(),
             glossary_hints: vec![],
+            glossary_terms: vec![],
             qa_hints: vec![],
             alternate_language_texts: vec![],
             target_language_history: vec![],
             row_window: vec![],
+            row_id: String::new(),
             installation_id: None,
         }
     }
@@ -4593,6 +4629,7 @@ mod tests {
             source_language: "English".to_string(),
             target_language: "Vietnamese".to_string(),
             glossary_hints: vec![],
+            glossary_terms: vec![],
             context_before: vec![],
             context_after: vec![],
             rows,

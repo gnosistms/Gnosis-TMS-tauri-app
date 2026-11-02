@@ -664,3 +664,209 @@ test("AI Review All runs batches concurrently with capped AI calls and serialize
   }
   assert.equal(state.editorChapter.aiReviewAllModal.step, "filter-enabled");
 });
+
+const { editorAiReviewContentFingerprint } = await import("./editor-ai-review-request.js");
+const { EDITOR_ROW_FILTER_MODE_PLEASE_CHECK } = await import("./editor-filters.js");
+
+function clarityChapter(rows) {
+  return chapter({
+    rows,
+    aiReviewAllModal: {
+      ...createEditorChapterState().aiReviewAllModal,
+      isOpen: true,
+      step: "configure",
+      reviewMode: "clarity",
+    },
+  });
+}
+
+function clarityRow(rowId, text, extra = {}) {
+  return { ...row(rowId, { es: `Src ${rowId}`, vi: text }, { vi: { reviewed: false, pleaseCheck: false } }), ...extra };
+}
+
+function applyBatchPayload(input) {
+  return {
+    languageCode: input.languageCode,
+    rows: input.rows.map((inputRow) => ({
+      rowId: inputRow.rowId,
+      text: state.editorChapter.rows.find((candidate) => candidate.rowId === inputRow.rowId).fields.vi,
+      footnote: "",
+      imageCaption: "",
+      reviewed: inputRow.reviewed,
+      pleaseCheck: inputRow.pleaseCheck,
+      commentCount: 1,
+      commentsRevision: 1,
+      aiClarityFingerprints: { vi: inputRow.commentFingerprint },
+      lastUpdate: null,
+    })),
+    wordCounts: { vi: 10 },
+    chapterBaseCommitSha: "abc1234",
+  };
+}
+
+test("AI Review All mode update accepts the clarity check", () => {
+  resetSessionState();
+  state.editorChapter = clarityChapter([]);
+  updateEditorAiReviewAllMode(() => {}, "grammar");
+  updateEditorAiReviewAllMode(() => {}, "clarity");
+  assert.equal(state.editorChapter.aiReviewAllModal.reviewMode, "clarity");
+});
+
+test("AI Review All clarity check comments on unclear rows, leaves clear rows untouched, and skips unchanged flagged rows", async () => {
+  resetSessionState();
+  editorAiReviewAllTestApi.resetActiveReviewAllRunId();
+  setupReviewRunProjectContext();
+  const unchangedFlagged = clarityRow("row-d", "Bon");
+  unchangedFlagged.aiClarityFingerprints = { vi: editorAiReviewContentFingerprint(unchangedFlagged, "vi") };
+  state.editorChapter = clarityChapter([
+    clarityRow("row-a", "Mot"),
+    clarityRow("row-b", "Hai"),
+    clarityRow("row-c", "Ba"),
+    unchangedFlagged,
+    // Flagged before, then edited: checked again.
+    clarityRow("row-e", "Nam", { aiClarityFingerprints: { vi: "stale" } }),
+  ]);
+  const batchRequests = [];
+  const applyBatchCalls = [];
+  const singleRequests = [];
+  const singleApplyInputs = [];
+  invokeHandler = async (command, args) => {
+    if (command === "run_ai_review") {
+      singleRequests.push(args.request);
+      return { suggestedText: "", reviewed: null, comment: "Câu này mơ hồ." };
+    }
+    if (command === "apply_gtms_editor_ai_review_result") {
+      singleApplyInputs.push(args.input);
+      return {
+        rowId: args.input.rowId,
+        languageCode: args.input.languageCode,
+        text: "Nam",
+        footnote: "",
+        imageCaption: "",
+        reviewed: args.input.reviewed,
+        pleaseCheck: args.input.pleaseCheck,
+        commentCount: 2,
+        commentsRevision: 3,
+        aiClarityFingerprints: { vi: args.input.commentFingerprint },
+        lastUpdate: null,
+        chapterBaseCommitSha: "def5678",
+      };
+    }
+    return null;
+  };
+
+  await confirmEditorAiReviewAll(() => {}, reviewBatchOperations({
+    runAiReviewBatch: async (request) => {
+      batchRequests.push(request);
+      return {
+        rows: request.rows.map((requestRow) => ({
+          rowId: requestRow.rowId,
+          reviewed: false,
+          suggestedText: "",
+          comment: requestRow.rowId === "row-b" ? "  “Hai” không rõ nghĩa.  " : "",
+        })),
+      };
+    },
+    applyAiReviewResultsBatch: async (input) => {
+      applyBatchCalls.push(input);
+      return applyBatchPayload(input);
+    },
+  }));
+
+  // row-d is skipped, and row-e is not adjacent to row-c, so it is checked on
+  // its own rather than in a batch with a gap.
+  assert.equal(batchRequests.length, 1);
+  assert.deepEqual(batchRequests[0].rows.map((requestRow) => requestRow.rowId), ["row-a", "row-b", "row-c"]);
+  assert.equal(batchRequests[0].reviewMode, "clarity");
+  assert.deepEqual(batchRequests[0].rows.map((requestRow) => requestRow.sourceText), ["", "", ""]);
+  assert.equal(batchRequests[0].contextAfter[0].targetText, "Bon");
+  assert.equal(singleRequests.length, 1);
+  assert.equal(singleRequests[0].rowId, "row-e");
+  assert.equal(singleRequests[0].reviewMode, "clarity");
+  assert.equal(singleRequests[0].sourceText, "");
+  assert.deepEqual(singleRequests[0].rowWindow.map((entry) => entry.targetText), ["Mot", "Hai", "Ba", "Bon", "Nam"]);
+
+  // Only the flagged row is written; the text is never changed.
+  const rowB = state.editorChapter.rows.find((candidate) => candidate.rowId === "row-b");
+  assert.equal(applyBatchCalls.length, 1);
+  assert.deepEqual(applyBatchCalls[0].rows, [{
+    rowId: "row-b",
+    suggestedText: "",
+    suggestedFootnotes: [],
+    suggestedImageCaption: "",
+    reviewed: false,
+    pleaseCheck: true,
+    comment: "“Hai” không rõ nghĩa.",
+    commentFingerprint: editorAiReviewContentFingerprint(rowB, "vi"),
+  }]);
+  assert.equal(singleApplyInputs.length, 1);
+  assert.equal(singleApplyInputs[0].rowId, "row-e");
+  assert.equal(singleApplyInputs[0].suggestedText, "");
+  assert.equal(singleApplyInputs[0].pleaseCheck, true);
+  assert.equal(singleApplyInputs[0].reviewed, false);
+  assert.equal(singleApplyInputs[0].comment, "Câu này mơ hồ.");
+
+  const rowsById = new Map(state.editorChapter.rows.map((candidate) => [candidate.rowId, candidate]));
+  assert.equal(rowsById.get("row-b").fields.vi, "Hai");
+  assert.deepEqual(rowsById.get("row-b").fieldStates.vi, { reviewed: false, pleaseCheck: true });
+  assert.equal(rowsById.get("row-b").commentCount, 1);
+  assert.deepEqual(
+    rowsById.get("row-b").aiClarityFingerprints,
+    { vi: editorAiReviewContentFingerprint(rowB, "vi") },
+  );
+  assert.deepEqual(rowsById.get("row-a").fieldStates.vi, { reviewed: false, pleaseCheck: false });
+  assert.equal(rowsById.get("row-e").commentsRevision, 3);
+
+  const modal = state.editorChapter.aiReviewAllModal;
+  assert.equal(modal.step, "filter-enabled");
+  assert.equal(modal.reviewMode, "clarity");
+  assert.equal(modal.completedCount, 4);
+  assert.equal(modal.totalCount, 4);
+  assert.equal(modal.flaggedCount, 2);
+  assert.equal(state.editorChapter.filters.rowFilterMode, EDITOR_ROW_FILTER_MODE_PLEASE_CHECK);
+});
+
+test("AI Review All clarity check that flags nothing writes nothing and leaves the filter alone", async () => {
+  resetSessionState();
+  editorAiReviewAllTestApi.resetActiveReviewAllRunId();
+  setupReviewRunProjectContext();
+  state.editorChapter = clarityChapter([clarityRow("row-a", "Mot"), clarityRow("row-b", "Hai")]);
+  const filterModeBefore = state.editorChapter.filters.rowFilterMode;
+  invokeHandler = async () => null;
+
+  await confirmEditorAiReviewAll(() => {}, reviewBatchOperations({
+    runAiReviewBatch: async (request) => ({
+      rows: request.rows.map((requestRow) => ({ rowId: requestRow.rowId, reviewed: false, comment: "" })),
+    }),
+    applyAiReviewResultsBatch: async () => {
+      throw new Error("a clarity check must not write rows that read clearly");
+    },
+  }));
+
+  const modal = state.editorChapter.aiReviewAllModal;
+  assert.equal(modal.step, "filter-enabled");
+  assert.equal(modal.flaggedCount, 0);
+  assert.equal(modal.completedCount, 2);
+  assert.equal(state.editorChapter.filters.rowFilterMode, filterModeBefore);
+});
+
+test("AI Review All clarity check explains when every unreviewed row was already checked", async () => {
+  resetSessionState();
+  editorAiReviewAllTestApi.resetActiveReviewAllRunId();
+  setupReviewRunProjectContext();
+  const flagged = clarityRow("row-a", "Mot");
+  flagged.aiClarityFingerprints = { vi: editorAiReviewContentFingerprint(flagged, "vi") };
+  state.editorChapter = clarityChapter([flagged]);
+
+  await confirmEditorAiReviewAll(() => {}, reviewBatchOperations({
+    runAiReviewBatch: async () => {
+      throw new Error("no AI call expected");
+    },
+  }));
+
+  assert.equal(state.editorChapter.aiReviewAllModal.step, "configure");
+  assert.equal(
+    state.editorChapter.aiReviewAllModal.error,
+    "Every unreviewed translation was already checked, and none has changed since.",
+  );
+});

@@ -2,7 +2,7 @@ use super::*;
 use std::sync::atomic::AtomicUsize;
 
 pub(super) fn batches(
-    groups: &[Vec<usize>],
+    groups: &[candidates::CandidateGroup],
     notes: &[Occurrence],
     known: &BTreeMap<String, Verdict>,
 ) -> Vec<Vec<usize>> {
@@ -10,10 +10,11 @@ pub(super) fn batches(
     let mut members = BTreeSet::new();
     let mut bytes = 0;
     for group in groups {
-        for edge in group.windows(2) {
-            if known.contains_key(&pair_key(&notes[edge[0]], &notes[edge[1]])) {
+        for &(a, b) in &group.edges {
+            if known.contains_key(&pair_key(&notes[a], &notes[b])) {
                 continue;
             }
+            let edge = [a, b];
             let missing = edge
                 .iter()
                 .filter(|id| !members.contains(*id))
@@ -28,7 +29,7 @@ pub(super) fn batches(
                 result.push(std::mem::take(&mut members).into_iter().collect());
                 bytes = 0;
             }
-            for &id in edge {
+            for id in edge {
                 if members.insert(id) {
                     bytes += notes[id].text.len() + notes[id].context.len();
                 }

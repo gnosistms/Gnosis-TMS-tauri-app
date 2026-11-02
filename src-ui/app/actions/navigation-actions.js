@@ -164,7 +164,7 @@ export function createNavigationActions(render) {
           return;
         }
 
-        await openGlossaryTermEditor(render, openEditorGlossaryTermId);
+        await openGlossaryTermEditor(render, openEditorGlossaryTermId, { returnToEditor: true });
       })();
       return true;
     }
