@@ -10,6 +10,21 @@ fn merge_editor_string_maps(
     merge_editor_string_maps_by(base, local, remote, |value| value.to_string())
 }
 
+// Field text for one batch row. Without base fields the caller sent only the
+// languages it changed (Translate All sends just the target), so those apply
+// as-is and every other language stays as stored — merging that partial map
+// against the stored row would read each missing language as a clear.
+fn merge_batch_row_fields(
+    base: Option<&BTreeMap<String, String>>,
+    local: &BTreeMap<String, String>,
+    remote: &BTreeMap<String, String>,
+) -> Option<BTreeMap<String, String>> {
+    match base {
+        Some(base) => merge_editor_string_maps(base, local, remote),
+        None => Some(local.clone()),
+    }
+}
+
 fn merge_editor_footnote_maps(
     base: &BTreeMap<String, String>,
     local: &BTreeMap<String, String>,
@@ -922,6 +937,31 @@ mod tests {
         assert_eq!(merged, Some(map(&[("es", "hola"), ("vi", "")])));
     }
 
+    #[test]
+    fn batch_row_fields_without_base_only_write_the_sent_languages() {
+        // Translate All saves just the target; the stored source and other
+        // targets must not come back as clears.
+        let merged = merge_batch_row_fields(
+            None,
+            &map(&[("en", "hello")]),
+            &map(&[("es", "hola"), ("vi", "xin chao")]),
+        );
+
+        assert_eq!(merged, Some(map(&[("en", "hello")])));
+    }
+
+    #[test]
+    fn batch_row_fields_with_base_still_merge_three_ways() {
+        let base = map(&[("es", "hola"), ("vi", "xin chao")]);
+        let merged = merge_batch_row_fields(
+            Some(&base),
+            &map(&[("es", "hola"), ("vi", "chao")]),
+            &map(&[("es", "hola remoto"), ("vi", "xin chao")]),
+        );
+
+        assert_eq!(merged, Some(map(&[("es", "hola remoto"), ("vi", "chao")])));
+    }
+
     fn url_input(url: &str) -> Option<EditorFieldImageInput> {
         Some(EditorFieldImageInput {
             kind: "url".to_string(),
@@ -1267,7 +1307,7 @@ pub(crate) fn update_gtms_editor_row_fields_batch_sync(
         let merged = if imported_conflict_ids.contains(row_id) {
             None
         } else {
-            merge_editor_string_maps(&base, &batch_row.fields, &remote)
+            merge_batch_row_fields(batch_row.base_fields.as_ref(), &batch_row.fields, &remote)
         };
         let merged_footnotes = match &batch_row.base_footnotes {
             Some(base) => merge_editor_footnote_maps(
