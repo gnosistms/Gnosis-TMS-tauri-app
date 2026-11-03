@@ -144,6 +144,8 @@ const {
   handleDroppedEditorImageFile,
   handleDroppedEditorImagePath,
   handleEditorImageCaptionEnrichedEvent,
+  handleEditorImageCaptionSearchFinishedEvent,
+  handleEditorImageCaptionSearchStartedEvent,
   closeEditorImagePreview,
   openEditorImagePreview,
   openEditorImageUrl,
@@ -393,6 +395,48 @@ test("WordPress caption enrichment ignores an event for a replaced image", () =>
     imageUrl: "https://example.com/wp-content/uploads/old.jpg",
     row: state.editorChapter.rows[0],
   }, createRenderSpy()), false);
+});
+
+test("WordPress caption search events track the running lookup for the row", () => {
+  installEditorFixture();
+  const imageUrl = "https://example.com/wp-content/uploads/photo.jpg";
+  installFixtureImage(imageUrl);
+  const render = createRenderSpy();
+  const payload = { chapterId: "chapter-1", rowId: "row-1", languageCode: "vi", imageUrl };
+
+  assert.equal(handleEditorImageCaptionSearchStartedEvent(payload, render), true);
+  assert.deepEqual(state.editorChapter.wordpressCaptionSearches, { "row-1:vi": imageUrl });
+
+  assert.equal(handleEditorImageCaptionSearchFinishedEvent(payload, render), true);
+  assert.deepEqual(state.editorChapter.wordpressCaptionSearches, {});
+  assert.equal(render.calls.length, 2);
+});
+
+test("WordPress caption search finish for a replaced image keeps the newer lookup", () => {
+  installEditorFixture();
+  const newUrl = "https://example.com/wp-content/uploads/new.jpg";
+  installFixtureImage(newUrl);
+  const base = { chapterId: "chapter-1", rowId: "row-1", languageCode: "vi" };
+
+  handleEditorImageCaptionSearchStartedEvent({ ...base, imageUrl: newUrl }, createRenderSpy());
+
+  assert.equal(handleEditorImageCaptionSearchFinishedEvent({
+    ...base,
+    imageUrl: "https://example.com/wp-content/uploads/old.jpg",
+  }, createRenderSpy()), false);
+  assert.deepEqual(state.editorChapter.wordpressCaptionSearches, { "row-1:vi": newUrl });
+});
+
+test("WordPress caption search started for another chapter is ignored", () => {
+  installEditorFixture();
+
+  assert.equal(handleEditorImageCaptionSearchStartedEvent({
+    chapterId: "chapter-2",
+    rowId: "row-1",
+    languageCode: "vi",
+    imageUrl: "https://example.com/wp-content/uploads/photo.jpg",
+  }, createRenderSpy()), false);
+  assert.deepEqual(state.editorChapter.wordpressCaptionSearches, {});
 });
 
 test("duplicateEditorLanguageImage duplicates into an empty language immediately", async () => {

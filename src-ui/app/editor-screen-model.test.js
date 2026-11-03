@@ -585,6 +585,39 @@ test("buildEditorScreenViewModel exposes submitting image URLs as visible loadin
   }
 });
 
+test("buildEditorScreenViewModel shows the WordPress caption search instead of the caption button", () => {
+  const snapshot = snapshotSharedState();
+  const imageUrl = "https://example.com/wp-content/uploads/image.png";
+
+  try {
+    applyEditorRegressionFixture(state, {
+      rowCount: 1,
+      imagesByRowId: {
+        "fixture-row-0001": { vi: { kind: "url", url: imageUrl } },
+      },
+    });
+    const sectionFor = () => buildEditorScreenViewModel(state).contentRows
+      .find((row) => row?.id === "fixture-row-0001")
+      ?.sections.find((section) => section.code === "vi");
+
+    state.editorChapter = {
+      ...state.editorChapter,
+      wordpressCaptionSearches: { "fixture-row-0001:vi": imageUrl },
+    };
+    assert.equal(sectionFor()?.isSearchingWordPressCaption, true);
+    assert.equal(sectionFor()?.showAddImageCaptionButton, false);
+
+    state.editorChapter = {
+      ...state.editorChapter,
+      wordpressCaptionSearches: { "fixture-row-0001:vi": "https://example.com/wp-content/uploads/old.png" },
+    };
+    assert.equal(sectionFor()?.isSearchingWordPressCaption, false);
+    assert.equal(sectionFor()?.showAddImageCaptionButton, true);
+  } finally {
+    restoreSharedState(snapshot);
+  }
+});
+
 test("buildEditorScreenViewModel shows the image caption button only when an image exists", () => {
   const snapshot = snapshotSharedState();
 

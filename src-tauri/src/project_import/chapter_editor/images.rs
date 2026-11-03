@@ -17,6 +17,8 @@ const WORDPRESS_CAPTION_USER_AGENT: &str = concat!(
 const MAX_WORDPRESS_MEDIA_RESPONSE_BYTES: u64 = 256 * 1024;
 const WORDPRESS_MEDIA_SEARCH_TOKEN_LIMITS: [usize; 3] = [9, 6, 3];
 pub(super) const EDITOR_IMAGE_CAPTION_ENRICHED_EVENT: &str = "editor-image-caption-enriched";
+const EDITOR_IMAGE_CAPTION_SEARCH_STARTED_EVENT: &str = "editor-image-caption-search-started";
+const EDITOR_IMAGE_CAPTION_SEARCH_FINISHED_EVENT: &str = "editor-image-caption-search-finished";
 
 #[derive(Debug, PartialEq, Eq)]
 struct WordPressMediaLookup {
@@ -51,6 +53,15 @@ struct EditorImageCaptionEnrichedEvent {
     image_url: String,
     row: EditorRow,
     chapter_base_commit_sha: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EditorImageCaptionSearchEvent {
+    chapter_id: String,
+    row_id: String,
+    language_code: String,
+    image_url: String,
 }
 
 pub(crate) fn save_gtms_editor_language_image_url_sync(
@@ -661,6 +672,18 @@ pub(crate) fn start_wordpress_caption_enrichment(
         image_url,
         base_caption,
     };
+    // Emits editor-image-caption-search-started now and
+    // editor-image-caption-search-finished once the lookup ends, found or not.
+    let search_event = EditorImageCaptionSearchEvent {
+        chapter_id: enrichment.chapter_id.clone(),
+        row_id: enrichment.row_id.clone(),
+        language_code: enrichment.language_code.clone(),
+        image_url: enrichment.image_url.clone(),
+    };
+    let _ = app.emit(
+        EDITOR_IMAGE_CAPTION_SEARCH_STARTED_EVENT,
+        search_event.clone(),
+    );
     tauri::async_runtime::spawn_blocking(move || {
         let event = enrich_wordpress_caption_sync(&app, enrichment)
             .ok()
@@ -668,6 +691,7 @@ pub(crate) fn start_wordpress_caption_enrichment(
         if let Some(event) = event {
             let _ = app.emit(EDITOR_IMAGE_CAPTION_ENRICHED_EVENT, event);
         }
+        let _ = app.emit(EDITOR_IMAGE_CAPTION_SEARCH_FINISHED_EVENT, search_event);
     });
 }
 

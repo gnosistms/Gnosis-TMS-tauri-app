@@ -538,6 +538,34 @@ test("renderTranslationContentRow gives custom HTML rows a monospace editing fie
   assert.match(html, /data-row-text-style="custom_html"/);
 });
 
+test("a WordPress caption search shows a spinner in the caption slot", () => {
+  const image = { kind: "url", url: "https://example.com/wp-content/uploads/image.png" };
+  const searching = renderTranslationContentRow({
+    ...rowWithSection({ canEdit: true, hasVisibleImage: true, image, isSearchingWordPressCaption: true }),
+    canEdit: true,
+  });
+  assert.match(
+    searching,
+    /data-editor-image-caption-search[^>]*>\s*<span class="[^"]*button__spinner"[^>]*><\/span>\s*<span>Searching WordPress for an image footnote\.<\/span>/,
+  );
+  assert.doesNotMatch(searching, /data-editor-image-caption-button/);
+
+  const withCaption = renderTranslationContentRow({
+    ...rowWithSection({
+      canEdit: true, hasVisibleImage: true, image, isSearchingWordPressCaption: true,
+      hasVisibleImageCaption: true, imageCaption: "Old caption",
+    }),
+    canEdit: true,
+  });
+  assert.match(withCaption, /Old caption[\s\S]*Searching WordPress for an image footnote\./);
+
+  const idle = renderTranslationContentRow({
+    ...rowWithSection({ canEdit: true, hasVisibleImage: true, image, showAddImageCaptionButton: true }),
+    canEdit: true,
+  });
+  assert.doesNotMatch(idle, /Searching WordPress/);
+});
+
 test("Quote rows expose an escaped per-language attribution textarea", () => {
   const html = renderTranslationContentRow({ ...rowWithSection({ canEdit: true, attribution: 'Author & <source>' }), textStyle: "quote", canEdit: true });
   assert.match(html, /<textarea[^>]*data-editor-row-field[^>]*data-content-kind="attribution"[^>]*data-language-code="vi"[^>]*>Author &amp; &lt;source&gt;<\/textarea>/);

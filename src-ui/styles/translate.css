@@ -1344,6 +1344,26 @@
   word-break: break-word;
 }
 
+.translation-language-panel__image-caption-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  color: var(--muted);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.translation-language-panel__image-caption-search-spinner {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  border-color: rgba(164, 112, 41, 0.2);
+  border-top-color: rgba(130, 82, 27, 0.78);
+}
+
 .translation-language-panel__image-caption-button:hover,
 .translation-language-panel__image-caption-button:focus-visible {
   border-color: rgba(236, 134, 9, 0.46);
