@@ -1,6 +1,6 @@
 # Catch identical footnotes attached to different words
 
-Status: implemented on `claude/release-0.8.140`.
+Status: implemented on `claude/release-0.8.140`, released in 0.8.143.
 
 ## Problem
 
