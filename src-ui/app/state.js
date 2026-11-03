@@ -489,6 +489,8 @@ export function createEditorChapterState() {
     footnoteEditor: createEditorFootnoteEditorState(),
     imageCaptionEditor: createEditorImageCaptionEditorState(),
     imageEditor: createEditorImageEditorState(),
+    // "<rowId>:<languageCode>" -> image URL whose WordPress caption lookup is running.
+    wordpressCaptionSearches: {},
     imageInvalidFileModal: createEditorImageInvalidFileModalState(),
     imageDuplicateOverwriteModal: createEditorImageDuplicateOverwriteModalState(),
     imageReuseModal: createEditorImageReuseModalState(),
@@ -622,6 +624,9 @@ export function createEditorImagePreviewOverlayState() {
     languageCode: null,
     src: "",
     imageUrl: "",
+    media: null,
+    title: "",
+    caption: "",
   };
 }
 

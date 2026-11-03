@@ -144,6 +144,8 @@ const {
   handleDroppedEditorImageFile,
   handleDroppedEditorImagePath,
   handleEditorImageCaptionEnrichedEvent,
+  handleEditorImageCaptionSearchFinishedEvent,
+  handleEditorImageCaptionSearchStartedEvent,
   closeEditorImagePreview,
   openEditorImagePreview,
   openEditorImageUrl,
@@ -284,7 +286,29 @@ test("openEditorImagePreview renders only the overlay so editor scroll stays sta
     languageCode: "vi",
     src: "https://example.com/image.png",
     imageUrl: "https://example.com/image.png",
+    media: { kind: "image", provider: null, id: null, hash: null },
+    title: "image.png",
+    caption: "",
   });
+  assert.deepEqual(render.calls, [[{ scope: "translate-image-preview-overlay" }]]);
+});
+
+test("openEditorImagePreview records an audio row's kind, file name and caption for the player", () => {
+  installEditorFixture();
+  installFixtureImage("https://example.com/wp-content/uploads/talk%20one.mp3");
+  state.editorChapter = {
+    ...state.editorChapter,
+    rows: state.editorChapter.rows.map((row) =>
+      row.rowId === "row-1" ? { ...row, imageCaptions: { vi: "A **talk**" } } : row),
+  };
+  const render = createRenderSpy();
+
+  openEditorImagePreview(render, "row-1", "vi");
+
+  const overlay = state.editorChapter.imagePreviewOverlay;
+  assert.equal(overlay.media.kind, "audio");
+  assert.equal(overlay.title, "talk one.mp3");
+  assert.equal(overlay.caption, "A **talk**");
   assert.deepEqual(render.calls, [[{ scope: "translate-image-preview-overlay" }]]);
 });
 
@@ -309,6 +333,9 @@ test("closeEditorImagePreview renders only the overlay so editor scroll stays st
     languageCode: null,
     src: "",
     imageUrl: "",
+    media: null,
+    title: "",
+    caption: "",
   });
   assert.deepEqual(render.calls, [[{ scope: "translate-image-preview-overlay" }]]);
 });
@@ -393,6 +420,48 @@ test("WordPress caption enrichment ignores an event for a replaced image", () =>
     imageUrl: "https://example.com/wp-content/uploads/old.jpg",
     row: state.editorChapter.rows[0],
   }, createRenderSpy()), false);
+});
+
+test("WordPress caption search events track the running lookup for the row", () => {
+  installEditorFixture();
+  const imageUrl = "https://example.com/wp-content/uploads/photo.jpg";
+  installFixtureImage(imageUrl);
+  const render = createRenderSpy();
+  const payload = { chapterId: "chapter-1", rowId: "row-1", languageCode: "vi", imageUrl };
+
+  assert.equal(handleEditorImageCaptionSearchStartedEvent(payload, render), true);
+  assert.deepEqual(state.editorChapter.wordpressCaptionSearches, { "row-1:vi": imageUrl });
+
+  assert.equal(handleEditorImageCaptionSearchFinishedEvent(payload, render), true);
+  assert.deepEqual(state.editorChapter.wordpressCaptionSearches, {});
+  assert.equal(render.calls.length, 2);
+});
+
+test("WordPress caption search finish for a replaced image keeps the newer lookup", () => {
+  installEditorFixture();
+  const newUrl = "https://example.com/wp-content/uploads/new.jpg";
+  installFixtureImage(newUrl);
+  const base = { chapterId: "chapter-1", rowId: "row-1", languageCode: "vi" };
+
+  handleEditorImageCaptionSearchStartedEvent({ ...base, imageUrl: newUrl }, createRenderSpy());
+
+  assert.equal(handleEditorImageCaptionSearchFinishedEvent({
+    ...base,
+    imageUrl: "https://example.com/wp-content/uploads/old.jpg",
+  }, createRenderSpy()), false);
+  assert.deepEqual(state.editorChapter.wordpressCaptionSearches, { "row-1:vi": newUrl });
+});
+
+test("WordPress caption search started for another chapter is ignored", () => {
+  installEditorFixture();
+
+  assert.equal(handleEditorImageCaptionSearchStartedEvent({
+    chapterId: "chapter-2",
+    rowId: "row-1",
+    languageCode: "vi",
+    imageUrl: "https://example.com/wp-content/uploads/photo.jpg",
+  }, createRenderSpy()), false);
+  assert.deepEqual(state.editorChapter.wordpressCaptionSearches, {});
 });
 
 test("duplicateEditorLanguageImage duplicates into an empty language immediately", async () => {
@@ -775,7 +844,7 @@ test("submitEditorImageUrl reports URL syntax errors without calling the image l
     mode: null,
     urlDraft: "notaurl",
     invalidUrl: true,
-    urlErrorMessage: "Enter a valid image URL.",
+    urlErrorMessage: "Enter a valid URL.",
     status: "idle",
   });
   assert.equal(invokeLog.length, 0);

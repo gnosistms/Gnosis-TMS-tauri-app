@@ -62,7 +62,7 @@ function renderAiReviewModeButton({ label, action, reviewMode, tooltip, isLoadin
   `;
 }
 
-function renderAiReviewSuggestionSections(aiReview, currentEntry, activeLanguage, includeReviewedSnapshot = false) {
+function renderAiReviewSuggestionSections(aiReview, currentEntry, activeLanguage, includeReviewedSnapshot = false, paragraphs = false) {
   // A clean review has no suggestion. Its input is the reviewed snapshot to
   // compare with later edits; omitted suggestion fields retain that input too.
   const reviewedText = (suggestion, source) => suggestion?.trim()
@@ -74,7 +74,7 @@ function renderAiReviewSuggestionSections(aiReview, currentEntry, activeLanguage
   const sections = [];
   if (text.trim() || (includeReviewedSnapshot && currentEntry?.plainText?.trim())) {
     sections.push(`
-      <p class="history-item__content" lang="${escapeHtml(activeLanguage.code)}">${renderHistoryContent({ plainText: text }, currentEntry)}</p>
+      <p class="history-item__content" lang="${escapeHtml(activeLanguage.code)}">${renderHistoryContent({ plainText: text }, currentEntry, { paragraphs })}</p>
     `);
   }
   if (footnote.trim() || (includeReviewedSnapshot && currentEntry?.footnote?.trim())) {
@@ -143,6 +143,8 @@ export function renderReviewPane(editorChapter, rows, languages, offlineMode = f
     pleaseCheck: historySection?.pleaseCheck === true,
     textStyle: historyRow?.textStyle ?? "paragraph",
   };
+  // Row text shows its blank-line paragraphs as the editor row does.
+  const paragraphs = historySection?.textHasParagraphs === true;
   const groupLastUpdate = activeRow?.srtGroup
     ? buildSrtGroupLastUpdate(editorChapter, activeRow, activeSection) : null;
   const { lastUpdateEntry, lastUpdateBaselineEntry, lastUpdateHeadingLabel,
@@ -291,7 +293,7 @@ export function renderReviewPane(editorChapter, rows, languages, offlineMode = f
           <article class="history-item">
             ${pendingLocalSaveMessage}
             ${groupLastUpdate ? renderSrtGroupLastUpdate(groupLastUpdate, activeLanguage.code) : `
-            ${renderHistoryEntryContent(lastUpdateEntry, lastUpdateBaselineEntry, activeLanguage.code)}
+            ${renderHistoryEntryContent(lastUpdateEntry, lastUpdateBaselineEntry, activeLanguage.code, { paragraphs })}
             ${renderHistoryNote(lastUpdateEntry, lastUpdateBaselineEntry, {
               includeMarkers: false,
               includeStatusNote: !showsPendingLocalSave,
@@ -322,7 +324,7 @@ export function renderReviewPane(editorChapter, rows, languages, offlineMode = f
             ${
               aiReview.showSuggestion || showStaleReview
                 ? `
-                  ${groupReview ? renderSrtReviewSuggestions(groupReview, activeRow, activeLanguage) : renderAiReviewSuggestionSections(aiReview, currentEntry, activeLanguage, showStaleReview)}
+                  ${groupReview ? renderSrtReviewSuggestions(groupReview, activeRow, activeLanguage) : renderAiReviewSuggestionSections(aiReview, currentEntry, activeLanguage, showStaleReview, paragraphs)}
                   ${aiReview.showSuggestion ? `<div class="history-item__footer">
                     <div class="history-item__actions">
                       ${applyButton}

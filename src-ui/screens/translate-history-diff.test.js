@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildHistoryDiffSegments } from "./translate-history-shared.js";
+import { buildHistoryDiffSegments, renderHistoryContent, renderHistoryEntryContent } from "./translate-history-shared.js";
 
 function joinByTypes(segments, types) {
   return segments
@@ -46,4 +46,40 @@ test("diff handles flag sequences (paired regional indicators) without corruptio
   }
   assert.equal(joinByTypes(segments, ["equal", "delete"]), "go 🇯🇵 now");
   assert.equal(joinByTypes(segments, ["equal", "insert"]), "go 🇰🇷 now");
+});
+
+const paragraphTexts = (html) =>
+  [...html.matchAll(/<span class="translation-language-panel__paragraph">(.*?)<\/span>(?=<span class="translation-language-panel__paragraph">|$)/gs)]
+    .map((match) => match[1]);
+
+test("row text shows its blank-line paragraphs, keeping line breaks inside them", () => {
+  const text = "One\nline two\n\n<em>Two</em>";
+  assert.deepEqual(
+    paragraphTexts(renderHistoryContent({ plainText: text }, null, { paragraphs: true })),
+    ["One\nline two", "<em>Two</em>"],
+  );
+  assert.deepEqual(
+    paragraphTexts(renderHistoryContent({ plainText: `${text} more` }, { plainText: text }, { paragraphs: true })),
+    ["One\nline two", 'Two<span class="history-diff__insert"> more</span>'],
+  );
+  assert.equal(renderHistoryContent({ plainText: text }, null), "One\nline two\n\n<em>Two</em>");
+});
+
+test("a removed paragraph break shows as a struck pilcrow, not a break", () => {
+  const html = renderHistoryContent({ plainText: "One Two\n\nThree" }, { plainText: "One\n\nTwo\n\nThree" }, { paragraphs: true });
+  assert.deepEqual(paragraphTexts(html), [
+    'One<span class="history-diff__delete">¶</span><span class="history-diff__insert"> </span>Two',
+    "Three",
+  ]);
+});
+
+test("only the main row text takes paragraphs in a history entry", () => {
+  const html = renderHistoryEntryContent(
+    { plainText: "A\n\nB", footnote: "Note one\n\nNote two" },
+    null,
+    "vi",
+    { paragraphs: true },
+  );
+  assert.equal(html.match(/translation-language-panel__paragraph/g)?.length, 2);
+  assert.match(html, /Note one\n\nNote two/);
 });

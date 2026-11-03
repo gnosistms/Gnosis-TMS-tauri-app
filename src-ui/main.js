@@ -23,6 +23,7 @@ import {
 import { loadUserTeams, setGithubAppInstallation } from "./app/team-setup-flow.js";
 import { syncLanguagePickerAlphabetIndexes } from "./app/language-picker-alphabet-index.js";
 import { renderResearchModals, researchModalHostContains, researchModalOpen } from "./app/research-modal-host.js";
+import { editorMediaPlayerOpen, renderEditorMediaPlayerHost } from "./app/editor-media-player-host.js";
 import { initializeConnectivity } from "./app/offline-connectivity.js";
 import {
   noteStartupStep,
@@ -756,6 +757,7 @@ function renderTranslateInsertLinkModalOnly() {
 }
 
 function renderTranslateImagePreviewOverlayOnly() {
+  renderEditorMediaPlayerHost(state);
   const html = renderEditorImagePreviewOverlay(state);
   const overlay = app.querySelector(".editor-image-preview-overlay");
   if (overlay instanceof HTMLElement) {
@@ -968,8 +970,9 @@ function renderWithOptionsImpl(options = {}) {
     || (shouldRestoreFocusedInputStateForScope(focusSnapshot, "full")
       ? restoreFocusedInputState(focusSnapshot)
       : false);
-  // An open research window owns the dialog focus; see research-modal-host.js.
-  if (!researchModalOpen()) {
+  // An open research window or media player owns the dialog focus; see
+  // research-modal-host.js and editor-media-player-host.js.
+  if (!researchModalOpen() && !editorMediaPlayerOpen()) {
     reconcileModalRenderState(app, modalSnapshot);
   }
   if (focusSnapshot?.kind === "editor-row-field" && !restoredFocus && focusSnapshot.rowId) {
@@ -984,6 +987,7 @@ function renderWithOptionsImpl(options = {}) {
   scrollActivePreviewSearchMatchIntoView(app);
   syncLanguagePickerAlphabetIndexes(app);
   renderResearchModals(state);
+  renderEditorMediaPlayerHost(state);
   restoreTargetLanguageManagerPickerScrollTop(targetLanguageManagerPickerScrollTop);
   refreshTranslateSessionAnchorAfterRender();
   document.title = titles[state.screen] ?? "Gnosis TMS";

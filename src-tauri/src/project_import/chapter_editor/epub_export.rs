@@ -3,9 +3,11 @@
 use super::book_export::{book_title, single_line_title};
 use super::chapter_export::{
     download_public_image_bytes_detailed, export_text_style, inline_visible_text,
-    numbered_book_documents, sanitize_inline_html, ExportBlock, ExportDocument, ExportImage,
+    numbered_book_documents, sanitize_inline_html, uploaded_media_file_name, ExportBlock,
+    ExportDocument, ExportImage,
 };
 use super::list_style::{list_items, list_kind, render_list_html};
+use super::media_kind::audio_mime_type;
 use scraper::{ElementRef, Html, Node};
 use std::{
     borrow::Cow,
@@ -29,7 +31,7 @@ const IMAGE_WORKERS: usize = 6;
 // Readers' own heading rules beat inherited alignment, so title headings set it.
 // The publisher logo fits about the PDF's 1.105in x 0.595in box; auto width and
 // height with both maxima keep its ratio without object-fit, which old readers lack.
-const STYLES: &str = "body{font-family:serif;line-height:1.5;margin:1em;}h1,h2{line-height:1.2;break-after:avoid;}blockquote{margin:1em 2em;}.quote-attribution{display:block;text-align:right;font-style:normal;}.indented{margin-inline-start:2em;}.centered,.title,.title h1,.title h2{text-align:center;}figure{text-align:center;break-inside:avoid;}img{max-width:100%;height:auto;}.title img{max-width:7em;max-height:4em;}figcaption{margin-top:.5em;}.missing-image{border:1px solid;padding:.5em;font-size:.9em;}.footnote{font-size:.9em;}hr{width:30%;margin:1.5em auto;}.noteref{vertical-align:super;font-size:.75em;}";
+const STYLES: &str = "body{font-family:serif;line-height:1.5;margin:1em;}h1,h2{line-height:1.2;break-after:avoid;}blockquote{margin:1em 2em;}.quote-attribution{display:block;text-align:right;font-style:normal;}.indented{margin-inline-start:2em;}.centered,.title,.title h1,.title h2{text-align:center;}figure{text-align:center;break-inside:avoid;}img{max-width:100%;height:auto;}.title img{max-width:7em;max-height:4em;}figcaption{margin-top:.5em;}audio{width:100%;}.missing-image{border:1px solid;padding:.5em;font-size:.9em;}.footnote{font-size:.9em;}hr{width:30%;margin:1.5em auto;}.noteref{vertical-align:super;font-size:.75em;}";
 
 struct Section {
     document: ExportDocument,
@@ -418,6 +420,7 @@ fn section_body(
     section: &Section,
     contents: &str,
     images: &[(&ExportImage, EmbeddedImage)],
+    audio: &[(&ExportImage, Option<String>)],
 ) -> String {
     let notes: Vec<_> = section
         .document
@@ -537,6 +540,50 @@ fn section_body(
                     }
                     EmbeddedImage::Unavailable(notice) => {
                         let _ = write!(body, "<figure>{notice}");
+                    }
+                }
+                if !caption.trim().is_empty() {
+                    let _ = write!(
+                        body,
+                        "<figcaption>{}</figcaption>",
+                        inline(caption, &[], &mut referenced)
+                    );
+                }
+                body.push_str("</figure>");
+            }
+            // apply_epub_print_policy keeps only uploaded audio the book bundles.
+            ExportBlock::Media {
+                media,
+                source,
+                caption,
+            } => {
+                citation_slot = None;
+                let name = match source {
+                    ExportImage::Upload {
+                        repo_relative_path, ..
+                    } => uploaded_media_file_name(repo_relative_path),
+                    ExportImage::Url(url) => url.as_str(),
+                };
+                match audio
+                    .iter()
+                    .find(|(bundled, _)| *bundled == source)
+                    .and_then(|(_, path)| path.as_deref())
+                {
+                    Some(path) => {
+                        let _ = write!(
+                            body,
+                            "<figure><audio controls=\"controls\" src=\"{}\">{}</audio>",
+                            xml(path),
+                            xml(name)
+                        );
+                    }
+                    None => {
+                        let _ = write!(
+                            body,
+                            "<figure><p class=\"missing-image\">The {} file {} could not be included.</p>",
+                            media.label().to_lowercase(),
+                            xml(name)
+                        );
                     }
                 }
                 if !caption.trim().is_empty() {
@@ -718,6 +765,42 @@ pub(super) fn render_epub_document(
             (source, embedded)
         })
         .collect();
+    // Uploaded audio is bundled whole, as its repo file. One that cannot be read
+    // leaves a notice in its place, as an unavailable image does.
+    let mut audio_assets = Vec::new();
+    let mut audio: Vec<(&ExportImage, Option<String>)> = Vec::new();
+    for block in sections.iter().flat_map(|section| &section.document.blocks) {
+        let ExportBlock::Media { source, .. } = block else {
+            continue;
+        };
+        let ExportImage::Upload {
+            repo_relative_path,
+            absolute_path,
+            ..
+        } = source
+        else {
+            continue;
+        };
+        if audio.iter().any(|(bundled, _)| *bundled == source) {
+            continue;
+        }
+        let path = audio_mime_type(repo_relative_path)
+            .zip(fs::read(absolute_path).ok())
+            .map(|(media_type, data)| {
+                let extension = repo_relative_path
+                    .rsplit_once('.')
+                    .map(|(_, extension)| extension.to_ascii_lowercase())
+                    .unwrap_or_default();
+                let path = format!("audio/audio-{}.{extension}", audio_assets.len() + 1);
+                audio_assets.push(ImageAsset {
+                    path: path.clone(),
+                    media_type,
+                    data,
+                });
+                path
+            });
+        audio.push((source, path));
+    }
     let mut files = Vec::new();
     let mut manifest = String::from("<item id=\"nav\" href=\"nav.xhtml\" media-type=\"application/xhtml+xml\" properties=\"nav\"/><item id=\"style\" href=\"styles.css\" media-type=\"text/css\"/>");
     let mut spine = String::new();
@@ -727,7 +810,7 @@ pub(super) fn render_epub_document(
         } else {
             String::new()
         };
-        let body = section_body(section, &contents, &images);
+        let body = section_body(section, &contents, &images, &audio);
         let file = format!("section-{}.xhtml", index + 1);
         files.push((
             format!("EPUB/{file}"),
@@ -744,6 +827,15 @@ pub(super) fn render_epub_document(
         let _ = write!(
             manifest,
             "<item id=\"image-{}\" href=\"{}\" media-type=\"{}\"/>",
+            index + 1,
+            asset.path,
+            asset.media_type
+        );
+    }
+    for (index, asset) in audio_assets.iter().enumerate() {
+        let _ = write!(
+            manifest,
+            "<item id=\"audio-{}\" href=\"{}\" media-type=\"{}\"/>",
             index + 1,
             asset.path,
             asset.media_type
@@ -793,6 +885,10 @@ pub(super) fn render_epub_document(
             &asset.data,
             asset.media_type != "image/svg+xml",
         )?;
+    }
+    for asset in audio_assets {
+        // MP3 and M4A are already compressed.
+        write_entry(&mut zip, &format!("EPUB/{}", asset.path), &asset.data, true)?;
     }
     zip.finish()
         .map(|cursor| cursor.into_inner())

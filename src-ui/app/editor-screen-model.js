@@ -48,6 +48,7 @@ import {
   editorLanguageFootnoteText,
 } from "./editor-utils.js";
 import { languageBaseCode } from "./editor-language-utils.js";
+import { editorWordPressCaptionSearchIsActive } from "./editor-images.js";
 import {
   chapterHasSrtSourceFormat,
   computeChapterTimingErrors,
@@ -72,6 +73,7 @@ let cachedImageEditorMode = null;
 let cachedImageEditorInvalidUrl = false;
 let cachedImageEditorUrlErrorMessage = "";
 let cachedImageEditorStatus = null;
+let cachedWordPressCaptionSearchesRef = null;
 let cachedLiveTranslationRows = [];
 const AI_TRANSLATE_PREPARING_TEXT = "Preparing glossary...";
 const AI_TRANSLATE_LOADING_TEXT = "Translating...";
@@ -153,6 +155,7 @@ function buildLiveTranslationRows(editorChapter, languages) {
     cachedImageEditorInvalidUrl = editorChapter?.imageEditor?.invalidUrl === true;
     cachedImageEditorUrlErrorMessage = String(editorChapter?.imageEditor?.urlErrorMessage ?? "");
     cachedImageEditorStatus = editorChapter?.imageEditor?.status ?? null;
+    cachedWordPressCaptionSearchesRef = editorChapter?.wordpressCaptionSearches ?? null;
     cachedLiveTranslationRows = [];
     return [];
   }
@@ -176,6 +179,7 @@ function buildLiveTranslationRows(editorChapter, languages) {
     && (editorChapter?.imageEditor?.invalidUrl === true) === cachedImageEditorInvalidUrl
     && String(editorChapter?.imageEditor?.urlErrorMessage ?? "") === cachedImageEditorUrlErrorMessage
     && (editorChapter?.imageEditor?.status ?? null) === cachedImageEditorStatus
+    && (editorChapter?.wordpressCaptionSearches ?? null) === cachedWordPressCaptionSearchesRef
   ) {
     return cachedLiveTranslationRows;
   }
@@ -235,6 +239,9 @@ function buildLiveTranslationRows(editorChapter, languages) {
         const imageCaption = editorLanguageImageCaptionText(row, language.code);
         const isImageCaptionEditorOpen =
           hasSavedImage && editorImageCaptionEditorMatches(editorChapter, row.rowId, language.code);
+        const isSearchingWordPressCaption =
+          hasSavedImage
+          && editorWordPressCaptionSearchIsActive(editorChapter, row.rowId, language.code, image);
         const text = row.fields?.[language.code] ?? "";
         const footnote = editorLanguageFootnoteText(row, language.code);
         const footnotes = editorLanguageFootnotes(row, language.code);
@@ -275,6 +282,7 @@ function buildLiveTranslationRows(editorChapter, languages) {
             ),
           isFootnoteEditorOpen: editorFootnoteEditorMatches(editorChapter, row.rowId, language.code),
           isImageCaptionEditorOpen,
+          isSearchingWordPressCaption,
           isImageUrlEditorOpen,
           isImageUrlSubmitting,
           isImageUploadEditorOpen,
@@ -296,7 +304,8 @@ function buildLiveTranslationRows(editorChapter, languages) {
           showAddImageCaptionButton:
             hasSavedImage
             && imageCaption.trim().length === 0
-            && !isImageCaptionEditorOpen,
+            && !isImageCaptionEditorOpen
+            && !isSearchingWordPressCaption,
           isTextEditorOpen: editorMainFieldEditorMatches(editorChapter, row.rowId, language.code),
           isActive:
             editorChapter?.activeRowId === row.rowId
@@ -345,6 +354,7 @@ function buildLiveTranslationRows(editorChapter, languages) {
   cachedImageEditorInvalidUrl = editorChapter?.imageEditor?.invalidUrl === true;
   cachedImageEditorUrlErrorMessage = String(editorChapter?.imageEditor?.urlErrorMessage ?? "");
   cachedImageEditorStatus = editorChapter?.imageEditor?.status ?? null;
+  cachedWordPressCaptionSearchesRef = editorChapter?.wordpressCaptionSearches ?? null;
   cachedLiveTranslationRows = liveRows;
   return liveRows;
 }

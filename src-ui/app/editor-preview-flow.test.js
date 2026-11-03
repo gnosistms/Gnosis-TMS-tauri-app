@@ -235,6 +235,20 @@ test("buildTranslateAnchorForPreviewBlock maps preview metadata to a translate l
   );
 });
 
+test("buildTranslateAnchorForPreviewBlock keeps a block near the bottom in the top half", () => {
+  installDomClasses();
+  state.editorChapter = {
+    ...createEditorChapterState(),
+    mode: EDITOR_MODE_PREVIEW,
+    languages: [{ code: "vi", name: "Vietnamese", role: "target" }],
+    selectedTargetLanguageCode: "vi",
+  };
+
+  // 370px down a 400px scroll area would land below the fold in translate mode.
+  const anchor = buildTranslateAnchorForPreviewBlock(previewBlockFixture({ blockTop: 470, containerTop: 100 }));
+  assert.equal(anchor.offsetTop, 200);
+});
+
 test("buildTranslateAnchorForPreviewBlock falls back to a row anchor for unavailable languages", () => {
   installDomClasses();
   state.editorChapter = {
