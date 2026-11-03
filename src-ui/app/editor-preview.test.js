@@ -16,6 +16,7 @@ import {
   serializeEditorPreviewWordPress,
   stepEditorPreviewSearchState,
 } from "./editor-preview.js";
+import { renderEditorMediaTile } from "./editor-media-tile.js";
 
 function customHtmlBlocks() {
   return buildEditorPreviewDocument([
@@ -1339,6 +1340,7 @@ test("plain text and the media link policy show audio and video as link lines", 
 test("the preview shows the media tile that opens the player", () => {
   const { html } = renderEditorPreviewDocumentHtml(mediaBlocks(), {
     resolveImageSrc: (image) => image.kind === "url" ? image.url : `asset://${image.filePath}`,
+    renderMediaTile: renderEditorMediaTile,
   });
 
   assert.match(html, /<figure class="translate-preview__image-block" data-preview-block="image" data-row-id="row-audio"[^>]*><button[^>]*translation-language-panel__media-preview--audio/);
@@ -1349,4 +1351,8 @@ test("the preview shows the media tile that opens the player", () => {
   // The preview has no image context menu, and no <img> stands in for audio.
   assert.doesNotMatch(html, /data-editor-image-context-menu-target/);
   assert.doesNotMatch(html, /<img class="translate-preview__image"/);
+
+  // Without a tile renderer, media renders nothing rather than a broken image.
+  const bare = renderEditorPreviewDocumentHtml(mediaBlocks(), { resolveImageSrc: (image) => image.url ?? "x" });
+  assert.doesNotMatch(bare.html, /data-preview-block="image"/);
 });
