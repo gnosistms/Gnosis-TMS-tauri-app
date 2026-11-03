@@ -593,9 +593,11 @@
   text-align: center;
 }
 
-/* A caption uses the shared tooltip itself; hide the surrounding figure's hint. */
+/* A caption or media tile uses the shared tooltip itself; hide the surrounding figure's hint. */
 .translate-preview__image-block:has(.translate-preview__image-caption:hover)::before,
-.translate-preview__image-block:has(.translate-preview__image-caption:hover)::after {
+.translate-preview__image-block:has(.translate-preview__image-caption:hover)::after,
+.translate-preview__image-block:has(.translation-language-panel__media-preview:hover)::before,
+.translate-preview__image-block:has(.translation-language-panel__media-preview:hover)::after {
   content: none;
 }
 

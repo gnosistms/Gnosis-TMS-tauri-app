@@ -1,4 +1,4 @@
-import { renderEditorPreviewDocumentHtml, applyCustomHtmlPlainTextPolicy } from "./editor-preview.js";
+import { renderEditorPreviewDocumentHtml, applyCustomHtmlPlainTextPolicy, applyMediaLinkPolicy } from "./editor-preview.js";
 import { extractInlineMarkupVisibleText } from "./editor-inline-markup/serialize.js";
 import { EDITOR_ROW_TEXT_STYLE_QUOTE, normalizeEditorRowTextStyle } from "./editor-row-text-style.js";
 import { bookPrintProfile } from "./project-book-print-profile.js";
@@ -27,7 +27,8 @@ function chapterCoverLength(blocks) {
 // keep one numbering and are listed after the text.
 export function renderBookChapterPages(blocks, modal, resolveImageSrc) {
   let searchDropcap = bookPrintProfile(modal).latin;
-  const normalized = applyCustomHtmlPlainTextPolicy(blocks, modal.omitCustomHtml)
+  // As in the PDF, audio and video become link lines.
+  const normalized = applyMediaLinkPolicy(applyCustomHtmlPlainTextPolicy(blocks, modal.omitCustomHtml))
     .map((block) => block.textStyle === "chapter_heading" ? { ...block, textStyle: "heading1" } : block);
   const cover = chapterCoverLength(normalized);
   // Cover blocks leave the drop cap to the text, which opens the next page.

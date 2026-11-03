@@ -4,7 +4,6 @@
 // that finishes later fills in the thumbnails already on screen, so no row
 // re-render (and no layout change) is needed.
 
-import { invoke } from "./runtime.js";
 import { editorVideoStaticThumbnailUrl } from "./editor-media-kind.js";
 
 export const EDITOR_VIDEO_THUMBNAIL_ATTRIBUTE = "data-editor-video-thumbnail-for";
@@ -39,8 +38,14 @@ function showThumbnail(videoUrl, thumbnailUrl) {
   }
 }
 
+// runtime.js is loaded on first use: it imports state.js, which imports
+// editor-preview.js, which renders video tiles through this module.
+function invokeRuntimeCommand(command, payload) {
+  return import("./runtime.js").then(({ invoke }) => invoke(command, payload));
+}
+
 export function requestEditorVideoThumbnail(media, videoUrl, operations = {}) {
-  const invokeCommand = operations.invoke ?? invoke;
+  const invokeCommand = operations.invoke ?? invokeRuntimeCommand;
   if (
     !videoNeedsLookup(media)
     || !videoUrl
