@@ -12,7 +12,13 @@
    `plans/redundancy-identical-footnote-candidates.md`, taken from main.
    The [1] label kerning fix (`070bf093`), made on `claude/release-0.8.140`
    after the cut, was cherry-picked onto `claude/release-0.8.144` at Hans's
-   request before merging.
+   request before merging. So were three later commits from that branch:
+   paragraph breaks kept when highlights redraw a row (`46846c32`), AI
+   Assistant accepting caption- or footnote-only rows (`fa47167c`), and
+   paragraphs in the Review and History tabs (`2820f13d`). The first browser
+   CI run failed the Preview double-click test, because the paragraph margins
+   moved its row near the bottom of the Preview; the translate anchor is now
+   held to the top half of the scroll area (`d4212627`).
 2. Synchronize npm, Tauri, Cargo, both lockfiles, and bundled notice versions to
    0.8.144. Add versioned notes.
 3. Validate version agreement, locked Cargo metadata, formatting, tests, and lint.
