@@ -1191,6 +1191,12 @@
   font-size: 11px;
 }
 
+/* Inter's proportional 1 has its stem on the right, which crowds the closing
+   bracket of "[1]"; the tabular 1 has a foot and sits centred. */
+.translation-row-text-style-button--footnote .translation-row-text-style-button__label {
+  font-variant-numeric: tabular-nums;
+}
+
 .translation-row-text-style-button__icon {
   display: inline-flex;
 }
