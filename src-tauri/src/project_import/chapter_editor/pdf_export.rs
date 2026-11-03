@@ -1145,7 +1145,7 @@ fn document_characters(document: &ExportDocument) -> BTreeSet<char> {
                     characters.extend(segment.text.chars());
                 }
             }
-            ExportBlock::Image { caption, .. } => {
+            ExportBlock::Image { caption, .. } | ExportBlock::Media { caption, .. } => {
                 for segment in inline_segments(caption) {
                     characters.extend(segment.text.chars());
                 }
@@ -1667,6 +1667,8 @@ fn render_typst_chapter(
             ExportBlock::Separator => source.push_str(
                 "#v(1em)\n#align(center, image(\"flourish.svg\", width: 0.66in))\n#v(1em)\n",
             ),
+            // The print policy turned media into link paragraphs.
+            ExportBlock::Media { .. } => {}
             ExportBlock::Footnote { number, text, .. } if !anchored_numbers.contains(number) => {
                 source.push_str(&format!(
                     "#footnote[{}]\n",

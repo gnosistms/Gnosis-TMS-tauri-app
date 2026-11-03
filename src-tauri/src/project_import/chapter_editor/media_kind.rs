@@ -27,6 +27,49 @@ pub(super) enum EditorMedia {
     Video(VideoSource),
 }
 
+impl EditorMedia {
+    pub(super) fn is_image(&self) -> bool {
+        matches!(self, Self::Image)
+    }
+
+    /// Reader-facing label for exports that show media as a link or as text.
+    pub(super) fn label(&self) -> &'static str {
+        match self {
+            Self::Image => "Image",
+            Self::Audio => "Audio",
+            Self::Video(_) => "Video",
+        }
+    }
+
+    /// The embeddable player address for a YouTube, Vimeo or VideoPress video.
+    /// Mirrors editorVideoEmbedUrl in editor-media-kind.js (without autoplay).
+    pub(super) fn video_embed_url(&self) -> Option<String> {
+        match self {
+            Self::Video(VideoSource::YouTube { id }) => {
+                Some(format!("https://www.youtube-nocookie.com/embed/{id}?rel=0"))
+            }
+            Self::Video(VideoSource::Vimeo { id, hash }) => Some(match hash {
+                Some(hash) => format!("https://player.vimeo.com/video/{id}?h={hash}"),
+                None => format!("https://player.vimeo.com/video/{id}"),
+            }),
+            Self::Video(VideoSource::VideoPress { guid }) => {
+                Some(format!("https://video.wordpress.com/embed/{guid}"))
+            }
+            _ => None,
+        }
+    }
+}
+
+/// The MIME type of uploaded audio, by its stored extension.
+pub(super) fn audio_mime_type(path: &str) -> Option<&'static str> {
+    match file_extension(path).as_str() {
+        "mp3" => Some("audio/mpeg"),
+        "m4a" => Some("audio/mp4"),
+        "wav" => Some("audio/wav"),
+        _ => None,
+    }
+}
+
 fn file_extension(path: &str) -> String {
     let name = path.rsplit(['/', '\\']).next().unwrap_or_default();
     match name.rsplit_once('.') {

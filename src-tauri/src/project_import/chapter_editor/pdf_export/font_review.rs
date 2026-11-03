@@ -106,6 +106,8 @@ pub(super) fn prepare(
                     ));
                 }
             }
+            // The print policy turned media into link paragraphs.
+            ExportBlock::Media { .. } => {}
             ExportBlock::Footnote { number, text, .. } => {
                 if review_plan.affected(text, options.footnote_links_as_plain_text) {
                     // Same size, number gutter, and text alignment as native PDF
