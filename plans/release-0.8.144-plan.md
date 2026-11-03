@@ -10,6 +10,9 @@
    Persian. The branch did not contain v0.8.143, so `origin/main` was merged
    in; the only conflict was the status line of
    `plans/redundancy-identical-footnote-candidates.md`, taken from main.
+   The [1] label kerning fix (`070bf093`), made on `claude/release-0.8.140`
+   after the cut, was cherry-picked onto `claude/release-0.8.144` at Hans's
+   request before merging.
 2. Synchronize npm, Tauri, Cargo, both lockfiles, and bundled notice versions to
    0.8.144. Add versioned notes.
 3. Validate version agreement, locked Cargo metadata, formatting, tests, and lint.
