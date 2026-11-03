@@ -1,5 +1,7 @@
 import { footnoteParagraphsHtml } from "./editor-footnote-paragraphs.js";
-import { normalizeEditorFieldImage } from "./editor-images.js";
+import { editorFieldImageDisplayName, normalizeEditorFieldImage } from "./editor-images.js";
+import { editorFieldMedia, editorVideoPageUrl } from "./editor-media-kind.js";
+import { renderEditorMediaTile } from "./editor-media-tile.js";
 import {
   normalizeEditorFootnotes,
   parseUnescapedFootnoteMarkers,
@@ -696,7 +698,19 @@ export function renderEditorPreviewDocumentHtml(blocks, options = {}) {
         const captionHtml = caption
           ? `<figcaption class="translate-preview__image-caption" data-preview-block="image-caption" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}" data-tooltip="Double-click to edit.">${renderPreviewHighlightedText(block.caption, searchState, matchCounter, block.languageCode)}</figcaption>`
           : "";
-        return `<figure class="translate-preview__image-block" data-preview-block="image" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}" data-tooltip="Double-click to edit."><img class="translate-preview__image" src="${escapeHtml(imageSrc)}" alt="" loading="eager" />${captionHtml}</figure>`;
+        // Audio and video show the row's tile, which opens the same player.
+        const media = editorFieldMedia(block.image);
+        const contentHtml = media.kind === "image"
+          ? `<img class="translate-preview__image" src="${escapeHtml(imageSrc)}" alt="" loading="eager" />`
+          : renderEditorMediaTile({
+            rowId: block.rowId,
+            languageCode: block.languageCode,
+            image: block.image,
+            media,
+            mediaSrc: imageSrc,
+            contextMenu: false,
+          });
+        return `<figure class="translate-preview__image-block" data-preview-block="image" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}" data-tooltip="Double-click to edit.">${contentHtml}${captionHtml}</figure>`;
       }
 
       if (block?.kind !== "text") {
@@ -786,8 +800,18 @@ function serializePreviewText(text) {
   return renderSanitizedInlineMarkupHtml(unescapeLiteralFootnoteMarkers(text)).replaceAll("\n", "<br>");
 }
 
+// Escapes as WordPress's serializeAttributes does, so a "--" or "<" in a URL
+// cannot end the block comment early.
+function serializeWordPressBlockAttributes(attributes) {
+  return JSON.stringify(attributes)
+    .replaceAll("--", "\\u002d\\u002d")
+    .replaceAll("<", "\\u003c")
+    .replaceAll(">", "\\u003e")
+    .replaceAll("&", "\\u0026");
+}
+
 function wrapSerializedWordPressBlock(blockName, html, attributes = null) {
-  const serializedAttributes = attributes ? ` ${JSON.stringify(attributes)}` : "";
+  const serializedAttributes = attributes ? ` ${serializeWordPressBlockAttributes(attributes)}` : "";
   return [
     `<!-- wp:${blockName}${serializedAttributes} -->`,
     html,
@@ -804,6 +828,11 @@ function serializePreviewImageHtml(block) {
     return "";
   }
 
+  const media = editorFieldMedia(block.image);
+  if (media.kind !== "image") {
+    return serializePreviewMediaHtml(block, media, exportSrc);
+  }
+
   const caption = String(block.caption ?? "").trim();
   const figureHtml = [
     '<figure class="wp-block-image aligncenter">',
@@ -814,6 +843,36 @@ function serializePreviewImageHtml(block) {
     "</figure>",
   ].join("");
   return wrapSerializedWordPressBlock("image", figureHtml, { align: "center" });
+}
+
+// Each branch is the markup the matching core block's `save` produces: an
+// audio or video block for a file, an embed block for YouTube, Vimeo and
+// VideoPress. Uploaded audio keeps its repo path; the WordPress export uploads
+// it to the media library, as it does uploaded images.
+function serializePreviewMediaHtml(block, media, exportSrc) {
+  const captionHtml = String(block.caption ?? "").trim()
+    ? `<figcaption class="wp-element-caption">${serializePreviewText(block.caption)}</figcaption>`
+    : "";
+  if (media.kind === "audio") {
+    return wrapSerializedWordPressBlock(
+      "audio",
+      `<figure class="wp-block-audio"><audio controls src="${escapeHtml(exportSrc)}"></audio>${captionHtml}</figure>`,
+    );
+  }
+  if (media.provider === "file") {
+    return wrapSerializedWordPressBlock(
+      "video",
+      `<figure class="wp-block-video"><video controls src="${escapeHtml(exportSrc)}"></video>${captionHtml}</figure>`,
+    );
+  }
+
+  const url = editorVideoPageUrl(media);
+  const className = "wp-embed-aspect-16-9 wp-has-aspect-ratio";
+  return wrapSerializedWordPressBlock(
+    "embed",
+    `<figure class="wp-block-embed is-type-video is-provider-${media.provider} wp-block-embed-${media.provider} ${className}"><div class="wp-block-embed__wrapper">\n${escapeHtml(url)}\n</div>${captionHtml}</figure>`,
+    { url, type: "video", providerNameSlug: media.provider, responsive: true, className },
+  );
 }
 
 function serializePreviewTextBlockHtml(block, footnoteState, options = {}) {
@@ -1145,11 +1204,37 @@ export function applyCustomHtmlPlainTextPolicy(blocks, omitCustomHtml = false) {
   });
 }
 
+// Block-list transform for formats that cannot play audio or video (plain
+// text, Vellum, the book preview), as the Rust print policy does for DOCX and
+// PDF: a centered "Audio:" or "Video:" line whose link text is the address
+// itself, so it still reads on paper, then the caption. Uploaded media has no
+// public address, so its file name stands in for the link.
+export function applyMediaLinkPolicy(blocks) {
+  return (Array.isArray(blocks) ? blocks : []).flatMap((block) => {
+    const media = block?.kind === "image" ? editorFieldMedia(block.image) : null;
+    if (!media || media.kind === "image") {
+      return [block];
+    }
+    const { image, caption, ...rest } = block;
+    const target = image.kind === "url"
+      ? `<a href="${escapeHtml(image.url ?? "")}">${String(image.url ?? "").replace(/[<>]/g, "")}</a>`
+      : editorFieldImageDisplayName(image).replace(/[<>]/g, "");
+    const line = {
+      ...rest,
+      kind: "text",
+      textStyle: EDITOR_ROW_TEXT_STYLE_CENTERED,
+      text: `<strong>${media.kind === "audio" ? "Audio" : "Video"}:</strong> ${target}`,
+      footnotes: [],
+    };
+    return String(caption ?? "").trim() ? [line, { ...line, text: caption }] : [line];
+  });
+}
+
 export function serializeEditorPreviewPlainText(blocks, options = {}) {
   const showFootnoteLinkUrls = options.showFootnoteLinkUrls === true;
   const omitCustomHtml = options.omitCustomHtml === true;
   const footnoteItems = [];
-  const sections = (Array.isArray(blocks) ? blocks : [])
+  const sections = applyMediaLinkPolicy(blocks)
     .flatMap((block) => {
       if (block?.kind === "image") {
         return extractInlineMarkupVisibleText(previewTextValue(block.caption)).trim();

@@ -146,6 +146,23 @@ export function editorVideoEmbedUrl(media, { autoplay = false } = {}) {
   }
 }
 
+// The video's own page, in the form WordPress recognizes for an embed.
+export function editorVideoPageUrl(media) {
+  if (media?.kind !== "video") {
+    return "";
+  }
+  switch (media.provider) {
+    case "youtube":
+      return `https://www.youtube.com/watch?v=${encodeURIComponent(media.id)}`;
+    case "vimeo":
+      return `https://vimeo.com/${encodeURIComponent(media.id)}${media.hash ? `/${encodeURIComponent(media.hash)}` : ""}`;
+    case "videopress":
+      return `https://videopress.com/v/${encodeURIComponent(media.id)}`;
+    default:
+      return "";
+  }
+}
+
 // The thumbnail address that needs no lookup. Vimeo and VideoPress thumbnails
 // come from their oEmbed endpoints instead (see editor-video-thumbnails.js).
 export function editorVideoStaticThumbnailUrl(media) {

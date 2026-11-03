@@ -7,14 +7,9 @@ import {
   textAction,
   tooltipAttributes,
 } from "../lib/ui.js";
-import { editorFieldImageDisplayName, editorFieldImageMetadataText } from "./editor-images.js";
+import { editorFieldImageMetadataText } from "./editor-images.js";
 import { editorFieldMedia, editorMediaForUrl, editorMediaNoun } from "./editor-media-kind.js";
-import { fileAudioIconSvg, filmIconSvg, playIconSvg } from "./editor-media-icons.js";
-import {
-  EDITOR_VIDEO_THUMBNAIL_ATTRIBUTE,
-  cachedEditorVideoThumbnailUrl,
-  requestEditorVideoThumbnail,
-} from "./editor-video-thumbnails.js";
+import { renderEditorMediaTile } from "./editor-media-tile.js";
 import { editorGlossaryEntryButtonEnabled, glossaryEntryTooltip } from "./editor-glossary-entry-selection.js";
 import { editorImagePreviewFrameSizeForSrc } from "./editor-image-preview-size.js";
 import { convertLocalFileSrc, isMacPlatform } from "./runtime.js";
@@ -647,66 +642,6 @@ function editorMediaArticleNoun(media) {
   return noun === "video" ? "a video" : `an ${noun}`;
 }
 
-function renderEditorVideoPoster(media, videoSrc) {
-  if (media.provider === "file") {
-    // The first frame stands in for a poster; the film icon shows if it can't load.
-    return `<video
-      class="translation-language-panel__media-poster-image"
-      src="${escapeHtml(`${videoSrc}#t=0.1`)}"
-      preload="metadata"
-      muted
-      playsinline
-      tabindex="-1"
-      aria-hidden="true"
-    ></video>`;
-  }
-
-  const thumbnailUrl = cachedEditorVideoThumbnailUrl(media, videoSrc);
-  if (thumbnailUrl === null) {
-    requestEditorVideoThumbnail(media, videoSrc);
-  }
-  return thumbnailUrl === ""
-    ? ""
-    : `<img
-      class="translation-language-panel__media-poster-image"
-      ${EDITOR_VIDEO_THUMBNAIL_ATTRIBUTE}="${escapeHtml(videoSrc)}"
-      ${thumbnailUrl ? `src="${escapeHtml(thumbnailUrl)}"` : ""}
-      alt=""
-      loading="eager"
-      referrerpolicy="no-referrer"
-    />`;
-}
-
-// Audio and video rows show a fixed-size tile, so a row's height never waits
-// on the media loading. Clicking it opens the player, as clicking an image
-// opens the larger view.
-function renderEditorLanguageMediaPreview(row, language, image, media, mediaSrc, isNew) {
-  const isAudio = media.kind === "audio";
-  const displayName = editorFieldImageDisplayName(image);
-  const tooltip = editorFieldImageMetadataText(image) || (isAudio ? "Play audio" : "Play video");
-  return `<button
-          class="translation-language-panel__image-preview translation-language-panel__media-preview translation-language-panel__media-preview--${isAudio ? "audio" : "video"}${isNew ? " translation-language-panel__image-preview--change-insert" : ""}"
-          type="button"
-          data-action="open-editor-image-preview"
-          data-editor-image-context-menu-target
-          data-editor-media-kind="${escapeHtml(media.kind)}"
-          data-row-id="${escapeHtml(row.id)}"
-          data-language-code="${escapeHtml(language.code)}"
-          ${image.kind === "url" ? `data-image-url="${escapeHtml(image.url ?? "")}"` : ""}
-          aria-label="${escapeHtml(isAudio ? `Play audio ${displayName}` : "Play video")}"
-          ${tooltipAttributes(tooltip, { side: "top", align: "start" })}
-        >
-          ${isAudio
-            ? `${fileAudioIconSvg("translation-language-panel__media-icon")}
-          <span class="translation-language-panel__media-name">${escapeHtml(displayName)}</span>`
-            : `<span class="translation-language-panel__media-poster">
-            ${filmIconSvg("translation-language-panel__media-poster-icon")}
-            ${renderEditorVideoPoster(media, mediaSrc)}
-            <span class="translation-language-panel__media-play" aria-hidden="true">${playIconSvg()}</span>
-          </span>`}
-        </button>`;
-}
-
 function renderEditorLanguageImage(row, language) {
   const previousImage = language.changeView?.image?.previous ?? null;
   if (!language.hasVisibleImage) {
@@ -869,7 +804,14 @@ function renderEditorLanguageImage(row, language) {
             class="translation-language-panel__image-loading-placeholder"
             data-editor-image-loading-placeholder
           >Loading image...</span>
-        </button>` : renderEditorLanguageMediaPreview(row, language, image, media, imageSrc, imageIsNew)}
+        </button>` : renderEditorMediaTile({
+          rowId: row.id,
+          languageCode: language.code,
+          image,
+          media,
+          mediaSrc: imageSrc,
+          className: imageIsNew ? "translation-language-panel__image-preview--change-insert" : "",
+        })}
         ${renderEditorLanguageImageCaption(row, language)}
         ${language.canEdit === true ? `<button
           class="translation-language-panel__image-remove"

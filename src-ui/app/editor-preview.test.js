@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   applyCustomHtmlPlainTextPolicy,
+  applyMediaLinkPolicy,
   buildEditorPreviewDocument,
   countEditorPreviewSearchMatches,
   EDITOR_MODE_PREVIEW,
@@ -1246,4 +1247,106 @@ test("plain text writes list markers and indents each level four spaces", () => 
     serializeEditorPreviewPlainText(listRowBlocks("list_letter")),
     "a. First bold[1]\n    i. Sub one\n    ii. Sub two\n        1. Deep\nb. Second\n\n[1] A note",
   );
+});
+
+function mediaBlocks() {
+  return buildEditorPreviewDocument([
+    {
+      rowId: "row-audio",
+      lifecycleState: "active",
+      textStyle: "paragraph",
+      fields: {},
+      imageCaptions: { vi: "Evening <em>talk</em>" },
+      images: { vi: { kind: "url", url: "https://example.org/wp-content/uploads/talk.mp3?a=1&b=2" } },
+    },
+    {
+      rowId: "row-youtube",
+      lifecycleState: "active",
+      textStyle: "paragraph",
+      fields: {},
+      imageCaptions: {},
+      images: { vi: { kind: "url", url: "https://youtu.be/dQw4w9WgXcQ?t=42" } },
+    },
+    {
+      rowId: "row-video",
+      lifecycleState: "active",
+      textStyle: "paragraph",
+      fields: {},
+      imageCaptions: {},
+      images: { vi: { kind: "url", url: "https://example.org/clip.mp4" } },
+    },
+    {
+      rowId: "row-upload",
+      lifecycleState: "active",
+      textStyle: "paragraph",
+      fields: {},
+      imageCaptions: {},
+      images: { vi: { kind: "upload", path: "chapters/ch-1/images/row-upload/chant.m4a", filePath: "/tmp/chant.m4a" } },
+    },
+  ], "vi");
+}
+
+test("WordPress export writes audio, video and embed blocks for media rows", () => {
+  const { content } = serializeEditorPreviewWordPress(mediaBlocks());
+
+  assert.match(content, /<!-- wp:audio -->\n<figure class="wp-block-audio"><audio controls src="https:\/\/example\.org\/wp-content\/uploads\/talk\.mp3\?a=1&amp;b=2"><\/audio><figcaption class="wp-element-caption">Evening <em>talk<\/em><\/figcaption><\/figure>\n<!-- \/wp:audio -->/);
+  assert.match(content, /<!-- wp:embed \{"url":"https:\/\/www\.youtube\.com\/watch\?v=dQw4w9WgXcQ","type":"video","providerNameSlug":"youtube","responsive":true,"className":"wp-embed-aspect-16-9 wp-has-aspect-ratio"\} -->/);
+  assert.match(content, /<figure class="wp-block-embed is-type-video is-provider-youtube wp-block-embed-youtube wp-embed-aspect-16-9 wp-has-aspect-ratio"><div class="wp-block-embed__wrapper">\nhttps:\/\/www\.youtube\.com\/watch\?v=dQw4w9WgXcQ\n<\/div><\/figure>/);
+  assert.match(content, /<!-- wp:video -->\n<figure class="wp-block-video"><video controls src="https:\/\/example\.org\/clip\.mp4"><\/video><\/figure>/);
+  // Uploaded audio keeps its repo path for the WordPress export to upload.
+  assert.match(content, /<audio controls src="chapters\/ch-1\/images\/row-upload\/chant\.m4a"><\/audio>/);
+  assert.doesNotMatch(content, /wp:image/);
+});
+
+test("WordPress block attributes escape characters that would end the comment", () => {
+  const blocks = buildEditorPreviewDocument([{
+    rowId: "row-1",
+    lifecycleState: "active",
+    textStyle: "paragraph",
+    fields: {},
+    images: { vi: { kind: "url", url: "https://youtu.be/ab--cdefghi" } },
+  }], "vi");
+
+  const { content } = serializeEditorPreviewWordPress(blocks);
+
+  assert.match(content, /"url":"https:\/\/www\.youtube\.com\/watch\?v=ab\\u002d\\u002dcdefghi"/);
+  // Only the comment's own "<!--" and "-->" remain in the opening line.
+  assert.equal(content.split("\n")[0].split("--").length - 1, 2);
+});
+
+test("plain text and the media link policy show audio and video as link lines", () => {
+  const linked = applyMediaLinkPolicy(mediaBlocks());
+
+  assert.deepEqual(linked.slice(0, 2).map((block) => [block.kind, block.textStyle, block.rowId, block.text]), [
+    ["text", "centered", "row-audio", "<strong>Audio:</strong> <a href=\"https://example.org/wp-content/uploads/talk.mp3?a=1&amp;b=2\">https://example.org/wp-content/uploads/talk.mp3?a=1&b=2</a>"],
+    ["text", "centered", "row-audio", "Evening <em>talk</em>"],
+  ]);
+  assert.equal(linked.at(-1).text, "<strong>Audio:</strong> chant.m4a");
+  assert.ok(linked.every((block) => block.kind === "text" && !("image" in block)));
+
+  assert.equal(
+    serializeEditorPreviewPlainText(mediaBlocks()),
+    [
+      "Audio: https://example.org/wp-content/uploads/talk.mp3?a=1&b=2",
+      "Evening talk",
+      "Video: https://youtu.be/dQw4w9WgXcQ?t=42",
+      "Video: https://example.org/clip.mp4",
+      "Audio: chant.m4a",
+    ].join("\n\n"),
+  );
+});
+
+test("the preview shows the media tile that opens the player", () => {
+  const { html } = renderEditorPreviewDocumentHtml(mediaBlocks(), {
+    resolveImageSrc: (image) => image.kind === "url" ? image.url : `asset://${image.filePath}`,
+  });
+
+  assert.match(html, /<figure class="translate-preview__image-block" data-preview-block="image" data-row-id="row-audio"[^>]*><button[^>]*translation-language-panel__media-preview--audio/);
+  assert.match(html, /data-action="open-editor-image-preview"[^>]*data-editor-media-kind="audio"[^>]*data-row-id="row-audio"[^>]*data-language-code="vi"/);
+  assert.match(html, /translation-language-panel__media-name">talk\.mp3</);
+  assert.match(html, /src="https:\/\/i\.ytimg\.com\/vi\/dQw4w9WgXcQ\/hqdefault\.jpg"/);
+  assert.match(html, /<figcaption class="translate-preview__image-caption"[^>]*>Evening <em>talk<\/em><\/figcaption>/);
+  // The preview has no image context menu, and no <img> stands in for audio.
+  assert.doesNotMatch(html, /data-editor-image-context-menu-target/);
+  assert.doesNotMatch(html, /<img class="translate-preview__image"/);
 });

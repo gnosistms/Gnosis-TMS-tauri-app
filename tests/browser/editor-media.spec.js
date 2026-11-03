@@ -67,6 +67,7 @@ async function mountMediaFixture(page) {
     await window.__gnosisDebug.waitForBootstrap();
     await window.__gnosisDebug.mountEditorFixture({
       rowCount: 6,
+      chapterStatus: "ready",
       imagesByRowId: {
         "fixture-row-0002": { vi: { kind: "url", url: audioUrl } },
         "fixture-row-0003": { vi: { kind: "url", url: youtubeUrl } },
@@ -150,6 +151,28 @@ test.describe("editor audio and video rows", () => {
 
     await player.click({ position: { x: 8, y: 300 } });
     await expect(player).toHaveCount(0);
+  });
+
+  test("the preview shows the same tiles and opens the same player", async ({ page }) => {
+    await mountMediaFixture(page);
+    await page.locator('[data-action="set-editor-mode:preview"]').click();
+    await page.locator("[data-editor-preview-language-select]").selectOption("vi");
+
+    const preview = page.locator("[data-editor-preview-document]");
+    const audioTile = preview.locator('[data-editor-media-kind="audio"][data-row-id="fixture-row-0002"]');
+    await expect(audioTile).toContainText("evening-talk.wav");
+    await expect(preview.locator('[data-editor-media-kind="video"][data-row-id="fixture-row-0003"] img')).toHaveAttribute(
+      "src",
+      "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+    );
+    await screenshot(page, "editor-media-preview");
+
+    await audioTile.click();
+    const player = page.locator("[data-editor-media-player]");
+    await expect(player.getByRole("heading", { name: "evening-talk.wav" })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(player).toHaveCount(0);
+    await expect(audioTile).toBeFocused();
   });
 
   test("the insert tooltips name audio and video", async ({ page }) => {
