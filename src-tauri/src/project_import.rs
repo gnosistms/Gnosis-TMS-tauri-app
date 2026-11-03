@@ -820,6 +820,18 @@ pub(crate) async fn save_gtms_editor_language_image_url(
     Ok(response)
 }
 
+/// The poster image of a Vimeo or VideoPress video row; None when it has none.
+#[tauri::command]
+pub(crate) async fn fetch_editor_video_thumbnail_url(
+    video_url: String,
+) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        chapter_editor::fetch_video_thumbnail_url(&video_url)
+    })
+    .await
+    .map_err(|error| format!("The video thumbnail worker failed: {error}"))
+}
+
 #[tauri::command]
 pub(crate) async fn find_gtms_editor_image_reuse(
     app: AppHandle,

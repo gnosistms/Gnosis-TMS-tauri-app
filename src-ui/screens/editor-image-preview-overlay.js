@@ -4,7 +4,9 @@ export function renderEditorImagePreviewOverlay(state) {
   const overlay = state.editorChapter?.imagePreviewOverlay;
   const src = typeof overlay?.src === "string" ? overlay.src.trim() : "";
   const imageUrl = typeof overlay?.imageUrl === "string" ? overlay.imageUrl.trim() : "";
-  if (overlay?.isOpen !== true || !src) {
+  // Audio and video open in the media player instead (editor-media-player.js).
+  const kind = overlay?.media?.kind;
+  if (overlay?.isOpen !== true || !src || kind === "audio" || kind === "video") {
     return "";
   }
 

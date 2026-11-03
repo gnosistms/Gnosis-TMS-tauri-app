@@ -57,6 +57,7 @@ mod history;
 mod image_reuse;
 mod images;
 mod list_style;
+mod media_kind;
 mod pdf_export;
 mod project_transfer;
 mod row_fields;
@@ -126,6 +127,7 @@ pub(super) use self::images::{
     save_gtms_editor_language_image_url_sync, start_wordpress_caption_enrichment,
     upload_gtms_editor_language_image_sync,
 };
+pub(crate) use self::media_kind::fetch_video_thumbnail_url;
 pub(crate) use self::pdf_export::{
     approve_gtms_chapter_pdf_fonts, cancel_gtms_chapter_pdf_export, forget_gtms_pdf_font_approval,
     inspect_gtms_chapter_pdf_fonts, start_gtms_chapter_pdf_export, start_project_book_page_preview,

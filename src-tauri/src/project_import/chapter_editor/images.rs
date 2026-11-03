@@ -7,6 +7,7 @@ use scraper::{ElementRef, Html, Selector};
 use std::{io::Read as _, time::Duration};
 use tauri::Emitter;
 
+use super::media_kind::{EditorMedia, VideoSource};
 use super::*;
 
 const WORDPRESS_CAPTION_USER_AGENT: &str = concat!(
@@ -277,6 +278,14 @@ fn wordpress_caption_response(
 }
 
 fn wordpress_media_lookup(image_url: &str) -> Option<WordPressMediaLookup> {
+    // Audio and video files live in the same media library; YouTube, Vimeo and
+    // VideoPress links have no library entry to look up.
+    let media_type = match super::media_kind::media_for_url(image_url) {
+        EditorMedia::Image => "image",
+        EditorMedia::Audio => "audio",
+        EditorMedia::Video(VideoSource::File) => "video",
+        EditorMedia::Video(_) => return None,
+    };
     let image = url::Url::parse(image_url).ok()?;
     if !matches!(image.scheme(), "http" | "https") {
         return None;
@@ -319,7 +328,7 @@ fn wordpress_media_lookup(image_url: &str) -> Option<WordPressMediaLookup> {
         .query_pairs_mut()
         .append_pair("slug", &slug)
         .append_pair("per_page", "1")
-        .append_pair("media_type", "image")
+        .append_pair("media_type", media_type)
         .append_pair("_fields", "caption,source_url,media_details");
     let mut endpoints = vec![exact_endpoint];
     endpoints.extend(searches.into_iter().map(|search| {
@@ -328,7 +337,7 @@ fn wordpress_media_lookup(image_url: &str) -> Option<WordPressMediaLookup> {
             .query_pairs_mut()
             .append_pair("search", &search)
             .append_pair("per_page", "100")
-            .append_pair("media_type", "image")
+            .append_pair("media_type", media_type)
             .append_pair("_fields", "caption,source_url,media_details");
         search_endpoint
     }));
@@ -903,7 +912,7 @@ pub(crate) fn upload_gtms_editor_language_image_sync(
     }
 
     let bytes = decode_uploaded_image_bytes(&input.data_base64, &input.filename)?;
-    let extension = validated_uploaded_image_extension(&input.filename, &bytes)?;
+    let extension = validated_uploaded_media_extension(&input.filename, &bytes)?;
     let relative_image_path =
         relative_uploaded_image_path(&repo_path, &chapter_path, &input.filename, extension)?;
     let relative_image_path =
@@ -1690,6 +1699,80 @@ pub(super) fn validated_uploaded_image_extension(
     Ok(detected_extension)
 }
 
+// ISO base media brands an M4A recording is written with. AVIF also starts
+// with `ftyp`, but with an `avif`/`avis` brand, and is detected as an image first.
+const M4A_BRANDS: [&[u8; 4]; 7] = [
+    b"M4A ", b"M4B ", b"M4P ", b"mp42", b"mp41", b"isom", b"iso2",
+];
+
+fn normalize_uploaded_audio_extension(extension: &str) -> Option<&'static str> {
+    match extension
+        .trim()
+        .trim_start_matches('.')
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "mp3" => Some("mp3"),
+        "m4a" => Some("m4a"),
+        "wav" | "wave" => Some("wav"),
+        _ => None,
+    }
+}
+
+fn detected_uploaded_audio_extension(bytes: &[u8]) -> Option<&'static str> {
+    // An MP3 opens with an ID3 tag or straight into an MPEG frame sync. JPEG's
+    // FF D8 cannot pass the sync test (D8 lacks the top three bits).
+    if bytes.starts_with(b"ID3")
+        || (bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] & 0xE0 == 0xE0)
+    {
+        return Some("mp3");
+    }
+    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WAVE" {
+        return Some("wav");
+    }
+    if bytes.len() >= 12
+        && &bytes[4..8] == b"ftyp"
+        && M4A_BRANDS
+            .iter()
+            .any(|brand| &bytes[8..12] == brand.as_slice())
+    {
+        return Some("m4a");
+    }
+    None
+}
+
+/// A file uploaded into a row: a raster image, or an MP3, M4A or WAV recording.
+/// The name's extension must match the contents, and the stored file takes the
+/// detected extension, which is what tells later readers it is audio
+/// (see media_kind.rs).
+pub(super) fn validated_uploaded_media_extension(
+    filename: &str,
+    bytes: &[u8],
+) -> Result<&'static str, String> {
+    let named_extension = Path::new(filename)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+    let detected_audio = detected_uploaded_audio_extension(bytes);
+    match normalize_uploaded_audio_extension(named_extension) {
+        Some(named) => match detected_audio {
+            Some(detected) if detected == named => Ok(detected),
+            Some(_) => {
+                Err("The uploaded file extension does not match its audio contents.".to_string())
+            }
+            None => Err("The uploaded file is not a valid MP3, M4A, or WAV recording.".to_string()),
+        },
+        None if normalize_uploaded_image_extension(named_extension).is_none()
+            && detected_uploaded_image_extension(bytes).is_none() =>
+        {
+            detected_audio.ok_or_else(|| {
+                "The uploaded file is not a supported image or audio file.".to_string()
+            })
+        }
+        None => validated_uploaded_image_extension(filename, bytes),
+    }
+}
+
 fn decode_uploaded_image_bytes(data_base64: &str, file_label: &str) -> Result<Vec<u8>, String> {
     let normalized_data = data_base64.trim();
     if normalized_data.is_empty() {
@@ -1705,14 +1788,14 @@ fn decode_uploaded_image_bytes(data_base64: &str, file_label: &str) -> Result<Ve
 pub(super) fn validate_editor_image_url(value: &str) -> Result<String, String> {
     let normalized_url = value.trim();
     if normalized_url.is_empty() {
-        return Err("Enter an image URL.".to_string());
+        return Err("Enter a URL.".to_string());
     }
 
-    let parsed_url = url::Url::parse(normalized_url)
-        .map_err(|error| format!("The image URL is invalid: {error}"))?;
+    let parsed_url =
+        url::Url::parse(normalized_url).map_err(|error| format!("The URL is invalid: {error}"))?;
     match parsed_url.scheme() {
         "http" | "https" => Ok(normalized_url.to_string()),
-        _ => Err("Only http:// and https:// image URLs are supported.".to_string()),
+        _ => Err("Only http:// and https:// URLs are supported.".to_string()),
     }
 }
 
@@ -2205,6 +2288,33 @@ mod tests {
     }
 
     #[test]
+    fn wordpress_media_lookup_asks_for_the_media_kind_of_the_url() {
+        let media_type = |url: &str| {
+            wordpress_media_lookup(url).map(|lookup| {
+                lookup_endpoint_with_query(&lookup, "slug")
+                    .query_pairs()
+                    .find(|(key, _)| key == "media_type")
+                    .map(|(_, value)| value.into_owned())
+                    .unwrap_or_default()
+            })
+        };
+        assert_eq!(
+            media_type("https://example.com/wp-content/uploads/2026/07/talk.mp3").as_deref(),
+            Some("audio")
+        );
+        assert_eq!(
+            media_type("https://example.com/wp-content/uploads/2026/07/talk.mp4").as_deref(),
+            Some("video")
+        );
+        assert_eq!(
+            media_type("https://example.com/wp-content/uploads/2026/07/photo.jpg").as_deref(),
+            Some("image")
+        );
+        assert_eq!(media_type("https://videopress.com/v/OcobLTqC"), None);
+        assert_eq!(media_type("https://youtu.be/dQw4w9WgXcQ"), None);
+    }
+
+    #[test]
     fn wordpress_media_lookup_supports_self_hosted_subdirectories_and_thumbnails() {
         let lookup = wordpress_media_lookup(
             "https://example.com/news/wp-content/uploads/2026/07/Temple-Entrance-1024x683.jpg?fit=800",
@@ -2691,6 +2801,58 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(&repo_path);
+    }
+
+    #[test]
+    fn uploaded_media_validation_accepts_audio_whose_contents_match_its_name() {
+        let mp3_tagged = b"ID3\x04\x00\x00\x00\x00\x00\x00rest";
+        let mp3_frame = [0xFF, 0xFB, 0x90, 0x64, 0x00];
+        let wav = b"RIFF\x24\x00\x00\x00WAVEfmt ";
+        let m4a = b"\x00\x00\x00\x20ftypM4A \x00\x00\x00\x00";
+        assert_eq!(
+            validated_uploaded_media_extension("talk.mp3", mp3_tagged),
+            Ok("mp3")
+        );
+        assert_eq!(
+            validated_uploaded_media_extension("talk.MP3", &mp3_frame),
+            Ok("mp3")
+        );
+        assert_eq!(
+            validated_uploaded_media_extension("chant.wav", wav),
+            Ok("wav")
+        );
+        assert_eq!(
+            validated_uploaded_media_extension("chant.m4a", m4a),
+            Ok("m4a")
+        );
+        assert_eq!(
+            validated_uploaded_media_extension("no-extension", wav),
+            Ok("wav")
+        );
+    }
+
+    #[test]
+    fn uploaded_media_validation_rejects_mismatched_or_unknown_audio() {
+        let wav = b"RIFF\x24\x00\x00\x00WAVEfmt ";
+        let png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR";
+        let avif = b"\x00\x00\x00\x1cftypavif\x00\x00\x00\x00avifmif1";
+        assert!(validated_uploaded_media_extension("talk.mp3", wav).is_err());
+        assert!(validated_uploaded_media_extension("talk.mp3", png).is_err());
+        assert!(validated_uploaded_media_extension("photo.png", wav).is_err());
+        assert!(validated_uploaded_media_extension("clip.ogg", b"OggS\x00\x02").is_err());
+        assert_eq!(
+            validated_uploaded_media_extension("photo.png", png),
+            Ok("png")
+        );
+        assert_eq!(
+            validated_uploaded_media_extension("photo.avif", avif),
+            Ok("avif")
+        );
+        // JPEG's FF D8 FF is not an MPEG frame sync.
+        assert_eq!(
+            detected_uploaded_audio_extension(&[0xFF, 0xD8, 0xFF, 0xE0]),
+            None
+        );
     }
 
     #[test]
