@@ -286,7 +286,29 @@ test("openEditorImagePreview renders only the overlay so editor scroll stays sta
     languageCode: "vi",
     src: "https://example.com/image.png",
     imageUrl: "https://example.com/image.png",
+    media: { kind: "image", provider: null, id: null, hash: null },
+    title: "image.png",
+    caption: "",
   });
+  assert.deepEqual(render.calls, [[{ scope: "translate-image-preview-overlay" }]]);
+});
+
+test("openEditorImagePreview records an audio row's kind, file name and caption for the player", () => {
+  installEditorFixture();
+  installFixtureImage("https://example.com/wp-content/uploads/talk%20one.mp3");
+  state.editorChapter = {
+    ...state.editorChapter,
+    rows: state.editorChapter.rows.map((row) =>
+      row.rowId === "row-1" ? { ...row, imageCaptions: { vi: "A **talk**" } } : row),
+  };
+  const render = createRenderSpy();
+
+  openEditorImagePreview(render, "row-1", "vi");
+
+  const overlay = state.editorChapter.imagePreviewOverlay;
+  assert.equal(overlay.media.kind, "audio");
+  assert.equal(overlay.title, "talk one.mp3");
+  assert.equal(overlay.caption, "A **talk**");
   assert.deepEqual(render.calls, [[{ scope: "translate-image-preview-overlay" }]]);
 });
 
@@ -311,6 +333,9 @@ test("closeEditorImagePreview renders only the overlay so editor scroll stays st
     languageCode: null,
     src: "",
     imageUrl: "",
+    media: null,
+    title: "",
+    caption: "",
   });
   assert.deepEqual(render.calls, [[{ scope: "translate-image-preview-overlay" }]]);
 });
@@ -819,7 +844,7 @@ test("submitEditorImageUrl reports URL syntax errors without calling the image l
     mode: null,
     urlDraft: "notaurl",
     invalidUrl: true,
-    urlErrorMessage: "Enter a valid image URL.",
+    urlErrorMessage: "Enter a valid URL.",
     status: "idle",
   });
   assert.equal(invokeLog.length, 0);

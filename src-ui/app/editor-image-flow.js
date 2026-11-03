@@ -1,8 +1,10 @@
 import {
+  editorFieldImageDisplayName,
   editorFieldImageEqual,
   editorWordPressCaptionSearchKey,
   normalizeEditorFieldImage,
 } from "./editor-images.js";
+import { editorFieldMedia, editorMediaForUploadPath } from "./editor-media-kind.js";
 import { enforceImportFileSizeLimit } from "./import-file-limit.js";
 import { openLocalFilePicker } from "./local-file-picker.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
@@ -44,7 +46,8 @@ import { projectRepoScope } from "./repo-write-queue.js";
 import { updateEditorChapterRow } from "./editor-state-flow.js";
 
 const IMAGE_FILE_ACCEPT =
-  ".jpg,.jpeg,.png,.gif,.svg,.webp,.avif,.bmp,.ico,.apng,image/jpeg,image/png,image/gif,image/svg+xml,image/webp,image/avif,image/bmp,image/x-icon";
+  ".jpg,.jpeg,.png,.gif,.svg,.webp,.avif,.bmp,.ico,.apng,image/jpeg,image/png,image/gif,image/svg+xml,image/webp,image/avif,image/bmp,image/x-icon"
+  + ",.mp3,.m4a,.wav,audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,audio/x-wav,audio/wave";
 // Activating the last row opens its two-row editing toolbar, which alone adds
 // about 80px below the fold; the tolerance must still count that as the bottom.
 const TRANSLATE_MAIN_BOTTOM_PIN_TOLERANCE_PX = 120;
@@ -519,11 +522,11 @@ function validateImageUrlSyntax(url) {
   try {
     parsedUrl = new URL(url);
   } catch {
-    return "Enter a valid image URL.";
+    return "Enter a valid URL.";
   }
 
   if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
-    return "Only http:// and https:// image URLs are supported.";
+    return "Only http:// and https:// URLs are supported.";
   }
 
   return "";
@@ -580,9 +583,18 @@ async function coerceUploadBlob(value) {
   throw new Error("Invalid file");
 }
 
-async function validateUploadedImageFile(fileBlob) {
+async function validateUploadedImageFile(fileBlob, fileName = "") {
   if (!(fileBlob instanceof Blob)) {
     throw new Error("Invalid file");
+  }
+
+  // Audio is checked by its contents when it is saved (images.rs); decoding it
+  // here would only reject files the webview's codecs happen not to support.
+  if (editorMediaForUploadPath(fileName).kind === "audio") {
+    if (fileBlob.size === 0) {
+      throw new Error("Invalid file");
+    }
+    return;
   }
 
   const objectUrl = URL.createObjectURL(fileBlob);
@@ -1033,7 +1045,7 @@ async function saveEditorImageUrlDraft(
     previousImage: currentImage(rowId, languageCode),
     nextImage,
     operations,
-    failureMessage: "The image URL could not be saved.",
+    failureMessage: "The URL could not be saved.",
     onFailure: (message) => {
       if (
         state.editorChapter?.chapterId === chapterAtRequest
@@ -1049,7 +1061,7 @@ async function saveEditorImageUrlDraft(
           mode: null,
           urlDraft: draft,
           invalidUrl: true,
-          urlErrorMessage: message || "The image URL could not be saved.",
+          urlErrorMessage: message || "The URL could not be saved.",
           status: "idle",
         });
       }
@@ -1205,7 +1217,7 @@ async function saveUploadedEditorImage(render, rowId, languageCode, file, operat
   renderEditorRowScoped(render, rowId, "image-upload-state");
 
   try {
-    await validateUploadedImageFile(fileBlob);
+    await validateUploadedImageFile(fileBlob, fileName);
   } catch {
     if (state.editorChapter?.chapterId === chapterAtRequest) {
       setImageEditorState({
@@ -1338,7 +1350,7 @@ async function saveValidatedUploadedEditorImage(
         fileName,
       },
       operations,
-      failureMessage: "The image could not be uploaded.",
+      failureMessage: "The file could not be uploaded.",
       notice: "The image changed on disk. Reloaded the latest version.",
       onFailure: () => {
         if (state.editorChapter?.chapterId === chapterAtRequest) {
@@ -1362,7 +1374,7 @@ async function saveValidatedUploadedEditorImage(
       renderEditorRowScoped(render, rowId, "image-upload-state");
     }
     const message = error instanceof Error ? error.message : String(error);
-    showNoticeBadge(message || "The image could not be uploaded.", render);
+    showNoticeBadge(message || "The file could not be uploaded.", render);
   }
   return null;
 }
@@ -1433,7 +1445,7 @@ export async function handleDroppedEditorImagePath(render, path, operations = {}
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    showNoticeBadge(message || "The image could not be uploaded.", render);
+    showNoticeBadge(message || "The file could not be uploaded.", render);
   }
 }
 
@@ -1760,6 +1772,7 @@ export function openEditorImagePreview(render, rowId, languageCode) {
     return;
   }
 
+  const media = editorFieldMedia(image);
   state.editorChapter = {
     ...state.editorChapter,
     imagePreviewOverlay: {
@@ -1770,6 +1783,9 @@ export function openEditorImagePreview(render, rowId, languageCode) {
       imageUrl: image?.kind === "url"
         ? image.url ?? ""
         : "",
+      media: { ...media },
+      title: editorFieldImageDisplayName(image),
+      caption: String(findEditorRowById(rowId, state.editorChapter)?.imageCaptions?.[languageCode] ?? ""),
     },
   };
   render?.({ scope: "translate-image-preview-overlay" });

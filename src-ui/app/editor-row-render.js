@@ -7,7 +7,14 @@ import {
   textAction,
   tooltipAttributes,
 } from "../lib/ui.js";
-import { editorFieldImageMetadataText } from "./editor-images.js";
+import { editorFieldImageDisplayName, editorFieldImageMetadataText } from "./editor-images.js";
+import { editorFieldMedia, editorMediaForUrl, editorMediaNoun } from "./editor-media-kind.js";
+import { fileAudioIconSvg, filmIconSvg, playIconSvg } from "./editor-media-icons.js";
+import {
+  EDITOR_VIDEO_THUMBNAIL_ATTRIBUTE,
+  cachedEditorVideoThumbnailUrl,
+  requestEditorVideoThumbnail,
+} from "./editor-video-thumbnails.js";
 import { editorGlossaryEntryButtonEnabled, glossaryEntryTooltip } from "./editor-glossary-entry-selection.js";
 import { editorImagePreviewFrameSizeForSrc } from "./editor-image-preview-size.js";
 import { convertLocalFileSrc, isMacPlatform } from "./runtime.js";
@@ -354,7 +361,7 @@ function renderRowTextStyleButtons(row, language) {
         data-editor-image-button
         data-row-id="${escapeHtml(row.id)}"
         data-language-code="${escapeHtml(language.code)}"
-        ${tooltipAttributes("Add image by link", { side: "top" })}
+        ${tooltipAttributes("Insert image, audio, or video by URL", { side: "top" })}
       >
         <span class="translation-row-text-style-button__label">img url</span>
       </button>
@@ -367,7 +374,7 @@ function renderRowTextStyleButtons(row, language) {
         data-editor-image-button
         data-row-id="${escapeHtml(row.id)}"
         data-language-code="${escapeHtml(language.code)}"
-        ${tooltipAttributes("Upload image", { side: "top" })}
+        ${tooltipAttributes("Upload image or audio", { side: "top" })}
       >
         <span class="translation-row-text-style-button__label">img ↑</span>
       </button>
@@ -547,7 +554,7 @@ function renderWordPressCaptionSearchStatus(row, language) {
       data-loading-spinner-key="wordpress-caption-search:${escapeHtml(row.id)}:${escapeHtml(language.code)}"
     >
       <span class="translation-language-panel__image-caption-search-spinner button__spinner" aria-hidden="true"></span>
-      <span>Searching WordPress for an image footnote.</span>
+      <span>Searching WordPress for ${editorMediaArticleNoun(editorFieldMedia(language.image))} footnote.</span>
     </div>
   `;
 }
@@ -578,7 +585,7 @@ function renderEditorLanguageImageCaption(row, language) {
             lang="${escapeHtml(language.baseCode || language.code)}"
             rows="1"
             spellcheck="false"
-            placeholder="Enter image caption"
+            placeholder="Enter ${editorMediaNoun(editorFieldMedia(language.image))} caption"
           >${escapeHtml(language.imageCaption ?? "")}</textarea>
         </div>
       </div>
@@ -595,7 +602,7 @@ function renderEditorLanguageImageCaption(row, language) {
           data-editor-image-caption-button
           data-row-id="${escapeHtml(row.id)}"
           data-language-code="${escapeHtml(language.code)}"
-          ${tooltipAttributes("Add image caption", { side: "top" })}
+          ${tooltipAttributes(`Add ${editorMediaNoun(editorFieldMedia(language.image))} caption`, { side: "top" })}
         >
           <span>+ caption</span>
         </button>
@@ -635,6 +642,71 @@ function renderEditorLanguageImageCaption(row, language) {
   `;
 }
 
+function editorMediaArticleNoun(media) {
+  const noun = editorMediaNoun(media);
+  return noun === "video" ? "a video" : `an ${noun}`;
+}
+
+function renderEditorVideoPoster(media, videoSrc) {
+  if (media.provider === "file") {
+    // The first frame stands in for a poster; the film icon shows if it can't load.
+    return `<video
+      class="translation-language-panel__media-poster-image"
+      src="${escapeHtml(`${videoSrc}#t=0.1`)}"
+      preload="metadata"
+      muted
+      playsinline
+      tabindex="-1"
+      aria-hidden="true"
+    ></video>`;
+  }
+
+  const thumbnailUrl = cachedEditorVideoThumbnailUrl(media, videoSrc);
+  if (thumbnailUrl === null) {
+    requestEditorVideoThumbnail(media, videoSrc);
+  }
+  return thumbnailUrl === ""
+    ? ""
+    : `<img
+      class="translation-language-panel__media-poster-image"
+      ${EDITOR_VIDEO_THUMBNAIL_ATTRIBUTE}="${escapeHtml(videoSrc)}"
+      ${thumbnailUrl ? `src="${escapeHtml(thumbnailUrl)}"` : ""}
+      alt=""
+      loading="eager"
+      referrerpolicy="no-referrer"
+    />`;
+}
+
+// Audio and video rows show a fixed-size tile, so a row's height never waits
+// on the media loading. Clicking it opens the player, as clicking an image
+// opens the larger view.
+function renderEditorLanguageMediaPreview(row, language, image, media, mediaSrc, isNew) {
+  const isAudio = media.kind === "audio";
+  const displayName = editorFieldImageDisplayName(image);
+  const tooltip = editorFieldImageMetadataText(image) || (isAudio ? "Play audio" : "Play video");
+  return `<button
+          class="translation-language-panel__image-preview translation-language-panel__media-preview translation-language-panel__media-preview--${isAudio ? "audio" : "video"}${isNew ? " translation-language-panel__image-preview--change-insert" : ""}"
+          type="button"
+          data-action="open-editor-image-preview"
+          data-editor-image-context-menu-target
+          data-editor-media-kind="${escapeHtml(media.kind)}"
+          data-row-id="${escapeHtml(row.id)}"
+          data-language-code="${escapeHtml(language.code)}"
+          ${image.kind === "url" ? `data-image-url="${escapeHtml(image.url ?? "")}"` : ""}
+          aria-label="${escapeHtml(isAudio ? `Play audio ${displayName}` : "Play video")}"
+          ${tooltipAttributes(tooltip, { side: "top", align: "start" })}
+        >
+          ${isAudio
+            ? `${fileAudioIconSvg("translation-language-panel__media-icon")}
+          <span class="translation-language-panel__media-name">${escapeHtml(displayName)}</span>`
+            : `<span class="translation-language-panel__media-poster">
+            ${filmIconSvg("translation-language-panel__media-poster-icon")}
+            ${renderEditorVideoPoster(media, mediaSrc)}
+            <span class="translation-language-panel__media-play" aria-hidden="true">${playIconSvg()}</span>
+          </span>`}
+        </button>`;
+}
+
 function renderEditorLanguageImage(row, language) {
   const previousImage = language.changeView?.image?.previous ?? null;
   if (!language.hasVisibleImage) {
@@ -659,7 +731,7 @@ function renderEditorLanguageImage(row, language) {
           data-language-code="${escapeHtml(language.code)}"
           aria-busy="true"
         >
-          <span class="message-box__text">Loading image...</span>
+          <span class="message-box__text">Loading ${editorMediaNoun(editorMediaForUrl(language.imageUrlDraft))}...</span>
         </button>
       </div>
     `;
@@ -696,7 +768,7 @@ function renderEditorLanguageImage(row, language) {
           data-row-id="${escapeHtml(row.id)}"
           data-language-code="${escapeHtml(language.code)}"
           spellcheck="false"
-          placeholder="paste image url here"
+          placeholder="paste image, audio, or video url here"
           value="${escapeHtml(language.imageUrlDraft ?? "")}"
         />
         <button
@@ -706,7 +778,7 @@ function renderEditorLanguageImage(row, language) {
           data-editor-image-url-close-button
           data-row-id="${escapeHtml(row.id)}"
           data-language-code="${escapeHtml(language.code)}"
-          ${tooltipAttributes("Close image URL", { side: "top" })}
+          ${tooltipAttributes("Close URL", { side: "top" })}
         >
           <span class="translation-language-panel__image-remove-icon" aria-hidden="true">
             <svg viewBox="0 0 12 12" focusable="false" aria-hidden="true">
@@ -731,7 +803,7 @@ function renderEditorLanguageImage(row, language) {
             data-row-id="${escapeHtml(row.id)}"
             data-language-code="${escapeHtml(language.code)}"
           >
-            <span>Drag and drop an image file or click to select.</span>
+            <span>Drag and drop an image or audio file or click to select.</span>
           </button>
           <button
             class="translation-language-panel__image-remove translation-language-panel__image-upload-close"
@@ -740,7 +812,7 @@ function renderEditorLanguageImage(row, language) {
             data-editor-image-upload-close-button
             data-row-id="${escapeHtml(row.id)}"
             data-language-code="${escapeHtml(language.code)}"
-            ${tooltipAttributes("Close image upload", { side: "top" })}
+            ${tooltipAttributes("Close upload", { side: "top" })}
           >
             <span class="translation-language-panel__image-remove-icon" aria-hidden="true">
               <svg viewBox="0 0 12 12" focusable="false" aria-hidden="true">
@@ -760,15 +832,16 @@ function renderEditorLanguageImage(row, language) {
     return "";
   }
 
+  const media = editorFieldMedia(image);
   const imageLabel = editorFieldImageMetadataText(image);
-  const cachedPreviewSize = editorImagePreviewFrameSizeForSrc(imageSrc);
-  const isLoading = !cachedPreviewSize;
+  const cachedPreviewSize = media.kind === "image" ? editorImagePreviewFrameSizeForSrc(imageSrc) : null;
+  const isLoading = media.kind === "image" && !cachedPreviewSize;
   const imageIsNew = language.changeView?.image?.currentChanged === true;
   return `
     <div class="translation-language-panel__image-shell">
       ${previousImage ? renderEditorChangePreviousImage(previousImage) : ""}
       <div class="translation-language-panel__image-row">
-        <button
+        ${media.kind === "image" ? `<button
           class="translation-language-panel__image-preview${isLoading ? " is-loading" : ""}${imageIsNew ? " translation-language-panel__image-preview--change-insert" : ""}"
           type="button"
           data-action="open-editor-image-preview"
@@ -796,7 +869,7 @@ function renderEditorLanguageImage(row, language) {
             class="translation-language-panel__image-loading-placeholder"
             data-editor-image-loading-placeholder
           >Loading image...</span>
-        </button>
+        </button>` : renderEditorLanguageMediaPreview(row, language, image, media, imageSrc, imageIsNew)}
         ${renderEditorLanguageImageCaption(row, language)}
         ${language.canEdit === true ? `<button
           class="translation-language-panel__image-remove"
@@ -805,7 +878,7 @@ function renderEditorLanguageImage(row, language) {
           data-editor-language-image-remove-button
           data-row-id="${escapeHtml(row.id)}"
           data-language-code="${escapeHtml(language.code)}"
-          ${tooltipAttributes("Remove image", { side: "top" })}
+          ${tooltipAttributes(`Remove ${editorMediaNoun(media)}`, { side: "top" })}
         >
           <span class="translation-language-panel__image-remove-icon" aria-hidden="true">
             <svg viewBox="0 0 12 12" focusable="false" aria-hidden="true">

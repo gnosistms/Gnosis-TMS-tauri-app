@@ -624,6 +624,9 @@ export function createEditorImagePreviewOverlayState() {
     languageCode: null,
     src: "",
     imageUrl: "",
+    media: null,
+    title: "",
+    caption: "",
   };
 }
 

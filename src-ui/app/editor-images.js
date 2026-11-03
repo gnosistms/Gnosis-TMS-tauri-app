@@ -127,6 +127,27 @@ export function urlImageFromString(value) {
   return { kind: "url", url };
 }
 
+// The file name a person recognizes: the last part of a URL, decoded, or the
+// uploaded file's name.
+export function editorFieldImageDisplayName(image) {
+  const normalizedImage = normalizeEditorFieldImage(image);
+  if (!normalizedImage) {
+    return "";
+  }
+
+  if (normalizedImage.kind === "upload") {
+    return normalizedImage.fileName ?? uploadedImageFileName(normalizedImage);
+  }
+
+  try {
+    const segments = new URL(normalizedImage.url).pathname.split("/").filter(Boolean);
+    const lastSegment = segments[segments.length - 1] ?? "";
+    return lastSegment ? decodeURIComponent(lastSegment) : normalizedImage.url;
+  } catch {
+    return normalizedImage.url ?? "";
+  }
+}
+
 export function editorFieldImageMetadataText(image) {
   const normalizedImage = normalizeEditorFieldImage(image);
   if (!normalizedImage) {
