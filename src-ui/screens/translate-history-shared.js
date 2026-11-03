@@ -1,4 +1,5 @@
 import { editorRowTextStyleLabel, normalizeEditorRowTextStyle } from "../app/editor-row-text-style.js";
+import { rowTextParagraphsHtml } from "../app/editor-footnote-paragraphs.js";
 import { renderTranslationMarkerIcon } from "../app/editor-row-render.js";
 import { editorFieldImageMetadataText } from "../app/editor-images.js";
 import {
@@ -116,12 +117,17 @@ export function buildHistoryDiffSegments(previousText, currentText) {
     });
 }
 
-function renderHistoryDiffText(previousText, currentText) {
+// With options.paragraphs, blank lines split row text into paragraphs as in the
+// editor row. A removed break is no longer in the text to lay out, so it shows
+// as a struck pilcrow.
+function renderHistoryDiffText(previousText, currentText, options = {}) {
+  const paragraphs = options.paragraphs === true;
   if (previousText === undefined || previousText === null) {
-    return renderSanitizedInlineMarkupHistoryHtml(String(currentText ?? ""));
+    const html = renderSanitizedInlineMarkupHistoryHtml(String(currentText ?? ""));
+    return paragraphs ? rowTextParagraphsHtml(html) : html;
   }
 
-  return buildHistoryDiffSegments(
+  const html = buildHistoryDiffSegments(
     extractInlineMarkupHistoryText(previousText),
     extractInlineMarkupHistoryText(currentText),
   )
@@ -130,17 +136,21 @@ function renderHistoryDiffText(previousText, currentText) {
         return escapeHtml(segment.text);
       }
 
-      return `<span class="history-diff__${segment.type}">${escapeHtml(segment.text)}</span>`;
+      const text = paragraphs && segment.type === "delete"
+        ? segment.text.replace(/\n(?:\s*\n)*/g, "¶")
+        : segment.text;
+      return `<span class="history-diff__${segment.type}">${escapeHtml(text)}</span>`;
     })
     .join("");
+  return paragraphs ? rowTextParagraphsHtml(html) : html;
 }
 
 function historyTextHasVisibleContent(value) {
   return String(value ?? "").trim().length > 0;
 }
 
-export function renderHistoryContent(entry, previousEntry) {
-  return renderHistoryDiffText(previousEntry?.plainText, entry?.plainText);
+export function renderHistoryContent(entry, previousEntry, options = {}) {
+  return renderHistoryDiffText(previousEntry?.plainText, entry?.plainText, options);
 }
 
 export function renderHistoryEntryContent(entry, previousEntry, languageCode, options = {}) {
@@ -202,7 +212,9 @@ export function renderHistoryEntryContent(entry, previousEntry, languageCode, op
           && (block.requiresVisibleImage !== true || hasVisibleImage)
         )
         .map((block) => {
-          const diffText = renderHistoryDiffText(block.previousText, block.currentText);
+          const diffText = renderHistoryDiffText(block.previousText, block.currentText, {
+            paragraphs: block.mainText === true && options.paragraphs === true,
+          });
           if (typeof block.render === "function") {
             return block.render(block.prefixLabel ?? "", diffText, block.className, languageCode);
           }
