@@ -61,7 +61,7 @@ impl EditorMedia {
 }
 
 /// The MIME type of uploaded audio, by its stored extension.
-pub(super) fn audio_mime_type(path: &str) -> Option<&'static str> {
+pub(crate) fn audio_mime_type(path: &str) -> Option<&'static str> {
     match file_extension(path).as_str() {
         "mp3" => Some("audio/mpeg"),
         "m4a" => Some("audio/mp4"),

@@ -14,7 +14,7 @@ use url::Url;
 
 use crate::{
     constants::WORDPRESS_EXPORT_PROGRESS_EVENT,
-    project_import::fetch_public_image_dimensions,
+    project_import::{audio_mime_type, fetch_public_image_dimensions},
     project_repo_paths::resolve_project_git_repo_path,
     wordpress::client::{WordPressSite, WORDPRESS_RECONNECT_MESSAGE},
     wordpress::debug::wordpress_debug_log,
@@ -823,6 +823,37 @@ fn run_wordpress_export(
         }
     }
 
+    let audio_sources = collect_local_audio_sources(&content);
+    if !audio_sources.is_empty() {
+        let repo_path = resolve_project_git_repo_path(
+            app,
+            input.installation_id,
+            input.project_id.as_deref(),
+            Some(&input.repo_name),
+        )?;
+        let total = audio_sources.len();
+        for (index, source) in audio_sources.iter().enumerate() {
+            emit_export_progress(
+                app,
+                WordPressExportProgressPayload {
+                    job_id: input.job_id.clone(),
+                    status: "progress",
+                    message: format!("Uploading audio {} of {total}...", index + 1),
+                    current: Some(index + 1),
+                    total: Some(total),
+                    post_link: None,
+                    post_id: None,
+                    post_title: None,
+                    post_status: None,
+                    post_edit_link: None,
+                    error_code: None,
+                },
+            );
+            let uploaded = upload_repo_audio(&site, &client, &repo_path, source)?;
+            content = apply_uploaded_audio_to_content(&content, source, &uploaded);
+        }
+    }
+
     emit_export_progress(
         app,
         WordPressExportProgressPayload {
@@ -1018,6 +1049,37 @@ fn collect_image_sources(content: &str) -> Vec<String> {
             continue;
         }
         if !sources.iter().any(|existing| existing == source) {
+            sources.push(source.to_string());
+        }
+    }
+    sources
+}
+
+/// Collects unique repo-relative `<audio src>` values: audio uploaded to the
+/// project, which the WordPress export uploads to the media library. Audio
+/// already at a URL plays from there.
+fn collect_local_audio_sources(content: &str) -> Vec<String> {
+    let mut sources = Vec::new();
+    let mut cursor = 0;
+    while let Some(offset) = content[cursor..].find("<audio ") {
+        let tag_start = cursor + offset;
+        let Some(tag_length) = content[tag_start..].find('>') else {
+            break;
+        };
+        let tag = &content[tag_start..tag_start + tag_length];
+        cursor = tag_start + tag_length;
+
+        let Some(source) = tag
+            .find("src=\"")
+            .map(|index| &tag[index + "src=\"".len()..])
+            .and_then(|rest| rest.find('"').map(|end| &rest[..end]))
+        else {
+            continue;
+        };
+        if !source.trim().is_empty()
+            && is_local_image_source(source)
+            && !sources.iter().any(|existing| existing == source)
+        {
             sources.push(source.to_string());
         }
     }
@@ -1313,6 +1375,69 @@ fn upload_repo_image(
     };
     cache_uploaded_wordpress_image(image_cache, prepared.cache_key, &uploaded);
     Ok(uploaded)
+}
+
+/// Uploads a project's audio file, or reuses the copy an earlier export
+/// uploaded: as for images, the media slug comes from the file's bytes.
+fn upload_repo_audio(
+    site: &WordPressSite,
+    client: &Client,
+    repo_path: &Path,
+    source: &str,
+) -> Result<UploadedWordPressImage, String> {
+    let absolute_path = resolve_repo_image_path(repo_path, source)?;
+    let mime_type = audio_mime_type(source)
+        .ok_or_else(|| format!("Could not determine the audio type for '{source}'."))?;
+    let bytes = std::fs::read(&absolute_path)
+        .map_err(|error| format!("Could not read the uploaded audio '{source}': {error}"))?;
+    if bytes.len() as u64 > MAX_WORDPRESS_IMAGE_BYTES {
+        return Err(format!("The audio '{source}' is too large to upload."));
+    }
+    let slug = content_addressed_media_slug_from_hash(&image_content_hash(&bytes));
+    if let Some(existing) = find_uploaded_media_by_slug(site, client, &slug)? {
+        wordpress_debug_log(&format!(
+            "reusing existing media for {source}: slug={slug} -> {}",
+            existing.source_url
+        ));
+        return Ok(existing);
+    }
+
+    wordpress_debug_log(&format!(
+        "uploading new WordPress audio for {source}: slug={slug}"
+    ));
+    let extension = source
+        .rsplit_once('.')
+        .map(|(_, extension)| extension.to_ascii_lowercase())
+        .unwrap_or_default();
+    let response = site.upload_media(client, &format!("{slug}.{extension}"), mime_type, bytes)?;
+    uploaded_wordpress_image_from_media_item(&response)
+        .ok_or_else(|| "WordPress did not return a URL for the uploaded audio.".to_string())
+}
+
+/// Points the serialized audio block at the uploaded file and records its
+/// attachment ID, as the WordPress editor does when audio is picked from the
+/// media library.
+fn apply_uploaded_audio_to_content(
+    content: &str,
+    source: &str,
+    uploaded: &UploadedWordPressImage,
+) -> String {
+    let source_url = escape_html_attribute(&uploaded.source_url);
+    let plain = format!(
+        "<!-- wp:audio -->\n<figure class=\"wp-block-audio\"><audio controls src=\"{source}\">"
+    );
+    match uploaded.attachment_id {
+        Some(attachment_id) if content.contains(&plain) => content.replace(
+            &plain,
+            &format!(
+                "<!-- wp:audio {{\"id\":{attachment_id}}} -->\n<figure class=\"wp-block-audio\"><audio controls src=\"{source_url}\">"
+            ),
+        ),
+        _ => content.replace(
+            &format!("<audio controls src=\"{source}\">"),
+            &format!("<audio controls src=\"{source_url}\">"),
+        ),
+    }
 }
 
 fn image_content_hash(bytes: &[u8]) -> String {
@@ -2032,6 +2157,44 @@ mod tests {
         );
         assert!(is_local_image_source("images/a b.png"));
         assert!(!is_local_image_source("https://example.com/x.png"));
+    }
+
+    #[test]
+    fn local_audio_is_collected_and_pointed_at_its_uploaded_attachment() {
+        let block = |source: &str| {
+            format!(
+                "<!-- wp:audio -->\n<figure class=\"wp-block-audio\"><audio controls src=\"{source}\"></audio></figure>\n<!-- /wp:audio -->"
+            )
+        };
+        let content = [
+            block("chapters/ch-1/images/row-1/talk.m4a"),
+            block("https://example.com/remote.mp3"),
+            block("chapters/ch-1/images/row-1/talk.m4a"),
+            "<figure><img src=\"images/a.png\" alt=\"\" /></figure>".to_string(),
+        ]
+        .join("\n\n");
+        assert_eq!(
+            collect_local_audio_sources(&content),
+            vec!["chapters/ch-1/images/row-1/talk.m4a".to_string()],
+        );
+
+        let uploaded = UploadedWordPressImage {
+            attachment_id: Some(42),
+            source_url: "https://site.example/wp-content/uploads/gnosis-tms-abc.m4a".to_string(),
+            natural_width: None,
+            natural_height: None,
+        };
+        let updated = apply_uploaded_audio_to_content(
+            &content,
+            "chapters/ch-1/images/row-1/talk.m4a",
+            &uploaded,
+        );
+        assert_eq!(
+            updated.matches("<!-- wp:audio {\"id\":42} -->\n<figure class=\"wp-block-audio\"><audio controls src=\"https://site.example/wp-content/uploads/gnosis-tms-abc.m4a\"></audio>").count(),
+            2,
+        );
+        assert!(updated.contains(&block("https://example.com/remote.mp3")));
+        assert!(!updated.contains("chapters/ch-1"));
     }
 
     #[test]
