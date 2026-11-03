@@ -459,7 +459,7 @@
 
 .translate-preview__document {
   display: grid;
-  gap: 1.1em;
+  gap: 1.1rem;
 }
 
 .translate-preview__block,
@@ -544,6 +544,19 @@
 
 .translate-preview__block--centered {
   text-align: center;
+}
+
+/* As in the book, every body paragraph opens with a first-line indent, and a
+   paragraph that follows another takes back the document gap (in rem, like the
+   gap, since the paragraph's own em is the editor font size). Japanese, Korean,
+   Chinese, Arabic and Persian text, which the book does not indent, keeps the
+   gap. */
+.translate-preview__document > .translate-preview__block--paragraph:not([lang^="ja" i], [lang^="ko" i], [lang^="zh" i], [lang^="ar" i], [lang^="fa" i]) {
+  text-indent: 1.5em;
+}
+
+.translate-preview__document > .translate-preview__block--paragraph:not([lang^="ja" i], [lang^="ko" i], [lang^="zh" i], [lang^="ar" i], [lang^="fa" i]) + .translate-preview__block--paragraph {
+  margin-top: -1.1rem;
 }
 
 /* Lists indent like the editor's list rows: a marker gutter, then one indent a
