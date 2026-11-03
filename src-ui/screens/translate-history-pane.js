@@ -94,7 +94,9 @@ function renderHistoryEntry(entry, previousEntry, activeLanguage, activeSection,
   return `
     <article class="history-item">
       ${pendingLocalSaveMessage}
-      ${renderHistoryEntryContent(entry, previousEntry, activeLanguage.code)}
+      ${renderHistoryEntryContent(entry, previousEntry, activeLanguage.code, {
+        paragraphs: activeSection?.textHasParagraphs === true,
+      })}
       ${renderHistoryNote(entry, previousEntry, { includeStatusNote: !isOptimisticEntry })}
       ${entryFooter}
     </article>
