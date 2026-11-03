@@ -59,6 +59,7 @@ import {
   renderPreviewToolbar,
   renderTranslateToolbar,
 } from "./translate-toolbar.js";
+import { renderEditorMediaTile } from "../app/editor-media-tile.js";
 
 function middleTruncateTitle(value, maxLength = 34) {
   const text = String(value ?? "");
@@ -164,6 +165,7 @@ function buildTranslateScreenFrame(state) {
   const previewRender = renderEditorPreviewDocumentHtml(previewBlocks, {
     searchState: editorChapter?.previewSearch,
     resolveImageSrc: resolvePreviewImageSrc,
+    renderMediaTile: renderEditorMediaTile,
   });
   let previewBody = "";
   if (editorChapter?.status === "loading") {

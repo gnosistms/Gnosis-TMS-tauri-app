@@ -1,7 +1,6 @@
 import { footnoteParagraphsHtml } from "./editor-footnote-paragraphs.js";
 import { editorFieldImageDisplayName, normalizeEditorFieldImage } from "./editor-images.js";
 import { editorFieldMedia, editorVideoPageUrl } from "./editor-media-kind.js";
-import { renderEditorMediaTile } from "./editor-media-tile.js";
 import {
   normalizeEditorFootnotes,
   parseUnescapedFootnoteMarkers,
@@ -681,6 +680,14 @@ export function renderEditorPreviewDocumentHtml(blocks, options = {}) {
     typeof options.resolveImageSrc === "function"
       ? options.resolveImageSrc
       : (() => "");
+  // The translate screen passes renderEditorMediaTile. It is injected so this
+  // module stays free of UI imports: Node-side browser specs import it directly.
+  // Without one, audio and video render nothing; renderers that cannot play
+  // media apply applyMediaLinkPolicy first.
+  const renderMediaTile =
+    typeof options.renderMediaTile === "function"
+      ? options.renderMediaTile
+      : null;
   const matchCounter = { current: 0 };
   const footnoteState = { items: [] };
   // One entry per input block (empty when it renders nothing), so callers can
@@ -700,9 +707,12 @@ export function renderEditorPreviewDocumentHtml(blocks, options = {}) {
           : "";
         // Audio and video show the row's tile, which opens the same player.
         const media = editorFieldMedia(block.image);
+        if (media.kind !== "image" && !renderMediaTile) {
+          return "";
+        }
         const contentHtml = media.kind === "image"
           ? `<img class="translate-preview__image" src="${escapeHtml(imageSrc)}" alt="" loading="eager" />`
-          : renderEditorMediaTile({
+          : renderMediaTile({
             rowId: block.rowId,
             languageCode: block.languageCode,
             image: block.image,
