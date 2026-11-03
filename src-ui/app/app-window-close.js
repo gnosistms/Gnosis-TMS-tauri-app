@@ -17,3 +17,23 @@ export function destroyCurrentAppWindow(
     return false;
   }
 }
+
+// Quits the app once the editor close wait is over (changes saved, or Close
+// without saving) without closing the window first. On macOS, destroying the
+// window at that point could hang AppKit's window close and freeze the app
+// with the wait dialog still on screen. The backend command saves the store
+// and exits; destroying the window is only the fallback when the command is
+// unavailable. See plans/editor-close-wait-direct-exit-plan.md.
+export async function exitAppAfterCloseWait({
+  tauriCoreApi = globalThis.window?.__TAURI__?.core,
+  tauriWindowApi = globalThis.window?.__TAURI__?.window,
+} = {}) {
+  if (typeof tauriCoreApi?.invoke === "function") {
+    try {
+      await tauriCoreApi.invoke("exit_app_after_close_wait");
+      return true;
+    } catch {}
+  }
+
+  return destroyCurrentAppWindow(tauriWindowApi);
+}
