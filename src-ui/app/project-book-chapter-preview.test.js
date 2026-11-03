@@ -27,6 +27,8 @@ test("book paragraphs follow print drop-cap and indentation boundaries", () => {
 test("opening headings and non-Latin chapters omit drop caps, and notes have a separate hanging area", () => {
   assert.doesNotMatch(render([text("heading2", "A heading"), text("paragraph", "Body")]), /book-print-dropcap/);
   assert.doesNotMatch(render([text("paragraph", "日本語")], "ja"), /book-print-dropcap/);
+  // Without a drop cap, a non-Latin chapter's opening paragraph is indented too.
+  assert.match(render([text("paragraph", "日本語")], "ja"), /<p class="[^"]*book-print-indent/);
   const html = render([text("paragraph", "A reference [1].", { footnotes: [{ marker: 1, text: "A <i>styled</i> note." }] })]);
   assert.match(html, /book-chapter__footnotes[^]*book-footnote__text[^]*<em>styled<\/em>/);
   assert.match(html, /translate-preview__footnote-ref/);

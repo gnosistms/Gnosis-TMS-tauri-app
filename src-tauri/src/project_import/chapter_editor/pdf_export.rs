@@ -1602,18 +1602,16 @@ fn render_typst_chapter(
                     style.as_str(),
                     "heading1" | "heading2" | "quote" | "blockquote" | "centered" | "indented"
                 ) && !is_list_text_style(&style);
-                if latin_body(&document.language_code) {
-                    // Every body paragraph is indented, whatever precedes it, except
-                    // the drop-cap opening.
-                    let amount = if plain && Some(block_index) != dropcap_index {
-                        "1.5em"
-                    } else {
-                        "0pt"
-                    };
-                    source.push_str(&format!(
-                        "#set par(first-line-indent: (amount: {amount}, all: true))\n"
-                    ));
-                }
+                // Every body paragraph is indented, whatever precedes it, except
+                // the drop-cap opening.
+                let amount = if plain && Some(block_index) != dropcap_index {
+                    paragraph_indent(&document.language_code)
+                } else {
+                    "0pt"
+                };
+                source.push_str(&format!(
+                    "#set par(first-line-indent: (amount: {amount}, all: true))\n"
+                ));
                 let dropcap = Some(block_index) == dropcap_index;
                 let citation = citation_after(&document.blocks, block_index);
                 let cited_block = citation.filter(|_| !dropcap).and_then(|(_, citation)| {
@@ -2845,6 +2843,21 @@ fn latin_body(language_code: &str) -> bool {
         || code.starts_with("zh")
         || code.starts_with("ar")
         || code.starts_with("fa"))
+}
+
+/// A body paragraph's first-line indent, after each script's book tradition
+/// (plans/per-language-paragraph-indents.md): Chinese indents two characters,
+/// Japanese and Korean one, and other scripts 1.5em, on the right for Arabic and
+/// Persian. The book composer and the editor preview use the same amounts.
+fn paragraph_indent(language_code: &str) -> &'static str {
+    let code = language_code.to_ascii_lowercase();
+    if code.starts_with("zh") {
+        "2em"
+    } else if code.starts_with("ja") || code.starts_with("ko") {
+        "1em"
+    } else {
+        "1.5em"
+    }
 }
 
 fn heading_font_families(document: &ExportDocument) -> Vec<&'static str> {
@@ -5281,6 +5294,60 @@ mod tests {
                 )),
                 "{source}"
             );
+        }
+    }
+
+    #[test]
+    fn non_latin_scripts_indent_every_paragraph_by_their_own_tradition() {
+        for (language_code, amount) in [
+            ("zh", "2em"),
+            ("zh-Hant", "2em"),
+            ("ja", "1em"),
+            ("ko", "1em"),
+            ("ar", "1.5em"),
+            ("fa", "1.5em"),
+        ] {
+            let workspace = pdf_workspace().unwrap();
+            let _cleanup = WorkspaceCleanup(workspace.clone());
+            let document = ExportDocument {
+                title: "Indents".into(),
+                language_code: language_code.into(),
+                blocks: vec![
+                    text_block("paragraph", "Opening."),
+                    text_block("heading2", "A heading"),
+                    text_block("paragraph", "After the heading."),
+                ],
+                book_parts: Vec::new(),
+            };
+            let session = begin_pdf_image_cache(&test_image_cache_scope(&format!(
+                "paragraph-indents-{language_code}"
+            )));
+            let options = PdfWorkspacePreparationOptions {
+                paper_size: "a5",
+                footnote_links_as_plain_text: true,
+                image_cache_session: &session,
+                layout: TypstLayout::Export,
+            };
+            prepare_typst_workspace(
+                None,
+                "",
+                &workspace,
+                &document,
+                &options,
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+            let source = fs::read_to_string(workspace.join("chapter.typ")).unwrap();
+            // No drop cap, so the opening paragraph is indented as well.
+            assert!(!source.contains("#gnosis-dropcap["), "{language_code}");
+            for text in ["Opening.", "After the heading."] {
+                assert!(
+                    source.contains(&format!(
+                        "#set par(first-line-indent: (amount: {amount}, all: true))\n#text(\"{text}\")"
+                    )),
+                    "{language_code}: {source}"
+                );
+            }
         }
     }
 
