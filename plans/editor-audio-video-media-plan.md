@@ -106,18 +106,20 @@ module (`chapter_editor/media_kind.rs`). Both test against one shared fixture,
 
    | Format | Audio | YouTube / Vimeo / VideoPress | Video file |
    |---|---|---|---|
-   | WordPress | `wp:audio` block; uploaded audio goes to the media library first, like uploaded images | `wp:embed` block | `wp:video` block |
+   | WordPress, clipboard HTML | `wp:audio` block; uploaded audio goes to the media library first, like uploaded images | `wp:embed` block | `wp:video` block |
    | HTML | `<audio controls>`; uploaded audio as a data URL, like uploaded images | `<iframe>` player | `<video controls>` |
-   | EPUB | uploaded audio bundled with `<audio controls>`; remote audio linked | linked | linked |
-   | PDF book | icon + caption + clickable URL | same | same |
-   | DOCX, RTF, Vellum | hyperlink paragraph with the caption | same | same |
-   | Markdown | link; uploaded audio bundled beside the file, like book images | link | link |
-   | TXT, XLSX | caption and the URL as plain text | same | same |
+   | EPUB | uploaded MP3 and M4A bundled with `<audio controls>`; WAV and remote audio linked | linked | linked |
+   | PDF, DOCX, RTF, Markdown, TXT, Vellum, plain-text copy | centered "Audio:" line whose link text is the URL, then the caption | "Video:" line | "Video:" line |
+   | XLSX | not exported, as images are not | same | same |
 
-   Uploaded audio has no public address, so the link-only formats show its
-   caption and file name as text. The in-app book preview and editor preview
-   show the same icon or thumbnail tile as the row. Media never becomes a
-   chapter's opening cover image.
+   As built: WAV is linked in EPUB because it is not an EPUB core media
+   type, so readers need not play it. The link-only formats share one rule
+   (`media_link_blocks` in Rust, `applyMediaLinkPolicy` in JS), with no
+   icon, and Markdown links uploaded audio by file name instead of bundling
+   it. Uploaded audio has no public address, so those formats show its file
+   name as text. The editor preview shows the row's tile and opens the same
+   player; the book preview models the PDF, so it shows the link lines.
+   Media never becomes a chapter's opening cover image.
 8. **Tests.** The shared media-kind fixture in `npm test` and `cargo test`;
    Rust tests for the new magic bytes, WordPress lookup parameters and each
    export format; row-render and overlay unit tests; one Playwright test that
