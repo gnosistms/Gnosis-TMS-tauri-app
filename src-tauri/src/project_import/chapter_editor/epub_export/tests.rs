@@ -450,6 +450,67 @@ fn epub_loads_images_in_parallel_but_numbers_them_in_document_order_with_progres
 }
 
 #[test]
+fn epub_bundles_uploaded_mp3_and_m4a_audio_and_links_other_media() {
+    use super::super::chapter_export::apply_epub_print_policy;
+    use super::super::media_kind::{EditorMedia, VideoSource};
+    let path = std::env::temp_dir().join(format!("gnosis-epub-{}.mp3", uuid::Uuid::now_v7()));
+    let mp3 = b"ID3\x04\x00\x00\x00\x00\x00\x00 audio".to_vec();
+    fs::write(&path, &mp3).unwrap();
+    let upload = |name: &str| ExportImage::Upload {
+        repo_relative_path: format!("chapters/ch-1/images/row/{name}"),
+        raw_url: None,
+        absolute_path: path.clone(),
+    };
+    let audio = ExportBlock::Media {
+        media: EditorMedia::Audio,
+        source: upload("evening-talk.mp3"),
+        caption: "<i>Evening</i> talk".into(),
+    };
+    let document = apply_epub_print_policy(
+        &document(
+            "Media",
+            vec![
+                audio.clone(),
+                audio,
+                ExportBlock::Media {
+                    media: EditorMedia::Audio,
+                    source: upload("chant.wav"),
+                    caption: String::new(),
+                },
+                ExportBlock::Media {
+                    media: EditorMedia::Video(VideoSource::YouTube {
+                        id: "dQw4w9WgXcQ".into(),
+                    }),
+                    source: ExportImage::Url("https://www.youtube.com/watch?v=dQw4w9WgXcQ".into()),
+                    caption: String::new(),
+                },
+            ],
+        ),
+        false,
+    );
+    let files = unpack(&document);
+    fs::remove_file(path).unwrap();
+
+    // The same file is bundled once, stored as it was uploaded.
+    assert_eq!(files["EPUB/audio/audio-1.mp3"], mp3);
+    assert!(!files
+        .keys()
+        .any(|name| name.starts_with("EPUB/audio/audio-2")));
+    assert!(file(&files, "EPUB/package.opf")
+        .contains("<item id=\"audio-1\" href=\"audio/audio-1.mp3\" media-type=\"audio/mpeg\"/>"));
+    let content = file(&files, "EPUB/section-1.xhtml");
+    assert!(content.contains(
+        "<figure><audio controls=\"controls\" src=\"audio/audio-1.mp3\">evening-talk.mp3</audio><figcaption><em>Evening</em> talk</figcaption></figure>"
+    ));
+    // WAV is not an EPUB core media type, and a video is a link.
+    assert!(content.contains("<strong>Audio:</strong> chant.wav"));
+    assert!(content.contains(
+        "<strong>Video:</strong> <a href=\"https://www.youtube.com/watch?v=dQw4w9WgXcQ\">"
+    ));
+    assert!(!content.contains("<iframe"));
+}
+
+#[test]
 fn epub_shows_a_notice_for_remote_images_that_cannot_be_included() {
     // Public-download validation rejects both sources before doing network I/O.
     let image = |url: &str, caption: &str| ExportBlock::Image {
