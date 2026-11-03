@@ -1,4 +1,4 @@
-import { footnoteParagraphsHtml } from "./editor-footnote-paragraphs.js";
+import { footnoteParagraphsHtml, rowTextParagraphsHtml } from "./editor-footnote-paragraphs.js";
 import { buildEditorGlossaryModel } from "./editor-glossary-highlighting.js";
 import { waitForGlossaryTermWritesToSettle } from "./glossary-term-write-coordinator.js";
 import { buildEditorRowSearchHighlightMap } from "./editor-search-flow.js";
@@ -339,11 +339,14 @@ function applyEditorTextHighlightLayersToRowCard(
               )
               : [],
           });
+        // Lay the text out as the row render did, or the redraw flattens it.
         setElementInnerHtmlIfChanged(displayText, contentKind === "footnote"
           ? footnoteParagraphsHtml(displayHtml)
           : contentKind === "field" && isListRowTextStyle(stack.dataset.rowTextStyle)
             ? renderEditorListFieldHtml(displayHtml, stack.dataset.rowTextStyle)
-            : displayHtml);
+            : contentKind === "field" && displayText.dataset.textHasParagraphs !== undefined
+              ? rowTextParagraphsHtml(displayHtml)
+              : displayHtml);
       }
     }
 

@@ -6415,6 +6415,17 @@ test.describe("editor regressions", () => {
     expect(second.top - first.bottom).toBeGreaterThan(4);
     await displayField.screenshot({ path: test.info().outputPath("row-paragraphs.png") });
 
+    // The deferred glossary/search highlight sync (250 ms after a render) redraws
+    // the display text; the paragraphs must survive it, with or without marks.
+    await page.waitForTimeout(600);
+    expect(await renderedParagraphs()).toEqual(["First paragraph with a\nline break", "Second paragraph"]);
+    await page.locator("[data-editor-search-input]").fill("Second");
+    await expect(displayField.locator(".translation-language-panel__search-match")).toHaveText("Second");
+    await page.waitForTimeout(600);
+    expect(await renderedParagraphs()).toEqual(["First paragraph with a\nline break", "Second paragraph"]);
+    await page.locator("[data-editor-search-input]").fill("");
+    await expect(displayField.locator(".translation-language-panel__search-match")).toHaveCount(0);
+
     const field = await activateMainEditorField(page, rowId, "vi");
     await expect(field).toHaveValue(text);
     const saveShortcut = await editorSaveShortcut(page);
