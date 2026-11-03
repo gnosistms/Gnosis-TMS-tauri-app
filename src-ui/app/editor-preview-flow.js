@@ -121,7 +121,10 @@ function previewBlockOffsetTop(previewBlock) {
 
   const containerRect = scrollContainer.getBoundingClientRect();
   const blockRect = previewBlock.getBoundingClientRect();
-  const offsetTop = blockRect.top - containerRect.top;
+  // At most halfway down: translate mode's scroll area starts lower than the
+  // preview's, so a block double-clicked near the bottom would otherwise bring
+  // its row back below the fold.
+  const offsetTop = Math.min(blockRect.top - containerRect.top, containerRect.height / 2);
   return Number.isFinite(offsetTop) ? offsetTop : 0;
 }
 
