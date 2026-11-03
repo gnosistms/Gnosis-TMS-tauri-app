@@ -1700,13 +1700,15 @@ When asked to review spelling or grammar, review all current target-language sec
 Be direct and useful. If the answer depends on ambiguity in the source text, say so."
             .to_string(),
     );
-    push_tagged_prompt_section(
-        &mut context,
-        "source_context",
-        format!(
-            "This is the source text in context, provided to help you understand source_text more clearly:\n{source_context}"
-        ),
-    );
+    if !source_context.is_empty() {
+        push_tagged_prompt_section(
+            &mut context,
+            "source_context",
+            format!(
+                "This is the source text in context, provided to help you understand source_text more clearly:\n{source_context}"
+            ),
+        );
+    }
     push_tagged_prompt_section(
         &mut context,
         "languages",
@@ -2772,6 +2774,14 @@ pub(crate) fn run_ai_translation(
     })
 }
 
+// An image row can have only a caption, and a row can have only a footnote;
+// either is enough source to discuss.
+fn assistant_row_has_source(row: &AiAssistantRowContext) -> bool {
+    !row.source_text.trim().is_empty()
+        || !row.source_footnote.trim().is_empty()
+        || !row.source_image_caption.trim().is_empty()
+}
+
 pub(crate) fn run_ai_assistant_turn(
     app: &AppHandle,
     request: AiAssistantTurnRequest,
@@ -2785,7 +2795,7 @@ pub(crate) fn run_ai_assistant_turn(
             request.provider_id.display_name()
         ));
     }
-    if request.row.source_text.trim().is_empty() {
+    if !assistant_row_has_source(&request.row) {
         return Err("There is no source text to discuss yet.".to_string());
     }
 
@@ -2844,7 +2854,7 @@ pub(crate) fn probe_ai_model(app: &AppHandle, request: AiModelProbeRequest) -> R
 #[cfg(test)]
 mod tests {
     use super::{
-        build_assistant_chat_prompt, build_assistant_prompt_parts,
+        assistant_row_has_source, build_assistant_chat_prompt, build_assistant_prompt_parts,
         build_glossary_alignment_prompt_request, build_review_batch_prompt, build_review_prompt,
         build_translation_batch_prompt, build_translation_prompt, find_matched_glossary_terms,
         find_matched_glossary_terms_in_texts, format_translation_glossary_hints,
@@ -3799,6 +3809,33 @@ mod tests {
 
         assert!(prompt.contains("<source_footnote>\nNota fuente\n</source_footnote>"));
         assert!(prompt.contains("<source_image_caption>\nCaption source\n</source_image_caption>"));
+    }
+
+    #[test]
+    fn assistant_accepts_rows_whose_only_source_is_a_caption_or_footnote() {
+        let mut request = assistant_request_for_prompt();
+        request.row.source_text = "  ".to_string();
+        assert!(!assistant_row_has_source(&request.row));
+
+        request.row.source_image_caption = "Kim tu thap".to_string();
+        assert!(assistant_row_has_source(&request.row));
+
+        request.row.source_image_caption = String::new();
+        request.row.source_footnote = "Nota fuente".to_string();
+        assert!(assistant_row_has_source(&request.row));
+    }
+
+    #[test]
+    fn assistant_prompt_for_caption_only_row_omits_empty_source_sections() {
+        let mut request = assistant_request_for_prompt();
+        request.row.source_text = String::new();
+        request.row.source_image_caption = "Caption source".to_string();
+        request.row_window = vec![];
+        let prompt = build_assistant_chat_prompt(&request);
+
+        assert!(prompt.contains("<source_image_caption>\nCaption source\n</source_image_caption>"));
+        assert!(!prompt.contains("<source_text>"));
+        assert!(!prompt.contains("<source_context>"));
     }
 
     #[test]
