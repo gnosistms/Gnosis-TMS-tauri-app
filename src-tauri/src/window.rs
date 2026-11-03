@@ -3,6 +3,7 @@ use base64::Engine as _;
 use serde::Serialize;
 use std::{fs, path::Path};
 use tauri::Manager;
+use tauri_plugin_store::StoreExt;
 
 pub(crate) fn focus_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
@@ -10,6 +11,23 @@ pub(crate) fn focus_main_window(app: &tauri::AppHandle) {
         let _ = window.unminimize();
         let _ = window.set_focus();
     }
+}
+
+const APP_STATE_STORE_FILE: &str = "app-state.json";
+
+/// Quits the app once the editor's close wait is over (changes saved, or the
+/// user chose Close without saving) without closing the window first. On
+/// macOS, destroying the window at that point could hang AppKit's window close
+/// and leave the app frozen with the wait dialog on screen. Saving the store
+/// here stands in for the store plugin's exit hook, which this path skips.
+/// See plans/editor-close-wait-direct-exit-plan.md.
+#[tauri::command]
+pub(crate) fn exit_app_after_close_wait(app: tauri::AppHandle) {
+    if let Some(store) = app.get_store(APP_STATE_STORE_FILE) {
+        let _ = store.save();
+    }
+    app.cleanup_before_exit();
+    std::process::exit(0);
 }
 
 #[derive(Serialize)]

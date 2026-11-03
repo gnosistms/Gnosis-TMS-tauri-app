@@ -188,7 +188,7 @@ use crate::{
         check_for_app_update, download_app_update, install_app_update, PendingUpdate,
         UpdateInstallation,
     },
-    window::read_local_dropped_file,
+    window::{exit_app_after_close_wait, read_local_dropped_file},
 };
 
 #[tauri::command]
@@ -616,6 +616,7 @@ pub fn run() {
             glossary_research_studio::dle::glossary_studio_fetch_dle,
             check_internet_connection,
             read_local_dropped_file,
+            exit_app_after_close_wait,
             append_editor_scroll_debug_log,
             check_for_app_update,
             download_app_update,
