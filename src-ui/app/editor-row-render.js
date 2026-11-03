@@ -1101,6 +1101,7 @@ function renderEditorLanguageField(row, language) {
           ><span
             class="translation-language-panel__field-static-text"
             data-editor-display-text
+            ${language.textHasParagraphs === true ? "data-text-has-paragraphs" : ""}
           >${staticFieldTextHtml}</span></div>
         `
       : row.canEdit === true && language.canEdit === true ? `
@@ -1115,6 +1116,7 @@ function renderEditorLanguageField(row, language) {
           ><span
             class="translation-language-panel__field-static-text"
             data-editor-display-text
+            ${language.textHasParagraphs === true ? "data-text-has-paragraphs" : ""}
           >${staticFieldTextHtml}</span></button>
         ` : `
           <div
@@ -1126,6 +1128,7 @@ function renderEditorLanguageField(row, language) {
           ><span
             class="translation-language-panel__field-static-text"
             data-editor-display-text
+            ${language.textHasParagraphs === true ? "data-text-has-paragraphs" : ""}
           >${staticFieldTextHtml}</span></div>
         `;
     return `
