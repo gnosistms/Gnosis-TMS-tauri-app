@@ -1,7 +1,10 @@
 import {
+  editorFieldImageDisplayName,
   editorFieldImageEqual,
+  editorWordPressCaptionSearchKey,
   normalizeEditorFieldImage,
 } from "./editor-images.js";
+import { editorFieldMedia, editorMediaForUploadPath } from "./editor-media-kind.js";
 import { enforceImportFileSizeLimit } from "./import-file-limit.js";
 import { openLocalFilePicker } from "./local-file-picker.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
@@ -43,11 +46,14 @@ import { projectRepoScope } from "./repo-write-queue.js";
 import { updateEditorChapterRow } from "./editor-state-flow.js";
 
 const IMAGE_FILE_ACCEPT =
-  ".jpg,.jpeg,.png,.gif,.svg,.webp,.avif,.bmp,.ico,.apng,image/jpeg,image/png,image/gif,image/svg+xml,image/webp,image/avif,image/bmp,image/x-icon";
+  ".jpg,.jpeg,.png,.gif,.svg,.webp,.avif,.bmp,.ico,.apng,image/jpeg,image/png,image/gif,image/svg+xml,image/webp,image/avif,image/bmp,image/x-icon"
+  + ",.mp3,.m4a,.wav,audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,audio/x-wav,audio/wave";
 // Activating the last row opens its two-row editing toolbar, which alone adds
 // about 80px below the fold; the tolerance must still count that as the bottom.
 const TRANSLATE_MAIN_BOTTOM_PIN_TOLERANCE_PX = 120;
 export const EDITOR_IMAGE_CAPTION_ENRICHED_EVENT = "editor-image-caption-enriched";
+export const EDITOR_IMAGE_CAPTION_SEARCH_STARTED_EVENT = "editor-image-caption-search-started";
+export const EDITOR_IMAGE_CAPTION_SEARCH_FINISHED_EVENT = "editor-image-caption-search-finished";
 
 let editorImageCaptionListenerPromise = null;
 
@@ -359,15 +365,69 @@ export function handleEditorImageCaptionEnrichedEvent(payload, render, operation
   return true;
 }
 
+function readWordPressCaptionSearchPayload(payload) {
+  const rowId = String(payload?.rowId ?? "");
+  const languageCode = String(payload?.languageCode ?? "");
+  const imageUrl = String(payload?.imageUrl ?? "");
+  if (!rowId || !languageCode || !imageUrl || state.editorChapter?.chapterId !== payload?.chapterId) {
+    return null;
+  }
+  return { rowId, languageCode, imageUrl, key: editorWordPressCaptionSearchKey(rowId, languageCode) };
+}
+
+export function handleEditorImageCaptionSearchStartedEvent(payload, render) {
+  const search = readWordPressCaptionSearchPayload(payload);
+  if (!search) {
+    return false;
+  }
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    wordpressCaptionSearches: {
+      ...state.editorChapter.wordpressCaptionSearches,
+      [search.key]: search.imageUrl,
+    },
+  };
+  renderEditorRowScoped(render, search.rowId, "wordpress-image-caption-search-started");
+  return true;
+}
+
+export function handleEditorImageCaptionSearchFinishedEvent(payload, render) {
+  const search = readWordPressCaptionSearchPayload(payload);
+  // A lookup for an image that was since replaced must not end the newer lookup.
+  if (!search || state.editorChapter.wordpressCaptionSearches?.[search.key] !== search.imageUrl) {
+    return false;
+  }
+
+  const wordpressCaptionSearches = { ...state.editorChapter.wordpressCaptionSearches };
+  delete wordpressCaptionSearches[search.key];
+  state.editorChapter = {
+    ...state.editorChapter,
+    wordpressCaptionSearches,
+  };
+  renderEditorRowScoped(render, search.rowId, "wordpress-image-caption-search-finished");
+  return true;
+}
+
 export function registerEditorImageCaptionListeners(render) {
   if (!listen) {
     return Promise.resolve(null);
   }
   if (!editorImageCaptionListenerPromise) {
-    editorImageCaptionListenerPromise = listen(
-      EDITOR_IMAGE_CAPTION_ENRICHED_EVENT,
-      (event) => handleEditorImageCaptionEnrichedEvent(event?.payload, render),
-    );
+    editorImageCaptionListenerPromise = Promise.all([
+      listen(
+        EDITOR_IMAGE_CAPTION_ENRICHED_EVENT,
+        (event) => handleEditorImageCaptionEnrichedEvent(event?.payload, render),
+      ),
+      listen(
+        EDITOR_IMAGE_CAPTION_SEARCH_STARTED_EVENT,
+        (event) => handleEditorImageCaptionSearchStartedEvent(event?.payload, render),
+      ),
+      listen(
+        EDITOR_IMAGE_CAPTION_SEARCH_FINISHED_EVENT,
+        (event) => handleEditorImageCaptionSearchFinishedEvent(event?.payload, render),
+      ),
+    ]);
   }
   return editorImageCaptionListenerPromise;
 }
@@ -462,11 +522,11 @@ function validateImageUrlSyntax(url) {
   try {
     parsedUrl = new URL(url);
   } catch {
-    return "Enter a valid image URL.";
+    return "Enter a valid URL.";
   }
 
   if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
-    return "Only http:// and https:// image URLs are supported.";
+    return "Only http:// and https:// URLs are supported.";
   }
 
   return "";
@@ -523,9 +583,18 @@ async function coerceUploadBlob(value) {
   throw new Error("Invalid file");
 }
 
-async function validateUploadedImageFile(fileBlob) {
+async function validateUploadedImageFile(fileBlob, fileName = "") {
   if (!(fileBlob instanceof Blob)) {
     throw new Error("Invalid file");
+  }
+
+  // Audio is checked by its contents when it is saved (images.rs); decoding it
+  // here would only reject files the webview's codecs happen not to support.
+  if (editorMediaForUploadPath(fileName).kind === "audio") {
+    if (fileBlob.size === 0) {
+      throw new Error("Invalid file");
+    }
+    return;
   }
 
   const objectUrl = URL.createObjectURL(fileBlob);
@@ -976,7 +1045,7 @@ async function saveEditorImageUrlDraft(
     previousImage: currentImage(rowId, languageCode),
     nextImage,
     operations,
-    failureMessage: "The image URL could not be saved.",
+    failureMessage: "The URL could not be saved.",
     onFailure: (message) => {
       if (
         state.editorChapter?.chapterId === chapterAtRequest
@@ -992,7 +1061,7 @@ async function saveEditorImageUrlDraft(
           mode: null,
           urlDraft: draft,
           invalidUrl: true,
-          urlErrorMessage: message || "The image URL could not be saved.",
+          urlErrorMessage: message || "The URL could not be saved.",
           status: "idle",
         });
       }
@@ -1148,7 +1217,7 @@ async function saveUploadedEditorImage(render, rowId, languageCode, file, operat
   renderEditorRowScoped(render, rowId, "image-upload-state");
 
   try {
-    await validateUploadedImageFile(fileBlob);
+    await validateUploadedImageFile(fileBlob, fileName);
   } catch {
     if (state.editorChapter?.chapterId === chapterAtRequest) {
       setImageEditorState({
@@ -1281,7 +1350,7 @@ async function saveValidatedUploadedEditorImage(
         fileName,
       },
       operations,
-      failureMessage: "The image could not be uploaded.",
+      failureMessage: "The file could not be uploaded.",
       notice: "The image changed on disk. Reloaded the latest version.",
       onFailure: () => {
         if (state.editorChapter?.chapterId === chapterAtRequest) {
@@ -1305,7 +1374,7 @@ async function saveValidatedUploadedEditorImage(
       renderEditorRowScoped(render, rowId, "image-upload-state");
     }
     const message = error instanceof Error ? error.message : String(error);
-    showNoticeBadge(message || "The image could not be uploaded.", render);
+    showNoticeBadge(message || "The file could not be uploaded.", render);
   }
   return null;
 }
@@ -1376,7 +1445,7 @@ export async function handleDroppedEditorImagePath(render, path, operations = {}
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    showNoticeBadge(message || "The image could not be uploaded.", render);
+    showNoticeBadge(message || "The file could not be uploaded.", render);
   }
 }
 
@@ -1703,6 +1772,7 @@ export function openEditorImagePreview(render, rowId, languageCode) {
     return;
   }
 
+  const media = editorFieldMedia(image);
   state.editorChapter = {
     ...state.editorChapter,
     imagePreviewOverlay: {
@@ -1713,6 +1783,9 @@ export function openEditorImagePreview(render, rowId, languageCode) {
       imageUrl: image?.kind === "url"
         ? image.url ?? ""
         : "",
+      media: { ...media },
+      title: editorFieldImageDisplayName(image),
+      caption: String(findEditorRowById(rowId, state.editorChapter)?.imageCaptions?.[languageCode] ?? ""),
     },
   };
   render?.({ scope: "translate-image-preview-overlay" });

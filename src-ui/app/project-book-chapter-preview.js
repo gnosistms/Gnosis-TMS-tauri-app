@@ -1,4 +1,4 @@
-import { renderEditorPreviewDocumentHtml, applyCustomHtmlPlainTextPolicy } from "./editor-preview.js";
+import { renderEditorPreviewDocumentHtml, applyCustomHtmlPlainTextPolicy, applyMediaLinkPolicy } from "./editor-preview.js";
 import { extractInlineMarkupVisibleText } from "./editor-inline-markup/serialize.js";
 import { EDITOR_ROW_TEXT_STYLE_QUOTE, normalizeEditorRowTextStyle } from "./editor-row-text-style.js";
 import { bookPrintProfile } from "./project-book-print-profile.js";
@@ -26,9 +26,9 @@ function chapterCoverLength(blocks) {
 // The chapter's pages: its text, or a cover page followed by its text. Footnotes
 // keep one numbering and are listed after the text.
 export function renderBookChapterPages(blocks, modal, resolveImageSrc) {
-  let indentNext = false;
   let searchDropcap = bookPrintProfile(modal).latin;
-  const normalized = applyCustomHtmlPlainTextPolicy(blocks, modal.omitCustomHtml)
+  // As in the PDF, audio and video become link lines.
+  const normalized = applyMediaLinkPolicy(applyCustomHtmlPlainTextPolicy(blocks, modal.omitCustomHtml))
     .map((block) => block.textStyle === "chapter_heading" ? { ...block, textStyle: "heading1" } : block);
   const cover = chapterCoverLength(normalized);
   // Cover blocks leave the drop cap to the text, which opens the next page.
@@ -37,17 +37,15 @@ export function renderBookChapterPages(blocks, modal, resolveImageSrc) {
     resolveImageSrc, attributionOutside: true, footnoteTextClass: "book-footnote__text",
     blockClassName(block, variant) {
       if (block.bookCover) return "";
-      if (variant === "image") { indentNext = false; return ""; }
-      if (variant === "separator") { indentNext = false; searchDropcap = false; return ""; }
+      if (variant === "image") return "";
+      if (variant === "separator") { searchDropcap = false; return ""; }
       const text = extractInlineMarkupVisibleText(block.text || "");
       const first = text.match(/[\p{L}\p{N}]/u)?.[0];
       const plain = variant === "paragraph";
       const dropcap = searchDropcap && plain && first && /\p{L}/u.test(first);
       if (first || block.attribution?.trim()) searchDropcap = false;
-      const indent = plain && indentNext && !dropcap;
-      if (text.trim()) indentNext = plain;
-      if (block.attribution?.trim()) indentNext = false;
-      return dropcap ? "book-print-dropcap" : indent ? "book-print-indent" : "";
+      // As in the PDF, every body paragraph but the drop-cap opening is indented.
+      return dropcap ? "book-print-dropcap" : plain ? "book-print-indent" : "";
     },
   });
   // Book pages are a reading preview; generic editor tooltips remain elsewhere.

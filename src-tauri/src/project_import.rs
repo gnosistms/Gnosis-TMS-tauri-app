@@ -16,7 +16,7 @@ use tauri::AppHandle;
 pub(crate) use import_sample::save_project_import_sample;
 
 pub(crate) use self::chapter_editor::{
-    fetch_public_image_dimensions, initialize_export_image_cache,
+    audio_mime_type, fetch_public_image_dimensions, initialize_export_image_cache,
     list_imported_editor_conflict_refs, normalize_chapter_settings_value,
     persist_imported_editor_conflict_entries, repo_has_imported_editor_conflicts,
     resolve_chapter_json_git_conflict_from_stage_texts, resolve_export_settings_git_conflict,
@@ -818,6 +818,18 @@ pub(crate) async fn save_gtms_editor_language_image_url(
     .map_err(|error| format!("The row image URL worker failed: {error}"))??;
     start_wordpress_caption_enrichment(app, input, &response);
     Ok(response)
+}
+
+/// The poster image of a Vimeo or VideoPress video row; None when it has none.
+#[tauri::command]
+pub(crate) async fn fetch_editor_video_thumbnail_url(
+    video_url: String,
+) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        chapter_editor::fetch_video_thumbnail_url(&video_url)
+    })
+    .await
+    .map_err(|error| format!("The video thumbnail worker failed: {error}"))
 }
 
 #[tauri::command]

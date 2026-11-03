@@ -3,6 +3,9 @@ use super::list_style::{
     is_list_text_style, list_item_numbers, list_items, list_kind, normalized_list_text,
     render_list_html, ListItem, ListKind, ListLevelFormat, LIST_MAX_LEVEL,
 };
+use super::media_kind::{
+    audio_mime_type, media_for_upload_path, media_for_url, EditorMedia, VideoSource,
+};
 use super::row_fields::parse_labeled_footnote_text_for_merge;
 use super::*;
 use crate::project_import::chapter_import::format_srt_timestamp;
@@ -155,6 +158,13 @@ pub(super) enum ExportBlock {
         image: ExportImage,
         caption: String,
     },
+    /// An audio or video row. Only HTML and EPUB embed it; for every other
+    /// format apply_print_custom_html_policy turns it into a link paragraph.
+    Media {
+        media: EditorMedia,
+        source: ExportImage,
+        caption: String,
+    },
     Footnote {
         number: usize,
         marker: usize,
@@ -285,7 +295,10 @@ pub(crate) fn export_gtms_chapter_file_sync(
             };
             fs::write(
                 &output_path,
-                super::epub_export::render_epub_document(&print_document, &mut progress)?,
+                super::epub_export::render_epub_document(
+                    &apply_epub_print_policy(&document, input.omit_custom_html),
+                    &mut progress,
+                )?,
             )
             .map_err(|error| format!("Could not write '{}': {error}", output_path.display()))
         }
@@ -911,11 +924,23 @@ pub(super) fn build_export_document(
         if let Some(image) = field
             .and_then(|value| export_image(repo_path, &value.image, project_full_name, head_sha))
         {
-            blocks.push(ExportBlock::Image {
-                image,
-                caption: field
-                    .map(|value| normalize_editor_image_caption_value(&value.image_caption))
-                    .unwrap_or_default(),
+            let caption = field
+                .map(|value| normalize_editor_image_caption_value(&value.image_caption))
+                .unwrap_or_default();
+            let media = match &image {
+                ExportImage::Url(url) => media_for_url(url),
+                ExportImage::Upload {
+                    repo_relative_path, ..
+                } => media_for_upload_path(repo_relative_path),
+            };
+            blocks.push(if media.is_image() {
+                ExportBlock::Image { image, caption }
+            } else {
+                ExportBlock::Media {
+                    media,
+                    source: image,
+                    caption,
+                }
             });
         }
 
@@ -1082,9 +1107,90 @@ pub(super) fn apply_print_custom_html_policy(
     document: &ExportDocument,
     omit: bool,
 ) -> ExportDocument {
+    apply_print_policy(document, omit, |_| false)
+}
+
+/// The print policy for EPUB, which bundles uploaded MP3 and M4A audio into the
+/// book and links everything else. WAV is not an EPUB core media type, so
+/// readers need not play it.
+pub(super) fn apply_epub_print_policy(document: &ExportDocument, omit: bool) -> ExportDocument {
+    apply_print_policy(document, omit, |block| match block {
+        ExportBlock::Media {
+            media: EditorMedia::Audio,
+            source: ExportImage::Upload {
+                repo_relative_path, ..
+            },
+            ..
+        } => matches!(
+            audio_mime_type(repo_relative_path),
+            Some("audio/mpeg" | "audio/mp4")
+        ),
+        _ => false,
+    })
+}
+
+/// The file name shown for uploaded media, which has no public address.
+pub(super) fn uploaded_media_file_name(repo_relative_path: &str) -> &str {
+    repo_relative_path
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(repo_relative_path)
+}
+
+/// Audio and video as text for formats that cannot play them: a centered
+/// "Audio: <link>" line (the link's text is the address itself, so it still
+/// reads on paper), then the caption. Uploaded media has no public address,
+/// so its file name stands in for the link.
+pub(super) fn media_link_blocks(
+    media: &EditorMedia,
+    source: &ExportImage,
+    caption: &str,
+) -> Vec<ExportBlock> {
+    let target = match source {
+        ExportImage::Url(url) => format!(
+            "<a href=\"{}\">{}</a>",
+            escape_html(url),
+            url.replace(['<', '>'], "")
+        ),
+        ExportImage::Upload {
+            repo_relative_path, ..
+        } => uploaded_media_file_name(repo_relative_path).replace(['<', '>'], ""),
+    };
+    let mut blocks = vec![ExportBlock::Text {
+        text_style: "centered".to_string(),
+        text: format!("<strong>{}:</strong> {target}", media.label()),
+    }];
+    if !caption.trim().is_empty() {
+        blocks.push(ExportBlock::Text {
+            text_style: "centered".to_string(),
+            text: caption.to_string(),
+        });
+    }
+    blocks
+}
+
+fn apply_print_policy(
+    document: &ExportDocument,
+    omit: bool,
+    keep_media: fn(&ExportBlock) -> bool,
+) -> ExportDocument {
     let mut blocks = Vec::with_capacity(document.blocks.len());
     let mut remapped_indices = BTreeMap::new();
     for (old_index, block) in document.blocks.iter().enumerate() {
+        if let ExportBlock::Media {
+            media,
+            source,
+            caption,
+        } = block
+        {
+            remapped_indices.insert(old_index, blocks.len());
+            if keep_media(block) {
+                blocks.push(block.clone());
+            } else {
+                blocks.extend(media_link_blocks(media, source, caption));
+            }
+            continue;
+        }
         let next_block = match block {
             ExportBlock::Text { text_style, text }
                 if export_text_style(Some(text_style)) == "custom_html" =>
@@ -1127,7 +1233,7 @@ pub(super) fn apply_print_custom_html_policy(
             .iter()
             .map(|part| BookPart {
                 item: part.item.clone(),
-                document: apply_print_custom_html_policy(&part.document, omit),
+                document: apply_print_policy(&part.document, omit, keep_media),
             })
             .collect(),
         title: document.title.clone(),
@@ -1546,15 +1652,73 @@ fn render_html_document(document: &ExportDocument) -> Result<String, String> {
                     );
                 }
             }
+            ExportBlock::Media {
+                media,
+                source,
+                caption,
+            } => {
+                citation_slot = None;
+                let caption_html = if caption.trim().is_empty() {
+                    String::new()
+                } else {
+                    format!("<figcaption>{}</figcaption>", sanitize_inline_html(caption))
+                };
+                let _ = writeln!(
+                    body,
+                    "<figure class=\"media\">{}{caption_html}</figure>",
+                    html_media_player(media, source)?
+                );
+            }
         }
     }
 
     Ok(format!(
-        "<!doctype html>\n<html lang=\"{}\">\n<head>\n<meta charset=\"utf-8\">\n<title>{}</title>\n<style>body{{max-width:760px;margin:40px auto;padding:0 24px;font-family:serif;line-height:1.6;color:#2f2117;}}h1{{font-size:2rem;}}h2{{font-size:1.4rem;}}blockquote{{margin:1em 2em;}}.quote-attribution{{display:block;font-size:90%;text-align:right;font-style:normal;}}.indented{{padding-left:2em;}}.centered{{text-align:center;}}.footnote{{font-size:.95em;}}figure{{margin:1.5em auto;text-align:center;}}img{{display:block;margin:0 auto;max-width:100%;height:auto;}}figcaption{{margin-top:.6em;text-align:center;}}</style>\n</head>\n<body>\n{}\n</body>\n</html>\n",
+        "<!doctype html>\n<html lang=\"{}\">\n<head>\n<meta charset=\"utf-8\">\n<title>{}</title>\n<style>body{{max-width:760px;margin:40px auto;padding:0 24px;font-family:serif;line-height:1.6;color:#2f2117;}}h1{{font-size:2rem;}}h2{{font-size:1.4rem;}}blockquote{{margin:1em 2em;}}.quote-attribution{{display:block;font-size:90%;text-align:right;font-style:normal;}}.indented{{padding-left:2em;}}.centered{{text-align:center;}}.footnote{{font-size:.95em;}}figure{{margin:1.5em auto;text-align:center;}}img{{display:block;margin:0 auto;max-width:100%;height:auto;}}figcaption{{margin-top:.6em;text-align:center;}}audio{{display:block;width:100%;}}video{{display:block;width:100%;height:auto;}}.video-frame{{aspect-ratio:16/9;}}.video-frame iframe{{display:block;width:100%;height:100%;border:0;}}</style>\n</head>\n<body>\n{}\n</body>\n</html>\n",
         escape_html(&document.language_code),
         escape_html(&document.title),
         body
     ))
+}
+
+/// The HTML player for an audio or video row. Uploaded audio is inlined as a
+/// data URL, as uploaded images are, so the file stays self-contained.
+fn html_media_player(media: &EditorMedia, source: &ExportImage) -> Result<String, String> {
+    let src = match source {
+        ExportImage::Url(url) => url.clone(),
+        ExportImage::Upload {
+            repo_relative_path,
+            absolute_path,
+            ..
+        } => {
+            let bytes = fs::read(absolute_path).map_err(|error| {
+                format!(
+                    "Could not read uploaded audio '{}': {error}",
+                    absolute_path.display()
+                )
+            })?;
+            let mime_type = audio_mime_type(repo_relative_path).ok_or_else(|| {
+                format!(
+                    "Could not determine the audio type for '{}'.",
+                    absolute_path.display()
+                )
+            })?;
+            format!("data:{mime_type};base64,{}", BASE64_STANDARD.encode(bytes))
+        }
+    };
+    Ok(match media {
+        EditorMedia::Video(VideoSource::File) => format!(
+            "<video controls preload=\"metadata\" src=\"{}\"></video>",
+            escape_html(&src)
+        ),
+        EditorMedia::Video(_) => format!(
+            "<div class=\"video-frame\"><iframe src=\"{}\" title=\"Video\" allow=\"autoplay; encrypted-media; fullscreen; picture-in-picture\" allowfullscreen loading=\"lazy\"></iframe></div>",
+            escape_html(&media.video_embed_url().unwrap_or(src))
+        ),
+        _ => format!(
+            "<audio controls preload=\"metadata\" src=\"{}\"></audio>",
+            escape_html(&src)
+        ),
+    })
 }
 
 fn html_image_src(image: &ExportImage) -> Result<Option<String>, String> {
@@ -1709,7 +1873,8 @@ fn render_txt_document(document: &ExportDocument) -> String {
                     parts.push(format!("[{number}] {text}"));
                 }
             }
-            ExportBlock::Image { .. } => {}
+            // The print policy turned media into link paragraphs.
+            ExportBlock::Image { .. } | ExportBlock::Media { .. } => {}
         }
     }
     if parts.is_empty() {
@@ -1864,6 +2029,8 @@ fn render_md_document(document: &ExportDocument) -> String {
                     fragments.push(caption.trim().to_string());
                 }
             }
+            // The print policy turned media into link paragraphs.
+            ExportBlock::Media { .. } => {}
             ExportBlock::Footnote { number, text, .. } => {
                 let inline = footnote_paragraphs(text)
                     .iter()
@@ -2303,6 +2470,8 @@ fn render_docx_document(
                             body.push_str(&docx_separator_paragraph_xml());
                         }
                     }
+                    // The print policy turned media into link paragraphs.
+                    ExportBlock::Media { .. } => {}
                     ExportBlock::Footnote { number, text, .. } => {
                         let text = print_footnote_text(text, footnote_links_as_plain_text);
                         let paragraphs = footnote_paragraphs(&text);
@@ -3095,6 +3264,8 @@ fn render_rtf_document(document: &ExportDocument, footnote_links_as_plain_text: 
             ExportBlock::Separator => {
                 body.push_str(&rtf_separator_paragraph());
             }
+            // The print policy turned media into link paragraphs.
+            ExportBlock::Media { .. } => {}
             ExportBlock::Footnote { number, text, .. } => {
                 let text = print_footnote_text(text, footnote_links_as_plain_text);
                 let paragraphs = footnote_paragraphs(&text);
@@ -4470,6 +4641,122 @@ mod tests {
         assert!(flattened_txt.contains("Keep"));
         assert!(flattened_txt.contains("Hello world"));
         assert!(!flattened_txt.contains("<b>"));
+    }
+
+    #[test]
+    fn print_policy_turns_media_into_link_lines_and_keeps_footnote_anchors() {
+        let doc = document(vec![
+            ExportBlock::Text {
+                text_style: "paragraph".to_string(),
+                text: "Before".to_string(),
+            },
+            ExportBlock::Media {
+                media: EditorMedia::Audio,
+                source: ExportImage::Url("https://example.com/talk.mp3?a=1&b=2".to_string()),
+                caption: "Evening <em>talk</em>".to_string(),
+            },
+            ExportBlock::Media {
+                media: EditorMedia::Video(VideoSource::File),
+                source: ExportImage::Upload {
+                    repo_relative_path: "chapters/ch-1/images/row/clip.m4a".to_string(),
+                    raw_url: None,
+                    absolute_path: PathBuf::from("/missing/clip.m4a"),
+                },
+                caption: String::new(),
+            },
+            ExportBlock::Text {
+                text_style: "paragraph".to_string(),
+                text: "After".to_string(),
+            },
+            ExportBlock::Footnote {
+                number: 1,
+                marker: 1,
+                anchor_block: Some(3),
+                text: "Note".to_string(),
+            },
+        ]);
+
+        let printed = apply_print_custom_html_policy(&doc, false);
+        assert_eq!(
+            printed.blocks[1..4],
+            [
+                ExportBlock::Text {
+                    text_style: "centered".to_string(),
+                    text: "<strong>Audio:</strong> <a href=\"https://example.com/talk.mp3?a=1&amp;b=2\">https://example.com/talk.mp3?a=1&b=2</a>".to_string(),
+                },
+                ExportBlock::Text {
+                    text_style: "centered".to_string(),
+                    text: "Evening <em>talk</em>".to_string(),
+                },
+                // Uploaded media has no public address, so its file name stands in.
+                ExportBlock::Text {
+                    text_style: "centered".to_string(),
+                    text: "<strong>Video:</strong> clip.m4a".to_string(),
+                },
+            ]
+        );
+        assert!(matches!(
+            printed.blocks[5],
+            ExportBlock::Footnote {
+                anchor_block: Some(4),
+                ..
+            }
+        ));
+        assert!(!printed
+            .blocks
+            .iter()
+            .any(|block| matches!(block, ExportBlock::Media { .. })));
+
+        let txt = render_txt_document(&printed);
+        assert!(txt.contains("Audio: https://example.com/talk.mp3?a=1&b=2"));
+        assert!(txt.contains("Evening talk"));
+        assert!(txt.contains("Video: clip.m4a"));
+        let md = render_md_document(&printed);
+        assert!(md.contains("https://example.com/talk.mp3?a=1&b=2"));
+    }
+
+    #[test]
+    fn html_export_embeds_audio_and_video_players() {
+        let audio_path =
+            std::env::temp_dir().join(format!("gnosis-html-export-{}.mp3", uuid::Uuid::now_v7()));
+        let audio_bytes = b"ID3\x04\x00 audio".to_vec();
+        fs::write(&audio_path, &audio_bytes).expect("audio should be written");
+        let video = |url: &str| ExportBlock::Media {
+            media: media_for_url(url),
+            source: ExportImage::Url(url.to_string()),
+            caption: String::new(),
+        };
+
+        let output = render_html_document(&document(vec![
+            ExportBlock::Media {
+                media: EditorMedia::Audio,
+                source: ExportImage::Url("https://example.com/talk.mp3?a=1&b=2".to_string()),
+                caption: "Evening <em>talk</em>".to_string(),
+            },
+            ExportBlock::Media {
+                media: EditorMedia::Audio,
+                source: ExportImage::Upload {
+                    repo_relative_path: "chapters/ch-1/images/row/talk.mp3".to_string(),
+                    raw_url: None,
+                    absolute_path: audio_path.clone(),
+                },
+                caption: String::new(),
+            },
+            video("https://youtu.be/dQw4w9WgXcQ"),
+            video("https://example.com/clip.mp4"),
+        ]))
+        .expect("html should render");
+        let _ = fs::remove_file(&audio_path);
+
+        assert!(output.contains("<figure class=\"media\"><audio controls preload=\"metadata\" src=\"https://example.com/talk.mp3?a=1&amp;b=2\"></audio><figcaption>Evening <em>talk</em></figcaption></figure>"));
+        assert!(output.contains(&format!(
+            "<audio controls preload=\"metadata\" src=\"data:audio/mpeg;base64,{}\"></audio>",
+            BASE64_STANDARD.encode(audio_bytes)
+        )));
+        assert!(output.contains("<div class=\"video-frame\"><iframe src=\"https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?rel=0\""));
+        assert!(output.contains(
+            "<video controls preload=\"metadata\" src=\"https://example.com/clip.mp4\"></video>"
+        ));
     }
 
     #[test]

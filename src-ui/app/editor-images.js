@@ -102,6 +102,17 @@ export function editorFieldImageUrl(image) {
   return normalizedImage.url ?? "";
 }
 
+export function editorWordPressCaptionSearchKey(rowId, languageCode) {
+  return `${normalizeText(rowId)}:${normalizeText(languageCode)}`;
+}
+
+// True while the WordPress caption lookup started for this exact URL image runs.
+export function editorWordPressCaptionSearchIsActive(editorChapter, rowId, languageCode, image) {
+  const searchUrl =
+    editorChapter?.wordpressCaptionSearches?.[editorWordPressCaptionSearchKey(rowId, languageCode)];
+  return typeof searchUrl === "string" && searchUrl !== "" && editorFieldImageUrl(image) === searchUrl;
+}
+
 export function imageUrlIsResolvable(image) {
   const normalizedImage = normalizeEditorFieldImage(image);
   return normalizedImage === null || normalizedImage.kind === "url";
@@ -114,6 +125,27 @@ export function urlImageFromString(value) {
   }
 
   return { kind: "url", url };
+}
+
+// The file name a person recognizes: the last part of a URL, decoded, or the
+// uploaded file's name.
+export function editorFieldImageDisplayName(image) {
+  const normalizedImage = normalizeEditorFieldImage(image);
+  if (!normalizedImage) {
+    return "";
+  }
+
+  if (normalizedImage.kind === "upload") {
+    return normalizedImage.fileName ?? uploadedImageFileName(normalizedImage);
+  }
+
+  try {
+    const segments = new URL(normalizedImage.url).pathname.split("/").filter(Boolean);
+    const lastSegment = segments[segments.length - 1] ?? "";
+    return lastSegment ? decodeURIComponent(lastSegment) : normalizedImage.url;
+  } catch {
+    return normalizedImage.url ?? "";
+  }
 }
 
 export function editorFieldImageMetadataText(image) {

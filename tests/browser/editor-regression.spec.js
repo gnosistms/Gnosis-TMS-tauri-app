@@ -6183,6 +6183,37 @@ test.describe("editor regressions", () => {
     expect(allow?.payload?.input?.imageKey).toBe(`url:${url}`);
   });
 
+  test("inserting a WordPress MP3 URL saves it and shows the audio tile", async ({ page }) => {
+    const rowId = "fixture-row-0008";
+    const languageCode = "vi";
+    const url = "https://example.org/wp-content/uploads/2026/07/evening-talk.mp3";
+    await mountEditorFixture(page, { rowCount: 18 }, { mockTauri: true });
+
+    await bringRowNearTop(page, rowId, 120);
+    await activateMainEditorField(page, rowId, languageCode);
+    await page.locator(
+      `[data-action="open-editor-image-url"][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+    ).click();
+    const urlInput = page.locator(
+      `[data-editor-image-url-input][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+    );
+    await expect(urlInput).toHaveAttribute("placeholder", "paste image, audio, or video url here");
+    await urlInput.fill(url);
+    await urlInput.press(await editorSaveShortcut(page));
+
+    const tile = page.locator(
+      `[data-editor-media-kind="audio"][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+    );
+    await expect(tile).toContainText("evening-talk.mp3");
+    await expect(page.locator(`.translation-language-panel__image[data-row-id="${rowId}"]`)).toHaveCount(0);
+    await expect.poll(async () => {
+      const saved = (await readMockTauriState(page)).invocations.find(
+        (entry) => entry.command === "save_gtms_editor_language_image_url",
+      );
+      return saved?.payload?.input?.url ?? null;
+    }).toBe(url);
+  });
+
   test("cancelling the duplicate image warning with Escape inserts nothing", async ({ page }) => {
     const rowId = "fixture-row-0008";
     const languageCode = "vi";

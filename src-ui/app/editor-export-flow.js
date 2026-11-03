@@ -13,6 +13,7 @@ import { invoke, isMacPlatform, listen } from "./runtime.js";
 import { findChapterContext, selectedProjectsTeam } from "./project-context.js";
 import {
   applyCustomHtmlPlainTextPolicy,
+  applyMediaLinkPolicy,
   buildEditorPreviewDocument,
   selectedEditorPreviewLanguageCode,
   serializeEditorPreviewHtml,
@@ -939,8 +940,9 @@ async function submitEditorCopyExport(render, option, operations) {
 
   try {
     if (option.format === "vellum") {
-      // Vellum can't carry raw HTML — drop or flatten custom-HTML rows first.
-      const policyBlocks = applyCustomHtmlPlainTextPolicy(blocks, omitCustomHtml);
+      // Vellum can't carry raw HTML or play media — drop or flatten custom-HTML
+      // rows and turn audio and video into link lines first.
+      const policyBlocks = applyMediaLinkPolicy(applyCustomHtmlPlainTextPolicy(blocks, omitCustomHtml));
       const imageRequests = buildVellumImageResourceRequests(policyBlocks);
       const vellumBlocks = imageRequests.length > 0
         ? applyPreparedVellumImageResources(

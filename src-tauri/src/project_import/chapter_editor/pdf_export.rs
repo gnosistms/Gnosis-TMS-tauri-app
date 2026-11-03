@@ -1145,7 +1145,7 @@ fn document_characters(document: &ExportDocument) -> BTreeSet<char> {
                     characters.extend(segment.text.chars());
                 }
             }
-            ExportBlock::Image { caption, .. } => {
+            ExportBlock::Image { caption, .. } | ExportBlock::Media { caption, .. } => {
                 for segment in inline_segments(caption) {
                     characters.extend(segment.text.chars());
                 }
@@ -1554,7 +1554,6 @@ fn render_typst_chapter(
     } else {
         None
     };
-    let mut indent_next = false;
     let mut set_citation = None;
     let mut cover_open = cover_end.is_some();
     for block_index in emission_order {
@@ -1604,7 +1603,9 @@ fn render_typst_chapter(
                     "heading1" | "heading2" | "quote" | "blockquote" | "centered" | "indented"
                 ) && !is_list_text_style(&style);
                 if latin_body(&document.language_code) {
-                    let amount = if plain && indent_next && Some(block_index) != dropcap_index {
+                    // Every body paragraph is indented, whatever precedes it, except
+                    // the drop-cap opening.
+                    let amount = if plain && Some(block_index) != dropcap_index {
                         "1.5em"
                     } else {
                         "0pt"
@@ -1649,12 +1650,8 @@ fn render_typst_chapter(
                         source.push_str(&text_block);
                     }
                 }
-                if !inline_visible_text(text).trim().is_empty() {
-                    indent_next = plain;
-                }
             }
             ExportBlock::Attribution { text } => {
-                indent_next = false;
                 // Already set as the last line of the block it cites.
                 if set_citation == Some(block_index) {
                     continue;
@@ -1667,12 +1664,11 @@ fn render_typst_chapter(
                     render_inline_typst(text, false)
                 ));
             }
-            ExportBlock::Separator => {
-                indent_next = false;
-                source.push_str(
-                    "#v(1em)\n#align(center, image(\"flourish.svg\", width: 0.66in))\n#v(1em)\n",
-                )
-            }
+            ExportBlock::Separator => source.push_str(
+                "#v(1em)\n#align(center, image(\"flourish.svg\", width: 0.66in))\n#v(1em)\n",
+            ),
+            // The print policy turned media into link paragraphs.
+            ExportBlock::Media { .. } => {}
             ExportBlock::Footnote { number, text, .. } if !anchored_numbers.contains(number) => {
                 source.push_str(&format!(
                     "#footnote[{}]\n",
@@ -1681,7 +1677,6 @@ fn render_typst_chapter(
             }
             ExportBlock::Footnote { .. } => {}
             ExportBlock::Image { image, caption } => {
-                indent_next = false;
                 let prepared = image_paths
                     .get(&export_image_key(image))
                     .ok_or_else(|| "An image could not be prepared for the PDF.".to_string())?;
@@ -5234,9 +5229,59 @@ mod tests {
         assert!(cited < citation && !source[cited..citation].contains("\n\n"));
         assert!(!source.contains("#gnosis-quote"));
         assert!(!source.contains("#align(right)"));
-        // The next paragraph is not indented, as after any citation.
-        assert!(source
-            .contains("#set par(first-line-indent: (amount: 0pt, all: true))\n#text(\"After.\")"));
+        // The next paragraph is indented, like every body paragraph.
+        assert!(source.contains(
+            "#set par(first-line-indent: (amount: 1.5em, all: true))\n#text(\"After.\")"
+        ));
+    }
+
+    #[test]
+    fn every_body_paragraph_but_the_drop_cap_opening_is_indented() {
+        let workspace = pdf_workspace().unwrap();
+        let _cleanup = WorkspaceCleanup(workspace.clone());
+        let document = ExportDocument {
+            title: "Indents".into(),
+            language_code: "en".into(),
+            blocks: vec![
+                text_block("paragraph", "Opening."),
+                text_block("heading2", "A heading"),
+                text_block("paragraph", "After the heading."),
+                ExportBlock::Separator,
+                text_block("paragraph", "After the separator."),
+            ],
+            book_parts: Vec::new(),
+        };
+        let session = begin_pdf_image_cache(&test_image_cache_scope("paragraph-indents"));
+        let options = PdfWorkspacePreparationOptions {
+            paper_size: "a5",
+            footnote_links_as_plain_text: true,
+            image_cache_session: &session,
+            layout: TypstLayout::Export,
+        };
+        prepare_typst_workspace(
+            None,
+            "",
+            &workspace,
+            &document,
+            &options,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let source = fs::read_to_string(workspace.join("chapter.typ")).unwrap();
+        assert!(
+            source.contains(
+                "#set par(first-line-indent: (amount: 0pt, all: true))\n#gnosis-dropcap["
+            ),
+            "{source}"
+        );
+        for text in ["After the heading.", "After the separator."] {
+            assert!(
+                source.contains(&format!(
+                    "#set par(first-line-indent: (amount: 1.5em, all: true))\n#text(\"{text}\")"
+                )),
+                "{source}"
+            );
+        }
     }
 
     #[test]
@@ -6233,11 +6278,11 @@ mod tests {
         assert!(source.contains(
             "#set par(first-line-indent: (amount: 0pt, all: true))\n#enum(numbering: \"1.\", [#text(\"Numbers \")#footnote[#text(\"A note in a list.\")]#enum(numbering: \"a.\", "
         ));
-        // A list is not a plain paragraph: it takes no drop cap, and the
-        // paragraph after it starts flush, as after a quote.
+        // A list is not a plain paragraph: it takes no drop cap or indent, and
+        // the paragraph after it is indented, like every body paragraph.
         assert!(!source.contains("#gnosis-dropcap["));
         assert!(source.contains(
-            "#set par(first-line-indent: (amount: 0pt, all: true))\n#text(\"A paragraph after a list.\")"
+            "#set par(first-line-indent: (amount: 1.5em, all: true))\n#text(\"A paragraph after a list.\")"
         ));
         assert!(source.contains("#enum(numbering: \"I.\", [#text(\"I\")#enum(numbering: \"A.\", "));
         assert!(source.contains("#list(marker: box("));
