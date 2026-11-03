@@ -1,5 +1,6 @@
 import {
   editorFieldImageEqual,
+  editorWordPressCaptionSearchKey,
   normalizeEditorFieldImage,
 } from "./editor-images.js";
 import { enforceImportFileSizeLimit } from "./import-file-limit.js";
@@ -48,6 +49,8 @@ const IMAGE_FILE_ACCEPT =
 // about 80px below the fold; the tolerance must still count that as the bottom.
 const TRANSLATE_MAIN_BOTTOM_PIN_TOLERANCE_PX = 120;
 export const EDITOR_IMAGE_CAPTION_ENRICHED_EVENT = "editor-image-caption-enriched";
+export const EDITOR_IMAGE_CAPTION_SEARCH_STARTED_EVENT = "editor-image-caption-search-started";
+export const EDITOR_IMAGE_CAPTION_SEARCH_FINISHED_EVENT = "editor-image-caption-search-finished";
 
 let editorImageCaptionListenerPromise = null;
 
@@ -359,15 +362,69 @@ export function handleEditorImageCaptionEnrichedEvent(payload, render, operation
   return true;
 }
 
+function readWordPressCaptionSearchPayload(payload) {
+  const rowId = String(payload?.rowId ?? "");
+  const languageCode = String(payload?.languageCode ?? "");
+  const imageUrl = String(payload?.imageUrl ?? "");
+  if (!rowId || !languageCode || !imageUrl || state.editorChapter?.chapterId !== payload?.chapterId) {
+    return null;
+  }
+  return { rowId, languageCode, imageUrl, key: editorWordPressCaptionSearchKey(rowId, languageCode) };
+}
+
+export function handleEditorImageCaptionSearchStartedEvent(payload, render) {
+  const search = readWordPressCaptionSearchPayload(payload);
+  if (!search) {
+    return false;
+  }
+
+  state.editorChapter = {
+    ...state.editorChapter,
+    wordpressCaptionSearches: {
+      ...state.editorChapter.wordpressCaptionSearches,
+      [search.key]: search.imageUrl,
+    },
+  };
+  renderEditorRowScoped(render, search.rowId, "wordpress-image-caption-search-started");
+  return true;
+}
+
+export function handleEditorImageCaptionSearchFinishedEvent(payload, render) {
+  const search = readWordPressCaptionSearchPayload(payload);
+  // A lookup for an image that was since replaced must not end the newer lookup.
+  if (!search || state.editorChapter.wordpressCaptionSearches?.[search.key] !== search.imageUrl) {
+    return false;
+  }
+
+  const wordpressCaptionSearches = { ...state.editorChapter.wordpressCaptionSearches };
+  delete wordpressCaptionSearches[search.key];
+  state.editorChapter = {
+    ...state.editorChapter,
+    wordpressCaptionSearches,
+  };
+  renderEditorRowScoped(render, search.rowId, "wordpress-image-caption-search-finished");
+  return true;
+}
+
 export function registerEditorImageCaptionListeners(render) {
   if (!listen) {
     return Promise.resolve(null);
   }
   if (!editorImageCaptionListenerPromise) {
-    editorImageCaptionListenerPromise = listen(
-      EDITOR_IMAGE_CAPTION_ENRICHED_EVENT,
-      (event) => handleEditorImageCaptionEnrichedEvent(event?.payload, render),
-    );
+    editorImageCaptionListenerPromise = Promise.all([
+      listen(
+        EDITOR_IMAGE_CAPTION_ENRICHED_EVENT,
+        (event) => handleEditorImageCaptionEnrichedEvent(event?.payload, render),
+      ),
+      listen(
+        EDITOR_IMAGE_CAPTION_SEARCH_STARTED_EVENT,
+        (event) => handleEditorImageCaptionSearchStartedEvent(event?.payload, render),
+      ),
+      listen(
+        EDITOR_IMAGE_CAPTION_SEARCH_FINISHED_EVENT,
+        (event) => handleEditorImageCaptionSearchFinishedEvent(event?.payload, render),
+      ),
+    ]);
   }
   return editorImageCaptionListenerPromise;
 }

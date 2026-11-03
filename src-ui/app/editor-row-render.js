@@ -534,6 +534,24 @@ function imageCaptionDisplayHtml(language) {
     : renderAttachmentTextHtml(language.imageCaption ?? "", language);
 }
 
+function renderWordPressCaptionSearchStatus(row, language) {
+  if (language.isSearchingWordPressCaption !== true) {
+    return "";
+  }
+
+  return `
+    <div
+      class="translation-language-panel__image-caption-search"
+      role="status"
+      data-editor-image-caption-search
+      data-loading-spinner-key="wordpress-caption-search:${escapeHtml(row.id)}:${escapeHtml(language.code)}"
+    >
+      <span class="translation-language-panel__image-caption-search-spinner button__spinner" aria-hidden="true"></span>
+      <span>Searching WordPress for an image footnote.</span>
+    </div>
+  `;
+}
+
 function renderEditorLanguageImageCaption(row, language) {
   if (!language.hasVisibleImage) {
     return "";
@@ -585,8 +603,11 @@ function renderEditorLanguageImageCaption(row, language) {
     `;
   }
 
+  const searchStatusHtml = renderWordPressCaptionSearchStatus(row, language);
   if (!language.hasVisibleImageCaption) {
-    return "";
+    return searchStatusHtml
+      ? `<div class="translation-language-panel__image-caption-shell translation-language-panel__image-caption-shell--idle">${searchStatusHtml}</div>`
+      : "";
   }
 
   return `
@@ -609,6 +630,7 @@ function renderEditorLanguageImageCaption(row, language) {
             ><span class="translation-language-panel__image-caption-text" data-editor-display-text lang="${escapeHtml(language.baseCode || language.code)}">${imageCaptionDisplayHtml(language)}</span></button>`
           : `<div class="translation-language-panel__image-caption-display"><span class="translation-language-panel__image-caption-text" data-editor-display-text lang="${escapeHtml(language.baseCode || language.code)}">${imageCaptionDisplayHtml(language)}</span></div>`
       }
+      ${searchStatusHtml}
     </div>
   `;
 }

@@ -102,6 +102,17 @@ export function editorFieldImageUrl(image) {
   return normalizedImage.url ?? "";
 }
 
+export function editorWordPressCaptionSearchKey(rowId, languageCode) {
+  return `${normalizeText(rowId)}:${normalizeText(languageCode)}`;
+}
+
+// True while the WordPress caption lookup started for this exact URL image runs.
+export function editorWordPressCaptionSearchIsActive(editorChapter, rowId, languageCode, image) {
+  const searchUrl =
+    editorChapter?.wordpressCaptionSearches?.[editorWordPressCaptionSearchKey(rowId, languageCode)];
+  return typeof searchUrl === "string" && searchUrl !== "" && editorFieldImageUrl(image) === searchUrl;
+}
+
 export function imageUrlIsResolvable(image) {
   const normalizedImage = normalizeEditorFieldImage(image);
   return normalizedImage === null || normalizedImage.kind === "url";
