@@ -11,7 +11,8 @@
    in image captions for print exports (`d72fe1f7`). Hans asked for this
    release on 2026-11-04. Later the same day, Full review accepting
    explanatory translations (`66ba105d` on `dev`) was cherry-picked onto the
-   release branch at Hans's request.
+   release branch at Hans's request, and then exporting a multi-paragraph
+   quote as one quotation (`84d6f833` on `dev`).
 2. Synchronize npm, Tauri, Cargo, both lockfiles, and bundled notice versions to
    0.8.146. Add versioned notes.
 3. Validate version agreement, locked Cargo metadata, formatting, tests, and lint.
