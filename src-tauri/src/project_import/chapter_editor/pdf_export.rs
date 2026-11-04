@@ -1689,7 +1689,10 @@ fn render_typst_chapter(
                             format!(
                                 "gnosis-image({}, caption: [{}])",
                                 typst_string(path),
-                                render_typst_image_caption(caption)
+                                render_typst_image_caption(
+                                    caption,
+                                    options.footnote_links_as_plain_text
+                                )
                             )
                         }
                     }
@@ -1708,7 +1711,12 @@ fn render_typst_chapter(
                     let placement = if floating { ", placement: auto" } else { "" };
                     format!("#figure({body}{placement})")
                 } else {
-                    render_typst_figure(&body, caption, floating)
+                    render_typst_figure(
+                        &body,
+                        caption,
+                        floating,
+                        options.footnote_links_as_plain_text,
+                    )
                 };
                 if cover {
                     // A cover image stays under the title. The 1fr block is the
@@ -1957,13 +1965,13 @@ fn render_typst_book(
                 source.push_str(&format!(
                     "#gnosis-image({}, caption: [{}])\n",
                     typst_string(path),
-                    render_typst_image_caption(&item.caption)
+                    render_typst_image_caption(&item.caption, options.footnote_links_as_plain_text)
                 ));
             }
             if !item.caption.trim().is_empty() {
                 source.push_str(&format!(
                     "#v(0.85em)\n{}\n",
-                    render_typst_image_caption(&item.caption)
+                    render_typst_image_caption(&item.caption, options.footnote_links_as_plain_text)
                 ));
             }
             source.push_str("]\n#v(1fr)\n");
@@ -3169,12 +3177,14 @@ fn leading_heading_title(document: &ExportDocument) -> Option<String> {
     }
 }
 
-fn render_typst_image_caption(caption: &str) -> String {
+/// With `show_link_urls`, a caption link is followed by its destination in
+/// parentheses, as footnote links are: a hyperlink cannot be followed on paper.
+fn render_typst_image_caption(caption: &str, show_link_urls: bool) -> String {
     // Vellum's reference captions use approximately 75% of body size and
     // centered, non-justified lines.
     format!(
         "#align(center)[#set par(justify: false, first-line-indent: 0pt)\n#text(size: 0.75em)[{}]]",
-        render_inline_typst(caption, false)
+        render_inline_typst(caption, show_link_urls)
     )
 }
 
@@ -3185,11 +3195,11 @@ fn render_typst_image_caption(caption: &str) -> String {
 /// page away from the paragraph it followed in the editor. Trailing images at the
 /// end of a chapter are emitted non-floating instead — see
 /// `typst_block_emission_order`.
-fn render_typst_figure(body: &str, caption: &str, floating: bool) -> String {
+fn render_typst_figure(body: &str, caption: &str, floating: bool, show_link_urls: bool) -> String {
     let placement = if floating { ", placement: auto" } else { "" };
     format!(
         "#figure({body}, caption: [{}], gap: 0.85em, numbering: none{placement})",
-        render_typst_image_caption(caption)
+        render_typst_image_caption(caption, show_link_urls)
     )
 }
 
@@ -3675,6 +3685,24 @@ mod tests {
             marker: 1,
             anchor_block: Some(0),
             text: "<a href=\"https://example.test/\u{13153}\">Reference</a>".into(),
+        });
+        assert!(
+            relevant_saved_fonts(&document, &workspace, false, true, &approved)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            relevant_saved_fonts(&document, &workspace, true, true, &approved)
+                .unwrap()
+                .len(),
+            1
+        );
+        // A caption link prints its URL under the same option, so its characters
+        // need fonts too.
+        document.blocks.pop();
+        document.blocks.push(ExportBlock::Image {
+            image: ExportImage::Url("https://example.test/plate.png".into()),
+            caption: "<a href=\"https://example.test/\u{13153}\">Source</a>".into(),
         });
         assert!(
             relevant_saved_fonts(&document, &workspace, false, true, &approved)
@@ -5819,11 +5847,27 @@ mod tests {
 
     #[test]
     fn image_captions_are_small_upright_text() {
-        let caption = render_typst_image_caption("A <b>bold</b> caption");
+        let caption = render_typst_image_caption("A <b>bold</b> caption", false);
         assert!(caption.starts_with("#align(center)"));
         assert!(caption.contains("#text(size: 0.75em)["));
         assert!(!caption.contains("italic"));
         assert!(caption.contains("#strong["));
+    }
+
+    #[test]
+    fn caption_links_print_their_url_like_footnote_links() {
+        let caption = "Photo from <a href=\"https://example.com/source\">the archive</a>";
+        let footnote = render_footnote_typst(caption, true);
+        let printed = render_typst_image_caption(caption, true);
+        assert!(printed.contains(&footnote));
+        assert!(printed.contains(
+            "#link(\"https://example.com/source\")[#text(\"the archive\")] #text(\"(https://example.com/source)\")"
+        ));
+        let linked = render_typst_image_caption(caption, false);
+        assert!(linked.contains("#link(\"https://example.com/source\")[#text(\"the archive\")]"));
+        assert!(!linked.contains("(https://example.com/source)"));
+        let figure = render_typst_figure("image(\"a.png\")", caption, true, true);
+        assert!(figure.contains("#text(\"(https://example.com/source)\")"));
     }
 
     #[test]
@@ -5841,6 +5885,7 @@ mod tests {
             "image(\"images/example.png\", width: 90%)",
             "An italic caption",
             true,
+            false,
         );
         assert!(figure.starts_with("#figure(image("));
         assert!(figure.contains("caption: [#align(center)"));
@@ -5855,6 +5900,7 @@ mod tests {
         let trailing = render_typst_figure(
             "image(\"images/example.png\", width: 90%)",
             "An italic caption",
+            false,
             false,
         );
         assert!(!trailing.contains("placement"));
@@ -6137,7 +6183,9 @@ mod tests {
                 },
                 ExportBlock::Image {
                     image: ExportImage::Url("http://127.0.0.1/unavailable.png".to_string()),
-                    caption: "Unavailable remote image".to_string(),
+                    // With footnote_links_as_plain_text, the link is followed by
+                    // its URL as plain text inside the figure caption.
+                    caption: "Unavailable remote image from <a href=\"https://example.com/plate\">the archive</a>".to_string(),
                 },
                 // Uncaptioned images take the caption-less floating-figure path.
                 ExportBlock::Image {
@@ -6174,6 +6222,7 @@ mod tests {
             .expect("generated drop cap");
         assert!(generated_dropcap.contains("“Ứng dụng"));
         assert!(!source.contains("U\u{031b}\u{0301}"));
+        assert!(source.contains("#text(\"(https://example.com/plate)\")"));
         // Exercise the vendored helper directly: punctuation stays in the
         // rendered cap, while both callbacks must receive the core grapheme.
         source.push_str(

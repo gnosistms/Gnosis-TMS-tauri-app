@@ -43,6 +43,21 @@ test("serializeEditorPreviewHtml passes custom HTML rows through as a wp:html bl
   assert.doesNotMatch(html, /wp:separator/);
 });
 
+test("serializeEditorPreviewPlainText prints caption link URLs under the footnote link option", () => {
+  const blocks = [{
+    kind: "image",
+    rowId: "row-image",
+    languageCode: "en",
+    image: { kind: "url", url: "https://example.com/plate.png" },
+    caption: "From <a href=\"https://example.com/source\">the archive</a>",
+  }];
+  assert.equal(
+    serializeEditorPreviewPlainText(blocks, { showFootnoteLinkUrls: true }),
+    "From the archive (https://example.com/source)",
+  );
+  assert.equal(serializeEditorPreviewPlainText(blocks), "From the archive");
+});
+
 test("serializeEditorPreviewPlainText omits or flattens custom HTML rows", () => {
   const omitted = serializeEditorPreviewPlainText(customHtmlBlocks(), { omitCustomHtml: true });
   assert.match(omitted, /Keep me/);

@@ -1653,8 +1653,8 @@ fn link_text_is_url(text: &str, href: &str) -> bool {
 /// Rewrites canonical inline markup so each link's destination is appended as plain
 /// text " (url)" after its closing tag, unless the link's visible text already is a
 /// URL. All tags are copied verbatim, so the appended text re-parses as ordinary,
-/// non-link text in the downstream renderers (DOCX/RTF). Used for footnotes in print
-/// formats where a hyperlink cannot be clicked.
+/// non-link text in the downstream renderers (DOCX/RTF). Used for footnotes and image
+/// captions in print formats where a hyperlink cannot be clicked.
 fn append_link_urls_to_inline(value: &str) -> String {
     let mut output = String::new();
     let mut cursor = 0usize;
@@ -1708,9 +1708,9 @@ fn append_link_urls_to_inline(value: &str) -> String {
     output
 }
 
-/// The footnote inline text for a print export: the stored markup, with link
+/// Footnote or caption inline text for a print export: the stored markup, with link
 /// destinations appended as plain text when the option is enabled.
-fn print_footnote_text(text: &str, footnote_links_as_plain_text: bool) -> String {
+fn print_inline_text(text: &str, footnote_links_as_plain_text: bool) -> String {
     if footnote_links_as_plain_text {
         append_link_urls_to_inline(text)
     } else {
@@ -2638,7 +2638,7 @@ fn render_docx_document(
                     // The print policy turned media into link paragraphs.
                     ExportBlock::Media { .. } => {}
                     ExportBlock::Footnote { number, text, .. } => {
-                        let text = print_footnote_text(text, footnote_links_as_plain_text);
+                        let text = print_inline_text(text, footnote_links_as_plain_text);
                         let paragraphs = footnote_paragraphs(&text);
                         if paragraphs.len() > 1 {
                             for (index, paragraph) in paragraphs.iter().enumerate() {
@@ -2706,7 +2706,7 @@ fn render_docx_document(
                         if !caption.trim().is_empty() {
                             body.push_str(&docx_text_paragraph_xml(
                                 Some("centered"),
-                                caption,
+                                &print_inline_text(caption, footnote_links_as_plain_text),
                                 false,
                             ));
                         }
@@ -3432,7 +3432,7 @@ fn render_rtf_document(document: &ExportDocument, footnote_links_as_plain_text: 
             // The print policy turned media into link paragraphs.
             ExportBlock::Media { .. } => {}
             ExportBlock::Footnote { number, text, .. } => {
-                let text = print_footnote_text(text, footnote_links_as_plain_text);
+                let text = print_inline_text(text, footnote_links_as_plain_text);
                 let paragraphs = footnote_paragraphs(&text);
                 if paragraphs.len() > 1 {
                     for (index, paragraph) in paragraphs.iter().enumerate() {
@@ -3459,7 +3459,8 @@ fn render_rtf_document(document: &ExportDocument, footnote_links_as_plain_text: 
             ExportBlock::Image { image, caption } => {
                 body.push_str(&rtf_image_paragraph(image));
                 if !caption.trim().is_empty() {
-                    body.push_str(&rtf_text_paragraph(Some("centered"), caption, false));
+                    let caption = print_inline_text(caption, footnote_links_as_plain_text);
+                    body.push_str(&rtf_text_paragraph(Some("centered"), &caption, false));
                 }
             }
         }
@@ -5417,6 +5418,49 @@ mod tests {
 
         let output = render_rtf_document(&document(blocks), false);
         assert!(!output.contains("(https://example.com/page)"));
+    }
+
+    fn caption_link_blocks() -> Vec<ExportBlock> {
+        // A missing upload renders as a link line, so no image is read or fetched.
+        vec![ExportBlock::Image {
+            image: ExportImage::Upload {
+                repo_relative_path: "images/missing.png".to_string(),
+                raw_url: None,
+                absolute_path: PathBuf::from("/nonexistent/images/missing.png"),
+            },
+            caption: "From <a href=\"https://example.com/plate\">the archive</a>".to_string(),
+        }]
+    }
+
+    #[test]
+    fn docx_caption_links_render_as_plain_text_when_option_enabled() {
+        let document_xml = |links_as_plain_text| {
+            let bytes = render_docx_document(&document(caption_link_blocks()), links_as_plain_text)
+                .expect("docx renders");
+            let mut archive = ZipArchive::new(Cursor::new(bytes)).expect("docx zip");
+            let mut xml = String::new();
+            archive
+                .by_name("word/document.xml")
+                .expect("document exists")
+                .read_to_string(&mut xml)
+                .expect("document xml reads");
+            xml
+        };
+        // The same treatment as footnote links: the hyperlink stays, followed by
+        // the URL as plain text.
+        let xml = document_xml(true);
+        assert!(xml.contains("HYPERLINK \"https://example.com/plate\""));
+        assert!(xml.contains(r#"<w:t xml:space="preserve"> (https://example.com/plate)</w:t>"#));
+        assert!(!document_xml(false).contains("(https://example.com/plate)"));
+    }
+
+    #[test]
+    fn rtf_caption_links_render_as_plain_text_when_option_enabled() {
+        let output = render_rtf_document(&document(caption_link_blocks()), true);
+        assert!(output.contains("HYPERLINK \"https://example.com/plate\""));
+        assert!(output.contains("(https://example.com/plate)"));
+        let output = render_rtf_document(&document(caption_link_blocks()), false);
+        assert!(!output.contains("(https://example.com/plate)"));
     }
 
     #[test]

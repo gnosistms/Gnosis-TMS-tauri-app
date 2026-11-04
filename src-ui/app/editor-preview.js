@@ -1309,7 +1309,11 @@ export function serializeEditorPreviewPlainText(blocks, options = {}) {
   const sections = applyMediaLinkPolicy(blocks, { links: false })
     .flatMap((block) => {
       if (block?.kind === "image") {
-        return extractInlineMarkupVisibleText(previewTextValue(block.caption)).trim();
+        // Caption links print their URL under the same option as footnote links.
+        const caption = previewTextValue(block.caption);
+        return (showFootnoteLinkUrls
+          ? extractInlineMarkupVisibleTextWithLinkUrls(caption)
+          : extractInlineMarkupVisibleText(caption)).trim();
       }
       if (block?.kind !== "text") {
         return "";

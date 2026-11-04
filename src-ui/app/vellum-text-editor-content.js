@@ -5,6 +5,7 @@ import {
 import {
   extractInlineMarkupFootnoteLinkSegments,
   extractInlineMarkupVisibleText,
+  extractInlineMarkupVisibleTextWithLinkUrls,
 } from "./editor-inline-markup/serialize.js";
 import { listItemsFromMarkup, listItemsWithMarkers } from "./editor-list.js";
 import {
@@ -1302,7 +1303,19 @@ function imageTooltip(fileName, prepared) {
   return fileName;
 }
 
-function appendImageRuns(block, target) {
+// With `showLinkUrls`, a caption link is followed by its destination as plain text,
+// as footnote links are. The caption stays a plain string: unlike footnotes, no
+// Vellum capture shows how a caption carries a clickable link.
+function imageCaptionText(caption, showLinkUrls) {
+  if (!showLinkUrls) {
+    return visibleInlineText(caption ?? "");
+  }
+  return extractInlineMarkupVisibleTextWithLinkUrls(
+    unescapeLiteralFootnoteMarkers(caption ?? ""),
+  ).trim();
+}
+
+function appendImageRuns(block, target, showLinkUrls = false) {
   const image = block?.image;
   if (!image) {
     return;
@@ -1318,7 +1331,7 @@ function appendImageRuns(block, target) {
   const lastAbsolutePath = normalizeText(prepared?.lastAbsolutePath)
     || fileUrlToPath(source)
     || source;
-  const caption = visibleInlineText(block?.caption ?? "");
+  const caption = imageCaptionText(block?.caption, showLinkUrls);
   const attributeKey = `image:${index}`;
   target.imageAttributes.set(attributeKey, {
     canUpsize: typeof prepared?.canUpsize === "boolean" ? prepared.canUpsize : undefined,
@@ -1509,7 +1522,7 @@ function appendBlockRuns(block, target, options = {}) {
   }
 
   if (block?.kind === "image") {
-    appendImageRuns(block, target);
+    appendImageRuns(block, target, options.showFootnoteLinkUrls === true);
     return;
   }
 
