@@ -1818,19 +1818,16 @@ fn render_html_document(document: &ExportDocument) -> Result<String, String> {
             }
             ExportBlock::Footnote { number, text, .. } => {
                 let paragraphs = footnote_paragraphs(text);
+                let paragraph_html =
+                    |paragraph: &str| sanitize_inline_html(paragraph).replace('\n', "<br>");
                 if paragraphs.len() > 1 {
                     let _ = write!(body, "<div class=\"footnote\" style=\"display:grid;grid-template-columns:auto 1fr;gap:.5em;font-style:italic\"><span>[{number}]</span><div>");
                     for (index, paragraph) in paragraphs.iter().enumerate() {
                         let indent = if index == 0 { "0" } else { "1.5em" };
-                        let content = sanitize_inline_html(paragraph);
-                        let content = if inline_visible_text(paragraph).is_empty() {
-                            "<br>"
-                        } else {
-                            &content
-                        };
                         let _ = write!(
                             body,
-                            "<p style=\"margin:0;text-indent:{indent}\">{content}</p>"
+                            "<p style=\"margin:0;text-indent:{indent}\">{}</p>",
+                            paragraph_html(paragraph)
                         );
                     }
                     body.push_str("</div></div>\n");
@@ -1840,7 +1837,7 @@ fn render_html_document(document: &ExportDocument) -> Result<String, String> {
                     body,
                     "<p class=\"footnote\"><em>[{}] {}</em></p>",
                     number,
-                    sanitize_inline_html(text)
+                    paragraph_html(paragraphs.first().map_or("", String::as_str))
                 );
             }
             ExportBlock::Image { image, caption } => {
@@ -2075,7 +2072,11 @@ fn render_txt_document(document: &ExportDocument) -> String {
                 parts.push("---".to_string());
             }
             ExportBlock::Footnote { number, text, .. } => {
-                let text = txt_inline_text(text).trim().to_string();
+                let text = footnote_paragraphs(text)
+                    .iter()
+                    .map(|paragraph| txt_inline_text(paragraph).trim().to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
                 if !text.is_empty() {
                     parts.push(format!("[{number}] {text}"));
                 }
@@ -2250,9 +2251,11 @@ fn render_md_document(document: &ExportDocument) -> String {
             // The print policy turned media into link paragraphs.
             ExportBlock::Media { .. } => {}
             ExportBlock::Footnote { number, text, .. } => {
+                // Continuation lines of a footnote definition are indented four
+                // spaces; a line break is a trailing backslash, as in row text.
                 let inline = footnote_paragraphs(text)
                     .iter()
-                    .map(|paragraph| md_single_line(&md_inline_text(paragraph)))
+                    .map(|paragraph| md_inline_text(paragraph).replace('\n', "\\\n    "))
                     .collect::<Vec<_>>()
                     .join("\n\n    ");
                 if inline.trim().is_empty() {
@@ -2387,9 +2390,41 @@ fn escape_md_text(value: &str) -> String {
     output
 }
 
-/// Footnote returns are paragraphs. Close/reopen supported inline tags so a
-/// formatting run spanning a return remains valid in each exported paragraph.
+/// A footnote follows the row rule: a blank line is a paragraph break and a
+/// single return a line break, which stays in its paragraph. Formatting that
+/// spans a break is closed and reopened, so each paragraph stands alone. Empty
+/// paragraphs are dropped and the rest trimmed, as a row's are.
 pub(super) fn footnote_paragraphs(value: &str) -> Vec<String> {
+    row_paragraphs(value)
+        .into_iter()
+        .filter(|paragraph| {
+            !inline_visible_text(paragraph).trim().is_empty() || paragraph.contains("<hr>")
+        })
+        .map(|paragraph| paragraph.trim().to_string())
+        .collect()
+}
+
+/// The 0.8.147 migration's rewrite of a stored footnote. Footnote returns used to
+/// be paragraph breaks; a paragraph break is now a blank line, as in row text. So
+/// every return that is not already part of a blank line becomes one. Existing
+/// blank lines (empty paragraphs, the separator between labelled notes) stay,
+/// and CR line endings become LF.
+pub(crate) fn footnote_returns_as_blank_lines(value: &str) -> String {
+    let normalized = value.replace("\r\n", "\n").replace('\r', "\n");
+    let blank_lines = blank_line_newlines(&normalized);
+    let mut output = String::with_capacity(normalized.len() + 16);
+    for (index, ch) in normalized.char_indices() {
+        output.push(ch);
+        if ch == '\n' && !blank_lines.contains(&index) {
+            output.push('\n');
+        }
+    }
+    output
+}
+
+/// Every line of a value, with formatting that spans a return closed and
+/// reopened, so each line's markup stands alone. A list row's items are lines.
+pub(super) fn inline_lines(value: &str) -> Vec<String> {
     split_inline_paragraphs(value, false)
 }
 
@@ -2721,7 +2756,10 @@ fn render_docx_document(
                         }
                         body.push_str(&docx_text_paragraph_xml(
                             None,
-                            &format!("[{number}] {text}"),
+                            &format!(
+                                "[{number}] {}",
+                                paragraphs.first().map_or("", String::as_str)
+                            ),
                             true,
                         ));
                     }
@@ -3515,7 +3553,10 @@ fn render_rtf_document(document: &ExportDocument, footnote_links_as_plain_text: 
                 }
                 body.push_str(&rtf_text_paragraph(
                     None,
-                    &format!("[{number}] {text}"),
+                    &format!(
+                        "[{number}] {}",
+                        paragraphs.first().map_or("", String::as_str)
+                    ),
                     true,
                 ));
             }
@@ -4710,11 +4751,11 @@ mod tests {
     }
 
     #[test]
-    fn footnote_paragraphs_preserve_formatting_blank_lines_and_export_structure() {
-        let note = "<i>First\nSecond</i>\n\nLast";
+    fn footnote_paragraphs_split_at_blank_lines_and_export_line_breaks() {
+        let note = "<i>First\n\nSecond\nline</i>\n\n \n\nLast";
         assert_eq!(
             footnote_paragraphs(note),
-            vec!["<em>First</em>", "<em>Second</em>", "", "Last"]
+            vec!["<em>First</em>", "<em>Second\nline</em>", "Last"]
         );
         let doc = document(vec![ExportBlock::Footnote {
             number: 1,
@@ -4723,8 +4764,8 @@ mod tests {
             text: note.into(),
         }]);
         let html = render_html_document(&doc).unwrap();
-        assert!(html.contains("text-indent:1.5em\"><em>Second</em>"));
-        assert!(html.contains("text-indent:1.5em\"><br></p>"));
+        assert_eq!(html.matches("<p style=\"margin:0;text-indent:").count(), 3);
+        assert!(html.contains("text-indent:1.5em\"><em>Second<br>line</em>"));
         let bytes = render_docx_document(&doc, false).unwrap();
         let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
         let mut xml = String::new();
@@ -4733,15 +4774,36 @@ mod tests {
             .unwrap()
             .read_to_string(&mut xml)
             .unwrap();
-        assert_eq!(xml.matches(r#"w:firstLine="360""#).count(), 3);
+        assert_eq!(xml.matches(r#"w:firstLine="360""#).count(), 2);
         assert!(xml.contains("<w:tab/>"));
-        assert!(!xml.contains("<w:br/>"));
+        assert_eq!(xml.matches("<w:br/>").count(), 1);
         let rtf = render_rtf_document(&doc, false);
-        assert_eq!(rtf.matches("\\li360\\fi360").count(), 3);
+        assert_eq!(rtf.matches("\\li360\\fi360").count(), 2);
         assert!(rtf.contains("[1]\\tab"));
-        assert!(!rtf.contains("\\line "));
+        assert_eq!(rtf.matches("\\line ").count(), 1);
         let markdown = render_md_document(&doc);
-        assert!(markdown.contains("\n\n    *Second*"));
+        assert!(
+            markdown.contains("[^1]: *First*\n\n    *Second\\\n    line*\n\n    Last"),
+            "{markdown}"
+        );
+        let txt = render_txt_document(&doc);
+        assert!(txt.contains("[1] First\n\nSecond\nline\n\nLast"), "{txt}");
+    }
+
+    #[test]
+    fn a_one_paragraph_footnote_keeps_its_line_breaks() {
+        let doc = document(vec![ExportBlock::Footnote {
+            number: 1,
+            marker: 1,
+            anchor_block: None,
+            text: "One,\nTwo.\n".into(),
+        }]);
+        let html = render_html_document(&doc).unwrap();
+        assert!(
+            html.contains("<p class=\"footnote\"><em>[1] One,<br>Two.</em></p>"),
+            "{html}"
+        );
+        assert!(render_rtf_document(&doc, false).contains("One,\\line Two."));
     }
 
     fn png_header(width: u32, height: u32) -> Vec<u8> {
@@ -6070,7 +6132,35 @@ mod tests {
             row_paragraphs("A\n<i>\nB</i>"),
             vec!["A", "<em></em>", "<em>B</em>"]
         );
-        assert_eq!(footnote_paragraphs("A\nB"), vec!["A", "B"]);
+        assert_eq!(footnote_paragraphs("A\nB"), vec!["A\nB"]);
+        assert_eq!(inline_lines("A\nB"), vec!["A", "B"]);
+    }
+
+    #[test]
+    fn migrated_footnote_returns_become_blank_lines_and_keep_their_paragraphs() {
+        // Each old return was a paragraph break; after the rewrite each is a
+        // blank line, so the note keeps the paragraphs it had.
+        let old = "Intro:\r\n<em>One,\nTwo.</em>\rAfter.";
+        let migrated = footnote_returns_as_blank_lines(old);
+        assert_eq!(migrated, "Intro:\n\n<em>One,\n\nTwo.</em>\n\nAfter.");
+        assert_eq!(
+            footnote_paragraphs(&migrated),
+            vec!["Intro:", "<em>One,</em>", "<em>Two.</em>", "After."]
+        );
+        // Existing blank lines, including the separator between labelled notes
+        // and lines of spaces or formatting, stay as they are.
+        assert_eq!(
+            footnote_returns_as_blank_lines("[1] A\nB\n\n[2] C\n \nD\n<i>\nE</i>"),
+            "[1] A\n\nB\n\n[2] C\n \nD\n<i>\nE</i>"
+        );
+        // A rule between returns stays its own paragraph.
+        assert_eq!(
+            footnote_returns_as_blank_lines("A\n<hr>\nB"),
+            "A\n\n<hr>\n\nB"
+        );
+        // One paragraph is untouched, and a rewritten note does not change again.
+        assert_eq!(footnote_returns_as_blank_lines("Only one"), "Only one");
+        assert_eq!(footnote_returns_as_blank_lines(&migrated), migrated);
     }
 
     fn paragraph_test_chapter(source_format: &str) -> StoredChapterFile {

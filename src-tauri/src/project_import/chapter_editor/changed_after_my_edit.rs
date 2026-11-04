@@ -20,14 +20,22 @@
 //! author date. Sync rebases, so neither alone is enough: an edit I never saw can land
 //! before my rebased commit in history while being newer by the clock, and an offline
 //! edit rebased on top of mine can be older by the clock.
+//!
+//! A repo migration commit rewrites stored rows for the app, whoever's app ran it: it
+//! is neither another person's edit nor my check. When the 0.8.147 migration (footnote
+//! paragraph breaks became blank lines) lies between the baseline and now, the baseline's
+//! footnotes are rewritten the same way, so the diff shows only people's changes.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use super::history::{author_login_from_email, parse_git_commit_message};
+use super::history::{
+    author_login_from_email, parse_git_commit_message, parse_gtms_migration_trailer,
+};
 use super::images::{
     editor_field_image_from_stored, load_historical_blob_bytes, normalize_editor_field_image_value,
 };
 use super::*;
+use crate::repo_layout_metadata::MIGRATION_08147;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -244,6 +252,8 @@ struct RowCommit {
     author_date: String,
     operation_type: Option<String>,
     ai_model: Option<String>,
+    /// The repo migration a `repo.migrate` commit applied (its `GTMS-Migration` trailer).
+    migration: Option<String>,
     /// None for the commit that created the row file.
     old_blob: Option<String>,
     new_blob: String,
@@ -283,8 +293,9 @@ fn load_row_commits_by_path(
         let author_name = parts.next().unwrap_or_default().trim();
         let author_email = parts.next().unwrap_or_default().trim();
         let author_date = parts.next().unwrap_or_default().trim();
-        let (_, operation_type, _, ai_model) =
-            parse_git_commit_message(parts.next().unwrap_or_default());
+        let message = parts.next().unwrap_or_default();
+        let (_, operation_type, _, ai_model) = parse_git_commit_message(message);
+        let migration = parse_gtms_migration_trailer(message);
         let raw_lines = parts.next().unwrap_or_default();
 
         for line in raw_lines.lines().filter(|line| line.starts_with(':')) {
@@ -310,6 +321,7 @@ fn load_row_commits_by_path(
                     author_date: author_date.to_string(),
                     operation_type: operation_type.clone(),
                     ai_model: ai_model.clone(),
+                    migration: migration.clone(),
                     old_blob: (status != "A" && old_blob != NULL_BLOB)
                         .then(|| old_blob.to_string()),
                     new_blob: new_blob.to_string(),
@@ -318,6 +330,26 @@ fn load_row_commits_by_path(
     }
 
     Ok(commits_by_path)
+}
+
+/// A repo migration reshapes stored rows for the app; nobody edited or checked them.
+fn is_repo_migration(commit: &RowCommit) -> bool {
+    commit.operation_type.as_deref() == Some("repo.migrate")
+}
+
+/// The baseline as it reads after the migrations newer than it. `newer` is the row's
+/// commits after the baseline commit in history.
+fn migrated_baseline(baseline: &RowContent, newer: &[RowCommit]) -> RowContent {
+    let mut baseline = baseline.clone();
+    if newer
+        .iter()
+        .any(|commit| commit.migration.as_deref() == Some(MIGRATION_08147))
+    {
+        for field in baseline.fields.values_mut() {
+            field.footnote = footnote_returns_as_blank_lines(&field.footnote);
+        }
+    }
+    baseline
 }
 
 /// Parsed rows by blob id. An unparseable blob maps to None, which never equals anything,
@@ -499,7 +531,7 @@ pub(super) fn find_rows_changed_after_my_edit(
                 continue;
             }
             let mine = end > walk.cursor && is_mine(&walk.commits[end - 1]);
-            let is_check = mine && {
+            let is_check = mine && !is_repo_migration(&walk.commits[end - 1]) && {
                 let commit = &walk.commits[end - 1];
                 let marks = blobs.mark_changes(commit);
                 let is_check = blobs.commit_is_edit(commit)
@@ -529,6 +561,7 @@ pub(super) fn find_rows_changed_after_my_edit(
                 let my_date = walk.commits[index].author_date.as_str();
                 for (position, commit) in walk.commits.iter().enumerate() {
                     if !is_mine(commit)
+                        && !is_repo_migration(commit)
                         && (position < index || commit.author_date.as_str() > my_date)
                     {
                         needed.extend(commit_blobs(commit));
@@ -540,7 +573,7 @@ pub(super) fn find_rows_changed_after_my_edit(
                 needed.extend(
                     walk.commits
                         .iter()
-                        .filter(|c| !is_mine(c))
+                        .filter(|c| !is_mine(c) && !is_repo_migration(c))
                         .flat_map(commit_blobs),
                 );
                 if let Some(created) = walk.commits.last() {
@@ -553,6 +586,9 @@ pub(super) fn find_rows_changed_after_my_edit(
 
     let mut rows = Vec::new();
     for walk in &walks {
+        let baseline_index = walk
+            .my_last_check
+            .unwrap_or(walk.commits.len().saturating_sub(1));
         let (baseline_commit, baseline_is_mine, candidates): (&RowCommit, bool, Vec<&RowCommit>) =
             match walk.my_last_check {
                 Some(index) => {
@@ -583,7 +619,7 @@ pub(super) fn find_rows_changed_after_my_edit(
             };
         let edits = candidates
             .into_iter()
-            .filter(|commit| blobs.commit_is_edit(commit))
+            .filter(|commit| !is_repo_migration(commit) && blobs.commit_is_edit(commit))
             .map(|commit| ChangedAfterMyEditEdit {
                 commit_sha: commit.commit_sha.clone(),
                 author_name: commit.author_name.clone(),
@@ -599,6 +635,7 @@ pub(super) fn find_rows_changed_after_my_edit(
         let Some(baseline) = blobs.get(&baseline_commit.new_blob) else {
             continue;
         };
+        let baseline = migrated_baseline(baseline, &walk.commits[..baseline_index]);
         let current = walk
             .commits
             .first()
@@ -618,7 +655,7 @@ pub(super) fn find_rows_changed_after_my_edit(
             baseline_fields: baseline_fields(
                 repo_path,
                 &baseline_commit.commit_sha,
-                baseline,
+                &baseline,
                 current.as_ref(),
             ),
             edits,
@@ -800,6 +837,56 @@ mod tests {
 
     fn reviewed_text(value: &str) -> serde_json::Value {
         json!({ "fields": { "es": { "plain_text": value, "editor_flags": { "reviewed": true } } } })
+    }
+
+    const FOOTNOTE_MIGRATION_MESSAGE: &str = "Separate footnote paragraphs with blank lines (0.8.147 migration)\n\nGTMS-Operation: repo.migrate\nGTMS-Migration: 0.8.147";
+
+    fn footnoted_text(value: &str, footnote: &str) -> serde_json::Value {
+        json!({ "fields": { "es": { "plain_text": value, "footnote": footnote } } })
+    }
+
+    #[test]
+    fn another_persons_repo_migration_is_not_an_edit() {
+        let mut repo = TestRepo::new();
+        repo.write_row("row-a", footnoted_text("uno[1]", "A\nB"));
+        repo.commit_as("me", "Import chapter", None);
+        repo.write_row("row-a", footnoted_text("uno[1]", "A\n\nB"));
+        repo.commit_as("other", FOOTNOTE_MIGRATION_MESSAGE, None);
+
+        assert!(repo.changed_row_ids("me").is_empty());
+    }
+
+    #[test]
+    fn my_repo_migration_is_not_my_check() {
+        let mut repo = TestRepo::new();
+        repo.write_row("row-a", footnoted_text("uno[1]", "A\nB"));
+        repo.commit_as("me", "Import chapter", None);
+        repo.write_row("row-a", footnoted_text("dos[1]", "A\nB"));
+        repo.commit_as("other", "Update row", None);
+        repo.write_row("row-a", footnoted_text("dos[1]", "A\n\nB"));
+        repo.commit_as("me", FOOTNOTE_MIGRATION_MESSAGE, None);
+
+        let rows = find_rows_changed_after_my_edit(&repo.path, ROWS_DIR, "me").expect("rows");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].baseline_fields["es"].plain_text, "uno[1]");
+        assert_eq!(rows[0].edits.len(), 1);
+        assert_eq!(rows[0].edits[0].author_login, "other");
+    }
+
+    #[test]
+    fn a_baseline_older_than_the_footnote_migration_reads_as_migrated() {
+        let mut repo = TestRepo::new();
+        repo.write_row("row-a", footnoted_text("uno[1]", "A\nB"));
+        repo.commit_as("me", "Import chapter", None);
+        repo.write_row("row-a", footnoted_text("uno[1]", "A\n\nB"));
+        repo.commit_as("other", FOOTNOTE_MIGRATION_MESSAGE, None);
+        repo.write_row("row-a", footnoted_text("dos[1]", "A\n\nB"));
+        repo.commit_as("other", "Update row", None);
+
+        let rows = find_rows_changed_after_my_edit(&repo.path, ROWS_DIR, "me").expect("rows");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].baseline_fields["es"].footnote, "A\n\nB");
+        assert_eq!(rows[0].edits.len(), 1);
     }
 
     #[test]

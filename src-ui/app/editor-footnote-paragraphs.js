@@ -49,12 +49,19 @@ function paragraphHasContent(paragraph) {
     || (paragraph.match(/<[^>]+>/g) ?? []).some(isSeparatorTag);
 }
 
+// A footnote follows the row rule: a blank line is a paragraph break and a
+// single return a line break inside its paragraph. Empty paragraphs are
+// dropped. A note of one paragraph stays inline; several become blocks, and
+// each after the first takes the 1.5em first-line indent.
 export function footnoteParagraphsHtml(html, tag = "span") {
   if (!/[\r\n\u2028]/.test(html)) return html;
-  return splitHtmlParagraphs(html).map((paragraph, index) => {
+  const paragraphs = splitHtmlParagraphs(String(html).trim(), isBlankLineNewline)
+    .filter(paragraphHasContent)
+    .map((paragraph) => paragraph.replaceAll("\n", "<br>"));
+  if (paragraphs.length <= 1) return paragraphs[0] ?? "";
+  return paragraphs.map((paragraph, index) => {
     const indent = index ? "1.5em" : "0";
-    const placeholder = paragraph.replace(/<[^>]*>/g, "") ? "" : "<br>";
-    return `<${tag} class="footnote-paragraph" style="display:block;margin:0;text-indent:${indent}">${paragraph}${placeholder}</${tag}>`;
+    return `<${tag} class="footnote-paragraph" style="display:block;margin:0;text-indent:${indent}">${paragraph}</${tag}>`;
   }).join("");
 }
 

@@ -1029,7 +1029,42 @@ function footnoteLinkSegments(text, showLinkUrls = false) {
     const lastIndex = segments.length - 1;
     segments[lastIndex] = { ...segments[lastIndex], text: segments[lastIndex].text.replace(/\s+$/, "") };
   }
-  return segments;
+  return withVellumFootnoteBreaks(segments);
+}
+
+// A footnote's blank lines are paragraph breaks (a run counts once) and its
+// single returns are line breaks, as in row text. Vellum reads U+000A as a
+// paragraph break and U+2028 as a line break, so each break becomes one of
+// those, wherever it falls across the runs.
+function withVellumFootnoteBreaks(segments) {
+  const text = segments.map((segment) => segment.text).join("");
+  const breaks = new Map();
+  for (const match of text.matchAll(/\n(?:[ \t]*\n)+|\n/g)) {
+    breaks.set(match.index, {
+      end: match.index + match[0].length,
+      value: match[0] === "\n" ? VELLUM_LINE_SEPARATOR : "\n",
+    });
+  }
+  if (breaks.size === 0) {
+    return segments;
+  }
+  let offset = 0;
+  let skipUntil = 0;
+  return segments.map((segment) => {
+    let output = "";
+    for (let index = 0; index < segment.text.length; index += 1) {
+      const position = offset + index;
+      const lineBreak = breaks.get(position);
+      if (lineBreak) {
+        output += lineBreak.value;
+        skipUntil = lineBreak.end;
+      } else if (position >= skipUntil) {
+        output += segment.text[index];
+      }
+    }
+    offset += segment.text.length;
+    return { ...segment, text: output };
+  }).filter((segment) => segment.text);
 }
 
 // Builds the footnote's nested attributed string. Footnotes with no link keep the

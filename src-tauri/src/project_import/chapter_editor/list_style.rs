@@ -2,7 +2,7 @@
 //! list: each line of its text is one item, and the tabs at the start of a line set
 //! the item's nesting level. The list style picks how each level is marked. These
 //! rules mirror `src-ui/app/editor-list.js`; see `plans/list-row-style-plan.md`.
-use super::chapter_export::{footnote_paragraphs, inline_visible_text};
+use super::chapter_export::{inline_lines, inline_visible_text};
 use super::normalize_editor_text_style_value;
 
 pub(super) const LIST_BULLET_TEXT_STYLE: &str = "list_bullet";
@@ -181,7 +181,7 @@ fn roman(mut number: usize) -> String {
 /// than the item before it.
 pub(super) fn list_items(text: &str) -> Vec<ListItem> {
     let mut items: Vec<ListItem> = Vec::new();
-    for line in footnote_paragraphs(text) {
+    for line in inline_lines(text) {
         if inline_visible_text(&line).trim().is_empty() {
             continue;
         }

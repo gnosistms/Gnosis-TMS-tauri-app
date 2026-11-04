@@ -642,11 +642,6 @@ fn section_body(
                 for (index, paragraph) in paragraphs.iter().enumerate() {
                     let indent = if index == 0 { "0" } else { "1.5em" };
                     let content = inline(paragraph, &[], &mut BTreeSet::new());
-                    let content = if inline_visible_text(paragraph).is_empty() {
-                        "<br/>"
-                    } else {
-                        &content
-                    };
                     let _ = write!(
                         body,
                         "<p style=\"margin:0;text-indent:{indent}\">{content}</p>"
@@ -655,7 +650,7 @@ fn section_body(
                 body.push_str("</div></aside>");
                 continue;
             }
-            let _ = write!(body, "<aside id=\"note-{}\" class=\"footnote\" epub:type=\"footnote\" role=\"doc-footnote\"><p><a href=\"#ref-{}\" aria-label=\"Back to text\">[{}]</a> {}</p></aside>", note.index, note.index, note.number, inline(note.text, &[], &mut BTreeSet::new()));
+            let _ = write!(body, "<aside id=\"note-{}\" class=\"footnote\" epub:type=\"footnote\" role=\"doc-footnote\"><p><a href=\"#ref-{}\" aria-label=\"Back to text\">[{}]</a> {}</p></aside>", note.index, note.index, note.number, inline(paragraphs.first().map_or("", String::as_str), &[], &mut BTreeSet::new()));
         }
         body.push_str("</section>");
     }

@@ -16,6 +16,10 @@ pub(crate) const MIGRATION_0875: &str = "0.8.75";
 // Content-only repair: moves uploaded images the 0.8.10 in-place migration
 // left in per-row folders to the flat paths their rows already reference.
 pub(crate) const MIGRATION_08138: &str = "0.8.138";
+// Content-only rewrite: footnotes take the row-text rule (a blank line is a
+// paragraph break, a single return a line break), so every stored footnote
+// return, which was a paragraph break, becomes a blank line.
+pub(crate) const MIGRATION_08147: &str = "0.8.147";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum RepoKind {

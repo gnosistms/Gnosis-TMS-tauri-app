@@ -954,6 +954,7 @@ function renderEditorFootnoteField(row, language) {
         <textarea
           class="translation-language-panel__field translation-language-panel__field--footnote"
           data-editor-row-field
+          data-text-has-paragraphs
           data-content-kind="footnote"
           data-footnote-marker="${escapeHtml(entry.marker)}"
           data-row-id="${escapeHtml(row.id)}"

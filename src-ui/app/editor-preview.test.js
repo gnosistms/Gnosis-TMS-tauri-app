@@ -902,7 +902,7 @@ test("HTML exports complete formatted notes with reciprocal links and row-local 
       text: "Literal \\[2\\], first <strong>[2]</strong> then [1].",
       footnotes: [
         { marker: 1, text: 'Second <a href="https://example.com/source?a=1&b=2">source</a>' },
-        { marker: 2, text: "Đầu tiên <em>formatted</em> & safe\nNext line" },
+        { marker: 2, text: "Đầu tiên <em>formatted</em> & safe\nNext line\n\nNext paragraph" },
       ],
     },
     {
@@ -919,7 +919,7 @@ test("HTML exports complete formatted notes with reciprocal links and row-local 
     assert.ok(html.includes(`<a href="#${referenceId}" role="doc-backlink"`));
   }
   assert.match(html, /Literal \[2\], first <strong><sup/);
-  assert.match(html, /Đầu tiên <em>formatted<\/em> &amp; safe<\/p><p[^>]+text-indent:1.5em">Next line/);
+  assert.match(html, /Đầu tiên <em>formatted<\/em> &amp; safe<br>Next line<\/p><p[^>]+text-indent:1.5em">Next paragraph/);
   assert.match(html, /Second <a href="https:\/\/example.com\/source\?a=1&amp;b=2">source<\/a>/);
   assert.match(html, /Distinct row note/);
   assert.match(html, /Unmarked note/);

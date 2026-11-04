@@ -2558,7 +2558,7 @@ mod tests {
     fn snapshot_forces_transport_sync_while_chapter_settings_migration_pends() {
         use crate::repo_layout_metadata::{
             new_v2_repo_layout_metadata, write_repo_layout_metadata, RepoKind, MIGRATION_08138,
-            MIGRATION_0856, MIGRATION_0875,
+            MIGRATION_08147, MIGRATION_0856, MIGRATION_0875,
         };
 
         let repo_path = init_test_repo("pending-0856-snapshot");
@@ -2592,6 +2592,9 @@ mod tests {
         metadata
             .applied_migrations
             .push(MIGRATION_08138.to_string());
+        metadata
+            .applied_migrations
+            .push(MIGRATION_08147.to_string());
         write_repo_layout_metadata(&repo_path, &metadata).expect("write migrated metadata");
         run_git(&repo_path, &["add", "-A"]);
         run_git(&repo_path, &["commit", "-m", "Record content migrations"]);

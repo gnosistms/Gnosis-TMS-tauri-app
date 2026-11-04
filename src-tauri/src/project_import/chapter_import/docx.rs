@@ -199,6 +199,9 @@ fn parse_docx_notes_xml(
     let mut notes = BTreeMap::new();
     let mut current_id: Option<String> = None;
     let mut current_text = String::new();
+    // A note's paragraphs are joined by a blank line and a <w:br/> inside one is
+    // a line break, the editor's rule for footnotes as for row text.
+    let mut current_paragraphs: Vec<String> = Vec::new();
     let mut in_text = false;
     let mut event_count = 0usize;
 
@@ -213,6 +216,7 @@ fn parse_docx_notes_xml(
                 if name == note_element_name {
                     current_id = xml_attribute_value(&event, "id")?;
                     current_text.clear();
+                    current_paragraphs.clear();
                 } else if current_id.is_some() && name == "t" {
                     in_text = true;
                 } else if current_id.is_some() && name == "tab" {
@@ -240,16 +244,22 @@ fn parse_docx_notes_xml(
                 let name = local_xml_name(event.name().as_ref());
                 if name == "t" {
                     in_text = false;
+                } else if current_id.is_some() && name == "p" {
+                    let paragraph = normalize_docx_text(&std::mem::take(&mut current_text));
+                    if !paragraph.is_empty() {
+                        current_paragraphs.push(paragraph);
+                    }
                 } else if name == note_element_name {
+                    let paragraph = normalize_docx_text(&std::mem::take(&mut current_text));
+                    if !paragraph.is_empty() {
+                        current_paragraphs.push(paragraph);
+                    }
                     if let Some(id) = current_id.take() {
-                        if !id.starts_with('-') {
-                            let note_text = normalize_docx_text(&current_text);
-                            if !note_text.is_empty() {
-                                notes.insert(id, note_text);
-                            }
+                        if !id.starts_with('-') && !current_paragraphs.is_empty() {
+                            notes.insert(id, current_paragraphs.join("\n\n"));
                         }
                     }
-                    current_text.clear();
+                    current_paragraphs.clear();
                 }
             }
             Ok(Event::Eof) => break,
@@ -621,4 +631,27 @@ fn increment_docx_unsupported(summary: &mut DocxImportSummary, key: &str) {
         .unsupported_content_counts
         .entry(key.to_string())
         .or_insert(0) += 1;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_docx_notes_xml;
+
+    #[test]
+    fn a_note_of_several_paragraphs_keeps_blank_lines_and_line_breaks() {
+        let xml = r#"
+            <w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+              <w:footnote w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:footnote>
+              <w:footnote w:id="2">
+                <w:p><w:r><w:footnoteRef/></w:r><w:r><w:t xml:space="preserve"> Intro:</w:t></w:r></w:p>
+                <w:p><w:r><w:t>One,</w:t><w:br/><w:t>two.</w:t></w:r></w:p>
+                <w:p/>
+                <w:p><w:r><w:t>After.</w:t></w:r></w:p>
+              </w:footnote>
+            </w:footnotes>
+        "#;
+        let notes = parse_docx_notes_xml(xml, "footnote").unwrap();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes["2"], "Intro:\n\nOne,\ntwo.\n\nAfter.");
+    }
 }

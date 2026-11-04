@@ -6737,7 +6737,7 @@ test.describe("editor regressions", () => {
       ?.footnotes?.["fixture-chapter"]?.[rowId]?.vi).toBe("Edited footnote to preserve while switching editors.");
   });
 
-  test("footnote paragraphs format on blur while native typing and stored returns stay unchanged", async ({ page }) => {
+  test("footnote paragraphs and line breaks follow row text and format on blur", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 18, chapterStatus: "ready" }, { mockTauri: true });
     const rowId = "fixture-row-0001";
     await activateMainEditorField(page, rowId, "vi");
@@ -6746,12 +6746,16 @@ test.describe("editor regressions", () => {
     await expect(field).toBeFocused();
     await field.pressSequentially("First paragraph.");
     await field.press("Enter");
-    await field.pressSequentially("Second paragraph.");
-    await expect(field).toHaveValue("First paragraph.\nSecond paragraph.");
+    await field.pressSequentially("Second paragraph,");
+    await field.press("Shift+Enter");
+    await field.pressSequentially("second line.");
+    const stored = "First paragraph.\n\nSecond paragraph,\nsecond line.";
+    await expect(field).toHaveValue(stored);
     await page.locator("[data-editor-search-input]").click();
     const display = page.locator(`[data-editor-footnote-display][data-row-id="${rowId}"][data-language-code="vi"]`);
     const paragraphs = display.locator(".footnote-paragraph");
     await expect(paragraphs).toHaveCount(2);
+    await expect(paragraphs.nth(1).locator("br")).toHaveCount(1);
     await expect(paragraphs.nth(0)).toHaveCSS("text-indent", "0px");
     const fontSize = await paragraphs.nth(1).evaluate((element) => parseFloat(getComputedStyle(element).fontSize));
     await expect(paragraphs.nth(1)).toHaveCSS("text-indent", `${fontSize * 1.5}px`);
@@ -6761,10 +6765,10 @@ test.describe("editor regressions", () => {
     }));
     expect(Math.abs(geometry[1].top - geometry[0].bottom)).toBeLessThan(1);
     await expect.poll(async () => (await readMockTauriState(page))?.footnotes?.["fixture-chapter"]?.[rowId]?.vi)
-      .toBe("First paragraph.\nSecond paragraph.");
+      .toBe(stored);
     await display.click();
     await expect(field).toBeFocused();
-    await expect(field).toHaveValue("First paragraph.\nSecond paragraph.");
+    await expect(field).toHaveValue(stored);
     await page.locator("[data-editor-search-input]").click();
     await page.locator('[data-action="set-editor-mode:preview"]').click();
     const previewParagraphs = page.locator('.wp-block-footnotes .footnote-paragraph');

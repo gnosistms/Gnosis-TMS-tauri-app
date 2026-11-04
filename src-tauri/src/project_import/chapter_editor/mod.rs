@@ -182,6 +182,9 @@ pub(super) use self::shared::{
 // Re-exported for the 0.8.56 repo migration, which runs the same normalization
 // over every chapter once.
 pub(crate) use self::shared::normalize_chapter_settings_value;
+// Re-exported for the 0.8.147 repo migration, which gives every stored footnote
+// blank-line paragraph breaks once.
+pub(crate) use self::chapter_export::footnote_returns_as_blank_lines;
 
 const ORDER_KEY_SPACING: u128 = 1u128 << 104;
 const DEFAULT_EDITOR_TEXT_STYLE: &str = "paragraph";
@@ -1246,6 +1249,8 @@ struct GitCommitMetadata {
     operation_type: Option<String>,
     status_note: Option<String>,
     ai_model: Option<String>,
+    /// The repo migration a `repo.migrate` commit applied (its `GTMS-Migration` trailer).
+    migration: Option<String>,
 }
 
 pub(super) fn load_gtms_chapter_editor_data_sync(
