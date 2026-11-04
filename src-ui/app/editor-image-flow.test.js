@@ -152,6 +152,7 @@ const {
   submitEditorImageUrl,
   updateEditorImageUrlDraft,
 } = await import("./editor-image-flow.js");
+const { audioNeedsRowTextMessage } = await import("./editor-audio-footnote.js");
 const {
   cancelEditorImageReuse,
   confirmEditorImageReuse,
@@ -848,6 +849,83 @@ test("submitEditorImageUrl reports URL syntax errors without calling the image l
     status: "idle",
   });
   assert.equal(invokeLog.length, 0);
+});
+
+test("submitEditorImageUrl refuses audio on a row without text", async () => {
+  installEditorFixture();
+  const render = createRenderSpy();
+  const url = "https://example.com/wp-content/uploads/talk.mp3";
+  state.editorChapter = {
+    ...state.editorChapter,
+    imageEditor: {
+      rowId: "row-1",
+      languageCode: "vi",
+      mode: "url",
+      urlDraft: url,
+      invalidUrl: false,
+      urlErrorMessage: "",
+      status: "idle",
+    },
+  };
+
+  await submitEditorImageUrl(render, "row-1", "vi");
+
+  assert.deepEqual(state.editorChapter.imageEditor, {
+    rowId: "row-1",
+    languageCode: "vi",
+    mode: null,
+    urlDraft: url,
+    invalidUrl: true,
+    urlErrorMessage: audioNeedsRowTextMessage(),
+    status: "idle",
+  });
+  assert.equal(invokeLog.length, 0);
+});
+
+test("audio upload is refused on a row without text", async () => {
+  installEditorFixture();
+  const render = createRenderSpy();
+  state.editorChapter = {
+    ...state.editorChapter,
+    imageEditor: {
+      rowId: "row-1",
+      languageCode: "vi",
+      mode: "upload",
+      status: "idle",
+    },
+  };
+
+  await handleDroppedEditorImageFile(render, "row-1", "vi", {
+    name: "talk.mp3",
+    type: "audio/mpeg",
+    async arrayBuffer() {
+      return Uint8Array.from([73, 68, 51, 4]).buffer;
+    },
+  }, { updateEditorChapterRow });
+
+  assert.equal(state.editorChapter.imageEditor.status, "idle");
+  assert.equal(state.editorChapter.imageInvalidFileModal?.isOpen === true, false);
+  assert.equal(invokeLog.length, 0);
+  assert.equal(state.editorChapter.rows[0].images.vi, undefined);
+});
+
+test("duplicateEditorLanguageImage refuses audio into a language without text", async () => {
+  installEditorFixture();
+  // The Spanish text exists, the Vietnamese text is empty.
+  state.editorChapter = {
+    ...state.editorChapter,
+    rows: state.editorChapter.rows.map((row) => ({
+      ...row,
+      images: { es: { kind: "url", url: "https://example.com/talk.mp3" } },
+    })),
+  };
+  const render = createRenderSpy();
+
+  const result = await duplicateEditorLanguageImage(render, "row-1", "es", "vi", { updateEditorChapterRow });
+
+  assert.equal(result.status, "blocked");
+  assert.equal(invokeLog.length, 0);
+  assert.equal(state.editorChapter.imageDuplicateOverwriteModal?.isOpen === true, false);
 });
 
 test("submitEditorImageUrl reports save failures as a clickable image URL error state", async () => {

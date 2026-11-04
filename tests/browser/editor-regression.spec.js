@@ -6214,6 +6214,37 @@ test.describe("editor regressions", () => {
     }).toBe(url);
   });
 
+  test("inserting an MP3 URL into a row without text explains why and saves nothing", async ({ page }) => {
+    const rowId = "fixture-row-0008";
+    const languageCode = "vi";
+    const url = "https://example.org/wp-content/uploads/2026/07/evening-talk.mp3";
+    await mountEditorFixture(
+      page,
+      { rowCount: 18, fieldsByRowId: { [rowId]: { es: "alpha source text", vi: "" } } },
+      { mockTauri: true },
+    );
+
+    await bringRowNearTop(page, rowId, 120);
+    await activateMainEditorField(page, rowId, languageCode);
+    await page.locator(
+      `[data-action="open-editor-image-url"][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+    ).click();
+    const urlInput = page.locator(
+      `[data-editor-image-url-input][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+    );
+    await urlInput.fill(url);
+    await urlInput.press(await editorSaveShortcut(page));
+
+    await expect(page.locator(".translation-language-panel__image-message-button.message-box--error")).toContainText(
+      "Write this row's text before adding audio.",
+    );
+    await expect(
+      page.locator(`[data-editor-media-kind="audio"][data-row-id="${rowId}"][data-language-code="${languageCode}"]`),
+    ).toHaveCount(0);
+    const invocations = (await readMockTauriState(page)).invocations;
+    expect(invocations.some((entry) => entry.command === "save_gtms_editor_language_image_url")).toBe(false);
+  });
+
   test("cancelling the duplicate image warning with Escape inserts nothing", async ({ page }) => {
     const rowId = "fixture-row-0008";
     const languageCode = "vi";

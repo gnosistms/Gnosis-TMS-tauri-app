@@ -4,6 +4,18 @@
 // tests/fixtures/audio-footnote/caption-cases.json.
 
 import { editorFieldImageDisplayName } from "./editor-images.js";
+import { extractInlineMarkupVisibleText } from "./editor-inline-markup.js";
+
+// Audio is refused on a row with no text in that language: the footnote that
+// carries it in print exports needs text to attach to.
+export function audioNeedsRowTextMessage(languageName = "") {
+  const name = String(languageName ?? "").trim();
+  return `Write this row's ${name ? `${name} ` : ""}text before adding audio. Print exports put the audio link in a footnote on that text.`;
+}
+
+export function editorRowHasTextForAudio(row, languageCode) {
+  return extractInlineMarkupVisibleText(String(row?.fields?.[languageCode] ?? "")).trim().length > 0;
+}
 
 // Punctuation that would sit badly before the ": ". Closing quotes and
 // brackets are not in it, so a quoted title stays balanced.

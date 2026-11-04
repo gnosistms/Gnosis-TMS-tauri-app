@@ -4,7 +4,8 @@ import {
   editorWordPressCaptionSearchKey,
   normalizeEditorFieldImage,
 } from "./editor-images.js";
-import { editorFieldMedia, editorMediaForUploadPath } from "./editor-media-kind.js";
+import { audioNeedsRowTextMessage, editorRowHasTextForAudio } from "./editor-audio-footnote.js";
+import { editorFieldMedia, editorMediaForUploadPath, editorMediaForUrl } from "./editor-media-kind.js";
 import { enforceImportFileSizeLimit } from "./import-file-limit.js";
 import { openLocalFilePicker } from "./local-file-picker.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
@@ -434,6 +435,13 @@ export function registerEditorImageCaptionListeners(render) {
 
 function currentImage(rowId, languageCode) {
   return normalizeEditorFieldImage(findEditorRowById(rowId, state.editorChapter)?.images?.[languageCode]);
+}
+
+// Print exports turn a row's audio into a footnote on its text, so audio
+// needs text in that language to attach to.
+function audioNeedsRowText(rowId, languageCode, media) {
+  return media?.kind === "audio"
+    && !editorRowHasTextForAudio(findEditorRowById(rowId, state.editorChapter), languageCode);
 }
 
 function applyOptimisticImage(rowId, languageCode, image, operations = {}) {
@@ -931,6 +939,20 @@ export async function persistEditorImageUrlOnBlur(render, rowId, languageCode, o
     return;
   }
 
+  if (audioNeedsRowText(rowId, languageCode, editorMediaForUrl(draft))) {
+    setImageEditorState({
+      rowId,
+      languageCode,
+      mode: null,
+      urlDraft: draft,
+      invalidUrl: true,
+      urlErrorMessage: audioNeedsRowTextMessage(),
+      status: "idle",
+    });
+    renderEditorRowScoped(render, rowId, "image-url-invalid");
+    return;
+  }
+
   return saveEditorImageUrlDraft(render, rowId, languageCode, draft, chapterAtRequest, operations, {
     checkReuse: true,
   });
@@ -1204,6 +1226,18 @@ async function saveUploadedEditorImage(render, rowId, languageCode, file, operat
       setImageInvalidFileModal(true);
       renderEditorRowScoped(render, rowId, "image-upload-state");
     }
+    return;
+  }
+
+  if (audioNeedsRowText(rowId, languageCode, editorMediaForUploadPath(fileName))) {
+    setImageEditorState({
+      rowId,
+      languageCode,
+      mode: "upload",
+      status: "idle",
+    });
+    renderEditorRowScoped(render, rowId, "image-upload-state");
+    showNoticeBadge(audioNeedsRowTextMessage(), render);
     return;
   }
 
@@ -1615,6 +1649,10 @@ export async function duplicateEditorLanguageImage(
   const sourceImage = currentImage(rowId, sourceLanguageCode);
   if (!sourceImage) {
     return { status: "skipped" };
+  }
+  if (audioNeedsRowText(rowId, destinationLanguageCode, editorFieldMedia(sourceImage))) {
+    showNoticeBadge(audioNeedsRowTextMessage(editorLanguageName(destinationLanguageCode)), render);
+    return { status: "blocked" };
   }
   if (
     state.editorChapter?.imagePreviewOverlay?.isOpen === true
