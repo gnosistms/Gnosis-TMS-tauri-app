@@ -1086,28 +1086,54 @@ fn plain_text_contains_unescaped_footnote_marker(text: &str, marker: usize) -> b
     false
 }
 
+/// A quote row is one quotation: its paragraphs share one text block, joined by
+/// this blank line, so every exporter sets them inside one quote.
+const QUOTE_PARAGRAPH_BREAK: &str = "\n\n";
+
+/// The paragraphs of a text block: several for a quote whose row has more than
+/// one (see `QUOTE_PARAGRAPH_BREAK`), otherwise the whole text.
+pub(super) fn quote_paragraphs<'a>(text_style: &str, text: &'a str) -> Vec<&'a str> {
+    if export_text_style(Some(text_style)) == "quote" {
+        text.split(QUOTE_PARAGRAPH_BREAK).collect()
+    } else {
+        vec![text]
+    }
+}
+
 /// Each paragraph of a row (text between blank lines) becomes a text block of its
-/// own, so every exporter sets it exactly as a separate row of the same style.
-/// Empty paragraphs are dropped, as empty rows are.
+/// own, so every exporter sets it exactly as a separate row of the same style. A
+/// quote's paragraphs stay in one block, so it is set as one quotation. Empty
+/// paragraphs are dropped, as empty rows are.
 fn push_text_blocks_with_separators(
     blocks: &mut Vec<ExportBlock>,
     text_style: String,
     text: &str,
     split_paragraphs: bool,
 ) {
+    let quote = export_text_style(Some(&text_style)) == "quote";
     let push_segment = |blocks: &mut Vec<ExportBlock>, segment: &str| {
         let paragraphs = if split_paragraphs {
             row_paragraphs(segment)
         } else {
             vec![segment.to_string()]
         };
+        let paragraphs = paragraphs
+            .iter()
+            .filter(|paragraph| !inline_visible_text(paragraph).trim().is_empty())
+            .map(|paragraph| paragraph.trim().to_string())
+            .collect::<Vec<_>>();
+        if quote && !paragraphs.is_empty() {
+            blocks.push(ExportBlock::Text {
+                text_style: text_style.clone(),
+                text: paragraphs.join(QUOTE_PARAGRAPH_BREAK),
+            });
+            return;
+        }
         for paragraph in paragraphs {
-            if !inline_visible_text(&paragraph).trim().is_empty() {
-                blocks.push(ExportBlock::Text {
-                    text_style: text_style.clone(),
-                    text: paragraph.trim().to_string(),
-                });
-            }
+            blocks.push(ExportBlock::Text {
+                text_style: text_style.clone(),
+                text: paragraph,
+            });
         }
     };
     let mut cursor = 0usize;
@@ -1741,6 +1767,22 @@ fn render_html_document(document: &ExportDocument) -> Result<String, String> {
                     let _ = writeln!(body, "{}", render_list_html(kind, &items, &items_html, ""));
                     continue;
                 }
+                let paragraphs = quote_paragraphs(text_style, text);
+                if paragraphs.len() > 1 {
+                    // One quotation, a paragraph each; its citation follows the last.
+                    let inner = paragraphs
+                        .iter()
+                        .map(|paragraph| {
+                            format!(
+                                "<p>{}</p>",
+                                sanitize_inline_html(paragraph).replace('\n', "<br>")
+                            )
+                        })
+                        .collect::<String>();
+                    let _ = writeln!(body, "<blockquote>{inner}</blockquote>");
+                    citation_slot = Some(body.len() - "</blockquote>".len() - 1);
+                    continue;
+                }
                 let text = sanitize_inline_html(text).replace('\n', "<br>");
                 let (open, close) = match export_text_style(Some(text_style)).as_str() {
                     "heading1" => ("<h1>", "</h1>"),
@@ -2147,16 +2189,27 @@ fn render_md_document(document: &ExportDocument) -> String {
                     }
                     continue;
                 }
-                let inline = md_inline_text(text);
+                let inline = quote_paragraphs(text_style, text)
+                    .into_iter()
+                    .map(md_inline_text)
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
                 if inline.trim().is_empty() {
                     continue;
                 }
                 let rendered = match export_text_style(Some(text_style)).as_str() {
                     "heading1" => format!("# {}", md_single_line(&inline)),
                     "heading2" => format!("## {}", md_single_line(&inline)),
+                    // A bare ">" line keeps a quote's paragraphs in one quotation.
                     "quote" => inline
                         .lines()
-                        .map(|line| format!("> {line}"))
+                        .map(|line| {
+                            if line.is_empty() {
+                                ">".to_string()
+                            } else {
+                                format!("> {line}")
+                            }
+                        })
                         .collect::<Vec<_>>()
                         .join("\n"),
                     // A lone newline is a soft break in Markdown; keep visual line
@@ -2604,10 +2657,16 @@ fn render_docx_document(
                                 ));
                             }
                         } else {
-                            body.push_str(&docx_paragraph_runs_xml(
-                                Some(text_style),
-                                &format!("{bookmark}{}", docx_runs_xml(text, false)),
-                            ));
+                            // A quote's paragraphs are Quote paragraphs in a row.
+                            for (index, paragraph) in
+                                quote_paragraphs(text_style, text).iter().enumerate()
+                            {
+                                let bookmark = if index == 0 { bookmark.as_str() } else { "" };
+                                body.push_str(&docx_paragraph_runs_xml(
+                                    Some(text_style),
+                                    &format!("{bookmark}{}", docx_runs_xml(paragraph, false)),
+                                ));
+                            }
                         }
                     }
                     ExportBlock::Attribution { text } => {
@@ -3420,7 +3479,11 @@ fn render_rtf_document(document: &ExportDocument, footnote_links_as_plain_text: 
         match block {
             ExportBlock::Text { text_style, text } => match list_kind(text_style) {
                 Some(kind) => body.push_str(&rtf_list_paragraphs(kind, text)),
-                None => body.push_str(&rtf_text_paragraph(Some(text_style), text, false)),
+                None => {
+                    for paragraph in quote_paragraphs(text_style, text) {
+                        body.push_str(&rtf_text_paragraph(Some(text_style), paragraph, false));
+                    }
+                }
             },
             ExportBlock::Attribution { text } => {
                 let paragraph = rtf_text_paragraph(None, text, false);
@@ -4016,6 +4079,88 @@ mod tests {
             assert!(html.contains("<hr>\n<blockquote><cite class=\"quote-attribution\">Author &amp; <strong>Work</strong></cite></blockquote>"), "Quote body: {text}");
             assert_eq!(html.matches("<cite ").count(), 1, "Quote body: {text}");
         }
+    }
+
+    #[test]
+    fn a_quote_row_of_several_paragraphs_exports_as_one_quote() {
+        let chapter = StoredChapterFile {
+            chapter_id: "chapter-1".into(),
+            title: "Chapter".into(),
+            lifecycle: active_lifecycle_state(),
+            source_files: Vec::new(),
+            languages: vec![export_language("en", "target", None)],
+            settings: None,
+            source_word_count: None,
+        };
+        let mut quote = row(
+            "q",
+            "a",
+            "First.\n\n<b>Second\nline</b>.\n\nThird.",
+            "quote",
+        );
+        quote.fields.get_mut("en").unwrap().attribution = "Author".into();
+        let next = row("r", "b", "Another quote.", "quote");
+        let separated = row("s", "c", "One.\n\nTwo.<hr>Three.", "quote");
+        let document = build_export_document(
+            Path::new("/repo"),
+            &chapter,
+            &[quote, next, separated],
+            "en",
+            None,
+            "",
+            AudioExport::Embed,
+        )
+        .unwrap();
+        // A quote row is one block per separator segment; other rows stay apart.
+        let texts = document
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                ExportBlock::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            texts,
+            vec![
+                "First.\n\n<strong>Second\nline</strong>.\n\nThird.",
+                "Another quote.",
+                "One.\n\nTwo.",
+                "Three."
+            ]
+        );
+
+        let html = render_html_document(&document).unwrap();
+        assert!(html.contains("<blockquote><p>First.</p><p><strong>Second<br>line</strong>.</p><p>Third.</p><cite class=\"quote-attribution\">Author</cite></blockquote>\n<blockquote>Another quote.</blockquote>\n<blockquote><p>One.</p><p>Two.</p></blockquote>\n<hr>\n<blockquote>Three.</blockquote>\n"), "{html}");
+
+        let md = render_md_document(&document);
+        assert!(
+            md.contains(
+                "> First.\n>\n> **Second\n> line**.\n>\n> Third.\n\n> Author\n\n> Another quote."
+            ),
+            "{md}"
+        );
+        let txt = render_txt_document(&document);
+        assert!(
+            txt.contains("<blockquote>\nFirst.\n\nSecond\nline.\n\nThird.\n</blockquote>"),
+            "{txt}"
+        );
+
+        // Word and RTF set a quote's paragraphs as Quote paragraphs in a row.
+        let rtf = render_rtf_document(&document, false);
+        assert_eq!(rtf.matches("\\li720\\ri720").count(), 7, "{rtf}");
+        let bytes = render_docx_document(&document, false).unwrap();
+        let mut zip = ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let mut xml = String::new();
+        zip.by_name("word/document.xml")
+            .unwrap()
+            .read_to_string(&mut xml)
+            .unwrap();
+        assert_eq!(
+            xml.matches("<w:pStyle w:val=\"Quote\"/>").count(),
+            7,
+            "{xml}"
+        );
     }
 
     #[test]

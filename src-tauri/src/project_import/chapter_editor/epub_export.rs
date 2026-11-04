@@ -3,8 +3,8 @@
 use super::book_export::{book_title, single_line_title};
 use super::chapter_export::{
     download_public_image_bytes_detailed, export_text_style, inline_visible_text,
-    numbered_book_documents, sanitize_inline_html, uploaded_media_file_name, ExportBlock,
-    ExportDocument, ExportImage,
+    numbered_book_documents, quote_paragraphs, sanitize_inline_html, uploaded_media_file_name,
+    ExportBlock, ExportDocument, ExportImage,
 };
 use super::list_style::{list_items, list_kind, render_list_html};
 use super::media_kind::audio_mime_type;
@@ -476,6 +476,32 @@ fn section_body(
                         &items_html,
                         &format!(" id=\"block-{index}\""),
                     ));
+                    continue;
+                }
+                let paragraphs = quote_paragraphs(text_style, text);
+                if paragraphs.len() > 1 {
+                    // One quotation, a paragraph each. Notes whose markers are not
+                    // in it follow its last paragraph, and so does its citation.
+                    let mut paragraphs_html = paragraphs
+                        .iter()
+                        .map(|paragraph| inline(paragraph, &anchor_notes, &mut referenced))
+                        .collect::<Vec<_>>();
+                    if let Some(last) = paragraphs_html.last_mut() {
+                        for note in &anchor_notes {
+                            if !referenced.contains(&note.index) {
+                                last.push_str(&noteref(note, &mut referenced));
+                            }
+                        }
+                    }
+                    let inner = paragraphs_html
+                        .iter()
+                        .map(|paragraph| format!("<p>{paragraph}</p>"))
+                        .collect::<String>();
+                    let _ = write!(
+                        body,
+                        "<blockquote id=\"block-{index}\" class=\"\">{inner}</blockquote>"
+                    );
+                    citation_slot = Some(body.len() - "</blockquote>".len());
                     continue;
                 }
                 let (tag, class) = match export_text_style(Some(text_style)).as_str() {

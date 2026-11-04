@@ -441,6 +441,47 @@ test("paragraph blocks keep their own footnotes and the quote attribution goes l
   assert.match(rendered, /Cites none\.<sup[^>]*><a[^>]*>3<\/a><\/sup><cite/);
 });
 
+test("a quote row of several paragraphs is one quote; the next quote row is another", () => {
+  const blocks = buildEditorPreviewDocument([
+    paragraphRow({ vi: "First.\n\nSecond.\n\nThird." }, { rowId: "q", textStyle: "quote", attributions: { vi: "Author" } }),
+    paragraphRow({ vi: "Another quote." }, { rowId: "r", textStyle: "quote" }),
+  ], "vi");
+  const paragraph = (text) => `<!-- wp:paragraph -->\n<p>${text}</p>\n<!-- /wp:paragraph -->`;
+  assert.equal(
+    serializeEditorPreviewWordPress(blocks).content,
+    `<!-- wp:quote -->\n<blockquote class="wp-block-quote">${paragraph("First.")}\n\n${paragraph("Second.")}\n\n${paragraph("Third.")}<cite>Author</cite></blockquote>\n<!-- /wp:quote -->`
+      + `\n\n<!-- wp:quote -->\n<blockquote class="wp-block-quote">${paragraph("Another quote.")}</blockquote>\n<!-- /wp:quote -->`,
+  );
+  assert.equal(serializeEditorPreviewHtml(blocks).match(/<blockquote /g).length, 2);
+
+  // The preview keeps a block per paragraph and marks those that continue a quote.
+  const rendered = renderEditorPreviewDocumentHtml(blocks).html;
+  assert.deepEqual(
+    [...rendered.matchAll(/<blockquote class="([^"]*)"[^>]*>([^<]*)/g)].map((match) => [match[2], match[1].includes("quote-continued")]),
+    [["First.", false], ["Second.", true], ["Third.", true], ["Another quote.", false]],
+  );
+});
+
+test("a quote's footnotes keep their order and a separator ends the quote", () => {
+  const footnoted = buildEditorPreviewDocument([
+    paragraphRow(
+      { vi: "Cites two[2].\n\nCites one[1]." },
+      { rowId: "q", textStyle: "quote", footnotes: { vi: "[1] Note one\n\n[2] Note two" } },
+    ),
+  ], "vi");
+  const { content, footnotes } = serializeEditorPreviewWordPress(footnoted);
+  assert.equal(content.match(/<!-- wp:quote -->/g).length, 1);
+  assert.match(content, /Cites two<sup[^]*>1<\/a><\/sup>[^]*Cites one<sup[^]*>2<\/a><\/sup>/);
+  assert.deepEqual(footnotes.map((note) => note.content), ["Note two", "Note one"]);
+
+  const separated = buildEditorPreviewDocument([
+    paragraphRow({ vi: "One.\n\nTwo.<hr>Three." }, { rowId: "q", textStyle: "quote" }),
+  ], "vi");
+  const wp = serializeEditorPreviewWordPress(separated).content;
+  assert.equal(wp.match(/<!-- wp:quote -->/g).length, 2);
+  assert.match(wp, /<p>One\.<\/p>[^]*<p>Two\.<\/p>[^]*<\/blockquote>[^]*wp:separator[^]*<p>Three\.<\/p>/);
+});
+
 test("headings split at a blank line like separate heading rows", () => {
   const blocks = buildEditorPreviewDocument([
     paragraphRow({ vi: "Part one\n\nThe beginning\nof it" }, { textStyle: "heading1" }),
