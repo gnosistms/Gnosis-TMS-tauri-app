@@ -6052,6 +6052,50 @@ test.describe("editor regressions", () => {
     }).toEqual([]);
   });
 
+  test("unreview all closes at once and clears markers while its commit is still waiting", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 6 }, { mockTauri: true });
+    const rowIds = ["fixture-row-0001", "fixture-row-0002"];
+    const reviewedButton = (rowId) => page.locator(
+      `[data-action="toggle-editor-reviewed"][data-row-id="${rowId}"][data-language-code="vi"]`,
+    );
+    const readDirtyRowIds = () => page.evaluate(() => window.__gnosisDebug.readEditorState().dirtyRowIds);
+
+    for (const rowId of rowIds) {
+      await reviewedButton(rowId).click();
+      await expect(reviewedButton(rowId)).toHaveAttribute("aria-pressed", "true");
+    }
+    await expect.poll(readDirtyRowIds).toEqual([]);
+
+    // Hold the commit open, as the backend does while a GitHub sync owns the repo lock.
+    await page.evaluate((changedRowIds) => {
+      const pending = new Promise((resolve) => { globalThis.__releaseUnreviewAll = resolve; });
+      globalThis.__gnosisMockTauriHandlers = {
+        ...(globalThis.__gnosisMockTauriHandlers ?? {}),
+        async clear_gtms_editor_reviewed_markers() {
+          globalThis.__unreviewAllStarted = true;
+          await pending;
+          return { rowIds: changedRowIds, languageCode: "vi", chapterBaseCommitSha: "unreview-all-commit" };
+        },
+      };
+    }, rowIds);
+
+    await page.locator('[data-action="open-editor-unreview-all"]').click();
+    await page.locator('[data-action="confirm-editor-unreview-all"]').click();
+    await page.waitForFunction(() => globalThis.__unreviewAllStarted === true);
+
+    await expect(page.locator('[data-modal-dialog="editor-unreview-all"]')).toHaveCount(0);
+    for (const rowId of rowIds) {
+      await expect(reviewedButton(rowId)).toHaveAttribute("aria-pressed", "false");
+    }
+    expect(await readDirtyRowIds()).toEqual(expect.arrayContaining(rowIds));
+
+    await page.evaluate(() => globalThis.__releaseUnreviewAll());
+    await expect.poll(readDirtyRowIds).toEqual([]);
+    for (const rowId of rowIds) {
+      await expect(reviewedButton(rowId)).toHaveAttribute("aria-pressed", "false");
+    }
+  });
+
   test("opening the image url editor keeps the scroll position stable", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 18 }, { mockTauri: true });
 

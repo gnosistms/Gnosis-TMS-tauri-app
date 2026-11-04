@@ -39,8 +39,11 @@ import {
 } from "./editor-persistence-state.js";
 import {
   applyEditorChapterRowsUnreviewed,
+  applyEditorChapterRowsUnreviewing,
   cancelEditorUnreviewAllModalState,
+  editorChapterReviewedRowIds,
   openEditorUnreviewAllModalState,
+  restoreEditorChapterRowsUnreviewing,
 } from "./editor-review-state.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
 import {
@@ -1605,16 +1608,9 @@ export async function confirmEditorUnreviewAll(render, operations = {}) {
     return;
   }
 
-  state.editorChapter = {
-    ...state.editorChapter,
-    unreviewAllModal: {
-      ...state.editorChapter.unreviewAllModal,
-      status: "loading",
-      error: "",
-    },
-  };
-  render?.();
-
+  // The modal closes and the markers clear right away; the commit waits its turn in
+  // the repo write queue, which can mean waiting out a background GitHub sync.
+  const optimisticRowIds = editorChapterReviewedRowIds(state.editorChapter, languageCode);
   const operationValue = {
     input: {
       installationId: team.installationId,
@@ -1625,6 +1621,7 @@ export async function confirmEditorUnreviewAll(render, operations = {}) {
     },
     chapterId: editorChapter.chapterId,
     languageCode,
+    optimisticRowIds,
     permissionContext: {
       team: cloneQueueContextValue(team),
       project: cloneQueueContextValue(context.project),
@@ -1645,6 +1642,21 @@ export async function confirmEditorUnreviewAll(render, operations = {}) {
     },
     invalidationKeys: [editorChapterInvalidationKey(repoScope, editorChapter.chapterId)],
   }, {
+    applyOptimistic: () => {
+      if (state.editorChapter?.chapterId !== editorChapter.chapterId) {
+        return;
+      }
+      state.editorChapter = applyEditorChapterRowsUnreviewing(
+        state.editorChapter,
+        languageCode,
+        optimisticRowIds,
+      );
+      // Dirty rows also hold off the next background sync until the commit lands.
+      for (const rowId of optimisticRowIds) {
+        markEditorRowDirty(rowId);
+      }
+      render?.();
+    },
     run: async (operation) => {
       assertQueuedEditorRowsReady({
         chapterId: operation.value.chapterId,
@@ -1666,14 +1678,10 @@ export async function confirmEditorUnreviewAll(render, operations = {}) {
       const changedRowIds = Array.isArray(payload?.rowIds) ? payload.rowIds.filter(Boolean) : [];
       const activeLanguageCode = state.editorChapter.activeLanguageCode;
       state.editorChapter = {
-        ...applyEditorChapterRowsUnreviewed(
-          state.editorChapter,
-          value.languageCode,
-          changedRowIds,
-        ),
+        ...applyEditorChapterRowsUnreviewed(state.editorChapter, value.languageCode),
         chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),
       };
-      reconcileDirtyTrackedEditorRows(changedRowIds);
+      reconcileDirtyTrackedEditorRows();
       render?.();
 
       if (
@@ -1690,9 +1698,18 @@ export async function confirmEditorUnreviewAll(render, operations = {}) {
         render,
       );
     },
-    onError: (error) => {
+    onError: (error, operation) => {
       const message = error instanceof Error ? error.message : String(error);
-      updateUnreviewAllModalError(message, render);
+      const value = operation?.value ?? operationValue;
+      if (state.editorChapter?.chapterId === value.chapterId) {
+        state.editorChapter = restoreEditorChapterRowsUnreviewing(
+          state.editorChapter,
+          value.languageCode,
+          value.optimisticRowIds,
+        );
+        reconcileDirtyTrackedEditorRows(value.optimisticRowIds);
+        render?.();
+      }
       showNoticeBadge(message || "The reviewed markers could not be cleared.", render);
     },
   });

@@ -1902,6 +1902,73 @@ test("unreview all queues behind dirty row text instead of blocking on the save"
   assert.equal(state.editorChapter.rows[0].fieldStates.es.pleaseCheck, true);
 });
 
+function installReviewedUnreviewAllFixture() {
+  installEditorFixture();
+  state.editorChapter.rows = normalizeEditorRows([{
+    rowId: "row-1",
+    textStyle: "paragraph",
+    fields: { es: "hola" },
+    fieldStates: { es: { reviewed: true, pleaseCheck: true } },
+  }]);
+  state.editorChapter.unreviewAllModal = {
+    ...state.editorChapter.unreviewAllModal,
+    isOpen: true,
+    languageCode: "es",
+  };
+  const blocker = deferred();
+  const blockerPromise = enqueueRepoWrite({
+    scope: "7:project-1:fixture-project",
+    kind: "testBackgroundSync",
+    run: () => blocker.promise,
+  });
+  return { blocker, blockerPromise };
+}
+
+test("unreview all clears markers and closes the modal while a sync still holds the queue", async () => {
+  const { blocker, blockerPromise } = installReviewedUnreviewAllFixture();
+  invokeHandler = async (command) => {
+    assert.equal(command, "clear_gtms_editor_reviewed_markers");
+    return { rowIds: ["row-1"], chapterBaseCommitSha: "head-unreview" };
+  };
+
+  await confirmEditorUnreviewAll(() => {});
+
+  assert.deepEqual(invokeLog, []);
+  assert.equal(state.editorChapter.unreviewAllModal.isOpen, false);
+  assert.deepEqual(state.editorChapter.rows[0].fieldStates.es, { reviewed: false, pleaseCheck: true });
+  assert.deepEqual(state.editorChapter.rows[0].persistedFieldStates.es, { reviewed: true, pleaseCheck: true });
+  assert.deepEqual([...state.editorChapter.dirtyRowIds], ["row-1"]);
+
+  blocker.resolve(null);
+  await blockerPromise;
+  await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
+
+  assert.deepEqual(invokeLog.map((entry) => entry.command), ["clear_gtms_editor_reviewed_markers"]);
+  assert.deepEqual(state.editorChapter.rows[0].fieldStates.es, { reviewed: false, pleaseCheck: true });
+  assert.deepEqual(state.editorChapter.rows[0].persistedFieldStates.es, { reviewed: false, pleaseCheck: true });
+  assert.deepEqual([...state.editorChapter.dirtyRowIds], []);
+  assert.equal(state.editorChapter.chapterBaseCommitSha, "head-unreview");
+});
+
+test("unreview all puts the markers back when the queued commit fails", async () => {
+  const { blocker, blockerPromise } = installReviewedUnreviewAllFixture();
+  invokeHandler = async () => {
+    throw new Error("clear failed");
+  };
+
+  await confirmEditorUnreviewAll(() => {});
+  assert.equal(state.editorChapter.rows[0].fieldStates.es.reviewed, false);
+
+  blocker.resolve(null);
+  await blockerPromise;
+  await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
+
+  assert.deepEqual(invokeLog.map((entry) => entry.command), ["clear_gtms_editor_reviewed_markers"]);
+  assert.equal(state.editorChapter.unreviewAllModal.isOpen, false);
+  assert.deepEqual(state.editorChapter.rows[0].fieldStates.es, { reviewed: true, pleaseCheck: true });
+  assert.deepEqual([...state.editorChapter.dirtyRowIds], []);
+});
+
 test("clear translations stops when a captured row is deleted by an earlier queued operation", async () => {
   installEditorFixture();
   const blocker = deferred();
