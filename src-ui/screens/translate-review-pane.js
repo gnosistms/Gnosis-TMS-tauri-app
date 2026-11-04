@@ -4,6 +4,7 @@ import { buildSrtGroupLastUpdate } from "../app/editor-srt-review-history.js";
 import { renderSrtGroupLastUpdate } from "./translate-srt-review-last-update.js";
 import { serializeEditorFootnotesForLegacy, mergeEditorFootnoteCorrections } from "../app/editor-footnotes.js";
 import { srtGroupSnapshot } from "../app/editor-srt-group-ai.js";
+import { capitalizeMediaWord, editorFieldMedia, editorMediaNoun } from "../app/editor-media-kind.js";
 import { pendingSrtGroupEdits } from "../app/editor-srt-group-edit-flow.js";
 import {
   escapeHtml,
@@ -62,6 +63,11 @@ function renderAiReviewModeButton({ label, action, reviewMode, tooltip, isLoadin
   `;
 }
 
+// "Image caption", "Audio caption" or "Video caption".
+function captionLabel(image) {
+  return `${capitalizeMediaWord(editorMediaNoun(image ? editorFieldMedia(image) : null))} caption`;
+}
+
 function renderAiReviewSuggestionSections(aiReview, currentEntry, activeLanguage, includeReviewedSnapshot = false, paragraphs = false) {
   // A clean review has no suggestion. Its input is the reviewed snapshot to
   // compare with later edits; omitted suggestion fields retain that input too.
@@ -85,7 +91,7 @@ function renderAiReviewSuggestionSections(aiReview, currentEntry, activeLanguage
   }
   if (imageCaption.trim() || (includeReviewedSnapshot && currentEntry?.imageCaption?.trim())) {
     sections.push(`
-      <p class="history-item__meta">Image caption</p>
+      <p class="history-item__meta">${escapeHtml(captionLabel(currentEntry?.image))}</p>
       <p class="history-item__content" lang="${escapeHtml(activeLanguage.code)}">${renderHistoryContent({ plainText: imageCaption }, { plainText: currentEntry?.imageCaption ?? "" })}</p>
     `);
   }
@@ -106,7 +112,7 @@ function renderSrtReviewSuggestions(review, group, language) {
     const sections = [];
     if (result.suggestedFootnotes?.length && note.ok) sections.push(`<p class="history-item__meta">Footnotes</p>
       <p class="history-item__content">${renderHistoryContent({ plainText: serializeEditorFootnotesForLegacy(note.footnotes) }, { plainText: serializeEditorFootnotesForLegacy(member.footnotes?.[code]) })}</p>`);
-    if (result.suggestedImageCaption) sections.push(`<p class="history-item__meta">Image caption</p>
+    if (result.suggestedImageCaption) sections.push(`<p class="history-item__meta">${escapeHtml(captionLabel(member.images?.[code]))}</p>
       <p class="history-item__content">${renderHistoryContent({ plainText: result.suggestedImageCaption }, { plainText: member.imageCaptions?.[code] ?? "" })}</p>`);
     return sections.length ? `<p class="history-item__meta">Fragment ${index + 1}</p>${sections.join("")}` : "";
   }).join("");

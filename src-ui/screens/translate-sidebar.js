@@ -21,6 +21,7 @@ import {
   tooltipAttributes,
 } from "../lib/ui.js";
 import { normalizeEditorSidebarTab } from "../app/editor-comments.js";
+import { capitalizeMediaWord, editorFieldMedia, editorMediaNoun } from "../app/editor-media-kind.js";
 import { languageBaseCodesMatch } from "../app/editor-language-utils.js";
 import { resolveEditorAiTranslateLanguages } from "../app/editor-ai-translate-target.js";
 import { renderCommentsPane } from "./translate-comments-pane.js";
@@ -520,7 +521,7 @@ function assistantDraftMatchesCurrentTarget(item, currentTargetText) {
     === normalizeAssistantDraftComparisonText(currentTargetText);
 }
 
-function renderAssistantTranscriptItem(item, currentTargetText = "") {
+function renderAssistantTranscriptItem(item, currentTargetText = "", captionLabel = "Image caption") {
   const itemType = item?.type ?? "assistant-message";
   const text = typeof item?.text === "string" ? item.text.trim() : "";
 
@@ -559,7 +560,7 @@ function renderAssistantTranscriptItem(item, currentTargetText = "") {
             : ""
         }
         ${renderAssistantDraftSection("Footnote", item?.draftTranslationFootnote)}
-        ${renderAssistantDraftSection("Image caption", item?.draftTranslationImageCaption)}
+        ${renderAssistantDraftSection(captionLabel, item?.draftTranslationImageCaption)}
         ${
           item.applyError
             ? renderInlineStateBox({
@@ -603,7 +604,7 @@ function renderAssistantTranscriptItem(item, currentTargetText = "") {
             : ""
         }
         ${renderAssistantDraftSection("Footnote", item?.details?.translatedFootnote)}
-        ${renderAssistantDraftSection("Image caption", item?.details?.translatedImageCaption)}
+        ${renderAssistantDraftSection(captionLabel, item?.details?.translatedImageCaption)}
         ${renderAssistantPromptDetails(item)}
       </article>
     `;
@@ -673,6 +674,11 @@ function renderAssistantTranscript(editorChapter, rows, languages, sourceCode, t
   const targetSection =
     activeRow?.sections?.find((section) => section.code === targetLanguage?.code) ?? null;
   const currentTargetText = typeof targetSection?.text === "string" ? targetSection.text : "";
+  // "Image caption", "Audio caption" or "Video caption", for the row's media.
+  const rowImage = targetSection?.image
+    ?? activeRow?.sections?.find((section) => section.code === sourceLanguage?.code)?.image
+    ?? null;
+  const captionLabel = `${capitalizeMediaWord(editorMediaNoun(rowImage ? editorFieldMedia(rowImage) : null))} caption`;
   const threadKey = buildEditorAssistantThreadKey(
     activeRow?.id ?? null,
     sourceLanguage?.code ?? null,
@@ -703,7 +709,7 @@ function renderAssistantTranscript(editorChapter, rows, languages, sourceCode, t
           message: assistant.error,
         })
         : ""}
-      ${items.map((item) => renderAssistantTranscriptItem(item, currentTargetText)).join("")}
+      ${items.map((item) => renderAssistantTranscriptItem(item, currentTargetText, captionLabel)).join("")}
       ${statusText ? `<p class="assistant-transcript__status">${escapeHtml(statusText)}</p>` : ""}
     </div>
   `;

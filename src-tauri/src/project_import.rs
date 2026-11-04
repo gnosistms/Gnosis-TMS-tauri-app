@@ -815,7 +815,7 @@ pub(crate) async fn save_gtms_editor_language_image_url(
         save_gtms_editor_language_image_url_sync(&worker_app, worker_input)
     })
     .await
-    .map_err(|error| format!("The row image URL worker failed: {error}"))??;
+    .map_err(|error| format!("The row media URL worker failed: {error}"))??;
     start_wordpress_caption_enrichment(app, input, &response);
     Ok(response)
 }
@@ -853,7 +853,7 @@ pub(crate) async fn allow_gtms_editor_image_reuse(
         chapter_editor::allow_gtms_editor_image_reuse_sync(&app, input)
     })
     .await
-    .map_err(|error| format!("The image reuse setting worker failed: {error}"))?
+    .map_err(|error| format!("The duplicate warning setting worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -870,7 +870,7 @@ pub(crate) async fn upload_gtms_editor_language_image(
         upload_gtms_editor_language_image_sync(&app, input)
     })
     .await
-    .map_err(|error| format!("The row image upload worker failed: {error}"))?
+    .map_err(|error| format!("The row media upload worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -887,7 +887,7 @@ pub(crate) async fn remove_gtms_editor_language_image(
         remove_gtms_editor_language_image_sync(&app, input)
     })
     .await
-    .map_err(|error| format!("The row image removal worker failed: {error}"))?
+    .map_err(|error| format!("The row media removal worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -904,7 +904,7 @@ pub(crate) async fn duplicate_gtms_editor_language_image(
         duplicate_gtms_editor_language_image_sync(&app, input)
     })
     .await
-    .map_err(|error| format!("The row image duplication worker failed: {error}"))?
+    .map_err(|error| format!("The row media duplication worker failed: {error}"))?
 }
 
 #[tauri::command]

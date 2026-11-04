@@ -1201,7 +1201,7 @@ fn plan_duplicate_editor_language_image(
     base_destination_image: Option<StoredFieldImage>,
 ) -> Result<DuplicateImageRowPlan, String> {
     let original_row_file: StoredRowFile = serde_json::from_str(original_row_text)
-        .map_err(|error| format!("Could not parse the row while duplicating its image: {error}"))?;
+        .map_err(|error| format!("Could not parse the row while duplicating its media: {error}"))?;
     let source_image = row_language_stored_image(&original_row_file, source_language_code);
     let destination_image =
         row_language_stored_image(&original_row_file, destination_language_code);
@@ -1216,16 +1216,16 @@ fn plan_duplicate_editor_language_image(
     }
 
     let mut row_value: Value = serde_json::from_str(original_row_text)
-        .map_err(|error| format!("Could not parse the row while duplicating its image: {error}"))?;
+        .map_err(|error| format!("Could not parse the row while duplicating its media: {error}"))?;
     apply_editor_field_image_update(
         &mut row_value,
         destination_language_code,
         Some(source_image.clone()),
     )?;
     let updated_row_json = serde_json::to_string_pretty(&row_value)
-        .map_err(|error| format!("Could not serialize the duplicated row image: {error}"))?;
+        .map_err(|error| format!("Could not serialize the duplicated row media: {error}"))?;
     let updated_row_file: StoredRowFile = serde_json::from_value(row_value)
-        .map_err(|error| format!("Could not decode the duplicated row image: {error}"))?;
+        .map_err(|error| format!("Could not decode the duplicated row media: {error}"))?;
     let release_candidates = destination_image
         .as_ref()
         .filter(|image| image.kind == "upload" && Some(*image) != Some(&source_image))
@@ -1258,7 +1258,7 @@ pub(crate) fn duplicate_gtms_editor_language_image_sync(
         || input.destination_language_code.trim().is_empty()
         || input.source_language_code == input.destination_language_code
     {
-        return Err("Choose a different destination language for the image.".to_string());
+        return Err("Choose a different destination language.".to_string());
     }
 
     let chapter_path =
@@ -1324,7 +1324,7 @@ pub(crate) fn duplicate_gtms_editor_language_image_sync(
                 });
             }
             DuplicateImageRowPlan::MissingSource => {
-                return Err("The source image is no longer available.".to_string());
+                return Err("The source media is no longer available.".to_string());
             }
             DuplicateImageRowPlan::Unchanged(row) => {
                 return Ok(SaveEditorLanguageImageResponse {
@@ -1414,11 +1414,11 @@ fn canonical_uploaded_relative_path(path: &str) -> Result<String, String> {
             std::path::Component::Normal(value) => {
                 let value = value
                     .to_str()
-                    .ok_or_else(|| "A stored uploaded image path is not valid.".to_string())?;
+                    .ok_or_else(|| "A stored uploaded file path is not valid.".to_string())?;
                 components.push(value.to_string());
             }
             std::path::Component::CurDir => {}
-            _ => return Err("A stored uploaded image path is not valid.".to_string()),
+            _ => return Err("A stored uploaded file path is not valid.".to_string()),
         }
     }
     let component_matches = |actual: &str, expected: &str| {
@@ -1435,8 +1435,7 @@ fn canonical_uploaded_relative_path(path: &str) -> Result<String, String> {
         || components[3..].iter().any(|component| component.is_empty())
     {
         return Err(
-            "A stored uploaded image path is outside a recognized chapter image folder."
-                .to_string(),
+            "A stored uploaded file path is outside a recognized chapter media folder.".to_string(),
         );
     }
     Ok(components.join("/"))
@@ -1457,7 +1456,7 @@ pub(super) fn validated_uploaded_asset_relative_path(
 ) -> Result<String, String> {
     let relative_path = canonical_uploaded_relative_path(path)?;
     let canonical_repo = fs::canonicalize(repo_path).map_err(|error| {
-        format!("Could not validate the local project path before updating an image: {error}")
+        format!("Could not validate the local project path before updating row media: {error}")
     })?;
     let mut current = repo_path.to_path_buf();
     for component in relative_path.split('/') {
@@ -1465,14 +1464,14 @@ pub(super) fn validated_uploaded_asset_relative_path(
         match fs::symlink_metadata(&current) {
             Ok(metadata) => {
                 if metadata.file_type().is_symlink() {
-                    return Err("A stored uploaded image path crosses a symbolic link.".to_string());
+                    return Err("A stored uploaded file path crosses a symbolic link.".to_string());
                 }
                 let resolved = fs::canonicalize(&current).map_err(|error| {
                     format!("Could not validate a stored uploaded image path: {error}")
                 })?;
                 if !resolved.starts_with(&canonical_repo) {
                     return Err(
-                        "A stored uploaded image path resolves outside the local project."
+                        "A stored uploaded file path resolves outside the local project."
                             .to_string(),
                     );
                 }
@@ -1505,22 +1504,26 @@ fn project_row_json_paths(repo_path: &Path) -> Result<Vec<PathBuf>, String> {
     }
     let mut paths = Vec::new();
     let chapters = fs::read_dir(&chapters_path).map_err(|error| {
-        format!("Could not inspect project chapters while checking image references: {error}")
+        format!(
+            "Could not inspect project chapters while checking uploaded-file references: {error}"
+        )
     })?;
     for chapter in chapters {
         let chapter = chapter.map_err(|error| {
-            format!("Could not inspect a project chapter while checking image references: {error}")
+            format!("Could not inspect a project chapter while checking uploaded-file references: {error}")
         })?;
         let rows_path = chapter.path().join("rows");
         if !rows_path.is_dir() {
             continue;
         }
         let rows = fs::read_dir(&rows_path).map_err(|error| {
-            format!("Could not inspect chapter rows while checking image references: {error}")
+            format!(
+                "Could not inspect chapter rows while checking uploaded-file references: {error}"
+            )
         })?;
         for row in rows {
             let row = row.map_err(|error| {
-                format!("Could not inspect a chapter row while checking image references: {error}")
+                format!("Could not inspect a chapter row while checking uploaded-file references: {error}")
             })?;
             let path = row.path();
             if path.extension().and_then(|value| value.to_str()) == Some("json") {
@@ -1776,13 +1779,13 @@ pub(super) fn validated_uploaded_media_extension(
 fn decode_uploaded_image_bytes(data_base64: &str, file_label: &str) -> Result<Vec<u8>, String> {
     let normalized_data = data_base64.trim();
     if normalized_data.is_empty() {
-        return Err("The uploaded image data is empty.".to_string());
+        return Err("The uploaded file data is empty.".to_string());
     }
     ensure_within_import_size_limit(decoded_base64_len(normalized_data) as u64, file_label)?;
 
     base64::engine::general_purpose::STANDARD
         .decode(normalized_data)
-        .map_err(|error| format!("Could not decode the uploaded image data: {error}"))
+        .map_err(|error| format!("Could not decode the uploaded file data: {error}"))
 }
 
 pub(super) fn validate_editor_image_url(value: &str) -> Result<String, String> {

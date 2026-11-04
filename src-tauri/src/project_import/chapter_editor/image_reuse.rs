@@ -443,7 +443,7 @@ fn allowlist_path(
     Ok(app
         .path()
         .app_data_dir()
-        .map_err(|_| "The local image settings are unavailable.".to_string())?
+        .map_err(|_| "The local warning settings are unavailable.".to_string())?
         .join(ALLOWLIST_DIR)
         .join(format!("{key}.json")))
 }
@@ -458,7 +458,7 @@ fn read_allowlist(path: &Path) -> BTreeSet<String> {
 
 fn allow_image_reuse(path: &Path, image_key: &str) -> Result<(), String> {
     if !valid_image_key(image_key) {
-        return Err("The image could not be identified.".to_string());
+        return Err("The file could not be identified.".to_string());
     }
     let _guard = ALLOWLIST_LOCK
         .lock()
@@ -469,15 +469,15 @@ fn allow_image_reuse(path: &Path, image_key: &str) -> Result<(), String> {
     }
     let dir = path
         .parent()
-        .ok_or_else(|| "The local image settings are unavailable.".to_string())?;
-    fs::create_dir_all(dir).map_err(|_| "Could not save the image setting.".to_string())?;
+        .ok_or_else(|| "The local warning settings are unavailable.".to_string())?;
+    fs::create_dir_all(dir).map_err(|_| "Could not save the warning setting.".to_string())?;
     let tmp = dir.join(format!("{}.tmp", uuid::Uuid::now_v7()));
     let bytes =
         serde_json::to_vec(&ImageReuseAllowlist { images }).map_err(|error| error.to_string())?;
-    fs::write(&tmp, bytes).map_err(|_| "Could not save the image setting.".to_string())?;
+    fs::write(&tmp, bytes).map_err(|_| "Could not save the warning setting.".to_string())?;
     crate::util::atomic_replace(&tmp, path).map_err(|_| {
         let _ = fs::remove_file(&tmp);
-        "Could not save the image setting.".to_string()
+        "Could not save the warning setting.".to_string()
     })
 }
 

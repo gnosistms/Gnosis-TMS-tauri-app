@@ -36,7 +36,7 @@ fn ensure_historical_uploaded_asset_restore_is_reference_safe(
         )?;
         if safe_to_rewrite.is_empty() {
             return Err(
-                "The historical uploaded image is shared by another field and cannot be restored in place."
+                "The historical uploaded file is shared by another field and cannot be restored in place."
                     .to_string(),
             );
         }
@@ -48,7 +48,7 @@ fn ensure_historical_uploaded_asset_restore_is_reference_safe(
         )?
     {
         return Err(
-            "The historical uploaded image is already referenced by another row and cannot be restored in place."
+            "The historical uploaded file is already referenced by another row and cannot be restored in place."
                 .to_string(),
         );
     }

@@ -2,6 +2,7 @@ import { escapeHtml } from "../lib/ui.js";
 import { resolveEffectiveAiActionSelection } from "./ai-action-config.js";
 import { normalizeAiProviderId } from "./ai-provider-config.js";
 import { normalizeEditorFieldImage } from "./editor-images.js";
+import { editorFieldMediaThing } from "./editor-media-kind.js";
 import { findEditorRowById } from "./editor-utils.js";
 import { state } from "./state.js";
 
@@ -51,7 +52,7 @@ export function renderEditorImageContextMenuItems(rowId, sourceLanguageCode) {
         tabindex="-1"
         data-action="copy-editor-image-url"
         data-image-url="${escapeHtml(sourceImage.url)}"
-      >Copy image URL</button>
+      >Copy ${escapeHtml(editorFieldMediaThing(sourceImage))} URL</button>
     `);
   }
 

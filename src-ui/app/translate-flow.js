@@ -45,6 +45,7 @@ import { applySrtGroupAction } from "./editor-srt-group-actions.js";
 import { runSrtGroupAi, applySrtGroupReview } from "./editor-srt-group-ai-flow.js";
 import { locateSrtGroupPosition } from "./editor-srt-group-text.js";
 import { mapInlineMarkupVisiblePositionToRawInsertionOffset } from "./editor-inline-markup.js";
+import { capitalizeMediaWord, editorFieldMedia, editorMediaThing } from "./editor-media-kind.js";
 import {
   openTranslateChapter as openTranslateChapterFlow,
 } from "./editor-chapter-load-flow.js";
@@ -1268,6 +1269,9 @@ async function translateDuplicatedEditorImageCaption(
       rowId,
       sourceLanguageCode,
       destinationLanguageCode,
+      mediaKind: editorFieldMedia(
+        state.editorChapter?.rows?.find?.((row) => row?.rowId === rowId)?.images?.[sourceLanguageCode],
+      ).kind,
       destinationLanguageName: context.targetLanguageLabel,
     },
   };
@@ -1295,13 +1299,14 @@ async function translateDuplicatedEditorImageCaption(
   );
 
   if (state.editorChapter?.imageCaptionTranslationModal?.requestId === requestId) {
+    const thing = editorMediaThing({ kind: state.editorChapter.imageCaptionTranslationModal.mediaKind });
     state.editorChapter = {
       ...state.editorChapter,
       imageCaptionTranslationModal: createEditorImageCaptionTranslationModalState(),
     };
     render?.();
     if (result?.ok) {
-      showNoticeBadge(`Image and caption duplicated to ${context.targetLanguageLabel}.`, render);
+      showNoticeBadge(`${capitalizeMediaWord(thing)} and caption duplicated to ${context.targetLanguageLabel}.`, render);
     }
   }
   return result;
@@ -1362,7 +1367,10 @@ export function cancelEditorImageCaptionTranslation(render) {
     imageCaptionTranslationModal: createEditorImageCaptionTranslationModalState(),
   };
   render?.();
-  showNoticeBadge("Caption translation canceled. The image was duplicated.", render);
+  showNoticeBadge(
+    `Caption translation canceled. The ${editorMediaThing({ kind: modal.mediaKind })} was duplicated.`,
+    render,
+  );
 }
 
 export async function copyEditorImageUrl(render, url) {

@@ -5,7 +5,14 @@ import {
   normalizeEditorFieldImage,
 } from "./editor-images.js";
 import { audioNeedsRowTextMessage, editorRowHasTextForAudio } from "./editor-audio-footnote.js";
-import { editorFieldMedia, editorMediaForUploadPath, editorMediaForUrl } from "./editor-media-kind.js";
+import {
+  capitalizeMediaWord,
+  editorFieldMedia,
+  editorFieldMediaThing,
+  editorMediaForUploadPath,
+  editorMediaForUrl,
+  editorMediaThing,
+} from "./editor-media-kind.js";
 import { enforceImportFileSizeLimit } from "./import-file-limit.js";
 import { openLocalFilePicker } from "./local-file-picker.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
@@ -703,7 +710,7 @@ function queueEditorImageWrite({
   previousImage,
   nextImage,
   operations,
-  failureMessage = "The image could not be saved.",
+  failureMessage = "",
   notice = "",
   onQueued = null,
   onFailure = null,
@@ -712,6 +719,8 @@ function queueEditorImageWrite({
   if (!chapterId || !rowId || !languageCode || !repoScope || typeof kind !== "string" || !kind) {
     return null;
   }
+  // "image", "audio file" or "video": what the user is changing.
+  const thing = editorFieldMediaThing(nextImage ?? previousImage);
 
   const operationValue = {
     input,
@@ -771,7 +780,7 @@ function queueEditorImageWrite({
       assertQueuedEditorRowsReady({
         chapterId: operation.value.chapterId,
         rowIds: [operation.value.rowId],
-        message: "Refresh or resolve the row before updating the image.",
+        message: `Refresh or resolve the row before updating the ${thing}.`,
       });
       return invokeQueuedEditorImageWriteCommand(
         kind === "imageRemove"
@@ -799,7 +808,7 @@ function queueEditorImageWrite({
         operations,
         payload?.status === "conflict"
           ? {
-            notice: notice || "The image changed on disk. Reloaded the latest version.",
+            notice: notice || `The ${thing} changed on disk. Reloaded the latest version.`,
             clearOptimisticOperationId: operation?.operationId,
           }
           : {
@@ -816,7 +825,7 @@ function queueEditorImageWrite({
         onFailure?.(message);
         renderEditorRowScoped(render, value.rowId, "image-write-failed");
       }
-      showNoticeBadge(message || failureMessage, render);
+      showNoticeBadge(message || failureMessage || `The ${thing} could not be saved.`, render);
     },
   });
   requested.promise.catch(() => {});
@@ -1025,6 +1034,7 @@ async function saveEditorImageUrlDraft(
         reuse,
         rowId,
         languageCode,
+        mediaKind: editorMediaForUrl(draft).kind,
         team,
         project: context.project,
         insert: () => saveEditorImageUrlDraft(
@@ -1330,6 +1340,7 @@ async function saveValidatedUploadedEditorImage(
         reuse,
         rowId,
         languageCode,
+        mediaKind: editorMediaForUploadPath(fileName).kind,
         team,
         project: context.project,
         insert: () => saveValidatedUploadedEditorImage(
@@ -1385,7 +1396,6 @@ async function saveValidatedUploadedEditorImage(
       },
       operations,
       failureMessage: "The file could not be uploaded.",
-      notice: "The image changed on disk. Reloaded the latest version.",
       onFailure: () => {
         if (state.editorChapter?.chapterId === chapterAtRequest) {
           setImageEditorState({
@@ -1526,8 +1536,7 @@ export async function removeEditorLanguageImage(render, rowId, languageCode, ope
     previousImage: image,
     nextImage: null,
     operations,
-    failureMessage: "The image could not be removed.",
-    notice: "The image changed on disk. Reloaded the latest version.",
+    failureMessage: `The ${editorFieldMediaThing(image)} could not be removed.`,
   });
 }
 
@@ -1574,13 +1583,19 @@ async function performEditorImageDuplicate(
     )
   ) {
     closeImageDuplicateOverwriteModalState();
-    showNoticeBadge("The image changed before it could be duplicated. Try again.", render);
+    showNoticeBadge(
+      `The ${editorFieldMediaThing(expectedImages.sourceImage)} changed before it could be duplicated. Try again.`,
+      render,
+    );
     render?.();
     return { status: "skipped" };
   }
   if (!sourceImage) {
     closeImageDuplicateOverwriteModalState();
-    showNoticeBadge("The source image is no longer available.", render);
+    showNoticeBadge(
+      `The source ${editorFieldMediaThing(expectedImages?.sourceImage)} is no longer available.`,
+      render,
+    );
     render?.();
     return { status: "skipped" };
   }
@@ -1617,8 +1632,7 @@ async function performEditorImageDuplicate(
     previousImage: destinationImage,
     nextImage: sourceImage,
     operations,
-    failureMessage: "The image could not be duplicated.",
-    notice: "The image changed on disk. Reloaded the latest version.",
+    failureMessage: `The ${editorFieldMediaThing(sourceImage)} could not be duplicated.`,
     onQueued: closeImageDuplicateOverwriteModalState,
   });
   return editorFieldImageEqual(
@@ -1724,7 +1738,10 @@ export async function confirmEditorImageDuplicateOverwrite(render, operations = 
     || !editorFieldImageEqual(destinationImage, modal.destinationImage)
   ) {
     closeImageDuplicateOverwriteModalState();
-    showNoticeBadge("The image changed before it could be duplicated. Try again.", render);
+    showNoticeBadge(
+      `The ${editorFieldMediaThing(modal.sourceImage)} changed before it could be duplicated. Try again.`,
+      render,
+    );
     render?.();
     return { status: "skipped" };
   }
@@ -1792,10 +1809,13 @@ export async function copyEditorImageUrl(render, url) {
       throw new Error("Clipboard access is not available.");
     }
     await navigator.clipboard.writeText(normalizedUrl);
-    showNoticeBadge("Image URL copied.", render);
+    showNoticeBadge(`${capitalizeMediaWord(editorMediaThing(editorMediaForUrl(normalizedUrl)))} URL copied.`, render);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    showNoticeBadge(message || "The image URL could not be copied.", render);
+    showNoticeBadge(
+      message || `The ${editorMediaThing(editorMediaForUrl(normalizedUrl))} URL could not be copied.`,
+      render,
+    );
   }
 }
 

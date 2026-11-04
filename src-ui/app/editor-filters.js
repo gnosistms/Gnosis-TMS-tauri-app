@@ -34,7 +34,7 @@ export const EDITOR_ROW_FILTER_OPTIONS = [
   { value: EDITOR_ROW_FILTER_MODE_TARGET_EMPTY, label: "Target empty" },
   { value: EDITOR_ROW_FILTER_MODE_QUOTE_BLOCK, label: "Quote block" },
   { value: EDITOR_ROW_FILTER_MODE_HEADING, label: "Heading" },
-  { value: EDITOR_ROW_FILTER_MODE_HAS_IMAGE, label: "Has image" },
+  { value: EDITOR_ROW_FILTER_MODE_HAS_IMAGE, label: "Has image, audio, or video" },
   { value: EDITOR_ROW_FILTER_MODE_HAS_FOOTNOTE, label: "Has footnote" },
   { value: EDITOR_ROW_FILTER_MODE_HAS_COMMENTS, label: "Has comments" },
   { value: EDITOR_ROW_FILTER_MODE_HAS_UNREAD_COMMENTS, label: "Has unread comments" },

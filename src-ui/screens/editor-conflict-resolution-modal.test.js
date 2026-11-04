@@ -60,7 +60,7 @@ test("conflict modal renders the resolved image URL field for image conflicts", 
   });
 
   assert.match(html, /data-editor-conflict-final-image-input/);
-  assert.match(html, /Resolved image URL/);
+  assert.match(html, /Resolved image, audio, or video URL/);
   assert.match(html, /https:\/\/example\.com\/local\.png/);
   assert.match(html, /https:\/\/example\.com\/remote\.png/);
 });

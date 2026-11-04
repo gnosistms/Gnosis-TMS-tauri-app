@@ -4,6 +4,7 @@ import {
   renderSanitizedInlineMarkupWithRanges,
 } from "./editor-inline-markup.js";
 import { normalizeEditorFootnotes } from "./editor-footnotes.js";
+import { editorFieldMediaThing } from "./editor-media-kind.js";
 import { normalizeEditorRowTextStyle } from "./editor-row-text-style.js";
 import { convertLocalFileSrc } from "./runtime.js";
 
@@ -89,6 +90,8 @@ function previousImageView(baselineField) {
   return {
     src,
     label: image.kind === "url" ? image.url ?? "" : image.fileName ?? image.path ?? "",
+    // "image", "audio file" or "video", for the tooltip.
+    thing: editorFieldMediaThing(image),
   };
 }
 
@@ -155,7 +158,7 @@ export function renderEditorChangePreviousImage(previousImage, { captionHtml = "
     <div class="translation-language-panel__image-row translation-language-panel__image-row--change-previous">
       <span
         class="translation-language-panel__image-preview translation-language-panel__image-preview--change-previous"
-        ${tooltipAttributes(previousImage.label ? `Previous image: ${previousImage.label}` : "Previous image", { side: "top", align: "start" })}
+        ${tooltipAttributes(`Previous ${previousImage.thing || "image"}${previousImage.label ? `: ${previousImage.label}` : ""}`, { side: "top", align: "start" })}
       >
         <img class="translation-language-panel__image" src="${escapeHtml(previousImage.src)}" alt="" loading="eager" referrerpolicy="no-referrer" />
         <svg class="translation-language-panel__image-change-x" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
