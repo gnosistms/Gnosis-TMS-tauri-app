@@ -686,8 +686,32 @@ export function glossaryPopoverContextForMark(mark) {
     : { kind: "glossary", payload };
 }
 
+// A highlight redraw replaces a row's marks without the pointer moving, so no
+// pointerover reaches the new mark and the open tooltip still belongs to a
+// detached one. The hovered-term shortcuts read the mark through this: it takes
+// over the mark now under the pointer, redrawing the tooltip from it, so the
+// shortcut does what the tooltip says. With no mark there, the stale tooltip
+// closes.
+function connectedActiveGlossaryTooltipMark() {
+  if (!(activeGlossaryTooltipMark instanceof HTMLElement)) {
+    return null;
+  }
+  if (activeGlossaryTooltipMark.isConnected) {
+    return activeGlossaryTooltipMark;
+  }
+
+  const hoveredMark = glossaryTooltipMarkAtActivePointer();
+  if (!hoveredMark) {
+    deactivateGlossaryTooltipMark();
+    return null;
+  }
+
+  activateGlossaryTooltipMark(hoveredMark);
+  return hoveredMark;
+}
+
 export function activeGlossaryFootnoteInsertionRequest() {
-  return glossaryFootnoteInsertionRequestForMark(activeGlossaryTooltipMark);
+  return glossaryFootnoteInsertionRequestForMark(connectedActiveGlossaryTooltipMark());
 }
 
 // A source term with exactly one translation offers Cmd/Ctrl+C to copy it, so a
@@ -709,7 +733,7 @@ export function glossaryTranslationCopyTextForMark(mark) {
 }
 
 export function activeGlossaryTranslationCopyText() {
-  return glossaryTranslationCopyTextForMark(activeGlossaryTooltipMark);
+  return glossaryTranslationCopyTextForMark(connectedActiveGlossaryTooltipMark());
 }
 
 export function registerGlossaryTooltipEvents() {

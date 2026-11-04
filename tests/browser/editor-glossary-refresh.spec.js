@@ -108,6 +108,22 @@ async function mountEditor(page, rowCount = 2) {
   if (await disclosureSave.count()) await disclosureSave.click();
 }
 
+// A highlight redraw replaces a row's marks without moving the pointer, and it
+// can land between the tooltip opening and the shortcut. Redraw the row's marks
+// on the next key press, before the app sees it, so the shortcut is checked
+// against freshly drawn marks every time instead of only when the timing lines up.
+async function redrawRowGlossaryMarksOnNextKey(page, rowId) {
+  await page.evaluate((rowId) => {
+    window.redrawnGlossaryMarks = 0;
+    window.addEventListener("keydown", () => {
+      for (const mark of document.querySelectorAll(`[data-row-id="${rowId}"] [data-editor-glossary-mark]`)) {
+        mark.replaceWith(mark.cloneNode(true));
+        window.redrawnGlossaryMarks += 1;
+      }
+    }, { capture: true, once: true });
+  }, rowId);
+}
+
 for (const { platform, modifier, hint } of [
   { platform: "mac", modifier: "Meta", hint: "Command + F to insert footnote" },
   { platform: "windows", modifier: "Control", hint: "Ctrl + F to insert footnote" },
@@ -118,7 +134,9 @@ for (const { platform, modifier, hint } of [
     const mark = page.locator('[data-row-id="fixture-row-0001"] [data-language-code="vi"] [data-editor-glossary-mark]').first();
     await mark.hover();
     await expect(page.locator(".editor-glossary-tooltip")).toContainText(hint);
+    await redrawRowGlossaryMarksOnNextKey(page, "fixture-row-0001");
     await page.keyboard.press(`${modifier}+f`);
+    expect(await page.evaluate(() => window.redrawnGlossaryMarks)).toBeGreaterThan(0);
     await expect.poll(() => page.evaluate(async () => {
       const { state } = await import("/app/state.js");
       return state.editorChapter.footnoteEditor;
@@ -150,7 +168,9 @@ for (const { platform, modifier, hint } of [
     await expect(tooltip).not.toContainText(hint);
     await page.locator('[data-row-id="fixture-row-0001"] [data-language-code="es"] [data-editor-glossary-mark]').first().hover();
     await expect(tooltip.locator(".editor-glossary-info-card__hint--copy")).toHaveText(hint);
+    await redrawRowGlossaryMarksOnNextKey(page, "fixture-row-0001");
     await page.keyboard.press(`${modifier}+c`);
+    expect(await page.evaluate(() => window.redrawnGlossaryMarks)).toBeGreaterThan(0);
     await expect.poll(() => page.evaluate(() => window.copiedTexts)).toEqual(["old wording"]);
     await expect(page.getByText("Translation copied.")).toBeVisible();
   });
