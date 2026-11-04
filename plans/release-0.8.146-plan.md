@@ -9,7 +9,9 @@
    Cmd/Ctrl+C (`e42ed3d0`), the leftover editor media gaps from PR #423
    (`081b57db`, `df99d213`, `7f5200ca`, `0cfac412`, `cb44a7f5`), and link URLs
    in image captions for print exports (`d72fe1f7`). Hans asked for this
-   release on 2026-11-04.
+   release on 2026-11-04. Later the same day, Full review accepting
+   explanatory translations (`66ba105d` on `dev`) was cherry-picked onto the
+   release branch at Hans's request.
 2. Synchronize npm, Tauri, Cargo, both lockfiles, and bundled notice versions to
    0.8.146. Add versioned notes.
 3. Validate version agreement, locked Cargo metadata, formatting, tests, and lint.
