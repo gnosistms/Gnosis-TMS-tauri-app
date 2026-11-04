@@ -12,7 +12,12 @@
    release on 2026-11-04. Later the same day, Full review accepting
    explanatory translations (`66ba105d` on `dev`) was cherry-picked onto the
    release branch at Hans's request, and then exporting a multi-paragraph
-   quote as one quotation (`84d6f833` on `dev`).
+   quote as one quotation (`84d6f833` on `dev`). The browser test for the
+   Cmd/Ctrl+C copy failed once on Ubuntu CI: a highlight redraw replaced the
+   hovered glossary mark, so the shortcut did nothing until the next hover.
+   The fix (`8e16ed16` on `dev`) was cherry-picked at Hans's request before
+   merging. The copy shortcut is new in this release, so the notes need no
+   separate line for it.
 2. Synchronize npm, Tauri, Cargo, both lockfiles, and bundled notice versions to
    0.8.146. Add versioned notes.
 3. Validate version agreement, locked Cargo metadata, formatting, tests, and lint.
