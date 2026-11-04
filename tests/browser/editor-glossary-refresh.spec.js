@@ -129,6 +129,33 @@ for (const { platform, modifier, hint } of [
   });
 }
 
+for (const { platform, modifier, hint } of [
+  { platform: "mac", modifier: "Meta", hint: "Command + C to copy" },
+  { platform: "windows", modifier: "Control", hint: "Ctrl + C to copy" },
+]) {
+  test(`a source term's only translation copies with the matching shortcut and hint on ${platform}`, async ({ page }) => {
+    await mountEditor(page);
+    await page.evaluate((platform) => {
+      history.replaceState(null, "", `?platform=${platform}`);
+      window.copiedTexts = [];
+      Object.defineProperty(navigator.clipboard, "writeText", {
+        configurable: true,
+        value: async (text) => { window.copiedTexts.push(text); },
+      });
+    }, platform);
+    const tooltip = page.locator(".editor-glossary-tooltip");
+    // The target term's card offers its footnote, not a copy.
+    await page.locator('[data-row-id="fixture-row-0001"] [data-language-code="vi"] [data-editor-glossary-mark]').first().hover();
+    await expect(tooltip).toContainText("to insert footnote");
+    await expect(tooltip).not.toContainText(hint);
+    await page.locator('[data-row-id="fixture-row-0001"] [data-language-code="es"] [data-editor-glossary-mark]').first().hover();
+    await expect(tooltip.locator(".editor-glossary-info-card__hint--copy")).toHaveText(hint);
+    await page.keyboard.press(`${modifier}+c`);
+    await expect.poll(() => page.evaluate(() => window.copiedTexts)).toEqual(["old wording"]);
+    await expect(page.getByText("Translation copied.")).toBeVisible();
+  });
+}
+
 test("a footnote edit after opening during batch sync preserves newly synced wording", async ({ page }) => {
   await mountEditor(page);
   await page.evaluate(() => { window.holdBatch = true; });

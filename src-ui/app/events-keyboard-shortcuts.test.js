@@ -78,6 +78,7 @@ globalThis.window = {
 
 const {
   registerKeyboardShortcutEvents,
+  shouldCopyHoveredGlossaryTranslation,
   shouldInsertHoveredGlossaryFootnote,
 } = await import("./events/keyboard-shortcuts.js");
 const { state } = await import("./state.js");
@@ -404,3 +405,48 @@ for (const { platform, modifiers } of [
     });
   }
 }
+
+for (const { platform, modifiers } of [
+  { platform: "MacIntel", modifiers: { metaKey: true, ctrlKey: false } },
+  { platform: "Win32", modifiers: { metaKey: false, ctrlKey: true } },
+  { platform: "Linux x86_64", modifiers: { metaKey: false, ctrlKey: true } },
+]) {
+  test(`hovered glossary translation copy uses the primary modifier on ${platform}`, () => {
+    navigator.platform = platform;
+    const copyEvent = (overrides = {}) => keyboardEvent({ key: "c", ...modifiers, ...overrides });
+    assert.equal(shouldCopyHoveredGlossaryTranslation(copyEvent(), true), true);
+    assert.equal(shouldCopyHoveredGlossaryTranslation(copyEvent({ key: "C" }), true), true);
+    assert.equal(shouldCopyHoveredGlossaryTranslation(copyEvent(), false), false);
+    for (const excluded of [
+      { metaKey: !modifiers.metaKey, ctrlKey: !modifiers.ctrlKey },
+      { metaKey: true, ctrlKey: true },
+      { altKey: true }, { shiftKey: true }, { repeat: true },
+      { isComposing: true }, { defaultPrevented: true }, { key: "v" },
+    ]) {
+      assert.equal(shouldCopyHoveredGlossaryTranslation(copyEvent(excluded), true), false);
+    }
+  });
+}
+
+test("hovered glossary translation copy leaves a text selection to the native copy", () => {
+  navigator.platform = "MacIntel";
+  const field = new HTMLTextAreaElement();
+  field.selectionStart = 4;
+  field.selectionEnd = 4;
+  const copyEvent = () => keyboardEvent({ key: "c", target: field });
+  assert.equal(shouldCopyHoveredGlossaryTranslation(copyEvent(), true), true);
+
+  field.selectionEnd = 9;
+  assert.equal(shouldCopyHoveredGlossaryTranslation(copyEvent(), true), false);
+
+  field.selectionEnd = 4;
+  const originalGetSelection = document.getSelection;
+  try {
+    document.getSelection = () => ({ isCollapsed: false, toString: () => "inner chamber" });
+    assert.equal(shouldCopyHoveredGlossaryTranslation(copyEvent(), true), false);
+    document.getSelection = () => ({ isCollapsed: true, toString: () => "" });
+    assert.equal(shouldCopyHoveredGlossaryTranslation(copyEvent(), true), true);
+  } finally {
+    document.getSelection = originalGetSelection;
+  }
+});

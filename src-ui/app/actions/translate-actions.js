@@ -19,6 +19,7 @@ import {
 import { showNoticeBadge } from "../status-feedback.js";
 import {
   activeGlossaryFootnoteInsertionRequest,
+  activeGlossaryTranslationCopyText,
   deactivateGlossaryTooltipMark,
 } from "../events/glossary-tooltip.js";
 import {
@@ -681,6 +682,23 @@ export function createTranslateActions(render) {
         visibleInsertIndex: request.visibleInsertIndex,
         footnoteText: request.footnoteText,
       });
+      return true;
+    }
+
+    if (action === "copy-hovered-glossary-translation") {
+      const text = activeGlossaryTranslationCopyText();
+      if (!text) {
+        return true;
+      }
+      try {
+        if (typeof navigator === "undefined" || typeof navigator.clipboard?.writeText !== "function") {
+          throw new Error("Clipboard access is not available.");
+        }
+        await navigator.clipboard.writeText(text);
+        showNoticeBadge("Translation copied.", render);
+      } catch {
+        showNoticeBadge("The translation could not be copied.", render);
+      }
       return true;
     }
 

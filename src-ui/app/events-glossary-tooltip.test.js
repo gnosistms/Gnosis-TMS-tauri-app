@@ -29,6 +29,7 @@ const {
   glossaryFootnoteInsertionRequestForMark,
   glossaryFootnotePopoverPayloadForMark,
   glossaryPopoverContextForMark,
+  glossaryTranslationCopyTextForMark,
 } = await import("./events/glossary-tooltip.js");
 
 function displayField() {
@@ -164,4 +165,44 @@ test("target terms with multiple distinct footnotes keep the popover but disable
     ["First note", "Second note"],
   );
   assert.equal(glossaryFootnoteInsertionRequestForMark(mark), null);
+});
+
+test("a source term with exactly one translation offers it for copying", () => {
+  const mark = (payload, options = {}) => new FakeHtmlElement({
+    payload,
+    displayText: new FakeHtmlElement(),
+    ...options,
+  });
+
+  assert.equal(
+    glossaryTranslationCopyTextForMark(mark({
+      kind: "source",
+      title: "the inner chamber of the heart",
+      variants: [{ text: "căn phòng bên trong của trái tim", note: "formal" }],
+    })),
+    "căn phòng bên trong của trái tim",
+  );
+  // Stored ruby markup is copied as is, so the pasted text passes the
+  // glossary's exact ruby check.
+  assert.equal(
+    glossaryTranslationCopyTextForMark(mark({
+      kind: "source",
+      variants: ["<ruby>漢字<rt>かんじ</rt></ruby>"],
+    })),
+    "<ruby>漢字<rt>かんじ</rt></ruby>",
+  );
+
+  for (const payload of [
+    { kind: "source", variants: ["first", "second"] },
+    { kind: "source", variants: [] },
+    { kind: "source", variants: [{ text: "", note: "note only" }] },
+    { kind: "source", variants: ["only"], noTranslation: { position: "", note: "leave out" } },
+    { kind: "target", title: "only", variants: ["source"], footnotes: [] },
+  ]) {
+    assert.equal(glossaryTranslationCopyTextForMark(mark(payload)), null, JSON.stringify(payload));
+  }
+  assert.equal(
+    glossaryTranslationCopyTextForMark(mark({ kind: "source", variants: ["only"] }, { isConnected: false })),
+    null,
+  );
 });

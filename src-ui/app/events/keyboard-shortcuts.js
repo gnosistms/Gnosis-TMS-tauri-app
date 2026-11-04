@@ -1,7 +1,10 @@
 import { isMacPlatform } from "../runtime.js";
 import { state } from "../state.js";
 import { chapterHasSrtSourceFormat } from "../editor-timing.js";
-import { activeGlossaryFootnoteInsertionRequest } from "./glossary-tooltip.js";
+import {
+  activeGlossaryFootnoteInsertionRequest,
+  activeGlossaryTranslationCopyText,
+} from "./glossary-tooltip.js";
 import { registerEditorFieldUndoEvents, handleEditorFieldUndoShortcut } from "../editor-field-undo.js";
 import { listIndentEdit, listReturnEdit } from "../editor-list-keys.js";
 
@@ -203,6 +206,35 @@ export function shouldInsertHoveredGlossaryFootnote(event, hasActiveRequest) {
     && !event.shiftKey;
 }
 
+function hasTextSelection(target) {
+  if (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) {
+    const { selectionStart, selectionEnd } = target;
+    if (Number.isInteger(selectionStart) && selectionStart !== selectionEnd) {
+      return true;
+    }
+  }
+  const selection = typeof document.getSelection === "function" ? document.getSelection() : null;
+  return Boolean(selection && !selection.isCollapsed && selection.toString());
+}
+
+// Cmd+C / Ctrl+C copies the hovered source term's only translation. Selected
+// text keeps the native copy, so the shortcut never replaces what the user
+// meant to copy.
+export function shouldCopyHoveredGlossaryTranslation(event, hasActiveTranslation) {
+  if (event.defaultPrevented || event.repeat || event.isComposing || !hasActiveTranslation) {
+    return false;
+  }
+  const key = typeof event.key === "string" ? event.key.toLowerCase() : "";
+  const hasModifier = isMacPlatform()
+    ? event.metaKey && !event.ctrlKey
+    : event.ctrlKey && !event.metaKey;
+  return key === "c"
+    && hasModifier
+    && !event.altKey
+    && !event.shiftKey
+    && !hasTextSelection(event.target);
+}
+
 function focusPageSearchInput(selectContents = false) {
   const input = document.querySelector(PAGE_SEARCH_INPUT_SELECTOR);
   if (!(input instanceof HTMLInputElement)) {
@@ -251,6 +283,12 @@ export function registerKeyboardShortcutEvents(dispatchAction) {
     if (shouldInsertHoveredGlossaryFootnote(event, Boolean(glossaryFootnoteRequest))) {
       event.preventDefault();
       void dispatchAction("insert-hovered-glossary-footnote", event);
+      return;
+    }
+
+    if (shouldCopyHoveredGlossaryTranslation(event, activeGlossaryTranslationCopyText() !== null)) {
+      event.preventDefault();
+      void dispatchAction("copy-hovered-glossary-translation", event);
       return;
     }
 
