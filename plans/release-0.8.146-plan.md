@@ -18,6 +18,12 @@
    The fix (`8e16ed16` on `dev`) was cherry-picked at Hans's request before
    merging. The copy shortcut is new in this release, so the notes need no
    separate line for it.
+   Then, at Hans's request ("ship as soon as possible"), footnote paragraph
+   and line breaks with their repo migration (`c1b47d1c` on `dev`) and the
+   same keys for captions and attributions (`fba482fc`). The footnote
+   migration keeps the id `0.8.147`, the release it was first meant for:
+   Hans's development app had already run it in 32 project repos and pushed
+   them, and a new id would run the rewrite on them again.
 2. Synchronize npm, Tauri, Cargo, both lockfiles, and bundled notice versions to
    0.8.146. Add versioned notes.
 3. Validate version agreement, locked Cargo metadata, formatting, tests, and lint.
