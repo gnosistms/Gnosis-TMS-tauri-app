@@ -1315,7 +1315,7 @@ test("WordPress block attributes escape characters that would end the comment", 
   assert.equal(content.split("\n")[0].split("--").length - 1, 2);
 });
 
-test("plain text and the media link policy show audio and video as link lines", () => {
+test("audio on a row without text, and video, stay link lines in plain text and the media link policy", () => {
   const linked = applyMediaLinkPolicy(mediaBlocks());
 
   assert.deepEqual(linked.slice(0, 2).map((block) => [block.kind, block.textStyle, block.rowId, block.text]), [
@@ -1335,6 +1335,69 @@ test("plain text and the media link policy show audio and video as link lines", 
       "Audio: chant.m4a",
     ].join("\n\n"),
   );
+});
+
+test("print formats make a row's audio a footnote after the row's own notes", () => {
+  const blocks = buildEditorPreviewDocument([
+    {
+      rowId: "row-audio",
+      lifecycleState: "active",
+      textStyle: "paragraph",
+      fields: { vi: "First paragraph.\n\nSecond [1] paragraph." },
+      footnotes: { vi: "A note" },
+      imageCaptions: { vi: "Evening <em>talk.</em>" },
+      images: { vi: { kind: "url", url: "https://example.org/talk.mp3?a=1&b=2" } },
+    },
+    {
+      rowId: "row-next",
+      lifecycleState: "active",
+      textStyle: "paragraph",
+      fields: { vi: "Next" },
+      imageCaptions: {},
+      images: { vi: { kind: "upload", path: "chapters/ch-1/images/row-next/chant.wav", filePath: "/tmp/chant.wav" } },
+    },
+  ], "vi");
+
+  assert.deepEqual(applyMediaLinkPolicy(blocks).map((block) => [block.kind, block.rowId, block.text, block.footnotes]), [
+    ["text", "row-audio", "First paragraph.", []],
+    ["text", "row-audio", "Second [1] paragraph.", [
+      { marker: 1, text: "A note" },
+      {
+        marker: 2,
+        text: "Evening <em>talk</em>: <a href=\"https://example.org/talk.mp3?a=1&amp;b=2\">https://example.org/talk.mp3?a=1&b=2</a>",
+      },
+    ]],
+    // Uploaded audio has no public address, so its file name stands in.
+    ["text", "row-next", "Next", [{ marker: 1, text: "chant.wav" }]],
+  ]);
+
+  // Plain text has no links, so the address is bare.
+  assert.equal(
+    serializeEditorPreviewPlainText(blocks, { showFootnoteLinkUrls: true }),
+    [
+      "First paragraph.",
+      "Second [1] paragraph. [2]",
+      "Next [3]",
+      "[1] A note\n[2] Evening talk: https://example.org/talk.mp3?a=1&b=2\n[3] chant.wav",
+    ].join("\n\n"),
+  );
+});
+
+test("an audio footnote takes a marker its paragraph never cites", () => {
+  const blocks = buildEditorPreviewDocument([
+    {
+      rowId: "row-audio",
+      lifecycleState: "active",
+      textStyle: "paragraph",
+      fields: { vi: "See [1] and [2]." },
+      imageCaptions: {},
+      images: { vi: { kind: "url", url: "https://example.org/talk.mp3" } },
+    },
+  ], "vi");
+
+  assert.deepEqual(applyMediaLinkPolicy(blocks, { links: false })[0].footnotes, [
+    { marker: 3, text: "https://example.org/talk.mp3" },
+  ]);
 });
 
 test("the preview shows the media tile that opens the player", () => {

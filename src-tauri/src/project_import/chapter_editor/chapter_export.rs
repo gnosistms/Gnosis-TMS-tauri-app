@@ -431,6 +431,7 @@ pub(super) fn build_scoped_export_document(
                 &input.language_code,
                 full_name,
                 head_sha,
+                AudioExport::for_format(&input.format),
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -857,6 +858,7 @@ pub(super) fn build_export_document(
     language_code: &str,
     project_full_name: Option<&str>,
     head_sha: &str,
+    audio_export: AudioExport,
 ) -> Result<ExportDocument, String> {
     let mut blocks = Vec::new();
     let mut footnote_count = 0usize;
@@ -921,6 +923,7 @@ pub(super) fn build_export_document(
             }
         }
 
+        let mut audio_footnote = None;
         if let Some(image) = field
             .and_then(|value| export_image(repo_path, &value.image, project_full_name, head_sha))
         {
@@ -933,17 +936,35 @@ pub(super) fn build_export_document(
                     repo_relative_path, ..
                 } => media_for_upload_path(repo_relative_path),
             };
-            blocks.push(if media.is_image() {
-                ExportBlock::Image { image, caption }
+            // Audio the format cannot play becomes a footnote at the end of the
+            // row's text. A row without text (audio attached before that was
+            // refused) keeps the media block, which the print policy sets as a
+            // link line.
+            let footnote_anchor = (media == EditorMedia::Audio && audio_export.footnotes(&image))
+                .then(|| last_visible_text_block_index(&blocks, row_block_start))
+                .flatten();
+            if let Some(anchor_block) = footnote_anchor {
+                audio_footnote = Some((
+                    anchor_block,
+                    audio_footnote_text(&image, &caption, audio_export.links()),
+                ));
+            } else if media.is_image() {
+                blocks.push(ExportBlock::Image { image, caption });
             } else {
-                ExportBlock::Media {
+                blocks.push(ExportBlock::Media {
                     media,
                     source: image,
                     caption,
-                }
-            });
+                });
+            }
         }
 
+        let mut audio_marker = row_footnotes
+            .iter()
+            .map(|footnote| footnote.marker)
+            .max()
+            .unwrap_or(0)
+            + 1;
         for footnote in row_footnotes {
             footnote_count += 1;
             let anchor_block = (row_block_start..blocks.len())
@@ -965,6 +986,27 @@ pub(super) fn build_export_document(
                 marker: footnote.marker,
                 anchor_block,
                 text: footnote.text,
+            });
+        }
+
+        if let Some((anchor_block, note)) = audio_footnote {
+            // The audio note follows the row's own notes, under a marker its
+            // text never cites, so it is set at the end of the paragraph.
+            while (row_block_start..blocks.len()).any(|index| {
+                matches!(
+                    &blocks[index],
+                    ExportBlock::Text { text, .. }
+                        if contains_unescaped_footnote_marker(text, audio_marker)
+                )
+            }) {
+                audio_marker += 1;
+            }
+            footnote_count += 1;
+            blocks.push(ExportBlock::Footnote {
+                number: footnote_count,
+                marker: audio_marker,
+                anchor_block: Some(anchor_block),
+                text: note,
             });
         }
     }
@@ -1117,16 +1159,139 @@ pub(super) fn apply_epub_print_policy(document: &ExportDocument, omit: bool) -> 
     apply_print_policy(document, omit, |block| match block {
         ExportBlock::Media {
             media: EditorMedia::Audio,
-            source: ExportImage::Upload {
-                repo_relative_path, ..
-            },
+            source,
             ..
+        } => epub_bundles_audio(source),
+        _ => false,
+    })
+}
+
+fn epub_bundles_audio(source: &ExportImage) -> bool {
+    match source {
+        ExportImage::Upload {
+            repo_relative_path, ..
         } => matches!(
             audio_mime_type(repo_relative_path),
             Some("audio/mpeg" | "audio/mp4")
         ),
-        _ => false,
-    })
+        ExportImage::Url(_) => false,
+    }
+}
+
+/// How a format carries a row's audio. A format that cannot play it makes the
+/// audio a footnote on the row's text, so a printed page never carries an
+/// address mid-text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum AudioExport {
+    /// The format plays audio (HTML): every audio row stays media.
+    Embed,
+    /// EPUB plays the audio it bundles and footnotes the rest.
+    EpubBundled,
+    /// The format cannot play audio. `links` says whether the address in the
+    /// footnote is a link (TXT has none).
+    Footnote { links: bool },
+}
+
+impl AudioExport {
+    pub(super) fn for_format(format: &str) -> Self {
+        match format.trim().to_lowercase().as_str() {
+            "html" | "xlsx" | "srt" => Self::Embed,
+            "epub" => Self::EpubBundled,
+            "txt" => Self::Footnote { links: false },
+            _ => Self::Footnote { links: true },
+        }
+    }
+
+    fn footnotes(self, source: &ExportImage) -> bool {
+        match self {
+            Self::Embed => false,
+            Self::EpubBundled => !epub_bundles_audio(source),
+            Self::Footnote { .. } => true,
+        }
+    }
+
+    fn links(self) -> bool {
+        !matches!(self, Self::Footnote { links: false })
+    }
+}
+
+/// Punctuation that would sit badly before the ": " that joins an audio
+/// caption to its address. Closing quotes and brackets are not in it, so a
+/// quoted title stays balanced. Mirrors editor-audio-footnote.js.
+const CAPTION_END_PUNCTUATION: &[char] = &[
+    '.', ',', ';', ':', '!', '?', '…', '。', '．', '，', '、', '；', '：', '！', '？', '،', '؛',
+    '؟', '।', '॥',
+];
+
+/// The caption without its ending punctuation (and the whitespace around it),
+/// looking past inline tags, so "Evening <em>talk.</em>" becomes
+/// "Evening <em>talk</em>". An entity such as `&amp;` counts as text.
+pub(super) fn strip_caption_end_punctuation(caption: &str) -> String {
+    let mut end = caption.len();
+    let mut removed = Vec::new();
+    loop {
+        let head = &caption[..end];
+        let Some(last) = head.chars().next_back() else {
+            break;
+        };
+        if last == '>' {
+            match head.rfind('<') {
+                Some(tag_start) => {
+                    end = tag_start;
+                    continue;
+                }
+                None => break,
+            }
+        }
+        if last == ';' {
+            let is_entity = head[..head.len() - 1].rfind('&').is_some_and(|amp| {
+                let name = &head[amp + 1..head.len() - 1];
+                !name.is_empty()
+                    && name
+                        .chars()
+                        .all(|ch| ch.is_ascii_alphanumeric() || ch == '#')
+            });
+            if is_entity {
+                break;
+            }
+        }
+        if !last.is_whitespace() && !CAPTION_END_PUNCTUATION.contains(&last) {
+            break;
+        }
+        end -= last.len_utf8();
+        removed.push(end..end + last.len_utf8());
+    }
+    let mut stripped = caption.to_string();
+    // `removed` runs from the end backwards, so earlier ranges stay valid.
+    for range in removed {
+        stripped.replace_range(range, "");
+    }
+    stripped.trim().to_string()
+}
+
+/// The footnote that carries a row's audio in a format that cannot play it:
+/// "Caption: address", or the address alone without a caption. Uploaded audio
+/// has no public address, so its file name stands in.
+pub(super) fn audio_footnote_text(source: &ExportImage, caption: &str, links: bool) -> String {
+    let target = match source {
+        ExportImage::Url(url) => {
+            let visible = url.replace(['<', '>'], "");
+            if links {
+                format!("<a href=\"{}\">{visible}</a>", escape_html(url))
+            } else {
+                visible
+            }
+        }
+        ExportImage::Upload {
+            repo_relative_path, ..
+        } => uploaded_media_file_name(repo_relative_path).replace(['<', '>'], ""),
+    };
+    let caption = strip_caption_end_punctuation(caption);
+    if inline_visible_text(&caption).trim().is_empty() {
+        target
+    } else {
+        format!("{caption}: {target}")
+    }
 }
 
 /// The file name shown for uploaded media, which has no public address.
@@ -3836,9 +4001,16 @@ mod tests {
         for text in ["Body<hr>", "<hr>", "Body<hr><hr>"] {
             let mut quote = row("q", "a", text, "quote");
             quote.fields.get_mut("en").unwrap().attribution = "Author & <b>Work</b>".into();
-            let document =
-                build_export_document(Path::new("/repo"), &chapter, &[quote], "en", None, "")
-                    .unwrap();
+            let document = build_export_document(
+                Path::new("/repo"),
+                &chapter,
+                &[quote],
+                "en",
+                None,
+                "",
+                AudioExport::Embed,
+            )
+            .unwrap();
             let html = render_html_document(&document).unwrap();
             assert!(html.contains("<hr>\n<blockquote><cite class=\"quote-attribution\">Author &amp; <strong>Work</strong></cite></blockquote>"), "Quote body: {text}");
             assert_eq!(html.matches("<cite ").count(), 1, "Quote body: {text}");
@@ -3867,6 +4039,7 @@ mod tests {
             "en",
             None,
             "",
+            AudioExport::Embed,
         )
         .unwrap();
         // No empty quote: the attribution follows the body text and its note.
@@ -3927,9 +4100,16 @@ mod tests {
         for attribution in ["", " \n\t"] {
             let mut quote = row("q", "a", "Body", "quote");
             quote.fields.get_mut("en").unwrap().attribution = attribution.into();
-            let document =
-                build_export_document(Path::new("/repo"), &chapter, &[quote], "en", None, "")
-                    .unwrap();
+            let document = build_export_document(
+                Path::new("/repo"),
+                &chapter,
+                &[quote],
+                "en",
+                None,
+                "",
+                AudioExport::Embed,
+            )
+            .unwrap();
             assert_eq!(
                 document.blocks,
                 vec![ExportBlock::Text {
@@ -4715,6 +4895,299 @@ mod tests {
         assert!(md.contains("https://example.com/talk.mp3?a=1&b=2"));
     }
 
+    fn row_with_media(
+        row_id: &str,
+        order_key: &str,
+        text: &str,
+        url: &str,
+        caption: &str,
+    ) -> StoredRowFile {
+        let mut stored = row(row_id, order_key, text, "paragraph");
+        let field = stored.fields.get_mut("en").expect("field exists");
+        field.image_caption = caption.to_string();
+        field.image = Some(StoredFieldImage {
+            kind: "url".to_string(),
+            url: Some(url.to_string()),
+            path: None,
+        });
+        stored
+    }
+
+    fn build_for_format(rows: &[StoredRowFile], format: &str) -> ExportDocument {
+        build_export_document(
+            Path::new("/repo"),
+            &paragraph_test_chapter(""),
+            rows,
+            "en",
+            None,
+            "",
+            AudioExport::for_format(format),
+        )
+        .expect("document should build")
+    }
+
+    fn paragraph(text: &str) -> ExportBlock {
+        ExportBlock::Text {
+            text_style: "paragraph".to_string(),
+            text: text.to_string(),
+        }
+    }
+
+    #[test]
+    fn print_formats_footnote_audio_after_the_rows_own_notes() {
+        let mut first = row_with_media(
+            "row-1",
+            "a",
+            "Text",
+            "https://example.com/talk.mp3?a=1&b=2",
+            "Evening <em>talk.</em>",
+        );
+        first.fields.get_mut("en").expect("field").footnote = "Note".to_string();
+        let mut second = row("row-2", "b", "Next", "paragraph");
+        second.fields.get_mut("en").expect("field").footnote = "Other".to_string();
+
+        let document = build_for_format(&[first, second], "pdf");
+        assert_eq!(
+            document.blocks,
+            vec![
+                paragraph("Text"),
+                ExportBlock::Footnote {
+                    number: 1,
+                    marker: 1,
+                    anchor_block: Some(0),
+                    text: "Note".to_string(),
+                },
+                ExportBlock::Footnote {
+                    number: 2,
+                    marker: 2,
+                    anchor_block: Some(0),
+                    text: "Evening <em>talk</em>: <a href=\"https://example.com/talk.mp3?a=1&amp;b=2\">https://example.com/talk.mp3?a=1&b=2</a>".to_string(),
+                },
+                paragraph("Next"),
+                ExportBlock::Footnote {
+                    number: 3,
+                    marker: 1,
+                    anchor_block: Some(3),
+                    text: "Other".to_string(),
+                },
+            ]
+        );
+        // Nothing is left for the print policy to turn into an "Audio:" line.
+        let printed = apply_print_custom_html_policy(&document, false);
+        assert_eq!(printed.blocks, document.blocks);
+        let md = render_md_document(&printed);
+        assert!(md.contains("Text[^1][^2]"), "{md}");
+        assert!(!md.contains("Audio:"), "{md}");
+        let rtf = render_rtf_document(&printed, false);
+        assert!(rtf.contains("Evening"), "{rtf}");
+        assert!(!rtf.contains("Audio:"), "{rtf}");
+    }
+
+    #[test]
+    fn txt_footnotes_audio_with_its_bare_address() {
+        let rows = [row_with_media(
+            "row-1",
+            "a",
+            "Text",
+            "https://example.com/talk.mp3",
+            "Evening talk.",
+        )];
+        let document = build_for_format(&rows, "txt");
+        assert_eq!(
+            render_txt_document(&apply_print_custom_html_policy(&document, false)),
+            "Text\n\n[1] Evening talk: https://example.com/talk.mp3\n"
+        );
+    }
+
+    #[test]
+    fn audio_footnote_takes_a_marker_the_row_text_never_cites() {
+        let rows = [row_with_media(
+            "row-1",
+            "a",
+            "See [1] and [2].",
+            "https://example.com/talk.mp3",
+            "",
+        )];
+        let document = build_for_format(&rows, "docx");
+        assert_eq!(
+            document.blocks[1],
+            ExportBlock::Footnote {
+                number: 1,
+                marker: 3,
+                anchor_block: Some(0),
+                text: "<a href=\"https://example.com/talk.mp3\">https://example.com/talk.mp3</a>"
+                    .to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn uploaded_audio_footnote_names_the_file() {
+        let mut uploaded = row("row-1", "a", "Text", "paragraph");
+        {
+            let field = uploaded.fields.get_mut("en").expect("field");
+            field.image_caption = "Chant".to_string();
+            field.image = Some(StoredFieldImage {
+                kind: "upload".to_string(),
+                url: None,
+                path: Some("chapters/ch-1/images/row-1/chant.wav".to_string()),
+            });
+        }
+        let document = build_for_format(&[uploaded], "pdf");
+        assert!(matches!(
+            &document.blocks[1],
+            ExportBlock::Footnote { text, .. } if text == "Chant: chant.wav"
+        ));
+    }
+
+    #[test]
+    fn audio_on_an_empty_row_video_and_html_keep_their_media() {
+        let rows = [
+            row_with_media("row-1", "a", "", "https://example.com/talk.mp3", "Talk"),
+            row_with_media("row-2", "b", "Clip", "https://example.com/clip.mp4", ""),
+        ];
+        let document = build_for_format(&rows, "pdf");
+        assert!(matches!(
+            document.blocks[0],
+            ExportBlock::Media {
+                media: EditorMedia::Audio,
+                ..
+            }
+        ));
+        assert_eq!(document.blocks[1], paragraph("Clip"));
+        assert!(matches!(
+            document.blocks[2],
+            ExportBlock::Media {
+                media: EditorMedia::Video(_),
+                ..
+            }
+        ));
+        assert_eq!(document.blocks.len(), 3);
+        // The empty row still prints its old "Audio:" line, so nothing is lost.
+        let printed = apply_print_custom_html_policy(&document, false);
+        assert!(matches!(
+            &printed.blocks[0],
+            ExportBlock::Text { text, .. } if text.starts_with("<strong>Audio:</strong>")
+        ));
+
+        let html = build_for_format(
+            &[row_with_media(
+                "row-3",
+                "c",
+                "Text",
+                "https://example.com/talk.mp3",
+                "Talk",
+            )],
+            "html",
+        );
+        assert!(matches!(
+            html.blocks[1],
+            ExportBlock::Media {
+                media: EditorMedia::Audio,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn epub_footnotes_only_the_audio_it_cannot_bundle() {
+        let mut uploaded = row("row-1", "a", "Bundled", "paragraph");
+        uploaded.fields.get_mut("en").expect("field").image = Some(StoredFieldImage {
+            kind: "upload".to_string(),
+            url: None,
+            path: Some("chapters/ch-1/images/row-1/talk.mp3".to_string()),
+        });
+        let remote = row_with_media(
+            "row-2",
+            "b",
+            "Linked",
+            "https://example.com/chant.wav",
+            "Chant",
+        );
+        let document = build_for_format(&[uploaded, remote], "epub");
+        assert!(matches!(
+            document.blocks[1],
+            ExportBlock::Media {
+                media: EditorMedia::Audio,
+                source: ExportImage::Upload { .. },
+                ..
+            }
+        ));
+        assert_eq!(
+            document.blocks[3],
+            ExportBlock::Footnote {
+                number: 1,
+                marker: 1,
+                anchor_block: Some(2),
+                text: "Chant: <a href=\"https://example.com/chant.wav\">https://example.com/chant.wav</a>"
+                    .to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn combined_chapters_number_audio_footnotes_through() {
+        let first = build_for_format(
+            &[row_with_media(
+                "row-1",
+                "a",
+                "One",
+                "https://example.com/a.mp3",
+                "",
+            )],
+            "pdf",
+        );
+        let mut cited = row_with_media("row-2", "a", "Two [1]", "https://example.com/b.mp3", "");
+        cited.fields.get_mut("en").expect("field").footnote = "Note".to_string();
+        let second = build_for_format(&[cited], "pdf");
+
+        let combined = combine_export_documents("Book", "en", vec![first, second]);
+        let notes = combined
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                ExportBlock::Footnote {
+                    number,
+                    marker,
+                    anchor_block: Some(anchor),
+                    ..
+                } => Some((*number, *marker, *anchor)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            notes.iter().map(|note| note.0).collect::<Vec<_>>(),
+            [1, 2, 3]
+        );
+        assert_eq!(
+            notes.iter().map(|note| note.1).collect::<Vec<_>>(),
+            [1, 2, 3]
+        );
+        assert!(matches!(
+            &combined.blocks[notes[2].2],
+            ExportBlock::Text { text, .. } if text == "Two [2]"
+        ));
+    }
+
+    #[test]
+    fn caption_punctuation_matches_the_shared_fixture() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/audio-footnote/caption-cases.json"
+        ))
+        .expect("fixture json");
+        let cases = fixture["cases"].as_array().expect("cases");
+        assert!(!cases.is_empty());
+        for case in cases {
+            let caption = case["caption"].as_str().expect("caption");
+            let stripped = case["stripped"].as_str().expect("stripped");
+            assert_eq!(
+                strip_caption_end_punctuation(caption),
+                stripped,
+                "case {caption:?}"
+            );
+        }
+    }
+
     #[test]
     fn html_export_embeds_audio_and_video_players() {
         let audio_path =
@@ -5213,6 +5686,7 @@ mod tests {
             "en",
             Some("org/repo"),
             "abc123",
+            AudioExport::Embed,
         )
         .expect("document should build");
         assert_eq!(document.blocks.len(), 3);
@@ -5290,9 +5764,16 @@ mod tests {
             source_word_count: None,
         };
 
-        let document =
-            build_export_document(Path::new("/repo"), &chapter, &[active], "en", None, "")
-                .expect("document should build");
+        let document = build_export_document(
+            Path::new("/repo"),
+            &chapter,
+            &[active],
+            "en",
+            None,
+            "",
+            AudioExport::Embed,
+        )
+        .expect("document should build");
 
         assert_eq!(
             document.blocks[1],
@@ -5323,9 +5804,16 @@ mod tests {
             source_word_count: None,
         };
 
-        let document =
-            build_export_document(Path::new("/repo"), &chapter, &[active], "en", None, "")
-                .expect("document should build");
+        let document = build_export_document(
+            Path::new("/repo"),
+            &chapter,
+            &[active],
+            "en",
+            None,
+            "",
+            AudioExport::Embed,
+        )
+        .expect("document should build");
 
         assert!(matches!(
             document.blocks[1],
@@ -5361,6 +5849,7 @@ mod tests {
             "en",
             Some("org/repo"),
             "abc123",
+            AudioExport::Embed,
         )
         .expect("document should build");
 
@@ -5432,6 +5921,7 @@ mod tests {
             "en",
             None,
             "",
+            AudioExport::Embed,
         )
         .expect("document should build");
 
@@ -5469,6 +5959,7 @@ mod tests {
             "en",
             None,
             "",
+            AudioExport::Embed,
         )
         .expect("document should build");
         assert_eq!(
@@ -5765,9 +6256,16 @@ mod tests {
             settings: None,
             source_word_count: None,
         };
-        let chapter_document =
-            build_export_document(Path::new("/repo"), &chapter, &rows, "en", None, "")
-                .expect("document");
+        let chapter_document = build_export_document(
+            Path::new("/repo"),
+            &chapter,
+            &rows,
+            "en",
+            None,
+            "",
+            AudioExport::Embed,
+        )
+        .expect("document");
         let document = combine_export_documents("Book", "en", vec![chapter_document]);
         for rendered in [
             render_html_document(&document).expect("html"),
@@ -5837,6 +6335,7 @@ mod tests {
             "en",
             None,
             "",
+            AudioExport::Embed,
         )
         .expect("document should build");
 
@@ -5873,6 +6372,7 @@ mod tests {
             "en",
             None,
             "",
+            AudioExport::Embed,
         )
         .expect("document should build");
         assert!(document.blocks.is_empty());

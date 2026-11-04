@@ -454,7 +454,7 @@ function teamCopyDetail(teamCopy, isExporting, appState, modal) {
 
   return {
     bodyMarkup: `
-      ${supportingText(modal?.projectId ? "Copy all project chapters in order, including every language and its images, into the selected project." : "Copy this chapter, including every language and its images, into a project on any team where you can add files — including this one.")}
+      ${supportingText(modal?.projectId ? "Copy all project chapters in order, including every language and its images and audio, into the selected project." : "Copy this chapter, including every language and its images and audio, into a project on any team where you can add files — including this one.")}
       ${renderExportSelect({
         id: "editor-export-team",
         label: "Team",
@@ -593,7 +593,7 @@ function exportDetail(option, isExporting, modal, appState) {
         ${supportingText(option.format === "md"
           ? `Save ${modal.book ? "your arranged book" : modal.projectId ? "all chapters in sequence" : "this chapter"} as a Markdown (.md) file.`
           : `Save ${modal.book ? "your arranged book" : modal.projectId ? "all chapters in sequence" : "this chapter"} as ${article} ${option.label} file.`)}
-        ${option.format === "epub" ? supportingText("Images are included for offline reading. Custom HTML is converted to plain text unless omitted.") : ""}
+        ${option.format === "epub" ? supportingText("Images and uploaded MP3 and M4A audio are included for offline reading; other audio links become footnotes. Custom HTML is converted to plain text unless omitted.") : ""}
         ${pdfDisclosure}
         ${fileExportLanguageSection(option, modal, appState)}
         ${option.format === "pdf" ? pdfPaperSizeSection(modal, isExporting) : ""}

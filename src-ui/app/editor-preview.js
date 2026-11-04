@@ -1,4 +1,5 @@
 import { footnoteParagraphsHtml } from "./editor-footnote-paragraphs.js";
+import { audioFootnoteText } from "./editor-audio-footnote.js";
 import { editorFieldImageDisplayName, normalizeEditorFieldImage } from "./editor-images.js";
 import { editorFieldMedia, editorVideoPageUrl } from "./editor-media-kind.js";
 import {
@@ -1214,37 +1215,98 @@ export function applyCustomHtmlPlainTextPolicy(blocks, omitCustomHtml = false) {
   });
 }
 
+// A centered "Audio:" or "Video:" line whose link text is the address itself,
+// so it still reads on paper, then the caption. Uploaded media has no public
+// address, so its file name stands in for the link.
+function mediaLinkLines(block, media) {
+  const { image, caption, ...rest } = block;
+  const target = image.kind === "url"
+    ? `<a href="${escapeHtml(image.url ?? "")}">${String(image.url ?? "").replace(/[<>]/g, "")}</a>`
+    : editorFieldImageDisplayName(image).replace(/[<>]/g, "");
+  const line = {
+    ...rest,
+    kind: "text",
+    textStyle: EDITOR_ROW_TEXT_STYLE_CENTERED,
+    text: `<strong>${media.kind === "audio" ? "Audio" : "Video"}:</strong> ${target}`,
+    footnotes: [],
+  };
+  return String(caption ?? "").trim() ? [line, { ...line, text: caption }] : [line];
+}
+
+// The row's last block of visible text, which carries the row's audio
+// footnote, or -1. Custom HTML is skipped: it is flattened or dropped later.
+function audioFootnoteAnchorIndex(blocks, rowId) {
+  if (!rowId) {
+    return -1;
+  }
+  for (let index = blocks.length - 1; index >= 0 && blocks[index]?.rowId === rowId; index -= 1) {
+    const block = blocks[index];
+    if (
+      block.kind === "text"
+      && !isCustomHtmlRowTextStyle(block.textStyle)
+      && previewTextHasVisibleContent(block.text)
+    ) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+// The audio note follows the row's own notes under a marker the anchor's text
+// never cites, so it is set at the end of the paragraph.
+function withAudioFootnote(blocks, anchorIndex, text) {
+  const anchor = blocks[anchorIndex];
+  let marker = 1;
+  for (let index = anchorIndex; index >= 0 && blocks[index]?.rowId === anchor.rowId; index -= 1) {
+    for (const entry of normalizeEditorFootnotes(blocks[index].footnotes)) {
+      marker = Math.max(marker, entry.marker + 1);
+    }
+  }
+  const cited = new Set(
+    parseUnescapedFootnoteMarkers(extractInlineMarkupVisibleText(previewTextValue(anchor.text)))
+      .map((entry) => entry.marker),
+  );
+  while (cited.has(marker)) {
+    marker += 1;
+  }
+  return {
+    ...anchor,
+    footnotes: [...normalizeEditorFootnotes(anchor.footnotes), { marker, text }],
+  };
+}
+
 // Block-list transform for formats that cannot play audio or video (plain
-// text, Vellum, the book preview), as the Rust print policy does for DOCX and
-// PDF: a centered "Audio:" or "Video:" line whose link text is the address
-// itself, so it still reads on paper, then the caption. Uploaded media has no
-// public address, so its file name stands in for the link.
-export function applyMediaLinkPolicy(blocks) {
-  return (Array.isArray(blocks) ? blocks : []).flatMap((block) => {
+// text, Vellum, the book preview), as the Rust exports do for DOCX and PDF.
+// Audio becomes a footnote on the row's text ("caption: address", the address
+// a link when `links`); a row without text keeps the "Audio:" line, and video
+// always gets a "Video:" line.
+export function applyMediaLinkPolicy(blocks, { links = true } = {}) {
+  const result = [];
+  for (const block of Array.isArray(blocks) ? blocks : []) {
     const media = block?.kind === "image" ? editorFieldMedia(block.image) : null;
     if (!media || media.kind === "image") {
-      return [block];
+      result.push(block);
+      continue;
     }
-    const { image, caption, ...rest } = block;
-    const target = image.kind === "url"
-      ? `<a href="${escapeHtml(image.url ?? "")}">${String(image.url ?? "").replace(/[<>]/g, "")}</a>`
-      : editorFieldImageDisplayName(image).replace(/[<>]/g, "");
-    const line = {
-      ...rest,
-      kind: "text",
-      textStyle: EDITOR_ROW_TEXT_STYLE_CENTERED,
-      text: `<strong>${media.kind === "audio" ? "Audio" : "Video"}:</strong> ${target}`,
-      footnotes: [],
-    };
-    return String(caption ?? "").trim() ? [line, { ...line, text: caption }] : [line];
-  });
+    const anchorIndex = media.kind === "audio" ? audioFootnoteAnchorIndex(result, block.rowId) : -1;
+    if (anchorIndex >= 0) {
+      result[anchorIndex] = withAudioFootnote(
+        result,
+        anchorIndex,
+        audioFootnoteText(block.image, block.caption, { links }),
+      );
+      continue;
+    }
+    result.push(...mediaLinkLines(block, media));
+  }
+  return result;
 }
 
 export function serializeEditorPreviewPlainText(blocks, options = {}) {
   const showFootnoteLinkUrls = options.showFootnoteLinkUrls === true;
   const omitCustomHtml = options.omitCustomHtml === true;
   const footnoteItems = [];
-  const sections = applyMediaLinkPolicy(blocks)
+  const sections = applyMediaLinkPolicy(blocks, { links: false })
     .flatMap((block) => {
       if (block?.kind === "image") {
         return extractInlineMarkupVisibleText(previewTextValue(block.caption)).trim();

@@ -27,7 +27,7 @@ function chapterCoverLength(blocks) {
 // keep one numbering and are listed after the text.
 export function renderBookChapterPages(blocks, modal, resolveImageSrc) {
   let searchDropcap = bookPrintProfile(modal).latin;
-  // As in the PDF, audio and video become link lines.
+  // As in the PDF, audio becomes a footnote on its row and video a link line.
   const normalized = applyMediaLinkPolicy(applyCustomHtmlPlainTextPolicy(blocks, modal.omitCustomHtml))
     .map((block) => block.textStyle === "chapter_heading" ? { ...block, textStyle: "heading1" } : block);
   const cover = chapterCoverLength(normalized);
