@@ -3140,17 +3140,12 @@ fn render_inline_typst(text: &str, show_link_urls: bool) -> String {
         .join("")
 }
 
+/// Paragraphs are joined by real paragraph breaks; a line break inside one is a
+/// newline in its text, which Typst sets as a line break.
 fn render_footnote_typst(text: &str, show_link_urls: bool) -> String {
     footnote_paragraphs(text)
         .iter()
-        .map(|paragraph| {
-            if inline_visible_text(paragraph).is_empty() {
-                // An authored empty paragraph still occupies a line.
-                "#text(\"\\u{a0}\")".to_string()
-            } else {
-                render_inline_typst(paragraph, show_link_urls)
-            }
-        })
+        .map(|paragraph| render_inline_typst(paragraph, show_link_urls))
         .collect::<Vec<_>>()
         .join("#parbreak()")
 }
@@ -5756,19 +5751,18 @@ mod tests {
     }
 
     #[test]
-    fn typst_footnote_paragraphs_have_real_boundaries_and_preserve_blank_lines() {
+    fn typst_footnote_paragraphs_break_at_blank_lines_and_keep_line_breaks() {
         assert_eq!(
-            render_footnote_typst("<i>First\nSecond</i>", false),
+            render_footnote_typst("<i>First\n\nSecond</i>", false),
             "#emph[#text(\"First\")]#parbreak()#emph[#text(\"Second\")]"
         );
-        let blank = render_footnote_typst("First\n\nLast", false);
-        assert_eq!(blank.matches("#parbreak()").count(), 2);
-        assert!(blank.contains("#text(\"\\u{a0}\")"));
-        // Ordinary within-row newlines must retain their old soft-break path.
+        // A single return is a line break inside its paragraph, as in row text.
         assert_eq!(
-            render_inline_typst("First\nSecond", false),
-            "#text(\"First\\nSecond\")"
+            render_footnote_typst("<i>One,\nTwo.</i>", false),
+            "#emph[#text(\"One,\\nTwo.\")]"
         );
+        let runs = render_footnote_typst("First\n\n \n\nLast", false);
+        assert_eq!(runs.matches("#parbreak()").count(), 1);
     }
 
     #[test]

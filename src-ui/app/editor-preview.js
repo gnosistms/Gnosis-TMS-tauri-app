@@ -1222,9 +1222,10 @@ function plainTextWithFootnoteRefs(block, footnoteItems, options = {}) {
     const footnoteText = showLinkUrls
       ? extractInlineMarkupVisibleTextWithLinkUrls(previewTextValue(entry.text))
       : extractInlineMarkupVisibleText(previewTextValue(entry.text));
+    // A blank line separates the note's paragraphs; a run of them counts once.
     footnoteItems.push({
       number,
-      text: footnoteText.trim(),
+      text: footnoteText.trim().replace(/\n(?:[ \t]*\n)+/g, "\n\n"),
     });
     return `[${number}]`;
   };

@@ -266,15 +266,15 @@ function rowFieldFixture({ contentKind, paragraphs = false, list = false, value 
   };
 }
 
-test("Return starts a paragraph with a blank line in row text", (t) => {
+test("Return starts a paragraph with a blank line in row text and footnotes", (t) => {
   navigator.platform = "MacIntel";
-  for (const [value, caret, inserted] of [
-    ["Line", 4, "\n\n"],
-    ["Ab", 1, "\n\n"],
-    ["Line\n", 5, "\n"],
-    ["", 0, "\n"],
-  ]) {
-    const fixture = rowFieldFixture({ paragraphs: true, value, caret });
+  for (const [contentKind, value, caret, inserted] of [undefined, "footnote"].flatMap((kind) => [
+    [kind, "Line", 4, "\n\n"],
+    [kind, "Ab", 1, "\n\n"],
+    [kind, "Line\n", 5, "\n"],
+    [kind, "", 0, "\n"],
+  ])) {
+    const fixture = rowFieldFixture({ contentKind, paragraphs: true, value, caret });
     t.after(fixture.restore);
     const event = fixture.run({ key: "Enter" });
     assert.equal(event.prevented, true);
@@ -292,9 +292,9 @@ test("Return starts a paragraph with a blank line in row text", (t) => {
   assert.equal(fixture.target.blurCount, 0);
 });
 
-test("Return keeps the native newline in footnotes, captions, attributions, subtitles and custom HTML", (t) => {
+test("Return keeps the native newline in captions, attributions, subtitles and custom HTML", (t) => {
   navigator.platform = "MacIntel";
-  for (const contentKind of [undefined, "footnote", "image-caption", "attribution"]) {
+  for (const contentKind of [undefined, "image-caption", "attribution"]) {
     const fixture = rowFieldFixture({ contentKind, value: "Line" });
     t.after(fixture.restore);
     assert.equal(fixture.run({ key: "Enter" }).prevented, false);

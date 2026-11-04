@@ -10,12 +10,12 @@ use uuid::Uuid;
 
 use crate::{
     git_commit::{git_commit_as_signed_in_user_with_metadata, GitCommitMetadata},
-    project_import::normalize_chapter_settings_value,
+    project_import::{footnote_returns_as_blank_lines, normalize_chapter_settings_value},
     repo_layout_metadata::{
         new_v2_repo_layout_metadata, parse_repo_layout_metadata_bytes,
         read_repo_layout_metadata_state, write_repo_layout_metadata, RepoKind, RepoLayoutMetadata,
-        RepoLayoutMetadataState, MIGRATION_0810, MIGRATION_08138, MIGRATION_0856, MIGRATION_0875,
-        REPO_METADATA_RELATIVE_PATH,
+        RepoLayoutMetadataState, MIGRATION_0810, MIGRATION_08138, MIGRATION_08147, MIGRATION_0856,
+        MIGRATION_0875, REPO_METADATA_RELATIVE_PATH,
     },
     repo_sync_shared::{format_git_spawn_error, git_command, git_output},
     short_path_names::{allocate_short_folder_name, allocate_short_image_filename},
@@ -77,6 +77,13 @@ const REPO_MIGRATION_REGISTRY: &[RepoMigrationDescriptor] = &[
         applies_to: &[RepoKind::Project],
         pending_description: "the uploaded image file repair migration",
         run_content: Some(migrate_project_repo_to_08138),
+    },
+    RepoMigrationDescriptor {
+        id: MIGRATION_08147,
+        kind: RepoMigrationKind::Content,
+        applies_to: &[RepoKind::Project],
+        pending_description: "the footnote paragraph migration",
+        run_content: Some(migrate_project_repo_to_08147),
     },
 ];
 
@@ -1310,7 +1317,7 @@ fn migrate_project_repo_to_0875(app: &AppHandle, repo_path: &Path) -> Result<(),
     }
 
     write_image_path_repair_report(repo_path, &outcome)?;
-    record_image_path_repair_migration(repo_path, MIGRATION_0875)?;
+    record_content_migration(repo_path, MIGRATION_0875)?;
     git_output(repo_path, &["add", "-A"], None)?;
     commit_migration_if_dirty(
         app,
@@ -1607,7 +1614,7 @@ fn migrate_project_repo_to_08138(app: &AppHandle, repo_path: &Path) -> Result<()
     }
 
     write_image_path_repair_report(repo_path, &outcome)?;
-    record_image_path_repair_migration(repo_path, MIGRATION_08138)?;
+    record_content_migration(repo_path, MIGRATION_08138)?;
     git_output(repo_path, &["add", "-A"], None)?;
     commit_migration_if_dirty(
         app,
@@ -1653,10 +1660,84 @@ fn write_image_path_repair_report(
     Ok(())
 }
 
-fn record_image_path_repair_migration(
-    repo_path: &Path,
-    migration: &'static str,
-) -> Result<(), String> {
+/// Content-only migration: footnotes take the row-text rule, where a blank
+/// line is a paragraph break and a single return a line break. Every return in
+/// a stored footnote was a paragraph break, so each becomes a blank line and
+/// every note reads as it did. Same execution model as 0.8.56: inline during
+/// sync, mergeable edits made in sorted order; a dirty worktree skips the run
+/// and the next sync retries.
+fn migrate_project_repo_to_08147(app: &AppHandle, repo_path: &Path) -> Result<(), String> {
+    let status = git_output(repo_path, &["status", "--porcelain"], None)?;
+    if !status.trim().is_empty() {
+        return Ok(());
+    }
+
+    let chapters_root = repo_path.join("chapters");
+    if chapters_root.exists() {
+        let skipped_unreadable = rewrite_footnote_paragraph_breaks(&chapters_root)?;
+        if skipped_unreadable > 0 {
+            crate::github::report_backend_nonfatal_error(
+                app,
+                "repo.migrate.footnote_paragraphs",
+                "row_json_unreadable_skipped",
+            );
+        }
+    }
+
+    record_content_migration(repo_path, MIGRATION_08147)?;
+    git_output(repo_path, &["add", "-A"], None)?;
+    commit_migration_if_dirty(
+        app,
+        repo_path,
+        MIGRATION_08147,
+        "Separate footnote paragraphs with blank lines (0.8.147 migration)",
+    )
+}
+
+/// Rewrite the `footnote` of every language of every row under `chapters_root`,
+/// writing only rows that change. Returns how many row files were skipped
+/// because they could not be parsed; a corrupt row must not block the sync.
+fn rewrite_footnote_paragraph_breaks(chapters_root: &Path) -> Result<usize, String> {
+    let mut skipped_unreadable = 0usize;
+    for chapter_dir in sorted_dir_paths(chapters_root, "chapters folder")? {
+        let rows_dir = chapter_dir.join("rows");
+        if !rows_dir.is_dir() {
+            continue;
+        }
+        for row_path in sorted_dir_paths(&rows_dir, "rows folder")? {
+            if row_path.extension().and_then(|value| value.to_str()) != Some("json") {
+                continue;
+            }
+            let mut row_value = match read_json_value(&row_path, "row file") {
+                Ok(value) => value,
+                Err(_) => {
+                    skipped_unreadable += 1;
+                    continue;
+                }
+            };
+            let Some(fields) = row_value.get_mut("fields").and_then(Value::as_object_mut) else {
+                continue;
+            };
+            let mut changed = false;
+            for field in fields.values_mut() {
+                let Some(Value::String(footnote)) = field.get_mut("footnote") else {
+                    continue;
+                };
+                let rewritten = footnote_returns_as_blank_lines(footnote);
+                if rewritten != *footnote {
+                    *footnote = rewritten;
+                    changed = true;
+                }
+            }
+            if changed {
+                write_json_value(&row_path, &row_value)?;
+            }
+        }
+    }
+    Ok(skipped_unreadable)
+}
+
+fn record_content_migration(repo_path: &Path, migration: &'static str) -> Result<(), String> {
     let mut metadata = match read_repo_layout_metadata_state(repo_path) {
         RepoLayoutMetadataState::Readable(metadata) => metadata,
         RepoLayoutMetadataState::Missing => new_v2_repo_layout_metadata(RepoKind::Project),
@@ -1771,7 +1852,12 @@ mod tests {
             .expect("write metadata");
         assert_eq!(
             pending_ids(&repo_path, &RepoKind::Project),
-            vec![MIGRATION_0856, MIGRATION_0875, MIGRATION_08138]
+            vec![
+                MIGRATION_0856,
+                MIGRATION_0875,
+                MIGRATION_08138,
+                MIGRATION_08147
+            ]
         );
         assert!(pending_ids(&repo_path, &RepoKind::Glossary).is_empty());
 
@@ -1782,8 +1868,67 @@ mod tests {
         metadata
             .applied_migrations
             .push(MIGRATION_08138.to_string());
+        metadata
+            .applied_migrations
+            .push(MIGRATION_08147.to_string());
         write_repo_layout_metadata(&repo_path, &metadata).expect("write migrated metadata");
         assert!(pending_ids(&repo_path, &RepoKind::Project).is_empty());
+
+        let _ = fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn footnote_paragraph_migration_rewrites_only_footnote_returns() {
+        let repo_path = temp_repo("footnote-paragraph-migration");
+        let rows_dir = repo_path.join("chapters/one/rows");
+        fs::create_dir_all(&rows_dir).expect("create rows dir");
+        let row = serde_json::json!({
+            "fields": {
+                "vi": {
+                    "footnote": "Intro:\n<em>One,\nTwo.</em>\nAfter.",
+                    "plain_text": "Line one\nline two",
+                },
+                "en": { "footnote": "[1] First\nnote\n\n[2] Second", "plain_text": "" },
+            },
+            "row_id": "row-1",
+        });
+        write_json_value(&rows_dir.join("row-1.json"), &row).expect("write row");
+        let untouched = serde_json::json!({
+            "fields": { "vi": { "footnote": "One paragraph", "plain_text": "A\nB" } },
+            "row_id": "row-2",
+        });
+        write_json_value(&rows_dir.join("row-2.json"), &untouched).expect("write row");
+        let untouched_bytes = fs::read(rows_dir.join("row-2.json")).expect("read row");
+        fs::write(rows_dir.join("broken.json"), "{not json").expect("write broken row");
+
+        let skipped = rewrite_footnote_paragraph_breaks(&repo_path.join("chapters"))
+            .expect("rewrite footnotes");
+        assert_eq!(skipped, 1);
+        let rewritten = read_json_value(&rows_dir.join("row-1.json"), "row").expect("read row");
+        assert_eq!(
+            rewritten["fields"]["vi"]["footnote"],
+            "Intro:\n\n<em>One,\n\nTwo.</em>\n\nAfter."
+        );
+        assert_eq!(
+            rewritten["fields"]["vi"]["plain_text"],
+            "Line one\nline two"
+        );
+        assert_eq!(
+            rewritten["fields"]["en"]["footnote"],
+            "[1] First\n\nnote\n\n[2] Second"
+        );
+        assert_eq!(
+            fs::read(rows_dir.join("row-2.json")).expect("read row"),
+            untouched_bytes
+        );
+
+        // A second run changes nothing.
+        let before = fs::read(rows_dir.join("row-1.json")).expect("read row");
+        rewrite_footnote_paragraph_breaks(&repo_path.join("chapters")).expect("rewrite again");
+        assert_eq!(
+            fs::read(rows_dir.join("row-1.json")).expect("read row"),
+            before
+        );
 
         let _ = fs::remove_dir_all(repo_path);
     }
@@ -1919,12 +2064,11 @@ mod tests {
         };
 
         write_image_path_repair_report(&repo_path, &outcome).expect("write repair report");
-        record_image_path_repair_migration(&repo_path, MIGRATION_0875)
-            .expect("record attempted migration");
+        record_content_migration(&repo_path, MIGRATION_0875).expect("record attempted migration");
 
         assert_eq!(
             pending_ids(&repo_path, &RepoKind::Project),
-            vec![MIGRATION_0856, MIGRATION_08138]
+            vec![MIGRATION_0856, MIGRATION_08138, MIGRATION_08147]
         );
         let report = read_json_value(
             &repo_path.join(IMAGE_PATH_REPAIR_REPORT_RELATIVE_PATH),
@@ -1957,10 +2101,13 @@ mod tests {
         .expect("write stale report");
         write_image_path_repair_report(&repo_path, &ImagePathRepairOutcome::default())
             .expect("remove stale report");
-        record_image_path_repair_migration(&repo_path, MIGRATION_08138)
+        record_content_migration(&repo_path, MIGRATION_08138)
             .expect("complete repair records marker");
 
-        assert!(pending_ids(&repo_path, &RepoKind::Project).is_empty());
+        assert_eq!(
+            pending_ids(&repo_path, &RepoKind::Project),
+            vec![MIGRATION_08147]
+        );
         assert!(!repo_path
             .join(IMAGE_PATH_REPAIR_REPORT_RELATIVE_PATH)
             .exists());
