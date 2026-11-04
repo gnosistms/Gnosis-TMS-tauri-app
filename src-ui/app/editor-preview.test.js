@@ -1181,6 +1181,30 @@ test("quote attribution stays attached in preview, WordPress, HTML and plain tex
   assert.equal(serializeEditorPreviewPlainText(blocks), "Body\n\nAuthor & Source");
 });
 
+test("a caption or attribution paragraph break is one empty line and a single return a line break", () => {
+  const blocks = buildEditorPreviewDocument([
+    {
+      rowId: "q",
+      textStyle: "quote",
+      fields: { en: "Body" },
+      attributions: { en: "Author,\nWork\n\n \n\nYear\n" },
+    },
+    {
+      rowId: "image",
+      textStyle: "paragraph",
+      fields: { en: "" },
+      imageCaptions: { en: "\nTitle\r\nArtist\n\n\nSource\n" },
+      images: { en: { kind: "url", url: "https://example.com/plate.png" } },
+    },
+  ], "en");
+  const preview = renderEditorPreviewDocumentHtml(blocks, { resolveImageSrc: (image) => image?.url ?? "" }).html;
+  assert.match(preview, /<cite class="translate-preview__attribution"[^>]*>Author,<br>Work<br><br>Year<\/cite>/);
+  assert.match(preview, /<figcaption class="translate-preview__image-caption"[^>]*>Title<br>Artist<br><br>Source<\/figcaption>/);
+  const wp = serializeEditorPreviewWordPress(blocks).content;
+  assert.match(wp, /<cite>Author,<br>Work<br><br>Year<\/cite>/);
+  assert.match(wp, /<figcaption class="wp-element-caption">Title<br>Artist<br><br>Source<\/figcaption>/);
+});
+
 test("an attribution-only quote and quotes with separators retain their source once", () => {
   for (const text of ["", "First<hr>Second", "First<hr>"]) {
     const blocks = buildEditorPreviewDocument([{ textStyle: "quote", fields: { en: text }, attributions: { en: "Author" } }], "en");

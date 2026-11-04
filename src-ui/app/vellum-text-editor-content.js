@@ -1342,12 +1342,16 @@ function imageTooltip(fileName, prepared) {
 // as footnote links are. The caption stays a plain string: unlike footnotes, no
 // Vellum capture shows how a caption carries a clickable link.
 function imageCaptionText(caption, showLinkUrls) {
-  if (!showLinkUrls) {
-    return visibleInlineText(caption ?? "");
-  }
-  return extractInlineMarkupVisibleTextWithLinkUrls(
-    unescapeLiteralFootnoteMarkers(caption ?? ""),
-  ).trim();
+  const text = showLinkUrls
+    ? extractInlineMarkupVisibleTextWithLinkUrls(unescapeLiteralFootnoteMarkers(caption ?? "")).trim()
+    : visibleInlineText(caption ?? "");
+  return withVellumParagraphAndLineBreaks(text);
+}
+
+// A caption's blank line is a paragraph break and a single return a line break,
+// as in row text: Vellum's U+000A and U+2028.
+function withVellumParagraphAndLineBreaks(text) {
+  return text.replace(/\n(?:[ \t]*\n)+|\n/g, (match) => (match === "\n" ? VELLUM_LINE_SEPARATOR : "\n"));
 }
 
 function appendImageRuns(block, target, showLinkUrls = false) {

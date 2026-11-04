@@ -631,3 +631,14 @@ test("list rows fall back to indented paragraphs that start with their markers",
   assert.match(xml, new RegExp(`<string>1\\. One\n  a\\. Two${VELLUM_ATTACHMENT_CHARACTER}\n2\\. Three\n</string>`));
   assert.match(xml, /<string>A note<\/string>/);
 });
+
+test("a caption's blank line is a Vellum paragraph break and a single return a line break", () => {
+  const xml = buildVellumTextEditorContentDecodedXml([{
+    kind: "image",
+    rowId: "row-image",
+    languageCode: "en",
+    image: { kind: "url", url: "https://example.com/plate.png" },
+    caption: "Title\nArtist\n\nSource",
+  }]);
+  assert.match(xml, /<string>Title\u2028Artist\nSource<\/string>/);
+});
