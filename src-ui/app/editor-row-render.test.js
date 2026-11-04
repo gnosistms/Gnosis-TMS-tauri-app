@@ -292,6 +292,39 @@ test("renderTranslationContentRow renders a closed footnote as a static live-mar
   assert.doesNotMatch(html, /<textarea[^>]*data-content-kind="footnote"/);
 });
 
+test("an open footnote takes Return and Shift+Return as row text does", () => {
+  const html = renderTranslationContentRow({
+    ...rowWithSection({
+      canEdit: true,
+      text: "Text[1]",
+      footnotes: [{ marker: 1, text: "One\n\nTwo" }],
+      hasVisibleFootnote: true,
+      isTextEditorOpen: true,
+      openFootnoteMarker: 1,
+    }),
+    canEdit: true,
+  });
+
+  assert.match(html, /<textarea[^>]*data-text-has-paragraphs[^>]*data-content-kind="footnote"/);
+});
+
+test("an open caption and a quote attribution take Return and Shift+Return as row text does", () => {
+  const caption = renderTranslationContentRow({
+    ...rowWithSection({
+      canEdit: true,
+      hasVisibleImage: true,
+      image: { kind: "url", url: "https://example.com/caption-keys.webp" },
+      imageCaption: "One\n\nTwo",
+      isImageCaptionEditorOpen: true,
+    }),
+    canEdit: true,
+  });
+  assert.match(caption, /<textarea[^>]*data-text-has-paragraphs[^>]*data-content-kind="image-caption"/);
+
+  const quote = renderTranslationContentRow({ ...rowWithSection({ canEdit: true, attribution: "Author" }), textStyle: "quote", canEdit: true });
+  assert.match(quote, /<textarea[^>]*data-text-has-paragraphs[^>]*data-content-kind="attribution"/);
+});
+
 test("renderTranslationContentRow makes an empty closed footnote marker reopenable", () => {
   const html = renderTranslationContentRow({
     ...rowWithSection({

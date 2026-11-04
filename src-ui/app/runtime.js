@@ -361,6 +361,10 @@ export function resolveCommandFailureReport(command, error) {
     normalizedMessage.includes("no source text to") // nothing to translate/discuss/align yet
     || normalizedMessage.includes("is not a file") // dropped a folder / non-file
     || normalizedMessage.includes("not a valid supported image") // unsupported upload
+    || normalizedMessage.includes("extension does not match its image contents") // misnamed upload
+    || normalizedMessage.includes("extension does not match its audio contents") // misnamed upload
+    || normalizedMessage.includes("not a valid mp3, m4a, or wav recording") // unsupported audio upload
+    || normalizedMessage.includes("not a supported image or audio file") // unsupported upload
     || normalizedMessage.includes("api key was rejected") // user's saved key is wrong
     || normalizedMessage.includes("expected an srt timing line") // malformed subtitle input
     || normalizedMessage.includes("openai is temporarily unavailable") // provider outage

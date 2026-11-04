@@ -4,6 +4,8 @@ import {
   renderSanitizedInlineMarkupWithRanges,
 } from "./editor-inline-markup.js";
 import { normalizeEditorFootnotes } from "./editor-footnotes.js";
+import { editorFieldMedia, editorMediaThing } from "./editor-media-kind.js";
+import { editorMediaTileClassName, renderEditorMediaTileFace } from "./editor-media-tile.js";
 import { normalizeEditorRowTextStyle } from "./editor-row-text-style.js";
 import { convertLocalFileSrc } from "./runtime.js";
 
@@ -16,7 +18,8 @@ import { convertLocalFileSrc } from "./runtime.js";
 //   captionDiff    — same for the image caption
 //   footnotes      — [{ marker, diff, change: "insert" | "delete" | "" }] per marker, or
 //                    null when no footnote changed
-//   image          — { previous: { src, label } | null, currentChanged: bool } or null
+//   image          — { previous: { src, label, image, media } | null, currentChanged: bool }
+//                    or null
 //   textStyle      — { previous, current } when the row text style changed, else null
 
 const DIFF_CACHE_LIMIT = 4000;
@@ -81,12 +84,16 @@ function previousImageView(baselineField) {
   if (!image) {
     return null;
   }
+  const media = editorFieldMedia(image);
   const src = baselineField.imageDataUrl
     || (image.kind === "url" ? image.url ?? "" : convertLocalFileSrc(image.filePath ?? ""));
-  if (!src) {
+  // An audio tile shows only the file name, so a deleted recording still has one.
+  if (!src && media.kind !== "audio") {
     return null;
   }
   return {
+    image,
+    media,
     src,
     label: image.kind === "url" ? image.url ?? "" : image.fileName ?? image.path ?? "",
   };
@@ -147,7 +154,40 @@ export function renderEditorChangeDiffHtml(diff) {
   );
 }
 
+const CHANGE_X_SVG = `<svg class="translation-language-panel__image-change-x" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+          <path class="translation-language-panel__image-change-x-halo" d="M4 4 96 96 M96 4 4 96" />
+          <path d="M4 4 96 96 M96 4 4 96" />
+        </svg>`;
+
+function renderChangePreviousCaption(captionHtml) {
+  return captionHtml
+    ? `<div class="translation-language-panel__image-caption-shell translation-language-panel__image-caption-shell--display"><div class="translation-language-panel__image-caption-display"><span class="translation-language-panel__image-caption-text">${captionHtml}</span></div></div>`
+    : "";
+}
+
+// Previous audio or video: the row's media tile, crossed out and not playable.
+function renderEditorChangePreviousMedia(previousImage, captionHtml) {
+  const { image, media, label } = previousImage;
+  const thing = editorMediaThing(media);
+  return `
+    <div class="translation-language-panel__image-row translation-language-panel__image-row--change-previous">
+      <span
+        class="${editorMediaTileClassName(media)} translation-language-panel__image-preview--change-previous"
+        ${tooltipAttributes(label ? `Previous ${thing}: ${label}` : `Previous ${thing}`, { side: "top", align: "start" })}
+      >
+        ${renderEditorMediaTileFace({ image, media, mediaSrc: previousImage.src, playBadge: false })}
+        ${CHANGE_X_SVG}
+      </span>
+      ${renderChangePreviousCaption(captionHtml)}
+    </div>
+  `;
+}
+
 export function renderEditorChangePreviousImage(previousImage, { captionHtml = "" } = {}) {
+  const mediaKind = previousImage?.media?.kind;
+  if (mediaKind === "audio" || mediaKind === "video") {
+    return renderEditorChangePreviousMedia(previousImage, captionHtml);
+  }
   if (!previousImage?.src) {
     return "";
   }
@@ -158,14 +198,9 @@ export function renderEditorChangePreviousImage(previousImage, { captionHtml = "
         ${tooltipAttributes(previousImage.label ? `Previous image: ${previousImage.label}` : "Previous image", { side: "top", align: "start" })}
       >
         <img class="translation-language-panel__image" src="${escapeHtml(previousImage.src)}" alt="" loading="eager" referrerpolicy="no-referrer" />
-        <svg class="translation-language-panel__image-change-x" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-          <path class="translation-language-panel__image-change-x-halo" d="M4 4 96 96 M96 4 4 96" />
-          <path d="M4 4 96 96 M96 4 4 96" />
-        </svg>
+        ${CHANGE_X_SVG}
       </span>
-      ${captionHtml
-        ? `<div class="translation-language-panel__image-caption-shell translation-language-panel__image-caption-shell--display"><div class="translation-language-panel__image-caption-display"><span class="translation-language-panel__image-caption-text">${captionHtml}</span></div></div>`
-        : ""}
+      ${renderChangePreviousCaption(captionHtml)}
     </div>
   `;
 }

@@ -577,7 +577,12 @@ export function createEditorImageEditorState() {
 }
 
 export function createEditorImageInvalidFileModalState() {
-  return createEntityModalState();
+  return createEntityModalState({
+    // Why the file was refused (see editor-upload-refusal.js); "" when it was
+    // read and is not a valid image or audio file.
+    reason: "",
+    fileName: "",
+  });
 }
 
 export function createEditorImageDuplicateOverwriteModalState() {
@@ -601,6 +606,8 @@ export function createEditorImageReuseModalState() {
     requestId: null,
     rowId: null,
     languageCode: null,
+    // "image", "audio" or "video", so the warning names what is being inserted.
+    mediaKind: "image",
     chapterTitles: [],
     dontShowAgain: false,
   };
@@ -614,6 +621,8 @@ export function createEditorImageCaptionTranslationModalState() {
     sourceLanguageCode: null,
     destinationLanguageCode: null,
     destinationLanguageName: "",
+    // "image", "audio" or "video": the media whose caption is translated.
+    mediaKind: "image",
   };
 }
 

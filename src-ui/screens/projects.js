@@ -67,7 +67,9 @@ function projectSearchExcerptSourceLabel(source) {
     return "Footnote";
   }
   if (source === "image-caption") {
-    return "Image caption";
+    // The search index does not record whether the caption is for an image,
+    // audio or video.
+    return "Caption";
   }
   return "Text";
 }

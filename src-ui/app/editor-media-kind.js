@@ -127,6 +127,27 @@ export function editorMediaNoun(media) {
   return media?.kind === "audio" || media?.kind === "video" ? media.kind : "image";
 }
 
+// The row's media as a thing, for messages about it: "image", "audio file" or
+// "video". (`editorMediaNoun` is the modifier form, as in "audio caption".)
+export function editorMediaThing(media) {
+  return media?.kind === "audio" ? "audio file" : media?.kind === "video" ? "video" : "image";
+}
+
+// "an image", "an audio file" or "a video".
+export function editorMediaThingWithArticle(media) {
+  return media?.kind === "video" ? "a video" : `an ${editorMediaThing(media)}`;
+}
+
+// The thing named by a stored image value, which may be missing.
+export function editorFieldMediaThing(image) {
+  return editorMediaThing(image ? editorFieldMedia(image) : null);
+}
+
+export function capitalizeMediaWord(text) {
+  const value = String(text ?? "");
+  return value ? `${value[0].toUpperCase()}${value.slice(1)}` : value;
+}
+
 export function editorVideoEmbedUrl(media, { autoplay = false } = {}) {
   if (media?.kind !== "video") {
     return "";

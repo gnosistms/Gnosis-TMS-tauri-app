@@ -43,3 +43,22 @@ test("image reuse modal offers cancel, insert and a per-image don't-show-again c
   assert.match(html, /data-editor-image-reuse-dont-show-again\s+checked/);
   assert.match(html, /Don't show this warning again for this image\./);
 });
+
+test("image reuse modal names an audio file instead of an image", () => {
+  const html = renderEditorImageReuseModal({
+    editorChapter: {
+      imageReuseModal: {
+        isOpen: true,
+        mediaKind: "audio",
+        chapterTitles: ["Chapter 2"],
+        dontShowAgain: false,
+      },
+    },
+  });
+
+  assert.match(html, /Duplicate audio file/);
+  assert.match(html, /This same audio file was also used in Chapter 2/);
+  assert.match(html, /for this audio file\./);
+  assert.match(html, /Insert audio file/);
+  assert.doesNotMatch(html, />[^<]*\bimage\b[^<]*</i);
+});

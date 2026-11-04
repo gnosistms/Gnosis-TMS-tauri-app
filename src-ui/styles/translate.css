@@ -567,6 +567,21 @@
   margin-top: -1.1rem;
 }
 
+/* A quote row is one quote: its later paragraphs follow without the gap and
+   open with the body indent, as in the PDF. */
+.translate-preview__document > .translate-preview__block--quote + .translate-preview__block--quote-continued {
+  margin-top: -1.1rem;
+  text-indent: 1.5em;
+}
+
+.translate-preview__document > .translate-preview__block--quote + .translate-preview__block--quote-continued:is([lang^="ja" i], [lang^="ko" i]) {
+  text-indent: 1em;
+}
+
+.translate-preview__document > .translate-preview__block--quote + .translate-preview__block--quote-continued[lang^="zh" i] {
+  text-indent: 2em;
+}
+
 /* Lists indent like the editor's list rows: a marker gutter, then one indent a
    level. */
 .translate-preview__block--list {
@@ -3662,6 +3677,7 @@
 }
 .translate-preview__block--quote > .translate-preview__attribution {
   margin-right: -32px;
+  text-indent: 0;
 }
 
 .translation-language-panel__attribution-prompt {

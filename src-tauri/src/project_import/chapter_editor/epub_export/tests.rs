@@ -218,7 +218,49 @@ fn epub_links_footnotes_per_row_and_keeps_literal_and_unanchored_notes() {
 }
 
 #[test]
-fn epub_footnote_paragraphs_keep_indentation_and_cross_paragraph_markup() {
+fn epub_sets_a_quote_of_several_paragraphs_as_one_blockquote() {
+    let doc = document(
+        "Quote",
+        vec![
+            paragraph("quote", "First[1].\n\nSecond."),
+            ExportBlock::Attribution {
+                text: "Author".into(),
+            },
+            ExportBlock::Footnote {
+                number: 1,
+                marker: 1,
+                anchor_block: Some(0),
+                text: "A note".into(),
+            },
+            ExportBlock::Footnote {
+                number: 2,
+                marker: 2,
+                anchor_block: Some(0),
+                text: "A row note".into(),
+            },
+        ],
+    );
+    let files = unpack(&doc);
+    let content = file(&files, "EPUB/section-1.xhtml");
+    assert_xml(&content);
+    assert_eq!(content.matches("<blockquote").count(), 1, "{content}");
+    // The row note no marker cites follows the last paragraph, then the citation.
+    assert!(
+        content.contains("<blockquote id=\"block-0\" class=\"\"><p>First<a id=\"ref-2\""),
+        "{content}"
+    );
+    assert!(
+        content.contains("</a>.</p><p>Second.<a id=\"ref-3\""),
+        "{content}"
+    );
+    assert!(
+        content.contains("</a></p><cite class=\"quote-attribution\">Author</cite></blockquote>"),
+        "{content}"
+    );
+}
+
+#[test]
+fn epub_footnote_paragraphs_keep_indentation_line_breaks_and_cross_paragraph_markup() {
     let doc = document(
         "Paragraph notes",
         vec![
@@ -227,14 +269,17 @@ fn epub_footnote_paragraphs_keep_indentation_and_cross_paragraph_markup() {
                 number: 1,
                 marker: 1,
                 anchor_block: Some(0),
-                text: "<i>First\nSecond</i>\n\nLast".into(),
+                text: "<i>First\n\nSecond\nline</i>\n\nLast".into(),
             },
         ],
     );
     let content = file(&unpack(&doc), "EPUB/section-1.xhtml");
     assert!(content.contains("text-indent:0\"><em>First</em></p>"));
-    assert!(content.contains("text-indent:1.5em\"><em>Second</em></p>"));
-    assert!(content.contains("text-indent:1.5em\"><br/></p>"));
+    assert!(
+        content.contains("text-indent:1.5em\"><em>Second<br/>line</em></p>"),
+        "{content}"
+    );
+    assert!(content.contains("text-indent:1.5em\">Last</p>"));
     assert_eq!(content.matches("id=\"note-1\"").count(), 1);
 }
 

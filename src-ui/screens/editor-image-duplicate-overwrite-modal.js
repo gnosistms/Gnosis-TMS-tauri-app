@@ -4,6 +4,11 @@ import {
   secondaryButton,
 } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
+import {
+  editorFieldMediaThing,
+  editorMediaThingWithArticle,
+  editorFieldMedia,
+} from "../app/editor-media-kind.js";
 
 export function renderEditorImageDuplicateOverwriteModal(state) {
   const modal = state.editorChapter?.imageDuplicateOverwriteModal;
@@ -14,9 +19,15 @@ export function renderEditorImageDuplicateOverwriteModal(state) {
   const languageName = String(modal.destinationLanguageName || modal.destinationLanguageCode || "")
     .trim();
   const isLoading = modal.status === "loading";
+  // The incoming media and the one it replaces can be different kinds.
+  const sourceThing = editorFieldMediaThing(modal.sourceImage);
+  const destinationThing = editorFieldMediaThing(modal.destinationImage);
+  const destinationWithArticle = editorMediaThingWithArticle(
+    modal.destinationImage ? editorFieldMedia(modal.destinationImage) : null,
+  );
   const supportingText = modal.withCaption === true
-    ? `${languageName} already has an image. Its image and caption will be replaced.`
-    : `${languageName} already has an image. Do you want to overwrite it?`;
+    ? `${languageName} already has ${destinationWithArticle}. Its ${destinationThing} and caption will be replaced.`
+    : `${languageName} already has ${destinationWithArticle}. Do you want to overwrite it?`;
   const errorMarkup = modal.error
     ? `<p class="modal__error">${escapeHtml(formatErrorForDisplay(modal.error))}</p>`
     : "";
@@ -25,8 +36,8 @@ export function renderEditorImageDuplicateOverwriteModal(state) {
     <div class="modal-backdrop">
       <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="editor-image-duplicate-overwrite-title" data-modal-dialog="editor-image-duplicate-overwrite" tabindex="-1">
         <div class="card__body modal-card__body">
-          <p class="card__eyebrow">Duplicate image</p>
-          <h2 class="modal__title" id="editor-image-duplicate-overwrite-title">Overwrite the ${escapeHtml(languageName)} image?</h2>
+          <p class="card__eyebrow">Duplicate ${escapeHtml(sourceThing)}</p>
+          <h2 class="modal__title" id="editor-image-duplicate-overwrite-title">Overwrite the ${escapeHtml(languageName)} ${escapeHtml(destinationThing)}?</h2>
           <p class="modal__supporting">${escapeHtml(supportingText)}</p>
           ${errorMarkup}
           <div class="modal__actions">

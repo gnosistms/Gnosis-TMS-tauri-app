@@ -154,12 +154,12 @@ export function renderEditorConflictResolutionModal(state) {
             showImageCaptions
               ? `
                 <label class="field editor-conflict-modal__final-field editor-conflict-modal__final-field--footnote">
-                  <span class="field__label">Resolved image caption text</span>
+                  <span class="field__label">Resolved caption text</span>
                   <textarea
                     class="field__textarea editor-conflict-modal__final-input editor-conflict-modal__final-input--footnote"
                     data-editor-conflict-final-image-caption-input
                     rows="1"
-                    placeholder="Enter image caption"
+                    placeholder="Enter caption"
                     ${isSubmitting ? "disabled" : ""}
                   >${escapeHtml(modal.finalImageCaption)}</textarea>
                 </label>
@@ -186,12 +186,12 @@ export function renderEditorConflictResolutionModal(state) {
             showImages
               ? `
                 <label class="field editor-conflict-modal__final-field editor-conflict-modal__final-field--footnote">
-                  <span class="field__label">Resolved image URL</span>
+                  <span class="field__label">Resolved image, audio, or video URL</span>
                   <textarea
                     class="field__textarea editor-conflict-modal__final-input editor-conflict-modal__final-input--footnote"
                     data-editor-conflict-final-image-input
                     rows="1"
-                    placeholder="Enter image URL"
+                    placeholder="Enter image, audio, or video URL"
                     ${isSubmitting ? "disabled" : ""}
                   >${escapeHtml(modal.finalImageUrl)}</textarea>
                 </label>

@@ -3,17 +3,25 @@ import assert from "node:assert/strict";
 import { footnoteParagraphsHtml, rowTextParagraphsHtml } from "./editor-footnote-paragraphs.js";
 import { renderSanitizedInlineMarkupHtml } from "./editor-inline-markup.js";
 
-test("footnote paragraphs indent continuations and keep cross-paragraph markup balanced", () => {
-  const html = footnoteParagraphsHtml(renderSanitizedInlineMarkupHtml('<i>First\nSecond <a href="https://example.com">link</a></i>'));
+test("footnote paragraphs split at blank lines, indent continuations and keep markup balanced", () => {
+  const html = footnoteParagraphsHtml(renderSanitizedInlineMarkupHtml('<i>First\n\nSecond <a href="https://example.com">link</a></i>'));
   assert.match(html, /text-indent:0"><em>First<\/em><\/span><span[^>]+text-indent:1.5em"><em>Second/);
   assert.match(html, /<a href="https:\/\/example.com">link<\/a><\/em><\/span>$/);
   assert.equal(html.includes("\n"), false, "structural boundaries must not create additional pre-wrap blank lines");
 });
 
-test("footnote paragraph layout preserves empty paragraphs and CRLF boundaries", () => {
-  const html = footnoteParagraphsHtml("First\r\n\r\nThird\r\n", "p");
-  assert.equal((html.match(/<p /g) || []).length, 4);
-  assert.equal((html.match(/<br>/g) || []).length, 2);
+test("a single return in a footnote is a line break inside its paragraph", () => {
+  assert.equal(footnoteParagraphsHtml("<em>Line one,\nline two.</em>"), "<em>Line one,<br>line two.</em>");
+  const html = footnoteParagraphsHtml("Intro:\n\n<em>One,\nTwo.</em>\n\nAfter.", "p");
+  assert.equal((html.match(/<p /g) || []).length, 3);
+  assert.match(html, /text-indent:1.5em"><em>One,<br>Two\.<\/em><\/p>/);
+});
+
+test("runs of blank lines and CRLF make one paragraph break, and empty paragraphs are dropped", () => {
+  const html = footnoteParagraphsHtml("First\r\n\r\n \r\n\r\nThird\r\n", "p");
+  assert.equal((html.match(/<p /g) || []).length, 2);
+  assert.equal(html.includes("<br>"), false);
+  assert.equal(footnoteParagraphsHtml("\n\n"), "");
 });
 
 test("single-paragraph footnotes retain their existing markup and sanitization", () => {

@@ -99,10 +99,16 @@ pub(super) fn prepare(
             }
             ExportBlock::Image { caption, .. } => {
                 image_number += 1;
-                if review_plan.affected(caption, false) {
+                if review_plan.affected(caption, options.footnote_links_as_plain_text) {
                     excerpts.push((
                         format!("Image {image_number} caption"),
-                        format!("#align(center)[{}]\n", render_typst_image_caption(caption)),
+                        format!(
+                            "#align(center)[{}]\n",
+                            render_typst_image_caption(
+                                caption,
+                                options.footnote_links_as_plain_text
+                            )
+                        ),
                     ));
                 }
             }

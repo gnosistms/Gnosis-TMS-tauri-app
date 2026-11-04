@@ -147,6 +147,49 @@ test("removed image is still shown, crossed out, with its caption struck through
   assert.match(html, /history-diff__delete">pie de foto/);
 });
 
+// The crossed-out tile for one previous value, as the row renders it.
+function previousTileHtml(previousImage, extraBaseline = {}) {
+  const current = section({ code: "es" });
+  const changeView = buildEditorSectionChangeView({
+    baselineRow: baselineRow({ es: { image: previousImage, ...extraBaseline } }),
+    section: current,
+    textStyle: "paragraph",
+  });
+  const html = renderRow({ ...current, changeView });
+  const start = html.indexOf("image-row--change-previous");
+  assert.ok(start >= 0, "the previous value is shown");
+  return html.slice(start);
+}
+
+test("previous video link is a crossed-out video tile, not a broken image", () => {
+  const html = previousTileHtml({ kind: "url", url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" });
+  assert.match(html, /media-preview--video[^"]*image-preview--change-previous/);
+  assert.match(html, /media-poster[\s\S]*src="https:\/\/i\.ytimg\.com\/vi\/dQw4w9WgXcQ\/hqdefault\.jpg"/);
+  assert.match(html, /image-change-x/);
+  assert.match(html, /Previous video: https:\/\/www\.youtube\.com\/watch\?v=dQw4w9WgXcQ/);
+  // Crossed out, so neither playable nor drawn as an image.
+  assert.doesNotMatch(html, /class="translation-language-panel__image"/);
+  assert.doesNotMatch(html, /media-play|data-action="open-editor-image-preview"/);
+});
+
+test("previous uploaded MP3 is a crossed-out audio tile even without a data URL", () => {
+  const html = previousTileHtml({ kind: "upload", path: "images/talk.mp3", fileName: "talk.mp3" });
+  assert.match(html, /media-preview--audio[^"]*image-preview--change-previous/);
+  assert.match(html, /media-icon[\s\S]*media-name">talk\.mp3</);
+  assert.match(html, /image-change-x/);
+  assert.match(html, /Previous audio file: talk\.mp3/);
+  assert.doesNotMatch(html, /<img/);
+});
+
+test("previous audio link keeps its caption struck through beside the tile", () => {
+  const html = previousTileHtml(
+    { kind: "url", url: "https://example.com/audio/hymn.m4a" },
+    { imageCaption: "himno" },
+  );
+  assert.match(html, /media-preview--audio[\s\S]*media-name">hymn\.m4a</);
+  assert.match(html, /history-diff__delete">himno/);
+});
+
 test("text style change colours the new style green and the old one red", () => {
   const current = section({ code: "es", text: "Título" });
   const changeView = buildEditorSectionChangeView({

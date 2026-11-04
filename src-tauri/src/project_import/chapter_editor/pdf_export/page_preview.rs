@@ -449,7 +449,9 @@ fn read_preview_pages(workspace: &Path) -> Result<Vec<String>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::super::chapter_export::{apply_book_chapter_title, build_export_document};
+    use super::super::super::chapter_export::{
+        apply_book_chapter_title, build_export_document, AudioExport,
+    };
     use super::*;
 
     fn run_typst_for_test(arguments: &[&std::ffi::OsStr], workspace: &Path) -> Option<Vec<u8>> {
@@ -779,7 +781,16 @@ mod tests {
                 ..book_item(&chapter.chapter_id, "chapter", &chapter.title)
             };
             let document = apply_book_chapter_title(
-                build_export_document(&repo, &chapter, &rows, &language, None, "").unwrap(),
+                build_export_document(
+                    &repo,
+                    &chapter,
+                    &rows,
+                    &language,
+                    None,
+                    "",
+                    AudioExport::Embed,
+                )
+                .unwrap(),
                 &item,
             );
             parts.push(BookPart { item, document });

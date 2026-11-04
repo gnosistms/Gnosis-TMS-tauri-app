@@ -305,7 +305,7 @@ function glossaryTooltipPayload(mark) {
 function renderStructuredGlossaryTooltipBody(
   body,
   payload,
-  { showEditHint = false, showInsertHint = false } = {},
+  { showEditHint = false, showInsertHint = false, showCopyHint = false } = {},
 ) {
   body.replaceChildren();
   body.classList.add("editor-glossary-info-card");
@@ -415,7 +415,7 @@ function renderStructuredGlossaryTooltipBody(
     }
   }
 
-  if (showEditHint || showInsertHint) {
+  if (showEditHint || showInsertHint || showCopyHint) {
     const footer = document.createElement("div");
     footer.className = "editor-glossary-info-card__footer";
     if (showEditHint) {
@@ -429,6 +429,12 @@ function renderStructuredGlossaryTooltipBody(
       insertHint.className = "editor-glossary-info-card__hint editor-glossary-info-card__hint--insert";
       insertHint.textContent = `${isMacPlatform() ? "Command" : "Ctrl"} + F to insert footnote`;
       footer.append(insertHint);
+    }
+    if (showCopyHint) {
+      const copyHint = document.createElement("span");
+      copyHint.className = "editor-glossary-info-card__hint editor-glossary-info-card__hint--copy";
+      copyHint.textContent = `${isMacPlatform() ? "Command" : "Ctrl"} + C to copy`;
+      footer.append(copyHint);
     }
     body.append(footer);
   }
@@ -496,9 +502,11 @@ function updateGlossaryTooltipPlacement(mark) {
     const showEditHint = Boolean(glossaryMarkTermId(mark)) && canManageGlossaries();
     const showInsertHint = popoverContext?.kind === "footnote"
       && Boolean(glossaryFootnoteInsertionRequestForMark(mark));
+    const showCopyHint = glossaryTranslationCopyTextForMark(mark) !== null;
     renderStructuredGlossaryTooltipBody(body, tooltipPayload, {
       showEditHint,
       showInsertHint,
+      showCopyHint,
     });
   } else {
     tooltip.classList.remove("editor-glossary-tooltip--structured");
@@ -678,8 +686,54 @@ export function glossaryPopoverContextForMark(mark) {
     : { kind: "glossary", payload };
 }
 
+// A highlight redraw replaces a row's marks without the pointer moving, so no
+// pointerover reaches the new mark and the open tooltip still belongs to a
+// detached one. The hovered-term shortcuts read the mark through this: it takes
+// over the mark now under the pointer, redrawing the tooltip from it, so the
+// shortcut does what the tooltip says. With no mark there, the stale tooltip
+// closes.
+function connectedActiveGlossaryTooltipMark() {
+  if (!(activeGlossaryTooltipMark instanceof HTMLElement)) {
+    return null;
+  }
+  if (activeGlossaryTooltipMark.isConnected) {
+    return activeGlossaryTooltipMark;
+  }
+
+  const hoveredMark = glossaryTooltipMarkAtActivePointer();
+  if (!hoveredMark) {
+    deactivateGlossaryTooltipMark();
+    return null;
+  }
+
+  activateGlossaryTooltipMark(hoveredMark);
+  return hoveredMark;
+}
+
 export function activeGlossaryFootnoteInsertionRequest() {
-  return glossaryFootnoteInsertionRequestForMark(activeGlossaryTooltipMark);
+  return glossaryFootnoteInsertionRequestForMark(connectedActiveGlossaryTooltipMark());
+}
+
+// A source term with exactly one translation offers Cmd/Ctrl+C to copy it, so a
+// long glossary phrase need not be remembered and retyped. "No translation" is a
+// second choice, and a variant with only a note has nothing to copy. The text is
+// the variant as the glossary stores it: ruby markup stays the exact form the
+// glossary check matches, and a "…" gap marker stays for the translator to fill.
+export function glossaryTranslationCopyTextForMark(mark) {
+  if (!(mark instanceof HTMLElement) || !mark.isConnected) {
+    return null;
+  }
+
+  const payload = glossaryTooltipPayload(mark);
+  if (payload?.kind !== "source" || payload.noTranslation || payload.variants.length !== 1) {
+    return null;
+  }
+
+  return payload.variants[0].text || null;
+}
+
+export function activeGlossaryTranslationCopyText() {
+  return glossaryTranslationCopyTextForMark(connectedActiveGlossaryTooltipMark());
 }
 
 export function registerGlossaryTooltipEvents() {

@@ -1,0 +1,27 @@
+{
+  "description": "Shared cases for strip_caption_end_punctuation (chapter_export.rs) and stripCaptionEndPunctuation (editor-audio-footnote.js). An audio row's footnote reads 'caption: address', so the caption loses its ending punctuation first. Closing quotes and brackets stay so a quoted title stays balanced; inline tags are looked past; an entity counts as text.",
+  "cases": [
+    { "caption": "Evening talk.", "stripped": "Evening talk" },
+    { "caption": "Evening talk", "stripped": "Evening talk" },
+    { "caption": "  Evening talk.  ", "stripped": "Evening talk" },
+    { "caption": "Evening <em>talk.</em>", "stripped": "Evening <em>talk</em>" },
+    { "caption": "Evening <em>talk</em> .", "stripped": "Evening <em>talk</em>" },
+    { "caption": "Who are we?", "stripped": "Who are we" },
+    { "caption": "Listen!?", "stripped": "Listen" },
+    { "caption": "Wait...", "stripped": "Wait" },
+    { "caption": "Wait…", "stripped": "Wait" },
+    { "caption": "Part one:", "stripped": "Part one" },
+    { "caption": "Part one;", "stripped": "Part one" },
+    { "caption": "Talk (2024).", "stripped": "Talk (2024)" },
+    { "caption": "“The Talk.”", "stripped": "“The Talk.”" },
+    { "caption": "Q&amp;A", "stripped": "Q&amp;A" },
+    { "caption": "Q&amp;A.", "stripped": "Q&amp;A" },
+    { "caption": "Q & A;", "stripped": "Q & A" },
+    { "caption": "法会。", "stripped": "法会" },
+    { "caption": "讲座！", "stripped": "讲座" },
+    { "caption": "سخنرانی؟", "stripped": "سخنرانی" },
+    { "caption": "प्रवचन।", "stripped": "प्रवचन" },
+    { "caption": "...", "stripped": "" },
+    { "caption": "", "stripped": "" }
+  ]
+}

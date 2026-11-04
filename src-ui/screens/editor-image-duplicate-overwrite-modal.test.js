@@ -38,3 +38,23 @@ test("image duplicate overwrite modal explains when the destination caption will
 
   assert.match(html, /Its image and caption will be replaced/);
 });
+
+test("image duplicate overwrite modal names audio and video instead of images", () => {
+  const html = renderEditorImageDuplicateOverwriteModal({
+    editorChapter: {
+      imageDuplicateOverwriteModal: {
+        isOpen: true,
+        destinationLanguageName: "Spanish",
+        sourceImage: { kind: "url", url: "https://example.com/talk.mp3" },
+        destinationImage: { kind: "url", url: "https://youtu.be/dQw4w9WgXcQ" },
+        status: "idle",
+        error: "",
+      },
+    },
+  });
+
+  assert.match(html, /Duplicate audio file/);
+  assert.match(html, /Overwrite the Spanish video\?/);
+  assert.match(html, /Spanish already has a video\./);
+  assert.doesNotMatch(html, />[^<]*\bimage\b[^<]*</i);
+});

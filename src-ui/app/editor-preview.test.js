@@ -43,6 +43,21 @@ test("serializeEditorPreviewHtml passes custom HTML rows through as a wp:html bl
   assert.doesNotMatch(html, /wp:separator/);
 });
 
+test("serializeEditorPreviewPlainText prints caption link URLs under the footnote link option", () => {
+  const blocks = [{
+    kind: "image",
+    rowId: "row-image",
+    languageCode: "en",
+    image: { kind: "url", url: "https://example.com/plate.png" },
+    caption: "From <a href=\"https://example.com/source\">the archive</a>",
+  }];
+  assert.equal(
+    serializeEditorPreviewPlainText(blocks, { showFootnoteLinkUrls: true }),
+    "From the archive (https://example.com/source)",
+  );
+  assert.equal(serializeEditorPreviewPlainText(blocks), "From the archive");
+});
+
 test("serializeEditorPreviewPlainText omits or flattens custom HTML rows", () => {
   const omitted = serializeEditorPreviewPlainText(customHtmlBlocks(), { omitCustomHtml: true });
   assert.match(omitted, /Keep me/);
@@ -424,6 +439,47 @@ test("paragraph blocks keep their own footnotes and the quote attribution goes l
   assert.match(rendered, /Cites two<sup[^>]*><a[^>]*>1<\/a><\/sup>/);
   assert.match(rendered, /Cites one<sup[^>]*><a[^>]*>2<\/a><\/sup>/);
   assert.match(rendered, /Cites none\.<sup[^>]*><a[^>]*>3<\/a><\/sup><cite/);
+});
+
+test("a quote row of several paragraphs is one quote; the next quote row is another", () => {
+  const blocks = buildEditorPreviewDocument([
+    paragraphRow({ vi: "First.\n\nSecond.\n\nThird." }, { rowId: "q", textStyle: "quote", attributions: { vi: "Author" } }),
+    paragraphRow({ vi: "Another quote." }, { rowId: "r", textStyle: "quote" }),
+  ], "vi");
+  const paragraph = (text) => `<!-- wp:paragraph -->\n<p>${text}</p>\n<!-- /wp:paragraph -->`;
+  assert.equal(
+    serializeEditorPreviewWordPress(blocks).content,
+    `<!-- wp:quote -->\n<blockquote class="wp-block-quote">${paragraph("First.")}\n\n${paragraph("Second.")}\n\n${paragraph("Third.")}<cite>Author</cite></blockquote>\n<!-- /wp:quote -->`
+      + `\n\n<!-- wp:quote -->\n<blockquote class="wp-block-quote">${paragraph("Another quote.")}</blockquote>\n<!-- /wp:quote -->`,
+  );
+  assert.equal(serializeEditorPreviewHtml(blocks).match(/<blockquote /g).length, 2);
+
+  // The preview keeps a block per paragraph and marks those that continue a quote.
+  const rendered = renderEditorPreviewDocumentHtml(blocks).html;
+  assert.deepEqual(
+    [...rendered.matchAll(/<blockquote class="([^"]*)"[^>]*>([^<]*)/g)].map((match) => [match[2], match[1].includes("quote-continued")]),
+    [["First.", false], ["Second.", true], ["Third.", true], ["Another quote.", false]],
+  );
+});
+
+test("a quote's footnotes keep their order and a separator ends the quote", () => {
+  const footnoted = buildEditorPreviewDocument([
+    paragraphRow(
+      { vi: "Cites two[2].\n\nCites one[1]." },
+      { rowId: "q", textStyle: "quote", footnotes: { vi: "[1] Note one\n\n[2] Note two" } },
+    ),
+  ], "vi");
+  const { content, footnotes } = serializeEditorPreviewWordPress(footnoted);
+  assert.equal(content.match(/<!-- wp:quote -->/g).length, 1);
+  assert.match(content, /Cites two<sup[^]*>1<\/a><\/sup>[^]*Cites one<sup[^]*>2<\/a><\/sup>/);
+  assert.deepEqual(footnotes.map((note) => note.content), ["Note two", "Note one"]);
+
+  const separated = buildEditorPreviewDocument([
+    paragraphRow({ vi: "One.\n\nTwo.<hr>Three." }, { rowId: "q", textStyle: "quote" }),
+  ], "vi");
+  const wp = serializeEditorPreviewWordPress(separated).content;
+  assert.equal(wp.match(/<!-- wp:quote -->/g).length, 2);
+  assert.match(wp, /<p>One\.<\/p>[^]*<p>Two\.<\/p>[^]*<\/blockquote>[^]*wp:separator[^]*<p>Three\.<\/p>/);
 });
 
 test("headings split at a blank line like separate heading rows", () => {
@@ -846,7 +902,7 @@ test("HTML exports complete formatted notes with reciprocal links and row-local 
       text: "Literal \\[2\\], first <strong>[2]</strong> then [1].",
       footnotes: [
         { marker: 1, text: 'Second <a href="https://example.com/source?a=1&b=2">source</a>' },
-        { marker: 2, text: "Đầu tiên <em>formatted</em> & safe\nNext line" },
+        { marker: 2, text: "Đầu tiên <em>formatted</em> & safe\nNext line\n\nNext paragraph" },
       ],
     },
     {
@@ -863,7 +919,7 @@ test("HTML exports complete formatted notes with reciprocal links and row-local 
     assert.ok(html.includes(`<a href="#${referenceId}" role="doc-backlink"`));
   }
   assert.match(html, /Literal \[2\], first <strong><sup/);
-  assert.match(html, /Đầu tiên <em>formatted<\/em> &amp; safe<\/p><p[^>]+text-indent:1.5em">Next line/);
+  assert.match(html, /Đầu tiên <em>formatted<\/em> &amp; safe<br>Next line<\/p><p[^>]+text-indent:1.5em">Next paragraph/);
   assert.match(html, /Second <a href="https:\/\/example.com\/source\?a=1&amp;b=2">source<\/a>/);
   assert.match(html, /Distinct row note/);
   assert.match(html, /Unmarked note/);
@@ -1125,6 +1181,30 @@ test("quote attribution stays attached in preview, WordPress, HTML and plain tex
   assert.equal(serializeEditorPreviewPlainText(blocks), "Body\n\nAuthor & Source");
 });
 
+test("a caption or attribution paragraph break is one empty line and a single return a line break", () => {
+  const blocks = buildEditorPreviewDocument([
+    {
+      rowId: "q",
+      textStyle: "quote",
+      fields: { en: "Body" },
+      attributions: { en: "Author,\nWork\n\n \n\nYear\n" },
+    },
+    {
+      rowId: "image",
+      textStyle: "paragraph",
+      fields: { en: "" },
+      imageCaptions: { en: "\nTitle\r\nArtist\n\n\nSource\n" },
+      images: { en: { kind: "url", url: "https://example.com/plate.png" } },
+    },
+  ], "en");
+  const preview = renderEditorPreviewDocumentHtml(blocks, { resolveImageSrc: (image) => image?.url ?? "" }).html;
+  assert.match(preview, /<cite class="translate-preview__attribution"[^>]*>Author,<br>Work<br><br>Year<\/cite>/);
+  assert.match(preview, /<figcaption class="translate-preview__image-caption"[^>]*>Title<br>Artist<br><br>Source<\/figcaption>/);
+  const wp = serializeEditorPreviewWordPress(blocks).content;
+  assert.match(wp, /<cite>Author,<br>Work<br><br>Year<\/cite>/);
+  assert.match(wp, /<figcaption class="wp-element-caption">Title<br>Artist<br><br>Source<\/figcaption>/);
+});
+
 test("an attribution-only quote and quotes with separators retain their source once", () => {
   for (const text of ["", "First<hr>Second", "First<hr>"]) {
     const blocks = buildEditorPreviewDocument([{ textStyle: "quote", fields: { en: text }, attributions: { en: "Author" } }], "en");
@@ -1315,7 +1395,7 @@ test("WordPress block attributes escape characters that would end the comment", 
   assert.equal(content.split("\n")[0].split("--").length - 1, 2);
 });
 
-test("plain text and the media link policy show audio and video as link lines", () => {
+test("audio on a row without text, and video, stay link lines in plain text and the media link policy", () => {
   const linked = applyMediaLinkPolicy(mediaBlocks());
 
   assert.deepEqual(linked.slice(0, 2).map((block) => [block.kind, block.textStyle, block.rowId, block.text]), [
@@ -1335,6 +1415,69 @@ test("plain text and the media link policy show audio and video as link lines", 
       "Audio: chant.m4a",
     ].join("\n\n"),
   );
+});
+
+test("print formats make a row's audio a footnote after the row's own notes", () => {
+  const blocks = buildEditorPreviewDocument([
+    {
+      rowId: "row-audio",
+      lifecycleState: "active",
+      textStyle: "paragraph",
+      fields: { vi: "First paragraph.\n\nSecond [1] paragraph." },
+      footnotes: { vi: "A note" },
+      imageCaptions: { vi: "Evening <em>talk.</em>" },
+      images: { vi: { kind: "url", url: "https://example.org/talk.mp3?a=1&b=2" } },
+    },
+    {
+      rowId: "row-next",
+      lifecycleState: "active",
+      textStyle: "paragraph",
+      fields: { vi: "Next" },
+      imageCaptions: {},
+      images: { vi: { kind: "upload", path: "chapters/ch-1/images/row-next/chant.wav", filePath: "/tmp/chant.wav" } },
+    },
+  ], "vi");
+
+  assert.deepEqual(applyMediaLinkPolicy(blocks).map((block) => [block.kind, block.rowId, block.text, block.footnotes]), [
+    ["text", "row-audio", "First paragraph.", []],
+    ["text", "row-audio", "Second [1] paragraph.", [
+      { marker: 1, text: "A note" },
+      {
+        marker: 2,
+        text: "Evening <em>talk</em>: <a href=\"https://example.org/talk.mp3?a=1&amp;b=2\">https://example.org/talk.mp3?a=1&b=2</a>",
+      },
+    ]],
+    // Uploaded audio has no public address, so its file name stands in.
+    ["text", "row-next", "Next", [{ marker: 1, text: "chant.wav" }]],
+  ]);
+
+  // Plain text has no links, so the address is bare.
+  assert.equal(
+    serializeEditorPreviewPlainText(blocks, { showFootnoteLinkUrls: true }),
+    [
+      "First paragraph.",
+      "Second [1] paragraph. [2]",
+      "Next [3]",
+      "[1] A note\n[2] Evening talk: https://example.org/talk.mp3?a=1&b=2\n[3] chant.wav",
+    ].join("\n\n"),
+  );
+});
+
+test("an audio footnote takes a marker its paragraph never cites", () => {
+  const blocks = buildEditorPreviewDocument([
+    {
+      rowId: "row-audio",
+      lifecycleState: "active",
+      textStyle: "paragraph",
+      fields: { vi: "See [1] and [2]." },
+      imageCaptions: {},
+      images: { vi: { kind: "url", url: "https://example.org/talk.mp3" } },
+    },
+  ], "vi");
+
+  assert.deepEqual(applyMediaLinkPolicy(blocks, { links: false })[0].footnotes, [
+    { marker: 3, text: "https://example.org/talk.mp3" },
+  ]);
 });
 
 test("the preview shows the media tile that opens the player", () => {

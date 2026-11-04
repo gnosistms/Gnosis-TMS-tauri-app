@@ -5,6 +5,7 @@ import {
 import {
   extractInlineMarkupFootnoteLinkSegments,
   extractInlineMarkupVisibleText,
+  extractInlineMarkupVisibleTextWithLinkUrls,
 } from "./editor-inline-markup/serialize.js";
 import { listItemsFromMarkup, listItemsWithMarkers } from "./editor-list.js";
 import {
@@ -1028,7 +1029,42 @@ function footnoteLinkSegments(text, showLinkUrls = false) {
     const lastIndex = segments.length - 1;
     segments[lastIndex] = { ...segments[lastIndex], text: segments[lastIndex].text.replace(/\s+$/, "") };
   }
-  return segments;
+  return withVellumFootnoteBreaks(segments);
+}
+
+// A footnote's blank lines are paragraph breaks (a run counts once) and its
+// single returns are line breaks, as in row text. Vellum reads U+000A as a
+// paragraph break and U+2028 as a line break, so each break becomes one of
+// those, wherever it falls across the runs.
+function withVellumFootnoteBreaks(segments) {
+  const text = segments.map((segment) => segment.text).join("");
+  const breaks = new Map();
+  for (const match of text.matchAll(/\n(?:[ \t]*\n)+|\n/g)) {
+    breaks.set(match.index, {
+      end: match.index + match[0].length,
+      value: match[0] === "\n" ? VELLUM_LINE_SEPARATOR : "\n",
+    });
+  }
+  if (breaks.size === 0) {
+    return segments;
+  }
+  let offset = 0;
+  let skipUntil = 0;
+  return segments.map((segment) => {
+    let output = "";
+    for (let index = 0; index < segment.text.length; index += 1) {
+      const position = offset + index;
+      const lineBreak = breaks.get(position);
+      if (lineBreak) {
+        output += lineBreak.value;
+        skipUntil = lineBreak.end;
+      } else if (position >= skipUntil) {
+        output += segment.text[index];
+      }
+    }
+    offset += segment.text.length;
+    return { ...segment, text: output };
+  }).filter((segment) => segment.text);
 }
 
 // Builds the footnote's nested attributed string. Footnotes with no link keep the
@@ -1302,7 +1338,23 @@ function imageTooltip(fileName, prepared) {
   return fileName;
 }
 
-function appendImageRuns(block, target) {
+// With `showLinkUrls`, a caption link is followed by its destination as plain text,
+// as footnote links are. The caption stays a plain string: unlike footnotes, no
+// Vellum capture shows how a caption carries a clickable link.
+function imageCaptionText(caption, showLinkUrls) {
+  const text = showLinkUrls
+    ? extractInlineMarkupVisibleTextWithLinkUrls(unescapeLiteralFootnoteMarkers(caption ?? "")).trim()
+    : visibleInlineText(caption ?? "");
+  return withVellumParagraphAndLineBreaks(text);
+}
+
+// A caption's blank line is a paragraph break and a single return a line break,
+// as in row text: Vellum's U+000A and U+2028.
+function withVellumParagraphAndLineBreaks(text) {
+  return text.replace(/\n(?:[ \t]*\n)+|\n/g, (match) => (match === "\n" ? VELLUM_LINE_SEPARATOR : "\n"));
+}
+
+function appendImageRuns(block, target, showLinkUrls = false) {
   const image = block?.image;
   if (!image) {
     return;
@@ -1318,7 +1370,7 @@ function appendImageRuns(block, target) {
   const lastAbsolutePath = normalizeText(prepared?.lastAbsolutePath)
     || fileUrlToPath(source)
     || source;
-  const caption = visibleInlineText(block?.caption ?? "");
+  const caption = imageCaptionText(block?.caption, showLinkUrls);
   const attributeKey = `image:${index}`;
   target.imageAttributes.set(attributeKey, {
     canUpsize: typeof prepared?.canUpsize === "boolean" ? prepared.canUpsize : undefined,
@@ -1509,7 +1561,7 @@ function appendBlockRuns(block, target, options = {}) {
   }
 
   if (block?.kind === "image") {
-    appendImageRuns(block, target);
+    appendImageRuns(block, target, options.showFootnoteLinkUrls === true);
     return;
   }
 

@@ -1,4 +1,4 @@
-import { renderEditorPreviewDocumentHtml, applyCustomHtmlPlainTextPolicy, applyMediaLinkPolicy } from "./editor-preview.js";
+import { renderEditorPreviewDocumentHtml, applyCustomHtmlPlainTextPolicy, applyMediaLinkPolicy, previewBlockContinuesQuote } from "./editor-preview.js";
 import { extractInlineMarkupVisibleText } from "./editor-inline-markup/serialize.js";
 import { EDITOR_ROW_TEXT_STYLE_QUOTE, normalizeEditorRowTextStyle } from "./editor-row-text-style.js";
 import { bookPrintProfile } from "./project-book-print-profile.js";
@@ -27,7 +27,7 @@ function chapterCoverLength(blocks) {
 // keep one numbering and are listed after the text.
 export function renderBookChapterPages(blocks, modal, resolveImageSrc) {
   let searchDropcap = bookPrintProfile(modal).latin;
-  // As in the PDF, audio and video become link lines.
+  // As in the PDF, audio becomes a footnote on its row and video a link line.
   const normalized = applyMediaLinkPolicy(applyCustomHtmlPlainTextPolicy(blocks, modal.omitCustomHtml))
     .map((block) => block.textStyle === "chapter_heading" ? { ...block, textStyle: "heading1" } : block);
   const cover = chapterCoverLength(normalized);
@@ -54,9 +54,11 @@ export function renderBookChapterPages(blocks, modal, resolveImageSrc) {
   const text = `${body(rendered.blocksHtml.slice(cover).join(""))}${rendered.footnotesHtml
     ? `<div class="book-chapter__footnotes">${clean(rendered.footnotesHtml)}</div>` : ""}`;
   if (!cover) return [text];
-  // Each cover quote shrinks to its text, so a one-line quote is centred.
+  // Each cover quote shrinks to its text, so a one-line quote is centred. A quote
+  // of several paragraphs is never one line, so it keeps the full width.
+  const oneParagraph = (index) => !previewBlockContinuesQuote(prepared, index) && !previewBlockContinuesQuote(prepared, index + 1);
   const coverHtml = rendered.blocksHtml.slice(0, cover)
-    .map((html, index) => html && quote(prepared[index]) ? `<div class="book-chapter__epigraph">${html}</div>` : html).join("");
+    .map((html, index) => html && quote(prepared[index]) && oneParagraph(index) ? `<div class="book-chapter__epigraph">${html}</div>` : html).join("");
   const image = prepared[cover - 1].kind === "image" ? " book-chapter__cover--image" : "";
   return [body(coverHtml, `book-chapter__body book-chapter__cover${image}`), text];
 }

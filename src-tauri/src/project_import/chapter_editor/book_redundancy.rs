@@ -629,13 +629,17 @@ fn occurrence(
         identity: String::new(),
     })
 }
+/// Matches a note with its previous review. Whitespace is compared loosely, so a
+/// note whose returns became blank lines (the 0.8.147 footnote migration) or were
+/// re-flowed keeps its choice.
 fn annotation_key(note: &Occurrence) -> Result<String, String> {
+    let text = note.text.split_whitespace().collect::<Vec<_>>().join(" ");
     Ok(digest(
         serde_json::to_vec(&json!([
             note.item_id,
             note.row_id,
             note.marker,
-            note.text,
+            text,
             note.context
         ]))
         .map_err(|e| e.to_string())?,
@@ -1610,6 +1614,40 @@ mod tests {
         current[0].choice_aliases.clear();
         carry_choice_aliases(&mut current, &previous).expect("changed annotation");
         assert!(current[0].choice_aliases.is_empty());
+    }
+    #[test]
+    fn a_footnote_whose_returns_became_blank_lines_keeps_its_choice() {
+        let row = stored_row();
+        let field = row.fields["en"].clone();
+        let item = BookItemInput {
+            id: "chapter".into(),
+            ..Default::default()
+        };
+        let note = |text: &str| {
+            occurrence(
+                &item,
+                &row,
+                &field,
+                "footnote",
+                1,
+                text.into(),
+                "Anchor".into(),
+            )
+            .expect("note")
+        };
+        let before = note("One,\ntwo.");
+        let previous = Detection {
+            footnotes: vec![Group {
+                id: "group".into(),
+                anchor: "Anchor".into(),
+                occurrences: vec![before.clone()],
+            }],
+            ..Default::default()
+        };
+        let mut current = vec![note("One,\n\ntwo.")];
+        assert_ne!(current[0].id, before.id);
+        carry_choice_aliases(&mut current, &previous).expect("carry");
+        assert_eq!(current[0].choice_aliases, vec![before.id]);
     }
     #[test]
     fn image_checkpoint_survives_interrupted_footnotes_and_unreadable_pair_cache() {

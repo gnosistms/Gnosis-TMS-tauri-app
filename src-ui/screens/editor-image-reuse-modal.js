@@ -1,4 +1,5 @@
 import { escapeHtml, primaryButton, secondaryButton } from "../lib/ui.js";
+import { editorMediaThing } from "../app/editor-media-kind.js";
 
 function chapterTitleList(titles) {
   const names = (Array.isArray(titles) ? titles : [])
@@ -14,14 +15,16 @@ export function renderEditorImageReuseModal(state) {
   if (modal?.isOpen !== true) {
     return "";
   }
+  // "image", "audio file" or "video".
+  const thing = editorMediaThing({ kind: modal.mediaKind });
 
   return `
     <div class="modal-backdrop">
       <section class="card modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="editor-image-reuse-title" data-modal-dialog="editor-image-reuse" tabindex="-1">
         <div class="card__body modal-card__body">
-          <h2 class="modal__title" id="editor-image-reuse-title">Duplicate image</h2>
+          <h2 class="modal__title" id="editor-image-reuse-title">Duplicate ${escapeHtml(thing)}</h2>
           <p class="modal__supporting">
-            This same image was also used in ${escapeHtml(chapterTitleList(modal.chapterTitles))}. Are you sure you want to use it again here?
+            This same ${escapeHtml(thing)} was also used in ${escapeHtml(chapterTitleList(modal.chapterTitles))}. Are you sure you want to use it again here?
           </p>
           <label class="field__checkbox">
             <input
@@ -29,13 +32,13 @@ export function renderEditorImageReuseModal(state) {
               data-editor-image-reuse-dont-show-again
               ${modal.dontShowAgain ? "checked" : ""}
             />
-            <span>Don't show this warning again for this image.</span>
+            <span>Don't show this warning again for this ${escapeHtml(thing)}.</span>
           </label>
           <div class="modal__actions">
             ${secondaryButton("Cancel", "cancel-editor-image-reuse", {
               modalCancel: true,
             })}
-            ${primaryButton("Insert image", "confirm-editor-image-reuse", {
+            ${primaryButton(`Insert ${thing}`, "confirm-editor-image-reuse", {
               modalDefault: true,
               modalInitialFocus: true,
             })}

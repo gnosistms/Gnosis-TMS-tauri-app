@@ -308,6 +308,21 @@ test("body-text links export as clickable links with no printed URL", () => {
   assert.doesNotMatch(xml, /\(https:\/\/example\.com\/page\)/);
 });
 
+test("image caption links print their URL as plain text when the option is on", () => {
+  const blocks = [{
+    kind: "image",
+    rowId: "row-image",
+    languageCode: "en",
+    image: { kind: "url", url: "https://example.com/plate.png" },
+    caption: "From <a href=\"https://example.com/source\">the archive</a>",
+  }];
+  const withUrls = buildVellumTextEditorContentDecodedXml(blocks, { showFootnoteLinkUrls: true });
+  assert.match(withUrls, /<string>From the archive \(https:\/\/example\.com\/source\)<\/string>/);
+  const withoutUrls = buildVellumTextEditorContentDecodedXml(blocks);
+  assert.match(withoutUrls, /<string>From the archive<\/string>/);
+  assert.doesNotMatch(withoutUrls, /\(https:\/\/example\.com\/source\)/);
+});
+
 test("a footnote without links keeps the simple plain attributed-string form", () => {
   const blocks = [{
     kind: "text",
@@ -615,4 +630,15 @@ test("list rows fall back to indented paragraphs that start with their markers",
 
   assert.match(xml, new RegExp(`<string>1\\. One\n  a\\. Two${VELLUM_ATTACHMENT_CHARACTER}\n2\\. Three\n</string>`));
   assert.match(xml, /<string>A note<\/string>/);
+});
+
+test("a caption's blank line is a Vellum paragraph break and a single return a line break", () => {
+  const xml = buildVellumTextEditorContentDecodedXml([{
+    kind: "image",
+    rowId: "row-image",
+    languageCode: "en",
+    image: { kind: "url", url: "https://example.com/plate.png" },
+    caption: "Title\nArtist\n\nSource",
+  }]);
+  assert.match(xml, /<string>Title\u2028Artist\nSource<\/string>/);
 });

@@ -8,7 +8,7 @@ import {
   tooltipAttributes,
 } from "../lib/ui.js";
 import { editorFieldImageMetadataText } from "./editor-images.js";
-import { editorFieldMedia, editorMediaForUrl, editorMediaNoun } from "./editor-media-kind.js";
+import { editorFieldMedia, editorMediaForUrl, editorMediaNoun, editorMediaThing } from "./editor-media-kind.js";
 import { renderEditorMediaTile } from "./editor-media-tile.js";
 import { editorGlossaryEntryButtonEnabled, glossaryEntryTooltip } from "./editor-glossary-entry-selection.js";
 import { editorImagePreviewFrameSizeForSrc } from "./editor-image-preview-size.js";
@@ -574,6 +574,7 @@ function renderEditorLanguageImageCaption(row, language) {
             class="translation-language-panel__field translation-language-panel__image-caption-input"
             data-editor-row-field
             data-editor-image-caption-input
+            data-text-has-paragraphs
             data-content-kind="image-caption"
             data-row-id="${escapeHtml(row.id)}"
             data-language-code="${escapeHtml(language.code)}"
@@ -666,7 +667,7 @@ function renderEditorLanguageImage(row, language) {
           data-language-code="${escapeHtml(language.code)}"
           aria-busy="true"
         >
-          <span class="message-box__text">Loading ${editorMediaNoun(editorMediaForUrl(language.imageUrlDraft))}...</span>
+          <span class="message-box__text">Loading ${editorMediaThing(editorMediaForUrl(language.imageUrlDraft))}...</span>
         </button>
       </div>
     `;
@@ -683,7 +684,7 @@ function renderEditorLanguageImage(row, language) {
           data-row-id="${escapeHtml(row.id)}"
           data-language-code="${escapeHtml(language.code)}"
         >
-          <span class="message-box__text">${escapeHtml(language.imageUrlErrorMessage || "The image URL could not be used.")}</span>
+          <span class="message-box__text">${escapeHtml(language.imageUrlErrorMessage || `The ${editorMediaThing(editorMediaForUrl(language.imageUrlDraft))} URL could not be used.`)}</span>
         </button>
       </div>
     `;
@@ -820,7 +821,7 @@ function renderEditorLanguageImage(row, language) {
           data-editor-language-image-remove-button
           data-row-id="${escapeHtml(row.id)}"
           data-language-code="${escapeHtml(language.code)}"
-          ${tooltipAttributes(`Remove ${editorMediaNoun(media)}`, { side: "top" })}
+          ${tooltipAttributes(`Remove ${editorMediaThing(media)}`, { side: "top" })}
         >
           <span class="translation-language-panel__image-remove-icon" aria-hidden="true">
             <svg viewBox="0 0 12 12" focusable="false" aria-hidden="true">
@@ -954,6 +955,7 @@ function renderEditorFootnoteField(row, language) {
         <textarea
           class="translation-language-panel__field translation-language-panel__field--footnote"
           data-editor-row-field
+          data-text-has-paragraphs
           data-content-kind="footnote"
           data-footnote-marker="${escapeHtml(entry.marker)}"
           data-row-id="${escapeHtml(row.id)}"
@@ -1038,7 +1040,7 @@ function renderQuoteAttribution(row, language) {
     <span class="translation-language-panel__attribution-label">Attribution</span>
     <span class="translation-language-panel__attribution-prompt" aria-hidden="true">Enter attribution</span>
     <textarea class="translation-language-panel__field translation-language-panel__field--attribution"
-      data-editor-row-field data-content-kind="attribution"
+      data-editor-row-field data-text-has-paragraphs data-content-kind="attribution"
       data-row-id="${escapeHtml(row.id)}" data-language-code="${escapeHtml(language.code)}"
       lang="${escapeHtml(language.baseCode || language.code)}" rows="1"
       aria-label="Quote attribution" placeholder="Enter attribution here." ${disabled ? "disabled" : ""}

@@ -493,14 +493,14 @@ pub(super) fn copy_row_images(
         if let Some(parent) = absolute_path.parent() {
             fs::create_dir_all(parent).map_err(|error| {
                 format!(
-                    "Could not create the copied images folder '{}': {error}",
+                    "Could not create the copied media folder '{}': {error}",
                     parent.display()
                 )
             })?;
         }
         fs::write(&absolute_path, &bytes).map_err(|error| {
             format!(
-                "Could not write the copied image '{}': {error}",
+                "Could not write the copied file '{}': {error}",
                 absolute_path.display()
             )
         })?;
@@ -522,16 +522,16 @@ fn validate_source_chapter_image_path(
             .components()
             .any(|component| !matches!(component, std::path::Component::Normal(_)))
     {
-        return Err("The source chapter contains an invalid uploaded image path.".to_string());
+        return Err("The source chapter contains an invalid uploaded file path.".to_string());
     }
 
     let chapter_relative = source_chapter_path
         .strip_prefix(source_repo_path)
-        .map_err(|_| "The source chapter image folder is outside the project repo.".to_string())?;
+        .map_err(|_| "The source chapter media folder is outside the project repo.".to_string())?;
     let allowed_relative = chapter_relative.join("images");
     if !relative_path.starts_with(&allowed_relative) || relative_path == allowed_relative {
         return Err(
-            "The source chapter contains an uploaded image outside its image folder.".to_string(),
+            "The source chapter contains an uploaded file outside its media folder.".to_string(),
         );
     }
 
@@ -542,13 +542,13 @@ fn validate_source_chapter_image_path(
         let canonical_chapter = fs::canonicalize(source_chapter_path)
             .map_err(|_| "The source chapter folder could not be validated.".to_string())?;
         let canonical_images = fs::canonicalize(source_chapter_path.join("images"))
-            .map_err(|_| "The source chapter image folder could not be validated.".to_string())?;
+            .map_err(|_| "The source chapter media folder could not be validated.".to_string())?;
         if !canonical_chapter.starts_with(&canonical_repo)
             || !canonical_images.starts_with(&canonical_chapter)
             || !canonical_candidate.starts_with(&canonical_images)
         {
             return Err(
-                "The source chapter contains an uploaded image that escapes its image folder."
+                "The source chapter contains an uploaded file that escapes its media folder."
                     .to_string(),
             );
         }
@@ -929,7 +929,10 @@ mod tests {
             let error =
                 validate_source_chapter_image_path(&source_repo, &source_chapter, invalid_path)
                     .expect_err("unsafe source image path should be rejected");
-            assert!(error.contains("image"));
+            assert!(
+                error.contains("uploaded file") || error.contains("media folder"),
+                "{error}"
+            );
         }
 
         let _ = fs::remove_dir_all(&source_repo);

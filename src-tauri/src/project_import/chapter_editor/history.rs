@@ -5,6 +5,7 @@ use super::images::{
     validated_uploaded_asset_relative_path, with_repo_file_rollback, write_uploaded_asset_file,
 };
 use super::*;
+use crate::repo_layout_metadata::MIGRATION_08147;
 
 fn ensure_historical_uploaded_asset_restore_is_reference_safe(
     repo_path: &Path,
@@ -36,7 +37,7 @@ fn ensure_historical_uploaded_asset_restore_is_reference_safe(
         )?;
         if safe_to_rewrite.is_empty() {
             return Err(
-                "The historical uploaded image is shared by another field and cannot be restored in place."
+                "The historical uploaded file is shared by another field and cannot be restored in place."
                     .to_string(),
             );
         }
@@ -48,7 +49,7 @@ fn ensure_historical_uploaded_asset_restore_is_reference_safe(
         )?
     {
         return Err(
-            "The historical uploaded image is already referenced by another row and cannot be restored in place."
+            "The historical uploaded file is already referenced by another row and cannot be restored in place."
                 .to_string(),
         );
     }
@@ -152,8 +153,13 @@ pub(crate) fn restore_gtms_editor_field_from_history_sync(
         )
     })?;
     let historical_plain_text = historical_field_value.field_value.plain_text.clone();
-    let historical_footnote =
+    let mut historical_footnote =
         normalize_editor_footnote_value(&historical_field_value.field_value.footnote);
+    if !historical_footnote.is_empty()
+        && footnote_migration_follows(&repo_path, &relative_row_json, &commit_sha)?
+    {
+        historical_footnote = footnote_returns_as_blank_lines(&historical_footnote);
+    }
     let historical_image_caption =
         normalize_editor_image_caption_value(&historical_field_value.field_value.image_caption);
     let historical_image =
@@ -583,6 +589,7 @@ fn load_git_history_for_path(
             let full_message = parts.next().unwrap_or_default();
             let (message, operation_type, status_note, ai_model) =
                 parse_git_commit_message(full_message);
+            let migration = parse_gtms_migration_trailer(full_message);
 
             Ok(GitCommitMetadata {
                 commit_sha: commit_sha.to_string(),
@@ -594,9 +601,42 @@ fn load_git_history_for_path(
                 operation_type,
                 status_note,
                 ai_model,
+                migration,
             })
         })
         .collect()
+}
+
+pub(super) fn parse_gtms_migration_trailer(message: &str) -> Option<String> {
+    message.lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        let value = value.trim();
+        (name.trim().eq_ignore_ascii_case("GTMS-Migration") && !value.is_empty())
+            .then(|| value.to_string())
+    })
+}
+
+/// Whether the 0.8.147 footnote migration rewrote the row after `commit_sha`. A
+/// footnote from before it separated paragraphs with single returns, so it is
+/// rewritten the same way before it is restored.
+fn footnote_migration_follows(
+    repo_path: &Path,
+    relative_row_json: &str,
+    commit_sha: &str,
+) -> Result<bool, String> {
+    let output = git_output(
+        repo_path,
+        &[
+            "log",
+            "--format=%B%x1e",
+            &format!("{commit_sha}..HEAD"),
+            "--",
+            relative_row_json,
+        ],
+    )?;
+    Ok(output
+        .split('\u{1e}')
+        .any(|message| parse_gtms_migration_trailer(message).as_deref() == Some(MIGRATION_08147)))
 }
 
 pub(super) fn author_login_from_email(author_email: &str) -> String {
@@ -819,6 +859,24 @@ pub(super) fn build_editor_field_history_entries(
     commits: Vec<GitCommitMetadata>,
     historical_field_versions: Vec<Option<HistoricalFieldVersion>>,
 ) -> Vec<EditorFieldHistoryEntry> {
+    // Versions older than the 0.8.147 footnote migration read as it rewrote them, so
+    // they show and compare in today's format and the migration itself is no entry.
+    let footnote_migration_index = commits
+        .iter()
+        .position(|commit| commit.migration.as_deref() == Some(MIGRATION_08147));
+    let historical_field_versions = historical_field_versions
+        .into_iter()
+        .enumerate()
+        .map(|(index, version)| {
+            version.map(|mut version| {
+                if footnote_migration_index.is_some_and(|migration| index > migration) {
+                    version.field_value.footnote =
+                        footnote_returns_as_blank_lines(&version.field_value.footnote);
+                }
+                version
+            })
+        })
+        .collect::<Vec<_>>();
     let baseline_index = historical_field_versions.iter().rposition(Option::is_some);
     let field_signatures: Vec<Option<HistoricalFieldSignature>> = historical_field_versions
         .iter()
@@ -1214,6 +1272,7 @@ mod tests {
             operation_type: operation_type.map(str::to_string),
             status_note: None,
             ai_model: None,
+            migration: None,
         }
     }
 
@@ -1559,5 +1618,79 @@ mod tests {
         assert_eq!(entries[0].footnote, "Note");
         assert_eq!(entries[1].commit_sha, "c1");
         assert_eq!(entries[1].footnote, "");
+    }
+
+    fn footnoted_version(plain_text: &str, footnote: &str) -> HistoricalFieldVersion {
+        let mut version = history_version(plain_text, DEFAULT_EDITOR_TEXT_STYLE, false, false);
+        version.field_value.footnote = footnote.to_string();
+        version
+    }
+
+    #[test]
+    fn versions_older_than_the_footnote_migration_show_its_blank_lines() {
+        let mut migration = history_commit("c2", Some("repo.migrate"));
+        migration.migration = Some(MIGRATION_08147.to_string());
+        let entries = build_editor_field_history_entries(
+            Path::new("."),
+            vec![
+                history_commit("c3", Some("editor-update")),
+                migration,
+                history_commit("c1", Some("import")),
+            ],
+            vec![
+                Some(footnoted_version("Hola[1]", "A\n\nB")),
+                Some(footnoted_version("Hello[1]", "A\n\nB")),
+                Some(footnoted_version("Hello[1]", "A\nB")),
+            ],
+        );
+
+        // The migration changed nothing a person wrote, so it is no entry.
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].commit_sha, "c3");
+        assert_eq!(entries[1].commit_sha, "c1");
+        assert_eq!(entries[1].footnote, "A\n\nB");
+    }
+
+    #[test]
+    fn footnote_migration_follows_only_commits_before_it() {
+        let repo_path = std::env::temp_dir().join(format!(
+            "gnosis-tms-history-migration-{}",
+            uuid::Uuid::now_v7()
+        ));
+        let row = "chapters/ch-1/rows/row-1.json";
+        std::fs::create_dir_all(repo_path.join("chapters/ch-1/rows")).expect("create rows dir");
+        run_git(&repo_path, &["init", "--initial-branch", "main"]);
+        let commit = |footnote: &str, message: &str| {
+            std::fs::write(
+                repo_path.join(row),
+                format!("{{\"footnote\": {footnote:?}}}\n"),
+            )
+            .expect("write row");
+            run_git(&repo_path, &["add", "."]);
+            run_git(
+                &repo_path,
+                &[
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@example.com",
+                    "commit",
+                    "-m",
+                    message,
+                ],
+            );
+            git_output(&repo_path, &["rev-parse", "HEAD"]).expect("head")
+        };
+        let before = commit("A\nB", "Update row");
+        let migrated = commit(
+            "A\n\nB",
+            "Separate footnote paragraphs\n\nGTMS-Operation: repo.migrate\nGTMS-Migration: 0.8.147",
+        );
+        let after = commit("A\n\nC", "Update row");
+
+        assert!(footnote_migration_follows(&repo_path, row, before.trim()).expect("before"));
+        assert!(!footnote_migration_follows(&repo_path, row, migrated.trim()).expect("migrated"));
+        assert!(!footnote_migration_follows(&repo_path, row, after.trim()).expect("after"));
+        let _ = std::fs::remove_dir_all(repo_path);
     }
 }

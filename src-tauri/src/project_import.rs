@@ -16,13 +16,14 @@ use tauri::AppHandle;
 pub(crate) use import_sample::save_project_import_sample;
 
 pub(crate) use self::chapter_editor::{
-    audio_mime_type, fetch_public_image_dimensions, initialize_export_image_cache,
-    list_imported_editor_conflict_refs, normalize_chapter_settings_value,
-    persist_imported_editor_conflict_entries, repo_has_imported_editor_conflicts,
-    resolve_chapter_json_git_conflict_from_stage_texts, resolve_export_settings_git_conflict,
-    resolve_project_json_git_conflict_from_stage_texts, resolve_row_git_conflict_from_stage_texts,
-    unescaped_footnote_marker_sequence, ImportedEditorConflictRef,
-    PendingImportedEditorConflictEntry, ResolvedEditorConflictAction, EXPORT_SETTINGS_PATH,
+    audio_mime_type, fetch_public_image_dimensions, footnote_returns_as_blank_lines,
+    initialize_export_image_cache, list_imported_editor_conflict_refs,
+    normalize_chapter_settings_value, persist_imported_editor_conflict_entries,
+    repo_has_imported_editor_conflicts, resolve_chapter_json_git_conflict_from_stage_texts,
+    resolve_export_settings_git_conflict, resolve_project_json_git_conflict_from_stage_texts,
+    resolve_row_git_conflict_from_stage_texts, unescaped_footnote_marker_sequence,
+    ImportedEditorConflictRef, PendingImportedEditorConflictEntry, ResolvedEditorConflictAction,
+    EXPORT_SETTINGS_PATH,
 };
 
 #[tauri::command]
@@ -815,7 +816,7 @@ pub(crate) async fn save_gtms_editor_language_image_url(
         save_gtms_editor_language_image_url_sync(&worker_app, worker_input)
     })
     .await
-    .map_err(|error| format!("The row image URL worker failed: {error}"))??;
+    .map_err(|error| format!("The row media URL worker failed: {error}"))??;
     start_wordpress_caption_enrichment(app, input, &response);
     Ok(response)
 }
@@ -853,7 +854,7 @@ pub(crate) async fn allow_gtms_editor_image_reuse(
         chapter_editor::allow_gtms_editor_image_reuse_sync(&app, input)
     })
     .await
-    .map_err(|error| format!("The image reuse setting worker failed: {error}"))?
+    .map_err(|error| format!("The duplicate warning setting worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -870,7 +871,7 @@ pub(crate) async fn upload_gtms_editor_language_image(
         upload_gtms_editor_language_image_sync(&app, input)
     })
     .await
-    .map_err(|error| format!("The row image upload worker failed: {error}"))?
+    .map_err(|error| format!("The row media upload worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -887,7 +888,7 @@ pub(crate) async fn remove_gtms_editor_language_image(
         remove_gtms_editor_language_image_sync(&app, input)
     })
     .await
-    .map_err(|error| format!("The row image removal worker failed: {error}"))?
+    .map_err(|error| format!("The row media removal worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -904,7 +905,7 @@ pub(crate) async fn duplicate_gtms_editor_language_image(
         duplicate_gtms_editor_language_image_sync(&app, input)
     })
     .await
-    .map_err(|error| format!("The row image duplication worker failed: {error}"))?
+    .map_err(|error| format!("The row media duplication worker failed: {error}"))?
 }
 
 #[tauri::command]

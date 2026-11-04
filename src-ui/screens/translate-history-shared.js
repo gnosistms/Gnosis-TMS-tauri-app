@@ -2,6 +2,7 @@ import { editorRowTextStyleLabel, normalizeEditorRowTextStyle } from "../app/edi
 import { rowTextParagraphsHtml } from "../app/editor-footnote-paragraphs.js";
 import { renderTranslationMarkerIcon } from "../app/editor-row-render.js";
 import { editorFieldImageMetadataText } from "../app/editor-images.js";
+import { capitalizeMediaWord, editorFieldMediaThing } from "../app/editor-media-kind.js";
 import {
   extractInlineMarkupHistoryText,
   renderSanitizedInlineMarkupHistoryHtml,
@@ -159,6 +160,12 @@ export function renderHistoryEntryContent(entry, previousEntry, languageCode, op
   const hasVisibleImage =
     historyTextHasVisibleContent(currentImageText)
     || historyTextHasVisibleContent(previousImageText);
+  // "Image:", "Audio file:" or "Video:"; "Media:" when the change swapped kinds.
+  const currentImageThing = entry?.image ? editorFieldMediaThing(entry.image) : "";
+  const previousImageThing = previousEntry?.image ? editorFieldMediaThing(previousEntry.image) : "";
+  const imagePrefixLabel = currentImageThing && previousImageThing && currentImageThing !== previousImageThing
+    ? "Media:"
+    : `${capitalizeMediaWord(currentImageThing || previousImageThing || "image")}:`;
   const historyBlocks = [
     {
       currentText: entry?.plainText,
@@ -181,7 +188,7 @@ export function renderHistoryEntryContent(entry, previousEntry, languageCode, op
       render(prefixLabel, diffText, className, currentLanguageCode) {
         return `<p class="${className}" lang="${escapeHtml(currentLanguageCode ?? "")}"><span class="history-item__image-label">${escapeHtml(prefixLabel)}</span><span class="history-item__image-value">${diffText}</span></p>`;
       },
-      prefixLabel: "Image:",
+      prefixLabel: imagePrefixLabel,
     },
     {
       currentText: entry?.imageCaption,

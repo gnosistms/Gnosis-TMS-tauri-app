@@ -1,4 +1,5 @@
 import { footnoteParagraphsHtml } from "./editor-footnote-paragraphs.js";
+import { audioFootnoteText } from "./editor-audio-footnote.js";
 import { editorFieldImageDisplayName, normalizeEditorFieldImage } from "./editor-images.js";
 import { editorFieldMedia, editorVideoPageUrl } from "./editor-media-kind.js";
 import {
@@ -101,8 +102,16 @@ function previewTextValue(value) {
   return typeof value === "string" ? value : String(value ?? "");
 }
 
+// Captions and attributions follow the row rule: a blank line is a paragraph
+// break, however many were typed, and a single return a line break. Centered or
+// right-aligned, they have no first-line indent to mark a paragraph, so every
+// renderer shows the break as one empty line (two line breaks).
+function previewCaptionTextValue(value) {
+  return previewTextValue(value).replace(/\r\n?/g, "\n").trim().replace(/\n(?:[ \t]*\n)+/g, "\n\n");
+}
+
 function previewImageCaptionValue(row, languageCode) {
-  return previewTextValue(row?.imageCaptions?.[languageCode]);
+  return previewCaptionTextValue(row?.imageCaptions?.[languageCode]);
 }
 
 function previewFieldValue(row, languageCode) {
@@ -170,6 +179,21 @@ function previewCitableBlockIndex(blocks) {
   return -1;
 }
 
+// A quote row is one quote, though each of its paragraphs is a block of its own:
+// a block continues the quote before it when both are paragraphs of one quote
+// row and the earlier one carries no citation.
+export function previewBlockContinuesQuote(blocks, index) {
+  const quote = (block) => block?.kind === "text"
+    && normalizeEditorRowTextStyle(block.textStyle) === EDITOR_ROW_TEXT_STYLE_QUOTE;
+  const block = blocks?.[index];
+  const previous = index > 0 ? blocks[index - 1] : null;
+  return quote(block)
+    && quote(previous)
+    && Boolean(block.rowId)
+    && block.rowId === previous.rowId
+    && !previous.attribution?.trim();
+}
+
 export function buildEditorPreviewDocument(rows, languageCode) {
   if (!languageCode) {
     return [];
@@ -186,7 +210,7 @@ export function buildEditorPreviewDocument(rows, languageCode) {
     const image = normalizeEditorFieldImage(row?.images?.[languageCode]);
     const caption = previewImageCaptionValue(row, languageCode);
     const textStyle = normalizeEditorRowTextStyle(row?.textStyle);
-    const attribution = textStyle === "quote" ? previewTextValue(row?.attributions?.[languageCode]) : "";
+    const attribution = textStyle === "quote" ? previewCaptionTextValue(row?.attributions?.[languageCode]) : "";
     const paragraphs = previewRowParagraphs(row, text, textStyle);
     const paragraphFootnotes = previewFootnotesByParagraph(paragraphs, footnotes);
 
@@ -692,8 +716,9 @@ export function renderEditorPreviewDocumentHtml(blocks, options = {}) {
   const footnoteState = { items: [] };
   // One entry per input block (empty when it renders nothing), so callers can
   // split the body while footnotes keep one numbering.
-  const blocksHtml = (Array.isArray(blocks) ? blocks : [])
-    .map((block) => {
+  const blockList = Array.isArray(blocks) ? blocks : [];
+  const blocksHtml = blockList
+    .map((block, blockIndex) => {
       if (block?.kind === "image") {
         options.blockClassName?.(block, "image");
         const imageSrc = resolveImageSrc(block.image);
@@ -759,6 +784,7 @@ export function renderEditorPreviewDocumentHtml(blocks, options = {}) {
       const parts = previewTextParts(block);
       const usedMarkers = new Set();
       const appendPartIndex = footnoteAppendPartIndex(parts, block.footnotes);
+      const continuesQuote = previewBlockContinuesQuote(blockList, blockIndex);
       return parts
         .map((part, index) => {
           if (part.kind === "separator") {
@@ -786,7 +812,10 @@ export function renderEditorPreviewDocumentHtml(blocks, options = {}) {
             return citation(textHtml);
           }
           const attributionHtml = cited ? citation() : "";
-          const extra = options.blockClassName?.(part.block, variant) || "";
+          const extra = [
+            continuesQuote && index === 0 ? "translate-preview__block--quote-continued" : "",
+            options.blockClassName?.(part.block, variant) || "",
+          ].filter(Boolean).join(" ");
           return `<${tagName} class="translate-preview__block translate-preview__block--${variant}${extra ? ` ${escapeHtml(extra)}` : ""}" data-preview-block="${escapeHtml(variant)}" data-row-id="${escapeHtml(block.rowId ?? "")}" lang="${escapeHtml(block.languageCode ?? "")}" data-tooltip="Double-click to edit.">${textHtml}${options.attributionOutside ? "" : attributionHtml}</${tagName}>${options.attributionOutside ? attributionHtml : ""}`;
         })
         .filter(Boolean)
@@ -913,13 +942,6 @@ function serializePreviewTextBlockHtml(block, footnoteState, options = {}) {
       html: `<h2 class="wp-block-heading">${textHtml}</h2>`,
     };
   }
-  if (normalizedStyle === EDITOR_ROW_TEXT_STYLE_QUOTE) {
-    const innerParagraph = wrapSerializedWordPressBlock("paragraph", `<p>${textHtml}</p>`);
-    return {
-      blockName: "quote",
-      html: `<blockquote class="wp-block-quote">${innerParagraph}${block.attribution?.trim() ? serializePreviewCitation(block.attribution, options) : ""}</blockquote>`,
-    };
-  }
   if (normalizedStyle === EDITOR_ROW_TEXT_STYLE_INDENTED) {
     return {
       blockName: "paragraph",
@@ -939,6 +961,37 @@ function serializePreviewTextBlockHtml(block, footnoteState, options = {}) {
     blockName: "paragraph",
     html: `<p>${textHtml}</p>`,
   };
+}
+
+// A quote row is one quote: each of its paragraphs is a core paragraph block
+// inside one quote block, and its citation closes the quote. Inner blocks are
+// joined by a blank line, as Gutenberg serializes them.
+function serializePreviewQuoteBlock(quote) {
+  return wrapSerializedWordPressBlock(
+    "quote",
+    `<blockquote class="wp-block-quote">${quote.paragraphs.join("\n\n")}${quote.citation}</blockquote>`,
+  );
+}
+
+// Consecutive paragraphs of one quote row join one quote. A citation, a
+// separator or any other block between them ends it.
+function joinPreviewQuoteParagraphs(entries) {
+  const joined = [];
+  for (const entry of entries) {
+    const previous = joined.at(-1)?.quote;
+    if (entry.quote && previous && !previous.citation && entry.quote.rowId && entry.quote.rowId === previous.rowId) {
+      joined[joined.length - 1] = {
+        quote: {
+          ...previous,
+          paragraphs: [...previous.paragraphs, ...entry.quote.paragraphs],
+          citation: entry.quote.citation,
+        },
+      };
+    } else {
+      joined.push(entry);
+    }
+  }
+  return joined;
 }
 
 function serializePreviewCitation(attribution, options = {}) {
@@ -990,52 +1043,60 @@ function serializePreviewListBlock(block, footnoteState, options = {}) {
   });
 }
 
+// A block's serialized parts: block markup strings, and `{ quote }` entries for
+// quote paragraphs, which joinPreviewQuoteParagraphs gathers into one quote.
 function serializePreviewTextBlockParts(block, footnoteState, options = {}) {
   if (isListRowTextStyle(block.textStyle)) {
-    return serializePreviewListBlock(block, footnoteState, options);
+    return [serializePreviewListBlock(block, footnoteState, options)];
   }
   const parts = previewTextParts(block);
   const usedMarkers = new Set();
   const htmlFootnotes = options.htmlFootnotes ? new Map() : undefined;
   const appendPartIndex = footnoteAppendPartIndex(parts, block.footnotes);
-  return parts
-    .map((part, index) => {
-      if (part.kind === "separator") {
-        return WORDPRESS_SEPARATOR_BLOCK;
-      }
-      const attribution = block.attribution?.trim() && index === parts.length - 1 ? block.attribution : "";
-      if (!previewTextHasVisibleContent(part.block?.text) && index !== appendPartIndex && !attribution) {
-        return "";
-      }
-      const textHtml = renderTextWithWordPressFootnoteRefs(part.block, footnoteState, {
-        serialize: true,
-        htmlFootnotes,
-        usedMarkers,
-        appendRemaining: index === appendPartIndex,
-      });
-      if (!textHtml.trim() && !attribution) return "";
-      if (attribution && !previewTextHasVisibleContent(part.block?.text)) {
-        return serializePreviewCitationParagraph(attribution, textHtml, options);
-      }
-      const quote = normalizeEditorRowTextStyle(block.textStyle) === EDITOR_ROW_TEXT_STYLE_QUOTE;
-      const textBlock = serializePreviewTextBlock({ ...part.block, attribution: quote ? attribution : "" }, footnoteState, {
-        preRenderedTextHtml: textHtml,
-        localFormatting: options.localFormatting,
-      });
-      return attribution && !quote
-        ? `${textBlock}\n\n${serializePreviewCitationParagraph(attribution, "", options)}`
-        : textBlock;
-    })
-    .filter(Boolean)
-    .join("\n\n");
+  const quote = normalizeEditorRowTextStyle(block.textStyle) === EDITOR_ROW_TEXT_STYLE_QUOTE;
+  return parts.flatMap((part, index) => {
+    if (part.kind === "separator") {
+      return [WORDPRESS_SEPARATOR_BLOCK];
+    }
+    const attribution = block.attribution?.trim() && index === parts.length - 1 ? block.attribution : "";
+    if (!previewTextHasVisibleContent(part.block?.text) && index !== appendPartIndex && !attribution) {
+      return [];
+    }
+    const textHtml = renderTextWithWordPressFootnoteRefs(part.block, footnoteState, {
+      serialize: true,
+      htmlFootnotes,
+      usedMarkers,
+      appendRemaining: index === appendPartIndex,
+    });
+    if (!textHtml.trim() && !attribution) return [];
+    if (attribution && !previewTextHasVisibleContent(part.block?.text)) {
+      return [serializePreviewCitationParagraph(attribution, textHtml, options)];
+    }
+    if (quote) {
+      return [{
+        quote: {
+          rowId: block.rowId ?? "",
+          paragraphs: [wrapSerializedWordPressBlock("paragraph", `<p>${textHtml}</p>`)],
+          citation: attribution ? serializePreviewCitation(attribution, options) : "",
+        },
+      }];
+    }
+    const textBlock = serializePreviewTextBlock(part.block, footnoteState, {
+      preRenderedTextHtml: textHtml,
+      localFormatting: options.localFormatting,
+    });
+    return attribution
+      ? [textBlock, serializePreviewCitationParagraph(attribution, "", options)]
+      : [textBlock];
+  });
 }
 
 function serializeEditorPreviewBlocks(blocks, options = {}) {
   const footnoteState = { items: [] };
-  const bodyHtml = (Array.isArray(blocks) ? blocks : [])
-    .map((block) => {
+  const entries = (Array.isArray(blocks) ? blocks : [])
+    .flatMap((block) => {
       if (block?.kind === "image") {
-        return serializePreviewImageHtml(block);
+        return [serializePreviewImageHtml(block)];
       }
 
       // Custom-HTML rows export the author's raw HTML verbatim, wrapped as a
@@ -1043,12 +1104,14 @@ function serializeEditorPreviewBlocks(blocks, options = {}) {
       // clipboard HTML and make it a native block on WordPress.com).
       if (block?.kind === "text" && isCustomHtmlRowTextStyle(block.textStyle)) {
         const rawHtml = String(block.text ?? "").trim();
-        return rawHtml ? `<!-- wp:html -->\n${rawHtml}\n<!-- /wp:html -->` : "";
+        return [rawHtml ? `<!-- wp:html -->\n${rawHtml}\n<!-- /wp:html -->` : ""];
       }
 
       return serializePreviewTextBlockParts(block, footnoteState, options);
     })
-    .filter(Boolean)
+    .filter(Boolean);
+  const bodyHtml = joinPreviewQuoteParagraphs(entries)
+    .map((entry) => (entry.quote ? serializePreviewQuoteBlock(entry.quote) : entry))
     .join("\n\n");
   const footnotesHtml = footnoteState.items.length > 0 ? "<!-- wp:footnotes /-->" : "";
   return { bodyHtml, footnotesHtml, footnoteState };
@@ -1167,9 +1230,10 @@ function plainTextWithFootnoteRefs(block, footnoteItems, options = {}) {
     const footnoteText = showLinkUrls
       ? extractInlineMarkupVisibleTextWithLinkUrls(previewTextValue(entry.text))
       : extractInlineMarkupVisibleText(previewTextValue(entry.text));
+    // A blank line separates the note's paragraphs; a run of them counts once.
     footnoteItems.push({
       number,
-      text: footnoteText.trim(),
+      text: footnoteText.trim().replace(/\n(?:[ \t]*\n)+/g, "\n\n"),
     });
     return `[${number}]`;
   };
@@ -1214,40 +1278,105 @@ export function applyCustomHtmlPlainTextPolicy(blocks, omitCustomHtml = false) {
   });
 }
 
+// A centered "Audio:" or "Video:" line whose link text is the address itself,
+// so it still reads on paper, then the caption. Uploaded media has no public
+// address, so its file name stands in for the link.
+function mediaLinkLines(block, media) {
+  const { image, caption, ...rest } = block;
+  const target = image.kind === "url"
+    ? `<a href="${escapeHtml(image.url ?? "")}">${String(image.url ?? "").replace(/[<>]/g, "")}</a>`
+    : editorFieldImageDisplayName(image).replace(/[<>]/g, "");
+  const line = {
+    ...rest,
+    kind: "text",
+    textStyle: EDITOR_ROW_TEXT_STYLE_CENTERED,
+    text: `<strong>${media.kind === "audio" ? "Audio" : "Video"}:</strong> ${target}`,
+    footnotes: [],
+  };
+  return String(caption ?? "").trim() ? [line, { ...line, text: caption }] : [line];
+}
+
+// The row's last block of visible text, which carries the row's audio
+// footnote, or -1. Custom HTML is skipped: it is flattened or dropped later.
+function audioFootnoteAnchorIndex(blocks, rowId) {
+  if (!rowId) {
+    return -1;
+  }
+  for (let index = blocks.length - 1; index >= 0 && blocks[index]?.rowId === rowId; index -= 1) {
+    const block = blocks[index];
+    if (
+      block.kind === "text"
+      && !isCustomHtmlRowTextStyle(block.textStyle)
+      && previewTextHasVisibleContent(block.text)
+    ) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+// The audio note follows the row's own notes under a marker the anchor's text
+// never cites, so it is set at the end of the paragraph.
+function withAudioFootnote(blocks, anchorIndex, text) {
+  const anchor = blocks[anchorIndex];
+  let marker = 1;
+  for (let index = anchorIndex; index >= 0 && blocks[index]?.rowId === anchor.rowId; index -= 1) {
+    for (const entry of normalizeEditorFootnotes(blocks[index].footnotes)) {
+      marker = Math.max(marker, entry.marker + 1);
+    }
+  }
+  const cited = new Set(
+    parseUnescapedFootnoteMarkers(extractInlineMarkupVisibleText(previewTextValue(anchor.text)))
+      .map((entry) => entry.marker),
+  );
+  while (cited.has(marker)) {
+    marker += 1;
+  }
+  return {
+    ...anchor,
+    footnotes: [...normalizeEditorFootnotes(anchor.footnotes), { marker, text }],
+  };
+}
+
 // Block-list transform for formats that cannot play audio or video (plain
-// text, Vellum, the book preview), as the Rust print policy does for DOCX and
-// PDF: a centered "Audio:" or "Video:" line whose link text is the address
-// itself, so it still reads on paper, then the caption. Uploaded media has no
-// public address, so its file name stands in for the link.
-export function applyMediaLinkPolicy(blocks) {
-  return (Array.isArray(blocks) ? blocks : []).flatMap((block) => {
+// text, Vellum, the book preview), as the Rust exports do for DOCX and PDF.
+// Audio becomes a footnote on the row's text ("caption: address", the address
+// a link when `links`); a row without text keeps the "Audio:" line, and video
+// always gets a "Video:" line.
+export function applyMediaLinkPolicy(blocks, { links = true } = {}) {
+  const result = [];
+  for (const block of Array.isArray(blocks) ? blocks : []) {
     const media = block?.kind === "image" ? editorFieldMedia(block.image) : null;
     if (!media || media.kind === "image") {
-      return [block];
+      result.push(block);
+      continue;
     }
-    const { image, caption, ...rest } = block;
-    const target = image.kind === "url"
-      ? `<a href="${escapeHtml(image.url ?? "")}">${String(image.url ?? "").replace(/[<>]/g, "")}</a>`
-      : editorFieldImageDisplayName(image).replace(/[<>]/g, "");
-    const line = {
-      ...rest,
-      kind: "text",
-      textStyle: EDITOR_ROW_TEXT_STYLE_CENTERED,
-      text: `<strong>${media.kind === "audio" ? "Audio" : "Video"}:</strong> ${target}`,
-      footnotes: [],
-    };
-    return String(caption ?? "").trim() ? [line, { ...line, text: caption }] : [line];
-  });
+    const anchorIndex = media.kind === "audio" ? audioFootnoteAnchorIndex(result, block.rowId) : -1;
+    if (anchorIndex >= 0) {
+      result[anchorIndex] = withAudioFootnote(
+        result,
+        anchorIndex,
+        audioFootnoteText(block.image, block.caption, { links }),
+      );
+      continue;
+    }
+    result.push(...mediaLinkLines(block, media));
+  }
+  return result;
 }
 
 export function serializeEditorPreviewPlainText(blocks, options = {}) {
   const showFootnoteLinkUrls = options.showFootnoteLinkUrls === true;
   const omitCustomHtml = options.omitCustomHtml === true;
   const footnoteItems = [];
-  const sections = applyMediaLinkPolicy(blocks)
+  const sections = applyMediaLinkPolicy(blocks, { links: false })
     .flatMap((block) => {
       if (block?.kind === "image") {
-        return extractInlineMarkupVisibleText(previewTextValue(block.caption)).trim();
+        // Caption links print their URL under the same option as footnote links.
+        const caption = previewTextValue(block.caption);
+        return (showFootnoteLinkUrls
+          ? extractInlineMarkupVisibleTextWithLinkUrls(caption)
+          : extractInlineMarkupVisibleText(caption)).trim();
       }
       if (block?.kind !== "text") {
         return "";

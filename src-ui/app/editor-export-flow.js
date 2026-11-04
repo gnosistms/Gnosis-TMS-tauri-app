@@ -941,7 +941,7 @@ async function submitEditorCopyExport(render, option, operations) {
   try {
     if (option.format === "vellum") {
       // Vellum can't carry raw HTML or play media — drop or flatten custom-HTML
-      // rows and turn audio and video into link lines first.
+      // rows, make audio a footnote on its row and video a link line first.
       const policyBlocks = applyMediaLinkPolicy(applyCustomHtmlPlainTextPolicy(blocks, omitCustomHtml));
       const imageRequests = buildVellumImageResourceRequests(policyBlocks);
       const vellumBlocks = imageRequests.length > 0

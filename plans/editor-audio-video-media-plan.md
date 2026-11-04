@@ -108,8 +108,8 @@ module (`chapter_editor/media_kind.rs`). Both test against one shared fixture,
    |---|---|---|---|
    | WordPress, clipboard HTML | `wp:audio` block; uploaded audio goes to the media library first, like uploaded images | `wp:embed` block | `wp:video` block |
    | HTML | `<audio controls>`; uploaded audio as a data URL, like uploaded images | `<iframe>` player | `<video controls>` |
-   | EPUB | uploaded MP3 and M4A bundled with `<audio controls>`; WAV and remote audio linked | linked | linked |
-   | PDF, DOCX, RTF, Markdown, TXT, Vellum, plain-text copy | centered "Audio:" line whose link text is the URL, then the caption | "Video:" line | "Video:" line |
+   | EPUB | uploaded MP3 and M4A bundled with `<audio controls>`; WAV and remote audio in a footnote | linked | linked |
+   | PDF, DOCX, RTF, Markdown, TXT, Vellum, plain-text copy | footnote on the row's text: "caption: URL" (see `plans/audio-footnotes-in-print-exports-plan.md`) | "Video:" line | "Video:" line |
    | XLSX | not exported, as images are not | same | same |
 
    As built: WAV is linked in EPUB because it is not an EPUB core media

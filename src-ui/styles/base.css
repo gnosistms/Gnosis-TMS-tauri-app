@@ -1027,7 +1027,8 @@ a {
   line-height: 1.3;
 }
 
-.editor-glossary-info-card__hint--insert {
+.editor-glossary-info-card__hint--insert,
+.editor-glossary-info-card__hint--copy {
   margin-left: auto;
   text-align: right;
 }

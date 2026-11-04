@@ -6214,6 +6214,37 @@ test.describe("editor regressions", () => {
     }).toBe(url);
   });
 
+  test("inserting an MP3 URL into a row without text explains why and saves nothing", async ({ page }) => {
+    const rowId = "fixture-row-0008";
+    const languageCode = "vi";
+    const url = "https://example.org/wp-content/uploads/2026/07/evening-talk.mp3";
+    await mountEditorFixture(
+      page,
+      { rowCount: 18, fieldsByRowId: { [rowId]: { es: "alpha source text", vi: "" } } },
+      { mockTauri: true },
+    );
+
+    await bringRowNearTop(page, rowId, 120);
+    await activateMainEditorField(page, rowId, languageCode);
+    await page.locator(
+      `[data-action="open-editor-image-url"][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+    ).click();
+    const urlInput = page.locator(
+      `[data-editor-image-url-input][data-row-id="${rowId}"][data-language-code="${languageCode}"]`,
+    );
+    await urlInput.fill(url);
+    await urlInput.press(await editorSaveShortcut(page));
+
+    await expect(page.locator(".translation-language-panel__image-message-button.message-box--error")).toContainText(
+      "Write this row's text before adding audio.",
+    );
+    await expect(
+      page.locator(`[data-editor-media-kind="audio"][data-row-id="${rowId}"][data-language-code="${languageCode}"]`),
+    ).toHaveCount(0);
+    const invocations = (await readMockTauriState(page)).invocations;
+    expect(invocations.some((entry) => entry.command === "save_gtms_editor_language_image_url")).toBe(false);
+  });
+
   test("cancelling the duplicate image warning with Escape inserts nothing", async ({ page }) => {
     const rowId = "fixture-row-0008";
     const languageCode = "vi";
@@ -6706,7 +6737,7 @@ test.describe("editor regressions", () => {
       ?.footnotes?.["fixture-chapter"]?.[rowId]?.vi).toBe("Edited footnote to preserve while switching editors.");
   });
 
-  test("footnote paragraphs format on blur while native typing and stored returns stay unchanged", async ({ page }) => {
+  test("footnote paragraphs and line breaks follow row text and format on blur", async ({ page }) => {
     await mountEditorFixture(page, { rowCount: 18, chapterStatus: "ready" }, { mockTauri: true });
     const rowId = "fixture-row-0001";
     await activateMainEditorField(page, rowId, "vi");
@@ -6715,12 +6746,16 @@ test.describe("editor regressions", () => {
     await expect(field).toBeFocused();
     await field.pressSequentially("First paragraph.");
     await field.press("Enter");
-    await field.pressSequentially("Second paragraph.");
-    await expect(field).toHaveValue("First paragraph.\nSecond paragraph.");
+    await field.pressSequentially("Second paragraph,");
+    await field.press("Shift+Enter");
+    await field.pressSequentially("second line.");
+    const stored = "First paragraph.\n\nSecond paragraph,\nsecond line.";
+    await expect(field).toHaveValue(stored);
     await page.locator("[data-editor-search-input]").click();
     const display = page.locator(`[data-editor-footnote-display][data-row-id="${rowId}"][data-language-code="vi"]`);
     const paragraphs = display.locator(".footnote-paragraph");
     await expect(paragraphs).toHaveCount(2);
+    await expect(paragraphs.nth(1).locator("br")).toHaveCount(1);
     await expect(paragraphs.nth(0)).toHaveCSS("text-indent", "0px");
     const fontSize = await paragraphs.nth(1).evaluate((element) => parseFloat(getComputedStyle(element).fontSize));
     await expect(paragraphs.nth(1)).toHaveCSS("text-indent", `${fontSize * 1.5}px`);
@@ -6730,10 +6765,10 @@ test.describe("editor regressions", () => {
     }));
     expect(Math.abs(geometry[1].top - geometry[0].bottom)).toBeLessThan(1);
     await expect.poll(async () => (await readMockTauriState(page))?.footnotes?.["fixture-chapter"]?.[rowId]?.vi)
-      .toBe("First paragraph.\nSecond paragraph.");
+      .toBe(stored);
     await display.click();
     await expect(field).toBeFocused();
-    await expect(field).toHaveValue("First paragraph.\nSecond paragraph.");
+    await expect(field).toHaveValue(stored);
     await page.locator("[data-editor-search-input]").click();
     await page.locator('[data-action="set-editor-mode:preview"]').click();
     const previewParagraphs = page.locator('.wp-block-footnotes .footnote-paragraph');
@@ -7699,6 +7734,35 @@ test("quote attribution saves separately, previews like the PDF, and appends whe
   await activateMainEditorField(page, rowId, "vi");
   await expect(body).toHaveValue(`${original}\n\nQuote source author`);
   await page.screenshot({ path: "/tmp/gnosis-quote-editor-converted.png" });
+});
+
+test("quote attribution takes Return as a paragraph break and Shift+Return as a line break", async ({ page }) => {
+  await mountEditorFixture(page, { rowCount: 8, chapterStatus: "ready" }, { mockTauri: true });
+  const rowId = "fixture-row-0001";
+  await activateMainEditorField(page, rowId, "vi");
+  await page.locator(`[data-editor-row-text-style-button][data-row-id="${rowId}"][data-language-code="vi"][data-text-style="quote"]`).click();
+  const attribution = page.locator(`[data-editor-row-field][data-content-kind="attribution"][data-row-id="${rowId}"][data-language-code="vi"]`);
+  await attribution.locator("..").getByText("Enter attribution", { exact: true }).click();
+  await expect(attribution).toBeFocused();
+  await page.keyboard.type("Author,");
+  await page.keyboard.press("Shift+Enter");
+  await page.keyboard.type("Work");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("Year");
+  const stored = "Author,\nWork\n\nYear";
+  await expect(attribution).toHaveValue(stored);
+  await page.locator("[data-editor-search-input]").focus();
+  await flushDirtyRows(page);
+  await expect.poll(async () => {
+    const mock = await readMockTauriState(page);
+    return mock.invocations.some((entry) => entry.command === "update_gtms_editor_row_fields"
+      && entry.payload.input.attributions?.vi === stored);
+  }).toBe(true);
+  await page.locator('[data-action="set-editor-mode:preview"]').click();
+  const citation = page.locator(".translate-preview__attribution").first();
+  await expect(citation).toHaveText("Author,WorkYear");
+  // The line break is one <br>; the paragraph break shows as one empty line.
+  await expect(citation.locator("br")).toHaveCount(3);
 });
 
 test("SRT rows hide style and inline formatting controls", async ({ page }) => {

@@ -1,4 +1,5 @@
 import { escapeHtml, secondaryButton } from "../lib/ui.js";
+import { editorMediaNoun } from "../app/editor-media-kind.js";
 
 export function renderEditorImageCaptionTranslationModal(state) {
   const modal = state.editorChapter?.imageCaptionTranslationModal;
@@ -24,7 +25,7 @@ export function renderEditorImageCaptionTranslationModal(state) {
         <div class="card__body modal-card__body modal-card__body--navigation-loading">
           <div class="navigation-loading-modal__spinner" aria-hidden="true"></div>
           <h2 class="modal__title navigation-loading-modal__title" id="editor-image-caption-translation-title">Translating caption</h2>
-          <p class="modal__supporting navigation-loading-modal__message">Please wait while the image caption is translated${languageName ? ` into ${escapeHtml(languageName)}` : ""}.</p>
+          <p class="modal__supporting navigation-loading-modal__message">Please wait while the ${escapeHtml(editorMediaNoun({ kind: modal.mediaKind }))} caption is translated${languageName ? ` into ${escapeHtml(languageName)}` : ""}.</p>
           <div class="modal__actions">
             ${secondaryButton("Cancel", "cancel-editor-image-caption-translation", {
               modalCancel: true,

@@ -35,8 +35,8 @@ test("opening headings and non-Latin chapters omit drop caps, and notes have a s
 });
 
 test("book export preview indents subsequent footnote paragraphs without adding blank lines", () => {
-  const html = render([text("paragraph", "Body [1]", { footnotes: [{ marker: 1, text: "<i>First\nSecond</i>" }] })]);
-  assert.match(html, /book-footnote__text[^]*text-indent:0"><em>First<\/em><\/p><p[^>]*text-indent:1.5em"><em>Second<\/em>/);
+  const html = render([text("paragraph", "Body [1]", { footnotes: [{ marker: 1, text: "<i>First\n\nSecond\nline</i>" }] })]);
+  assert.match(html, /book-footnote__text[^]*text-indent:0"><em>First<\/em><\/p><p[^>]*text-indent:1.5em"><em>Second<br>line<\/em>/);
 });
 
 test("an opening quote or image stands alone on a cover page before the chapter text", () => {
@@ -57,6 +57,14 @@ test("an opening quote or image stands alone on a cover page before the chapter 
   assert.doesNotMatch(cover, /book-print-dropcap/);
   // Footnotes keep one numbering across both pages and are listed after the text.
   assert.match(body, /^<div class="book-chapter__body">[^]*The text[^]*>2<\/a>[^]*book-chapter__footnotes[^]*A note\.[^]*Another\./);
+
+  // A quote of several paragraphs is never one line: it keeps the full width.
+  const [longCover] = pages([
+    text("quote", "A first paragraph."), text("quote", "A second paragraph.", { attribution: "— One" }),
+    text("paragraph", "The text."),
+  ]);
+  assert.doesNotMatch(longCover, /book-chapter__epigraph/);
+  assert.match(longCover, /<blockquote class="[^"]*"[^>]*>A first paragraph\.<\/blockquote><blockquote class="[^"]*quote-continued[^"]*"[^>]*>A second paragraph\.<\/blockquote><cite/);
 
   const [imageCover, imageBody] = pages([image, image, text("paragraph", "After the images.")]);
   assert.match(imageCover, /^<div class="book-chapter__body book-chapter__cover book-chapter__cover--image"><figure[^]*<\/figure><\/div>$/);

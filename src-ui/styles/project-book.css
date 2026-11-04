@@ -74,6 +74,10 @@
    here the margins add only the remaining .72em. */
 .book-page--chapter .translate-preview__block--quote { font-size: .9em; font-style: normal; padding-inline: var(--book-paper-font); margin: calc(var(--book-paper-font) * .72) 0; }
 .book-page--chapter .translate-preview__block--quote:has(+ cite) { margin-bottom: 0; }
+/* A quote row is one quote: as in the PDF, its later paragraphs follow at the
+   paragraph space and open with the body indent. */
+.book-page--chapter .translate-preview__block--quote:has(+ .translate-preview__block--quote-continued) { margin-bottom: 0; }
+.book-page--chapter .translate-preview__block--quote + .translate-preview__block--quote-continued { margin-top: 0; text-indent: var(--book-first-indent); }
 .book-page--chapter .translate-preview__block--indented { padding-inline: 0; padding-left: 2em; }
 .book-page--chapter .translate-preview__block--centered { text-align: center; }
 .book-page--chapter .translate-preview__block--list { margin: .78em 0; padding-inline-start: 1.5em; }
@@ -108,6 +112,8 @@
   .book-chapter__body > .translate-preview__block--heading1, .book-chapter__body > .translate-preview__block--heading2 { margin-bottom: calc(var(--book-paper-font) * .78); }
   :is(.book-chapter__body, .book-chapter__epigraph) > .translate-preview__block--quote { margin: calc(var(--book-paper-font) * 1.5) 0; }
   :is(.book-chapter__body, .book-chapter__epigraph) > .translate-preview__block--quote:has(+ cite) { margin-bottom: calc(var(--book-paper-font) * .78); }
+  :is(.book-chapter__body, .book-chapter__epigraph) > .translate-preview__block--quote:has(+ .translate-preview__block--quote-continued) { margin-bottom: .78em; }
+  :is(.book-chapter__body, .book-chapter__epigraph) > .translate-preview__block--quote + .translate-preview__block--quote-continued { margin-top: .78em; }
   :is(.book-chapter__body, .book-chapter__epigraph) > .translate-preview__attribution { margin-bottom: calc(var(--book-paper-font) * 1.5); }
   .book-chapter__body > :first-child, .book-chapter__epigraph:first-child > :first-child { margin-top: 0; }
   .book-page--chapter .book-print-dropcap::first-letter { margin-block-end: calc(var(--book-paper-font) * -.75 - .14em); margin-inline-end: .2em; }

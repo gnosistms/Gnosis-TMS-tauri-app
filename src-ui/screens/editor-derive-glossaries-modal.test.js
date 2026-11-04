@@ -177,7 +177,7 @@ test("Translate toolbar includes image and footnote row filters", () => {
     targetCode: "vi",
   });
 
-  assert.match(html, /<option value="has-image"[^>]*>Has image<\/option>/);
+  assert.match(html, /<option value="has-image"[^>]*>Has image, audio, or video<\/option>/);
   assert.match(html, /<option value="has-footnote"[^>]*>Has footnote<\/option>/);
 });
 

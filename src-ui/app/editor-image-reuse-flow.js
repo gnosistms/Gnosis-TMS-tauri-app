@@ -87,7 +87,10 @@ function setImageReuseModal(nextModal) {
  * Asks before inserting a reused image. `insert` runs on confirm and `cancel`
  * on dismiss; both receive no arguments and own their own editor state.
  */
-export function openEditorImageReuseModal(render, { reuse, rowId, languageCode, team, project, insert, cancel }) {
+export function openEditorImageReuseModal(
+  render,
+  { reuse, rowId, languageCode, mediaKind = "image", team, project, insert, cancel },
+) {
   if (!state.editorChapter?.chapterId) {
     return;
   }
@@ -112,6 +115,7 @@ export function openEditorImageReuseModal(render, { reuse, rowId, languageCode, 
     requestId,
     rowId,
     languageCode,
+    mediaKind,
     chapterTitles: reuse.chapterTitles,
   });
   render?.();
@@ -167,7 +171,7 @@ export async function confirmEditorImageReuse(render) {
     } catch (error) {
       // Remembering the choice is secondary; the insert the user asked for still runs.
       const message = error instanceof Error ? error.message : String(error);
-      showNoticeBadge(message || "The image setting could not be saved.", render);
+      showNoticeBadge(message || "Your choice to skip this warning could not be saved.", render);
     }
   }
   await taken.pending.insert?.();

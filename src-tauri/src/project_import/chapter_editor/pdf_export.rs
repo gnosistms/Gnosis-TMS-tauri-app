@@ -30,8 +30,8 @@ pub(crate) use page_preview::{start_project_book_page_preview, BookPagePreviewIn
 use super::chapter_export::{
     apply_print_custom_html_policy, build_scoped_export_document,
     download_public_image_bytes_detailed, export_text_style, footnote_paragraphs, inline_segments,
-    inline_visible_text, load_export_chapters, ExportBlock, ExportChapterFileInput, ExportDocument,
-    ExportImage, InlineStyleState,
+    inline_visible_text, load_export_chapters, quote_paragraphs, ExportBlock,
+    ExportChapterFileInput, ExportDocument, ExportImage, InlineStyleState,
 };
 use super::list_style::{
     is_list_text_style, list_events, list_items, list_kind, ListEvent, ListItem, ListKind,
@@ -1591,11 +1591,13 @@ fn render_typst_chapter(
                         );
                         render_typst_list(kind, &items, &items_inline)
                     }
-                    None => render_inline_typst_with_footnotes(
-                        text,
+                    // A quote's paragraphs are set as paragraphs of one quote.
+                    None => render_inline_typst_parts_with_footnotes(
+                        &quote_paragraphs(text_style, text),
                         footnotes,
                         options.footnote_links_as_plain_text,
-                    ),
+                    )
+                    .join("\n\n"),
                 };
                 let style = export_text_style(Some(text_style));
                 let plain = !matches!(
@@ -1689,7 +1691,10 @@ fn render_typst_chapter(
                             format!(
                                 "gnosis-image({}, caption: [{}])",
                                 typst_string(path),
-                                render_typst_image_caption(caption)
+                                render_typst_image_caption(
+                                    caption,
+                                    options.footnote_links_as_plain_text
+                                )
                             )
                         }
                     }
@@ -1708,7 +1713,12 @@ fn render_typst_chapter(
                     let placement = if floating { ", placement: auto" } else { "" };
                     format!("#figure({body}{placement})")
                 } else {
-                    render_typst_figure(&body, caption, floating)
+                    render_typst_figure(
+                        &body,
+                        caption,
+                        floating,
+                        options.footnote_links_as_plain_text,
+                    )
                 };
                 if cover {
                     // A cover image stays under the title. The 1fr block is the
@@ -1957,13 +1967,13 @@ fn render_typst_book(
                 source.push_str(&format!(
                     "#gnosis-image({}, caption: [{}])\n",
                     typst_string(path),
-                    render_typst_image_caption(&item.caption)
+                    render_typst_image_caption(&item.caption, options.footnote_links_as_plain_text)
                 ));
             }
             if !item.caption.trim().is_empty() {
                 source.push_str(&format!(
                     "#v(0.85em)\n{}\n",
-                    render_typst_image_caption(&item.caption)
+                    render_typst_image_caption(&item.caption, options.footnote_links_as_plain_text)
                 ));
             }
             source.push_str("]\n#v(1fr)\n");
@@ -3005,8 +3015,9 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
         ""
     };
     format!(
-        "#set page(paper: \"{paper_size}\", margin: {margins}, numbering: \"1\")\n#set text(font: ({family_list}), size: {size_pt}pt, lang: {}, dir: {direction})\n{word_spacing}#set par(justify: true, leading: {leading_em}em, spacing: {leading_em}em)\n{GNOSIS_FOOTNOTE_RULE}{greek_rule}{heading_rule}{dropcap_rule}{title_rule}#show link: set text(fill: rgb(\"245c8a\"))\n{GNOSIS_IMAGE_RULE}{GNOSIS_QUOTE_RULE}\n",
-        typst_string(&document.language_code)
+        "#set page(paper: \"{paper_size}\", margin: {margins}, numbering: \"1\")\n#set text(font: ({family_list}), size: {size_pt}pt, lang: {}, dir: {direction})\n{word_spacing}#set par(justify: true, leading: {leading_em}em, spacing: {leading_em}em)\n{GNOSIS_FOOTNOTE_RULE}{greek_rule}{heading_rule}{dropcap_rule}{title_rule}#show link: set text(fill: rgb(\"245c8a\"))\n{GNOSIS_IMAGE_RULE}#let gnosis-quote-indent = {quote_indent}\n{GNOSIS_QUOTE_RULE}\n",
+        typst_string(&document.language_code),
+        quote_indent = paragraph_indent(&document.language_code),
     )
 }
 
@@ -3091,6 +3102,11 @@ const GNOSIS_IMAGE_RULE: &str = "#let gnosis-image(path, caption: none) = layout
 /// replace Typst's built-in 2.4em and 1.8em, which are dropped at the wrapper's
 /// edges.
 ///
+/// A quote of several paragraphs indents each after the first by the body's
+/// paragraph indent (`gnosis-quote-indent`, set from `paragraph_indent`), as books
+/// set multi-paragraph block quotes: paragraph spacing equals the leading, so
+/// without it a new paragraph would read as a line break.
+///
 /// On a chapter cover (`cover: true`) a quote that fits on one line is centred
 /// rather than left alone at the start of an empty page: the quote shrinks to its
 /// text in a centred box, and its citation is stacked under it, one quote line and
@@ -3100,7 +3116,7 @@ const GNOSIS_IMAGE_RULE: &str = "#let gnosis-image(path, caption: none) = layout
 /// block is given the full width explicitly: the wrapping block otherwise shrinks
 /// to the box, leaving `align` nothing to centre in.
 const GNOSIS_QUOTE_RULE: &str = r#"#let gnosis-citation(body, scale: 1) = [#linebreak(justify: false)#h(1fr)#context box(inset: (top: (par.spacing + 0.25em) / scale - par.leading))[#text(size: 0.8em / scale, style: "normal", tracking: 0.06em)[#upper(body)]]]
-#let gnosis-quote-body(body, citation) = quote(block: true)[#set par(first-line-indent: 0pt)
+#let gnosis-quote-body(body, citation) = quote(block: true)[#set par(first-line-indent: (amount: gnosis-quote-indent, all: false))
 #text(size: 0.9em, style: "normal")[#body#if citation != none { gnosis-citation(citation, scale: 0.9) }]]
 #let gnosis-quote(body, citation: none, cover: false) = block(above: 1.5em, below: 1.5em, layout(region => {
   let height(content) = measure(block(width: region.width, content)).height
@@ -3124,17 +3140,12 @@ fn render_inline_typst(text: &str, show_link_urls: bool) -> String {
         .join("")
 }
 
+/// Paragraphs are joined by real paragraph breaks; a line break inside one is a
+/// newline in its text, which Typst sets as a line break.
 fn render_footnote_typst(text: &str, show_link_urls: bool) -> String {
     footnote_paragraphs(text)
         .iter()
-        .map(|paragraph| {
-            if inline_visible_text(paragraph).is_empty() {
-                // An authored empty paragraph still occupies a line.
-                "#text(\"\\u{a0}\")".to_string()
-            } else {
-                render_inline_typst(paragraph, show_link_urls)
-            }
-        })
+        .map(|paragraph| render_inline_typst(paragraph, show_link_urls))
         .collect::<Vec<_>>()
         .join("#parbreak()")
 }
@@ -3169,12 +3180,14 @@ fn leading_heading_title(document: &ExportDocument) -> Option<String> {
     }
 }
 
-fn render_typst_image_caption(caption: &str) -> String {
+/// With `show_link_urls`, a caption link is followed by its destination in
+/// parentheses, as footnote links are: a hyperlink cannot be followed on paper.
+fn render_typst_image_caption(caption: &str, show_link_urls: bool) -> String {
     // Vellum's reference captions use approximately 75% of body size and
     // centered, non-justified lines.
     format!(
         "#align(center)[#set par(justify: false, first-line-indent: 0pt)\n#text(size: 0.75em)[{}]]",
-        render_inline_typst(caption, false)
+        render_inline_typst(caption, show_link_urls)
     )
 }
 
@@ -3185,11 +3198,11 @@ fn render_typst_image_caption(caption: &str) -> String {
 /// page away from the paragraph it followed in the editor. Trailing images at the
 /// end of a chapter are emitted non-floating instead — see
 /// `typst_block_emission_order`.
-fn render_typst_figure(body: &str, caption: &str, floating: bool) -> String {
+fn render_typst_figure(body: &str, caption: &str, floating: bool, show_link_urls: bool) -> String {
     let placement = if floating { ", placement: auto" } else { "" };
     format!(
         "#figure({body}, caption: [{}], gap: 0.85em, numbering: none{placement})",
-        render_typst_image_caption(caption)
+        render_typst_image_caption(caption, show_link_urls)
     )
 }
 
@@ -3200,6 +3213,7 @@ fn render_typst_image_placeholder(message: &str) -> String {
     )
 }
 
+#[cfg(test)]
 fn render_inline_typst_with_footnotes(
     text: &str,
     footnotes: &[(usize, String)],
@@ -3210,8 +3224,8 @@ fn render_inline_typst_with_footnotes(
         .unwrap_or_default()
 }
 
-/// Renders the parts of one block (a paragraph, or the items of a list) that share
-/// the block's footnotes. Each footnote is set at its marker in the first part that
+/// Renders the parts of one block (a paragraph, the paragraphs of a quote, or the
+/// items of a list) that share the block's footnotes. Each footnote is set at its marker in the first part that
 /// has it.
 fn render_inline_typst_parts_with_footnotes(
     texts: &[&str],
@@ -3675,6 +3689,24 @@ mod tests {
             marker: 1,
             anchor_block: Some(0),
             text: "<a href=\"https://example.test/\u{13153}\">Reference</a>".into(),
+        });
+        assert!(
+            relevant_saved_fonts(&document, &workspace, false, true, &approved)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            relevant_saved_fonts(&document, &workspace, true, true, &approved)
+                .unwrap()
+                .len(),
+            1
+        );
+        // A caption link prints its URL under the same option, so its characters
+        // need fonts too.
+        document.blocks.pop();
+        document.blocks.push(ExportBlock::Image {
+            image: ExportImage::Url("https://example.test/plate.png".into()),
+            caption: "<a href=\"https://example.test/\u{13153}\">Source</a>".into(),
         });
         assert!(
             relevant_saved_fonts(&document, &workspace, false, true, &approved)
@@ -5141,6 +5173,58 @@ mod tests {
     }
 
     #[test]
+    fn a_quote_of_several_paragraphs_is_one_quote_with_indented_later_paragraphs() {
+        let workspace = pdf_workspace().unwrap();
+        let _cleanup = WorkspaceCleanup(workspace.clone());
+        let document = ExportDocument {
+            title: "Quotes".into(),
+            language_code: "vi".into(),
+            blocks: vec![
+                text_block("quote", "First[1].\n\nSecond."),
+                ExportBlock::Attribution {
+                    text: "Author".into(),
+                },
+                ExportBlock::Footnote {
+                    number: 1,
+                    marker: 1,
+                    anchor_block: Some(0),
+                    text: "A note".into(),
+                },
+            ],
+            book_parts: Vec::new(),
+        };
+        let session = begin_pdf_image_cache(&test_image_cache_scope("multi-paragraph-quote"));
+        let options = PdfWorkspacePreparationOptions {
+            paper_size: "a5",
+            footnote_links_as_plain_text: true,
+            image_cache_session: &session,
+            layout: TypstLayout::Export,
+        };
+        prepare_typst_workspace(
+            None,
+            "",
+            &workspace,
+            &document,
+            &options,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let source = fs::read_to_string(workspace.join("chapter.typ")).unwrap();
+        assert!(
+            source.contains(
+                "#gnosis-quote(citation: [#text(\"Author\")])[#text(\"First\")#footnote[#text(\"A note\")]#text(\".\")\n\n#text(\"Second.\")]"
+            ),
+            "{source}"
+        );
+        assert!(
+            source.contains("#let gnosis-quote-indent = 1.5em\n"),
+            "{source}"
+        );
+        assert!(GNOSIS_QUOTE_RULE
+            .contains("#set par(first-line-indent: (amount: gnosis-quote-indent, all: false))"));
+    }
+
+    #[test]
     fn citations_are_set_as_the_last_line_of_what_they_cite() {
         let workspace = pdf_workspace().unwrap();
         let _cleanup = WorkspaceCleanup(workspace.clone());
@@ -5667,19 +5751,18 @@ mod tests {
     }
 
     #[test]
-    fn typst_footnote_paragraphs_have_real_boundaries_and_preserve_blank_lines() {
+    fn typst_footnote_paragraphs_break_at_blank_lines_and_keep_line_breaks() {
         assert_eq!(
-            render_footnote_typst("<i>First\nSecond</i>", false),
+            render_footnote_typst("<i>First\n\nSecond</i>", false),
             "#emph[#text(\"First\")]#parbreak()#emph[#text(\"Second\")]"
         );
-        let blank = render_footnote_typst("First\n\nLast", false);
-        assert_eq!(blank.matches("#parbreak()").count(), 2);
-        assert!(blank.contains("#text(\"\\u{a0}\")"));
-        // Ordinary within-row newlines must retain their old soft-break path.
+        // A single return is a line break inside its paragraph, as in row text.
         assert_eq!(
-            render_inline_typst("First\nSecond", false),
-            "#text(\"First\\nSecond\")"
+            render_footnote_typst("<i>One,\nTwo.</i>", false),
+            "#emph[#text(\"One,\\nTwo.\")]"
         );
+        let runs = render_footnote_typst("First\n\n \n\nLast", false);
+        assert_eq!(runs.matches("#parbreak()").count(), 1);
     }
 
     #[test]
@@ -5819,11 +5902,27 @@ mod tests {
 
     #[test]
     fn image_captions_are_small_upright_text() {
-        let caption = render_typst_image_caption("A <b>bold</b> caption");
+        let caption = render_typst_image_caption("A <b>bold</b> caption", false);
         assert!(caption.starts_with("#align(center)"));
         assert!(caption.contains("#text(size: 0.75em)["));
         assert!(!caption.contains("italic"));
         assert!(caption.contains("#strong["));
+    }
+
+    #[test]
+    fn caption_links_print_their_url_like_footnote_links() {
+        let caption = "Photo from <a href=\"https://example.com/source\">the archive</a>";
+        let footnote = render_footnote_typst(caption, true);
+        let printed = render_typst_image_caption(caption, true);
+        assert!(printed.contains(&footnote));
+        assert!(printed.contains(
+            "#link(\"https://example.com/source\")[#text(\"the archive\")] #text(\"(https://example.com/source)\")"
+        ));
+        let linked = render_typst_image_caption(caption, false);
+        assert!(linked.contains("#link(\"https://example.com/source\")[#text(\"the archive\")]"));
+        assert!(!linked.contains("(https://example.com/source)"));
+        let figure = render_typst_figure("image(\"a.png\")", caption, true, true);
+        assert!(figure.contains("#text(\"(https://example.com/source)\")"));
     }
 
     #[test]
@@ -5841,6 +5940,7 @@ mod tests {
             "image(\"images/example.png\", width: 90%)",
             "An italic caption",
             true,
+            false,
         );
         assert!(figure.starts_with("#figure(image("));
         assert!(figure.contains("caption: [#align(center)"));
@@ -5855,6 +5955,7 @@ mod tests {
         let trailing = render_typst_figure(
             "image(\"images/example.png\", width: 90%)",
             "An italic caption",
+            false,
             false,
         );
         assert!(!trailing.contains("placement"));
@@ -6137,7 +6238,9 @@ mod tests {
                 },
                 ExportBlock::Image {
                     image: ExportImage::Url("http://127.0.0.1/unavailable.png".to_string()),
-                    caption: "Unavailable remote image".to_string(),
+                    // With footnote_links_as_plain_text, the link is followed by
+                    // its URL as plain text inside the figure caption.
+                    caption: "Unavailable remote image from <a href=\"https://example.com/plate\">the archive</a>".to_string(),
                 },
                 // Uncaptioned images take the caption-less floating-figure path.
                 ExportBlock::Image {
@@ -6174,6 +6277,7 @@ mod tests {
             .expect("generated drop cap");
         assert!(generated_dropcap.contains("“Ứng dụng"));
         assert!(!source.contains("U\u{031b}\u{0301}"));
+        assert!(source.contains("#text(\"(https://example.com/plate)\")"));
         // Exercise the vendored helper directly: punctuation stays in the
         // rendered cap, while both callbacks must receive the core grapheme.
         source.push_str(

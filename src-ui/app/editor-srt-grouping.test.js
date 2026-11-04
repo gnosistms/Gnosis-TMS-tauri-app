@@ -117,3 +117,14 @@ test("search and glossary matches span fragments without treating markers as con
   assert.equal(highlights.get("es").hasMatches, true);
   assert.equal(buildEditorFilterResult({ rows, languages: state.languages, filters: { searchQuery: "⟦1⟧" } }).filteredRows.length, 0);
 });
+
+test("a group shows each cue's footnote as its own paragraph", () => {
+  const state = displayChapter();
+  state.rows = state.rows.map((row, index) => ({ ...row, sections: row.sections.map((section) => (
+    section.code === "es" && index !== 1 ? { ...section, footnote: `Nota ${index}`, hasVisibleFootnote: true } : section
+  )) }));
+  const [group] = projectSrtDisplayRows(state.rows, state, state.languages);
+  const spanish = group.sections.find((section) => section.code === "es");
+  assert.equal(spanish.footnote, "Nota 0\n\nNota 2");
+  assert.equal(spanish.searchFootnote, "Nota 0\n\nNota 2");
+});

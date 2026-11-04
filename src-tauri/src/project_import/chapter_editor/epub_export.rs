@@ -3,8 +3,8 @@
 use super::book_export::{book_title, single_line_title};
 use super::chapter_export::{
     download_public_image_bytes_detailed, export_text_style, inline_visible_text,
-    numbered_book_documents, sanitize_inline_html, uploaded_media_file_name, ExportBlock,
-    ExportDocument, ExportImage,
+    numbered_book_documents, quote_paragraphs, sanitize_inline_html, uploaded_media_file_name,
+    ExportBlock, ExportDocument, ExportImage,
 };
 use super::list_style::{list_items, list_kind, render_list_html};
 use super::media_kind::audio_mime_type;
@@ -478,6 +478,32 @@ fn section_body(
                     ));
                     continue;
                 }
+                let paragraphs = quote_paragraphs(text_style, text);
+                if paragraphs.len() > 1 {
+                    // One quotation, a paragraph each. Notes whose markers are not
+                    // in it follow its last paragraph, and so does its citation.
+                    let mut paragraphs_html = paragraphs
+                        .iter()
+                        .map(|paragraph| inline(paragraph, &anchor_notes, &mut referenced))
+                        .collect::<Vec<_>>();
+                    if let Some(last) = paragraphs_html.last_mut() {
+                        for note in &anchor_notes {
+                            if !referenced.contains(&note.index) {
+                                last.push_str(&noteref(note, &mut referenced));
+                            }
+                        }
+                    }
+                    let inner = paragraphs_html
+                        .iter()
+                        .map(|paragraph| format!("<p>{paragraph}</p>"))
+                        .collect::<String>();
+                    let _ = write!(
+                        body,
+                        "<blockquote id=\"block-{index}\" class=\"\">{inner}</blockquote>"
+                    );
+                    citation_slot = Some(body.len() - "</blockquote>".len());
+                    continue;
+                }
                 let (tag, class) = match export_text_style(Some(text_style)).as_str() {
                     "heading1" | "chapter_heading" => ("h1", ""),
                     "heading2" => ("h2", ""),
@@ -616,11 +642,6 @@ fn section_body(
                 for (index, paragraph) in paragraphs.iter().enumerate() {
                     let indent = if index == 0 { "0" } else { "1.5em" };
                     let content = inline(paragraph, &[], &mut BTreeSet::new());
-                    let content = if inline_visible_text(paragraph).is_empty() {
-                        "<br/>"
-                    } else {
-                        &content
-                    };
                     let _ = write!(
                         body,
                         "<p style=\"margin:0;text-indent:{indent}\">{content}</p>"
@@ -629,7 +650,7 @@ fn section_body(
                 body.push_str("</div></aside>");
                 continue;
             }
-            let _ = write!(body, "<aside id=\"note-{}\" class=\"footnote\" epub:type=\"footnote\" role=\"doc-footnote\"><p><a href=\"#ref-{}\" aria-label=\"Back to text\">[{}]</a> {}</p></aside>", note.index, note.index, note.number, inline(note.text, &[], &mut BTreeSet::new()));
+            let _ = write!(body, "<aside id=\"note-{}\" class=\"footnote\" epub:type=\"footnote\" role=\"doc-footnote\"><p><a href=\"#ref-{}\" aria-label=\"Back to text\">[{}]</a> {}</p></aside>", note.index, note.index, note.number, inline(paragraphs.first().map_or("", String::as_str), &[], &mut BTreeSet::new()));
         }
         body.push_str("</section>");
     }
