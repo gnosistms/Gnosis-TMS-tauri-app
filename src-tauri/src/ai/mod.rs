@@ -134,7 +134,7 @@ fn review_target_language_punctuation_guidance() -> &'static str {
 }
 
 fn meaning_review_guidance() -> &'static str {
-    "Translation accuracy is about preserving meaning, not mirroring the source's structure. Treat differences in word order, clause order, or the order of items in a list as correct when the relationships and meaning are preserved and the target-language text is grammatical. Do not suggest a change merely to match the source's order, syntax, phrasing, or style, or to substitute equally valid wording. For translation-accuracy reasons, suggest a correction only when the target adds, omits, contradicts, or otherwise misrepresents meaning."
+    "Translation accuracy is about conveying the author's intended meaning, not mirroring the source's structure or wording. Treat differences in word order, clause order, or the order of items in a list as correct when the relationships and meaning are preserved and the target-language text is grammatical. Treat explanatory translation as correct too: the translator may paraphrase, expand, or add clarifying words where a literal rendering would be hard for target-language readers to understand, as long as the result communicates what the author meant. Do not suggest a change merely to match the source's order, syntax, phrasing, or style, to make the translation more literal, or to substitute equally valid wording. For translation-accuracy reasons, suggest a correction only where the translator has misunderstood the source: the target contradicts or misrepresents what the author meant, leaves out part of it, or adds something the author did not mean."
 }
 
 fn review_footnote_marker_guidance() -> &'static str {
@@ -3072,8 +3072,9 @@ mod tests {
         assert!(prompt.contains(
             "Do not suggest a change merely to match the source's order, syntax, phrasing, or style"
         ));
+        assert!(prompt.contains("Treat explanatory translation as correct too"));
         assert!(prompt.contains(
-            "suggest a correction only when the target adds, omits, contradicts, or otherwise misrepresents meaning"
+            "suggest a correction only where the translator has misunderstood the source"
         ));
         assert!(prompt.contains(r#""sourceTerm":"Fuente""#));
         assert!(prompt.contains(r#""targetVariants":[{"text":"nguon"}]"#));
@@ -4773,8 +4774,9 @@ mod tests {
         assert!(prompt.contains(
             "Do not suggest a change merely to match the source's order, syntax, phrasing, or style"
         ));
+        assert!(prompt.contains("Treat explanatory translation as correct too"));
         assert!(prompt.contains(
-            "suggest a correction only when the target adds, omits, contradicts, or otherwise misrepresents meaning"
+            "suggest a correction only where the translator has misunderstood the source"
         ));
     }
 }
