@@ -221,6 +221,28 @@ test("skips expected user-input / validation failures", () => {
   }
 });
 
+test("upload validator rejections are expected, other upload failures still report", () => {
+  // Exactly as images.rs words them.
+  for (const message of [
+    "The uploaded file is not a valid supported image.",
+    "The uploaded file extension does not match its image contents.",
+    "The uploaded file extension does not match its audio contents.",
+    "The uploaded file is not a valid MP3, M4A, or WAV recording.",
+    "The uploaded file is not a supported image or audio file.",
+  ]) {
+    assert.equal(
+      resolveCommandFailureReport("upload_gtms_editor_language_image", new Error(message)),
+      null,
+      `expected skip for: ${message}`,
+    );
+  }
+  const unexpected = new Error("Could not write the uploaded file: Permission denied (os error 13)");
+  assert.equal(
+    resolveCommandFailureReport("upload_gtms_editor_language_image", unexpected).error,
+    unexpected,
+  );
+});
+
 test("skips expected repository creation validation", () => {
   for (const command of [
     "create_gnosis_project_repo",
