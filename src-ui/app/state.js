@@ -577,7 +577,12 @@ export function createEditorImageEditorState() {
 }
 
 export function createEditorImageInvalidFileModalState() {
-  return createEntityModalState();
+  return createEntityModalState({
+    // Why the file was refused (see editor-upload-refusal.js); "" when it was
+    // read and is not a valid image or audio file.
+    reason: "",
+    fileName: "",
+  });
 }
 
 export function createEditorImageDuplicateOverwriteModalState() {

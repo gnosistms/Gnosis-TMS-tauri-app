@@ -14,6 +14,7 @@ import {
   editorMediaThing,
 } from "./editor-media-kind.js";
 import { enforceImportFileSizeLimit } from "./import-file-limit.js";
+import { editorUploadRefusalReason } from "./editor-upload-refusal.js";
 import { openLocalFilePicker } from "./local-file-picker.js";
 import { findChapterContextById, selectedProjectsTeam } from "./project-context.js";
 import {
@@ -488,7 +489,7 @@ function setImageEditorState(nextEditorState) {
   };
 }
 
-function setImageInvalidFileModal(open) {
+function setImageInvalidFileModal(open, { reason = "", fileName = "" } = {}) {
   if (!state.editorChapter?.chapterId) {
     return;
   }
@@ -499,6 +500,8 @@ function setImageInvalidFileModal(open) {
       ? {
           ...createEditorImageInvalidFileModalState(),
           isOpen: true,
+          reason,
+          fileName,
         }
       : createEditorImageInvalidFileModalState(),
   };
@@ -1215,8 +1218,30 @@ export function collapseEmptyEditorImageEditor(render, rowId, languageCode) {
   renderEditorRowScoped(render, rowId, "image-editor-collapsed");
 }
 
+// Video, audio other than MP3, M4A and WAV, and files over the size limit are
+// refused before they are read, with a message that says what to do instead.
+function refuseUploadedEditorFile(render, rowId, languageCode, file) {
+  const reason = editorUploadRefusalReason(file);
+  if (!reason) {
+    return false;
+  }
+  setImageEditorState({
+    rowId,
+    languageCode,
+    mode: "upload",
+    status: "idle",
+  });
+  setImageInvalidFileModal(true, { reason, fileName: uploadLikeFileName(file, "") });
+  renderEditorRowScoped(render, rowId, "image-upload-state");
+  return true;
+}
+
 async function saveUploadedEditorImage(render, rowId, languageCode, file, operations = {}) {
   if (!imageEditorMatches(state.editorChapter, rowId, languageCode, "upload")) {
+    return;
+  }
+
+  if (refuseUploadedEditorFile(render, rowId, languageCode, file)) {
     return;
   }
 
@@ -1471,6 +1496,13 @@ export async function handleDroppedEditorImagePath(render, path, operations = {}
   const rowId = state.editorChapter?.imageEditor?.rowId ?? "";
   const languageCode = state.editorChapter?.imageEditor?.languageCode ?? "";
   if (!normalizedPath || !imageEditorMatches(state.editorChapter, rowId, languageCode, "upload")) {
+    return;
+  }
+
+  // Judged by name before the backend reads it, so a large video is refused as
+  // a video, not for its size.
+  const droppedName = normalizedPath.split(/[\\/]/).pop() ?? "";
+  if (refuseUploadedEditorFile(render, rowId, languageCode, { name: droppedName })) {
     return;
   }
 

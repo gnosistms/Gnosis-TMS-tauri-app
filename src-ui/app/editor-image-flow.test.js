@@ -1631,6 +1631,96 @@ test("handleDroppedEditorImagePath applies a native dropped file to the active u
   ]);
 });
 
+function refusedUpload(name, { type = "", size = 4 } = {}) {
+  return {
+    name,
+    type,
+    size,
+    async arrayBuffer() {
+      assert.fail(`${name} should be refused before it is read`);
+    },
+  };
+}
+
+function installIdleUploadEditor() {
+  state.editorChapter = {
+    ...state.editorChapter,
+    imageEditor: {
+      ...state.editorChapter.imageEditor,
+      mode: "upload",
+      status: "idle",
+    },
+  };
+}
+
+for (const [label, file, reason] of [
+  ["a video file", refusedUpload("sermon.mp4", { type: "video/mp4" }), "video"],
+  ["audio other than MP3, M4A or WAV", refusedUpload("hymn.ogg", { type: "audio/ogg" }), "unsupported-audio"],
+  ["a file over the size limit", refusedUpload("photo.png", { type: "image/png", size: 26 * 1024 * 1024 }), "too-large"],
+]) {
+  test(`handleDroppedEditorImageFile refuses ${label} before reading it and says why`, async () => {
+    installEditorFixture();
+    installIdleUploadEditor();
+    const render = createRenderSpy();
+
+    await handleDroppedEditorImageFile(render, "row-1", "vi", file);
+
+    assert.deepEqual(
+      { ...state.editorChapter.imageInvalidFileModal },
+      { isOpen: true, status: "idle", error: "", reason, fileName: file.name },
+    );
+    assert.equal(state.editorChapter.imageEditor.mode, "upload");
+    assert.equal(state.editorChapter.imageEditor.status, "idle");
+    assert.deepEqual(invokeLog, []);
+  });
+}
+
+test("handleDroppedEditorImagePath refuses a dropped video by name before the backend reads it", async () => {
+  installEditorFixture();
+  installIdleUploadEditor();
+  const render = createRenderSpy();
+
+  await handleDroppedEditorImagePath(render, "/Users/hans/Movies/Sermon Clip.MOV");
+
+  assert.equal(state.editorChapter.imageInvalidFileModal.isOpen, true);
+  assert.equal(state.editorChapter.imageInvalidFileModal.reason, "video");
+  assert.equal(state.editorChapter.imageInvalidFileModal.fileName, "Sermon Clip.MOV");
+  assert.deepEqual(invokeLog, []);
+});
+
+test("an image that cannot be opened keeps the general invalid-file message", async () => {
+  installEditorFixture();
+  installIdleUploadEditor();
+  const render = createRenderSpy();
+  const originalImage = globalThis.Image;
+  const originalCreateObjectUrl = globalThis.URL.createObjectURL;
+  const originalRevokeObjectUrl = globalThis.URL.revokeObjectURL;
+  globalThis.Image = class {
+    set onload(_callback) {}
+
+    set onerror(callback) {
+      this._onerror = callback;
+    }
+
+    set src(_value) {
+      this._onerror?.();
+    }
+  };
+  globalThis.URL.createObjectURL = () => "blob:test-image";
+  globalThis.URL.revokeObjectURL = () => {};
+  try {
+    await handleDroppedEditorImageFile(render, "row-1", "vi", separatorUpload());
+  } finally {
+    globalThis.Image = originalImage;
+    globalThis.URL.createObjectURL = originalCreateObjectUrl;
+    globalThis.URL.revokeObjectURL = originalRevokeObjectUrl;
+  }
+
+  assert.equal(state.editorChapter.imageInvalidFileModal.isOpen, true);
+  assert.equal(state.editorChapter.imageInvalidFileModal.reason, "");
+  assert.deepEqual(invokeLog, []);
+});
+
 const REUSED_URL = "https://example.com/separator.png";
 
 function installUrlDraft(url = REUSED_URL) {
