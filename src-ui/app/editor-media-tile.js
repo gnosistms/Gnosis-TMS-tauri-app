@@ -37,6 +37,23 @@ function renderEditorVideoPoster(media, videoSrc) {
     />`;
 }
 
+export function editorMediaTileClassName(media) {
+  return `translation-language-panel__image-preview translation-language-panel__media-preview translation-language-panel__media-preview--${media.kind === "audio" ? "audio" : "video"}`;
+}
+
+// What the tile shows: the audio icon and file name, or the video's poster.
+// `playBadge: false` leaves out the play button, for a tile that cannot play.
+export function renderEditorMediaTileFace({ image, media, mediaSrc, playBadge = true }) {
+  return media.kind === "audio"
+    ? `${fileAudioIconSvg("translation-language-panel__media-icon")}
+          <span class="translation-language-panel__media-name">${escapeHtml(editorFieldImageDisplayName(image))}</span>`
+    : `<span class="translation-language-panel__media-poster">
+            ${filmIconSvg("translation-language-panel__media-poster-icon")}
+            ${renderEditorVideoPoster(media, mediaSrc)}
+            ${playBadge ? `<span class="translation-language-panel__media-play" aria-hidden="true">${playIconSvg()}</span>` : ""}
+          </span>`;
+}
+
 // Audio and video show a fixed-size tile, in the row and in the preview, so
 // nothing resizes while the media loads. Clicking it opens the player, as
 // clicking an image opens the larger view.
@@ -53,7 +70,7 @@ export function renderEditorMediaTile({
   const displayName = editorFieldImageDisplayName(image);
   const tooltip = editorFieldImageMetadataText(image) || (isAudio ? "Play audio" : "Play video");
   return `<button
-          class="translation-language-panel__image-preview translation-language-panel__media-preview translation-language-panel__media-preview--${isAudio ? "audio" : "video"}${className ? ` ${escapeHtml(className)}` : ""}"
+          class="${editorMediaTileClassName(media)}${className ? ` ${escapeHtml(className)}` : ""}"
           type="button"
           data-action="open-editor-image-preview"
           ${contextMenu ? "data-editor-image-context-menu-target" : ""}
@@ -64,13 +81,6 @@ export function renderEditorMediaTile({
           aria-label="${escapeHtml(isAudio ? `Play audio ${displayName}` : "Play video")}"
           ${tooltipAttributes(tooltip, { side: "top", align: "start" })}
         >
-          ${isAudio
-            ? `${fileAudioIconSvg("translation-language-panel__media-icon")}
-          <span class="translation-language-panel__media-name">${escapeHtml(displayName)}</span>`
-            : `<span class="translation-language-panel__media-poster">
-            ${filmIconSvg("translation-language-panel__media-poster-icon")}
-            ${renderEditorVideoPoster(media, mediaSrc)}
-            <span class="translation-language-panel__media-play" aria-hidden="true">${playIconSvg()}</span>
-          </span>`}
+          ${renderEditorMediaTileFace({ image, media, mediaSrc })}
         </button>`;
 }
