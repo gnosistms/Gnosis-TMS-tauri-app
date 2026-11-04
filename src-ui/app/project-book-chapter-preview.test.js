@@ -58,6 +58,14 @@ test("an opening quote or image stands alone on a cover page before the chapter 
   // Footnotes keep one numbering across both pages and are listed after the text.
   assert.match(body, /^<div class="book-chapter__body">[^]*The text[^]*>2<\/a>[^]*book-chapter__footnotes[^]*A note\.[^]*Another\./);
 
+  // A quote of several paragraphs is never one line: it keeps the full width.
+  const [longCover] = pages([
+    text("quote", "A first paragraph."), text("quote", "A second paragraph.", { attribution: "— One" }),
+    text("paragraph", "The text."),
+  ]);
+  assert.doesNotMatch(longCover, /book-chapter__epigraph/);
+  assert.match(longCover, /<blockquote class="[^"]*"[^>]*>A first paragraph\.<\/blockquote><blockquote class="[^"]*quote-continued[^"]*"[^>]*>A second paragraph\.<\/blockquote><cite/);
+
   const [imageCover, imageBody] = pages([image, image, text("paragraph", "After the images.")]);
   assert.match(imageCover, /^<div class="book-chapter__body book-chapter__cover book-chapter__cover--image"><figure[^]*<\/figure><\/div>$/);
   assert.match(imageBody, /^<div class="book-chapter__body"><figure[^]*After the images\./);

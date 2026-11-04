@@ -30,8 +30,8 @@ pub(crate) use page_preview::{start_project_book_page_preview, BookPagePreviewIn
 use super::chapter_export::{
     apply_print_custom_html_policy, build_scoped_export_document,
     download_public_image_bytes_detailed, export_text_style, footnote_paragraphs, inline_segments,
-    inline_visible_text, load_export_chapters, ExportBlock, ExportChapterFileInput, ExportDocument,
-    ExportImage, InlineStyleState,
+    inline_visible_text, load_export_chapters, quote_paragraphs, ExportBlock,
+    ExportChapterFileInput, ExportDocument, ExportImage, InlineStyleState,
 };
 use super::list_style::{
     is_list_text_style, list_events, list_items, list_kind, ListEvent, ListItem, ListKind,
@@ -1591,11 +1591,13 @@ fn render_typst_chapter(
                         );
                         render_typst_list(kind, &items, &items_inline)
                     }
-                    None => render_inline_typst_with_footnotes(
-                        text,
+                    // A quote's paragraphs are set as paragraphs of one quote.
+                    None => render_inline_typst_parts_with_footnotes(
+                        &quote_paragraphs(text_style, text),
                         footnotes,
                         options.footnote_links_as_plain_text,
-                    ),
+                    )
+                    .join("\n\n"),
                 };
                 let style = export_text_style(Some(text_style));
                 let plain = !matches!(
@@ -3013,8 +3015,9 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
         ""
     };
     format!(
-        "#set page(paper: \"{paper_size}\", margin: {margins}, numbering: \"1\")\n#set text(font: ({family_list}), size: {size_pt}pt, lang: {}, dir: {direction})\n{word_spacing}#set par(justify: true, leading: {leading_em}em, spacing: {leading_em}em)\n{GNOSIS_FOOTNOTE_RULE}{greek_rule}{heading_rule}{dropcap_rule}{title_rule}#show link: set text(fill: rgb(\"245c8a\"))\n{GNOSIS_IMAGE_RULE}{GNOSIS_QUOTE_RULE}\n",
-        typst_string(&document.language_code)
+        "#set page(paper: \"{paper_size}\", margin: {margins}, numbering: \"1\")\n#set text(font: ({family_list}), size: {size_pt}pt, lang: {}, dir: {direction})\n{word_spacing}#set par(justify: true, leading: {leading_em}em, spacing: {leading_em}em)\n{GNOSIS_FOOTNOTE_RULE}{greek_rule}{heading_rule}{dropcap_rule}{title_rule}#show link: set text(fill: rgb(\"245c8a\"))\n{GNOSIS_IMAGE_RULE}#let gnosis-quote-indent = {quote_indent}\n{GNOSIS_QUOTE_RULE}\n",
+        typst_string(&document.language_code),
+        quote_indent = paragraph_indent(&document.language_code),
     )
 }
 
@@ -3099,6 +3102,11 @@ const GNOSIS_IMAGE_RULE: &str = "#let gnosis-image(path, caption: none) = layout
 /// replace Typst's built-in 2.4em and 1.8em, which are dropped at the wrapper's
 /// edges.
 ///
+/// A quote of several paragraphs indents each after the first by the body's
+/// paragraph indent (`gnosis-quote-indent`, set from `paragraph_indent`), as books
+/// set multi-paragraph block quotes: paragraph spacing equals the leading, so
+/// without it a new paragraph would read as a line break.
+///
 /// On a chapter cover (`cover: true`) a quote that fits on one line is centred
 /// rather than left alone at the start of an empty page: the quote shrinks to its
 /// text in a centred box, and its citation is stacked under it, one quote line and
@@ -3108,7 +3116,7 @@ const GNOSIS_IMAGE_RULE: &str = "#let gnosis-image(path, caption: none) = layout
 /// block is given the full width explicitly: the wrapping block otherwise shrinks
 /// to the box, leaving `align` nothing to centre in.
 const GNOSIS_QUOTE_RULE: &str = r#"#let gnosis-citation(body, scale: 1) = [#linebreak(justify: false)#h(1fr)#context box(inset: (top: (par.spacing + 0.25em) / scale - par.leading))[#text(size: 0.8em / scale, style: "normal", tracking: 0.06em)[#upper(body)]]]
-#let gnosis-quote-body(body, citation) = quote(block: true)[#set par(first-line-indent: 0pt)
+#let gnosis-quote-body(body, citation) = quote(block: true)[#set par(first-line-indent: (amount: gnosis-quote-indent, all: false))
 #text(size: 0.9em, style: "normal")[#body#if citation != none { gnosis-citation(citation, scale: 0.9) }]]
 #let gnosis-quote(body, citation: none, cover: false) = block(above: 1.5em, below: 1.5em, layout(region => {
   let height(content) = measure(block(width: region.width, content)).height
@@ -3210,6 +3218,7 @@ fn render_typst_image_placeholder(message: &str) -> String {
     )
 }
 
+#[cfg(test)]
 fn render_inline_typst_with_footnotes(
     text: &str,
     footnotes: &[(usize, String)],
@@ -3220,8 +3229,8 @@ fn render_inline_typst_with_footnotes(
         .unwrap_or_default()
 }
 
-/// Renders the parts of one block (a paragraph, or the items of a list) that share
-/// the block's footnotes. Each footnote is set at its marker in the first part that
+/// Renders the parts of one block (a paragraph, the paragraphs of a quote, or the
+/// items of a list) that share the block's footnotes. Each footnote is set at its marker in the first part that
 /// has it.
 fn render_inline_typst_parts_with_footnotes(
     texts: &[&str],
@@ -5166,6 +5175,58 @@ mod tests {
         assert_eq!(quote, "#gnosis-quote[Quotation]\n\n");
         assert!(GNOSIS_QUOTE_RULE.contains("quote(block: true)"));
         assert!(GNOSIS_QUOTE_RULE.contains("#text(size: 0.9em, style: \"normal\")[#body"));
+    }
+
+    #[test]
+    fn a_quote_of_several_paragraphs_is_one_quote_with_indented_later_paragraphs() {
+        let workspace = pdf_workspace().unwrap();
+        let _cleanup = WorkspaceCleanup(workspace.clone());
+        let document = ExportDocument {
+            title: "Quotes".into(),
+            language_code: "vi".into(),
+            blocks: vec![
+                text_block("quote", "First[1].\n\nSecond."),
+                ExportBlock::Attribution {
+                    text: "Author".into(),
+                },
+                ExportBlock::Footnote {
+                    number: 1,
+                    marker: 1,
+                    anchor_block: Some(0),
+                    text: "A note".into(),
+                },
+            ],
+            book_parts: Vec::new(),
+        };
+        let session = begin_pdf_image_cache(&test_image_cache_scope("multi-paragraph-quote"));
+        let options = PdfWorkspacePreparationOptions {
+            paper_size: "a5",
+            footnote_links_as_plain_text: true,
+            image_cache_session: &session,
+            layout: TypstLayout::Export,
+        };
+        prepare_typst_workspace(
+            None,
+            "",
+            &workspace,
+            &document,
+            &options,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let source = fs::read_to_string(workspace.join("chapter.typ")).unwrap();
+        assert!(
+            source.contains(
+                "#gnosis-quote(citation: [#text(\"Author\")])[#text(\"First\")#footnote[#text(\"A note\")]#text(\".\")\n\n#text(\"Second.\")]"
+            ),
+            "{source}"
+        );
+        assert!(
+            source.contains("#let gnosis-quote-indent = 1.5em\n"),
+            "{source}"
+        );
+        assert!(GNOSIS_QUOTE_RULE
+            .contains("#set par(first-line-indent: (amount: gnosis-quote-indent, all: false))"));
     }
 
     #[test]
