@@ -7736,6 +7736,35 @@ test("quote attribution saves separately, previews like the PDF, and appends whe
   await page.screenshot({ path: "/tmp/gnosis-quote-editor-converted.png" });
 });
 
+test("quote attribution takes Return as a paragraph break and Shift+Return as a line break", async ({ page }) => {
+  await mountEditorFixture(page, { rowCount: 8, chapterStatus: "ready" }, { mockTauri: true });
+  const rowId = "fixture-row-0001";
+  await activateMainEditorField(page, rowId, "vi");
+  await page.locator(`[data-editor-row-text-style-button][data-row-id="${rowId}"][data-language-code="vi"][data-text-style="quote"]`).click();
+  const attribution = page.locator(`[data-editor-row-field][data-content-kind="attribution"][data-row-id="${rowId}"][data-language-code="vi"]`);
+  await attribution.locator("..").getByText("Enter attribution", { exact: true }).click();
+  await expect(attribution).toBeFocused();
+  await page.keyboard.type("Author,");
+  await page.keyboard.press("Shift+Enter");
+  await page.keyboard.type("Work");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("Year");
+  const stored = "Author,\nWork\n\nYear";
+  await expect(attribution).toHaveValue(stored);
+  await page.locator("[data-editor-search-input]").focus();
+  await flushDirtyRows(page);
+  await expect.poll(async () => {
+    const mock = await readMockTauriState(page);
+    return mock.invocations.some((entry) => entry.command === "update_gtms_editor_row_fields"
+      && entry.payload.input.attributions?.vi === stored);
+  }).toBe(true);
+  await page.locator('[data-action="set-editor-mode:preview"]').click();
+  const citation = page.locator(".translate-preview__attribution").first();
+  await expect(citation).toHaveText("Author,WorkYear");
+  // The line break is one <br>; the paragraph break shows as one empty line.
+  await expect(citation.locator("br")).toHaveCount(3);
+});
+
 test("SRT rows hide style and inline formatting controls", async ({ page }) => {
   await mountEditorFixture(page, { rowCount: 8, srt: true }, { mockTauri: true });
   await activateMainEditorField(page, "fixture-row-0001", "vi");

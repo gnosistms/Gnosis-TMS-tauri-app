@@ -918,7 +918,7 @@ pub(super) fn build_export_document(
                 // A quote with only an attribution attributes body text: it adds no
                 // empty quote, and its citation goes to the block before it.
                 blocks.push(ExportBlock::Attribution {
-                    text: attribution.to_string(),
+                    text: caption_paragraph_breaks(attribution),
                 });
             }
         }
@@ -928,7 +928,11 @@ pub(super) fn build_export_document(
             .and_then(|value| export_image(repo_path, &value.image, project_full_name, head_sha))
         {
             let caption = field
-                .map(|value| normalize_editor_image_caption_value(&value.image_caption))
+                .map(|value| {
+                    caption_paragraph_breaks(&normalize_editor_image_caption_value(
+                        &value.image_caption,
+                    ))
+                })
                 .unwrap_or_default();
             let media = match &image {
                 ExportImage::Url(url) => media_for_url(url),
@@ -1847,7 +1851,10 @@ fn render_html_document(document: &ExportDocument) -> Result<String, String> {
                     let caption_html = if caption.trim().is_empty() {
                         String::new()
                     } else {
-                        format!("<figcaption>{}</figcaption>", sanitize_inline_html(caption))
+                        format!(
+                            "<figcaption>{}</figcaption>",
+                            sanitize_inline_html(caption).replace('\n', "<br>")
+                        )
                     };
                     let _ = writeln!(
                         body,
@@ -1865,7 +1872,10 @@ fn render_html_document(document: &ExportDocument) -> Result<String, String> {
                 let caption_html = if caption.trim().is_empty() {
                     String::new()
                 } else {
-                    format!("<figcaption>{}</figcaption>", sanitize_inline_html(caption))
+                    format!(
+                        "<figcaption>{}</figcaption>",
+                        sanitize_inline_html(caption).replace('\n', "<br>")
+                    )
                 };
                 let _ = writeln!(
                     body,
@@ -2243,9 +2253,15 @@ fn render_md_document(document: &ExportDocument) -> String {
                     "![](<{}>)",
                     md_link_destination(&export_image_link(image))
                 ));
-                let caption = md_single_line(&md_inline_text(caption));
-                if !caption.trim().is_empty() {
-                    fragments.push(caption.trim().to_string());
+                // Paragraphs stay paragraphs and a line break is a hard break.
+                let caption = footnote_paragraphs(caption)
+                    .iter()
+                    .map(|paragraph| md_inline_text(paragraph).trim().replace('\n', "\\\n"))
+                    .filter(|paragraph| !paragraph.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                if !caption.is_empty() {
+                    fragments.push(caption);
                 }
             }
             // The print policy turned media into link paragraphs.
@@ -2418,6 +2434,29 @@ pub(crate) fn footnote_returns_as_blank_lines(value: &str) -> String {
         if ch == '\n' && !blank_lines.contains(&index) {
             output.push('\n');
         }
+    }
+    output
+}
+
+/// Captions and attributions follow the row rule: a blank line is a paragraph
+/// break, however many were typed, and a single return a line break. Centered or
+/// right-aligned, they have no first-line indent to mark a paragraph, so every
+/// export sets the break as one empty line (two line breaks). Matches
+/// `previewCaptionTextValue` in `editor-preview.js`.
+pub(super) fn caption_paragraph_breaks(value: &str) -> String {
+    let normalized = value.replace("\r\n", "\n").replace('\r', "\n");
+    let mut output = String::with_capacity(normalized.len());
+    let mut blank_line = false;
+    for line in normalized.trim().split('\n') {
+        if line.chars().all(|ch| ch == ' ' || ch == '\t') {
+            blank_line = true;
+            continue;
+        }
+        if !output.is_empty() {
+            output.push_str(if blank_line { "\n\n" } else { "\n" });
+        }
+        output.push_str(line);
+        blank_line = false;
     }
     output
 }
@@ -5101,6 +5140,50 @@ mod tests {
         assert!(txt.contains("Video: clip.m4a"));
         let md = render_md_document(&printed);
         assert!(md.contains("https://example.com/talk.mp3?a=1&b=2"));
+    }
+
+    #[test]
+    fn a_caption_or_attribution_paragraph_break_is_one_empty_line_in_exports() {
+        assert_eq!(
+            caption_paragraph_breaks("\nTitle\r\nArtist\n\n \t\n\nSource\n"),
+            "Title\nArtist\n\nSource"
+        );
+        assert_eq!(caption_paragraph_breaks("One line"), "One line");
+
+        let image = row_with_media(
+            "row-1",
+            "0001",
+            "",
+            "https://example.com/plate.png",
+            "Title\nArtist\n\n\nSource",
+        );
+        let mut quote = row("row-2", "0002", "Body", "quote");
+        quote
+            .fields
+            .get_mut("en")
+            .expect("field exists")
+            .attribution = "Author,\nWork\n\n\nYear".into();
+        let document = build_for_format(&[image, quote], "html");
+        assert!(document.blocks.iter().any(|block| matches!(
+            block,
+            ExportBlock::Image { caption, .. } if caption == "Title\nArtist\n\nSource"
+        )));
+        assert!(document.blocks.iter().any(|block| matches!(
+            block,
+            ExportBlock::Attribution { text } if text == "Author,\nWork\n\nYear"
+        )));
+
+        let html = render_html_document(&document).expect("html");
+        assert!(
+            html.contains("<figcaption>Title<br>Artist<br><br>Source</figcaption>"),
+            "{html}"
+        );
+        assert!(
+            html.contains("Author,<br>Work<br><br>Year</cite>"),
+            "{html}"
+        );
+        let md = render_md_document(&document);
+        assert!(md.contains("Title\\\nArtist\n\nSource"), "{md}");
     }
 
     fn row_with_media(

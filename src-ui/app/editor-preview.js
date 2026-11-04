@@ -102,8 +102,16 @@ function previewTextValue(value) {
   return typeof value === "string" ? value : String(value ?? "");
 }
 
+// Captions and attributions follow the row rule: a blank line is a paragraph
+// break, however many were typed, and a single return a line break. Centered or
+// right-aligned, they have no first-line indent to mark a paragraph, so every
+// renderer shows the break as one empty line (two line breaks).
+function previewCaptionTextValue(value) {
+  return previewTextValue(value).replace(/\r\n?/g, "\n").trim().replace(/\n(?:[ \t]*\n)+/g, "\n\n");
+}
+
 function previewImageCaptionValue(row, languageCode) {
-  return previewTextValue(row?.imageCaptions?.[languageCode]);
+  return previewCaptionTextValue(row?.imageCaptions?.[languageCode]);
 }
 
 function previewFieldValue(row, languageCode) {
@@ -202,7 +210,7 @@ export function buildEditorPreviewDocument(rows, languageCode) {
     const image = normalizeEditorFieldImage(row?.images?.[languageCode]);
     const caption = previewImageCaptionValue(row, languageCode);
     const textStyle = normalizeEditorRowTextStyle(row?.textStyle);
-    const attribution = textStyle === "quote" ? previewTextValue(row?.attributions?.[languageCode]) : "";
+    const attribution = textStyle === "quote" ? previewCaptionTextValue(row?.attributions?.[languageCode]) : "";
     const paragraphs = previewRowParagraphs(row, text, textStyle);
     const paragraphFootnotes = previewFootnotesByParagraph(paragraphs, footnotes);
 

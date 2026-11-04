@@ -574,6 +574,7 @@ function renderEditorLanguageImageCaption(row, language) {
             class="translation-language-panel__field translation-language-panel__image-caption-input"
             data-editor-row-field
             data-editor-image-caption-input
+            data-text-has-paragraphs
             data-content-kind="image-caption"
             data-row-id="${escapeHtml(row.id)}"
             data-language-code="${escapeHtml(language.code)}"
@@ -1039,7 +1040,7 @@ function renderQuoteAttribution(row, language) {
     <span class="translation-language-panel__attribution-label">Attribution</span>
     <span class="translation-language-panel__attribution-prompt" aria-hidden="true">Enter attribution</span>
     <textarea class="translation-language-panel__field translation-language-panel__field--attribution"
-      data-editor-row-field data-content-kind="attribution"
+      data-editor-row-field data-text-has-paragraphs data-content-kind="attribution"
       data-row-id="${escapeHtml(row.id)}" data-language-code="${escapeHtml(language.code)}"
       lang="${escapeHtml(language.baseCode || language.code)}" rows="1"
       aria-label="Quote attribution" placeholder="Enter attribution here." ${disabled ? "disabled" : ""}

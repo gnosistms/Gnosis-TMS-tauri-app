@@ -77,10 +77,10 @@ function termEditorSaveAction(event) {
   return action && isSaveShortcut(event) ? action : null;
 }
 
-// Row text and footnotes split into paragraphs at blank lines, so Return
-// inserts one: two newlines, or one when the caret already follows a newline.
-// Shift+Return keeps the native single newline, a line break. Subtitle text,
-// custom HTML, captions and attributions keep native newlines throughout.
+// Row text, footnotes, captions and attributions split into paragraphs at blank
+// lines, so Return inserts one: two newlines, or one when the caret already
+// follows a newline. Shift+Return keeps the native single newline, a line break.
+// Subtitle text and custom HTML keep native newlines throughout.
 function shouldInsertEditorParagraphBreak(event) {
   if (event.defaultPrevented || event.isComposing) {
     return false;

@@ -266,9 +266,9 @@ function rowFieldFixture({ contentKind, paragraphs = false, list = false, value 
   };
 }
 
-test("Return starts a paragraph with a blank line in row text and footnotes", (t) => {
+test("Return starts a paragraph with a blank line in row text, footnotes, captions and attributions", (t) => {
   navigator.platform = "MacIntel";
-  for (const [contentKind, value, caret, inserted] of [undefined, "footnote"].flatMap((kind) => [
+  for (const [contentKind, value, caret, inserted] of [undefined, "footnote", "image-caption", "attribution"].flatMap((kind) => [
     [kind, "Line", 4, "\n\n"],
     [kind, "Ab", 1, "\n\n"],
     [kind, "Line\n", 5, "\n"],
@@ -292,16 +292,15 @@ test("Return starts a paragraph with a blank line in row text and footnotes", (t
   assert.equal(fixture.target.blurCount, 0);
 });
 
-test("Return keeps the native newline in captions, attributions, subtitles and custom HTML", (t) => {
+test("Return keeps the native newline in subtitles and custom HTML", (t) => {
   navigator.platform = "MacIntel";
-  for (const contentKind of [undefined, "image-caption", "attribution"]) {
-    const fixture = rowFieldFixture({ contentKind, value: "Line" });
-    t.after(fixture.restore);
-    assert.equal(fixture.run({ key: "Enter" }).prevented, false);
-    assert.equal(fixture.run({ key: "Enter", shiftKey: true }).prevented, false);
-    assert.deepEqual(fixture.commands, []);
-    assert.equal(fixture.target.blurCount, 0);
-  }
+  // Those fields are rendered without data-text-has-paragraphs.
+  const fixture = rowFieldFixture({ value: "Line" });
+  t.after(fixture.restore);
+  assert.equal(fixture.run({ key: "Enter" }).prevented, false);
+  assert.equal(fixture.run({ key: "Enter", shiftKey: true }).prevented, false);
+  assert.deepEqual(fixture.commands, []);
+  assert.equal(fixture.target.blurCount, 0);
 });
 
 test("Return and Shift+Return start a list item at the current level", (t) => {
