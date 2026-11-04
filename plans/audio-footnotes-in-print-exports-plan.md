@@ -82,11 +82,9 @@ text instead of a centered "Audio:" line. Follows
   and the Rust row-media errors now name image, audio file or video (or stay
   neutral where the kind is unknown).
 
-## Not done (noted)
+## Follow-ups (done)
 
-- The change view's crossed-out previous value is always drawn as `<img>`, so
-  a previous audio or video shows a broken image.
-- The invalid-file modal uses one message for a video upload, an unsupported
-  audio format and an oversized file.
-- `runtime.js` keeps only "not a valid supported image" out of telemetry; the
-  newer audio validation errors are reported as command failures.
+The three gaps noted while building this (the change view drew a previous
+audio or video as a broken `<img>`, the invalid-file modal gave one message
+for every refusal, and `runtime.js` reported the audio validation errors as
+command failures) were fixed in `plans/editor-media-leftover-gaps-plan.md`.
