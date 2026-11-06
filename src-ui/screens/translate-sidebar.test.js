@@ -111,6 +111,35 @@ for (const aiLatest of [true, false]) {
   });
 }
 
+test("collapsed history retains style changes against hidden previous commits", () => {
+  const entry = (commitSha, textStyle) => ({
+    commitSha,
+    authorName: "translator",
+    plainText: "Xin chao",
+    textStyle,
+  });
+  const chapter = activeEditorChapter({
+    sidebarTab: "history",
+    history: {
+      status: "ready",
+      entries: [entry("latest", "heading1"), entry("oldest", "paragraph")],
+    },
+  });
+  const historyRows = [{
+    id: "row-1",
+    textStyle: "heading1",
+    sections: [{ code: "vi", text: "Xin chao" }],
+  }];
+  for (const current of [chapter, applyEditorHistoryGroupExpandedToggle(chapter, "oldest")]) {
+    const html = renderTranslateSidebar(
+      current, historyRows, languages, "es", "vi", createAiActionConfigurationState(),
+    );
+    assert.match(html, /Style change/);
+    assert.match(html, /history-diff__delete">P<\/span>/);
+    assert.match(html, /history-diff__insert">H1<\/span>/);
+  }
+});
+
 test("assistant sidebar disables AI translate and composer while offline", () => {
   const html = renderTranslateSidebar(
     activeEditorChapter(),

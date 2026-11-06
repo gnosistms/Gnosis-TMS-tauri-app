@@ -40,6 +40,10 @@ updates, bump the app version, and publish an update.
   A newly authored line break could be converted to a paragraph break. Restrict
   that shortcut to edits that leave the original newline structure intact; use
   the ordinary conservative three-way merge otherwise.
+- Full browser CI caught a collapsed History group hiding its latest style-change
+  note. Keep text comparisons against the previous visible revision, but compare
+  revision notes against the actual previous commit, including hidden revisions.
+  Add a rendering regression and rerun the existing style-change browser checks.
 
 ## Validation and release outcome
 
