@@ -8,6 +8,8 @@ import {
 import { updateTelemetryDisclosureEnabled } from "./telemetry-disclosure-flow.js";
 import { updateEditorImageReuseDontShowAgain } from "./editor-image-reuse-flow.js";
 import { state } from "./state.js";
+import { updateEditorConflictPassage } from "./editor-conflict-resolution-flow.js";
+import { conflictReviewPendingCount } from "./editor-conflict-review.js";
 import {
   syncAutoSizeTextarea,
   syncEditorConflictResolutionTextareaHeight,
@@ -868,6 +870,29 @@ function handleEditorInsertLinkUrlInput(event) {
 }
 
 function handleEditorConflictResolutionInput(event) {
+  const passageInput = event.target.closest("[data-editor-conflict-passage-input]");
+  if (passageInput) {
+    // Drafts already track input. A blur/change must not resize or replay them.
+    if (event.type !== "input") return true;
+    updateEditorConflictPassage(passageInput.dataset.editorConflictPassageInput, passageInput.value);
+    syncEditorConflictResolutionTextareaHeight(passageInput);
+    const modal = state.editorChapter?.conflictResolutionModal;
+    const pending = conflictReviewPendingCount(modal);
+    const card = passageInput.closest(".modal-card--editor-conflict");
+    const save = card?.querySelector('[data-action="save-editor-conflict-resolution"]');
+    if (save instanceof HTMLButtonElement) {
+      save.disabled = pending > 0;
+      if (pending) save.setAttribute("aria-disabled", "true");
+      else save.removeAttribute("aria-disabled");
+    }
+    const feedback = card?.querySelector("[data-editor-conflict-pending]");
+    if (feedback) feedback.textContent = pending ? `${pending} ${pending === 1 ? "passage needs" : "passages need"} a choice` : "Ready to save";
+    const passage = passageInput.closest("[data-editor-conflict-passage]");
+    const status = passage?.querySelector("[data-editor-conflict-result-status]");
+    if (status) status.textContent = "Manually edited";
+    passage?.querySelectorAll('[aria-pressed="true"]').forEach((button) => button.setAttribute("aria-pressed", "false"));
+    return true;
+  }
   const imageInput = event.target.closest("[data-editor-conflict-final-image-input]");
   if (imageInput) {
     updateEditorConflictResolutionFinalImageUrl(imageInput.value);

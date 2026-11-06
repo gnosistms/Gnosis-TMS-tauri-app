@@ -273,6 +273,8 @@ export function captureModalRenderState(root = document) {
   const activeInsideDialog = dialog instanceof HTMLElement && dialog.contains(activeElement);
   return {
     dialogId: dialogId(dialog),
+    scrollTop: dialog?.scrollTop ?? 0,
+    scrollLeft: dialog?.scrollLeft ?? 0,
     focusedInsideDialog: activeInsideDialog
       ? captureFocusLocator(activeElement, dialog)
       : null,
@@ -316,12 +318,14 @@ export function reconcileModalRenderState(root = document, snapshot = {}) {
 
   if (previousDialogId === nextDialogId) {
     activeDialogSession.dialogId = nextDialogId;
-    if (dialog.contains(elementDocument(dialog)?.activeElement)) {
-      return;
-    }
-    if (!restoreFocusLocator(snapshot?.focusedInsideDialog, dialog)) {
+    if (
+      !dialog.contains(elementDocument(dialog)?.activeElement)
+      && !restoreFocusLocator(snapshot?.focusedInsideDialog, dialog)
+    ) {
       focusInitialDialogControl(dialog);
     }
+    dialog.scrollTop = snapshot?.scrollTop ?? 0;
+    dialog.scrollLeft = snapshot?.scrollLeft ?? 0;
     return;
   }
 

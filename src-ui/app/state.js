@@ -990,6 +990,10 @@ export function createEditorConflictResolutionModalState() {
     remoteImageUrl: "",
     finalImageUrl: "",
     remoteVersion: null,
+    hasSharedBase: false,
+    showMarkup: false,
+    editingPassageId: null,
+    review: null,
   });
 }
 

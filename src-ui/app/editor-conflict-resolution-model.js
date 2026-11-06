@@ -2,6 +2,7 @@ import { createEditorConflictResolutionModalState } from "./state.js";
 import { serializeEditorFootnotesForLegacy } from "./editor-footnotes.js";
 import { cloneRowFields, cloneRowFootnotes } from "./editor-utils.js";
 import { editorFieldImageUrl, urlImageFromString } from "./editor-images.js";
+import { initializeConflictReview } from "./editor-conflict-review.js";
 
 export function normalizeEditorConflictResolutionValue(value) {
   return typeof value === "string" ? value : String(value ?? "");
@@ -34,7 +35,10 @@ export function buildEditorConflictResolutionModalState(row, languageCode) {
   const localImageUrl = editorFieldImageUrl(row?.images?.[languageCode]);
   const remoteImageUrl = editorFieldImageUrl(row?.conflictState?.remoteRow?.images?.[languageCode]);
 
-  return {
+  const conflict = row?.conflictState;
+  const hasSharedBase = conflict?.hasSharedBase ?? ["baseFields", "baseFootnotes", "baseImageCaptions", "baseAttributions"]
+    .some((key) => Object.hasOwn(conflict?.[key] ?? {}, languageCode));
+  return initializeConflictReview({
     ...createEditorConflictResolutionModalState(),
     isOpen: true,
     rowId: row?.rowId ?? null,
@@ -55,7 +59,14 @@ export function buildEditorConflictResolutionModalState(row, languageCode) {
     remoteImageUrl,
     finalImageUrl: remoteImageUrl,
     remoteVersion: row?.conflictState?.remoteVersion ?? null,
-  };
+    hasSharedBase,
+    baseText: normalizeEditorConflictResolutionValue(conflict?.baseFields?.[languageCode]),
+    baseFootnote: serializeEditorFootnotesForLegacy(conflict?.baseFootnotes?.[languageCode]),
+    baseImageCaption: normalizeEditorConflictResolutionValue(conflict?.baseImageCaptions?.[languageCode]),
+    baseAttribution: normalizeEditorConflictResolutionValue(conflict?.baseAttributions?.[languageCode]),
+    baseImageUrl: editorFieldImageUrl(conflict?.baseImages?.[languageCode]),
+    showMarkup: false,
+  });
 }
 
 export function buildEditorConflictResolutionSaveState(row, languageCode, modal) {
@@ -151,32 +162,6 @@ export function editorConflictResolutionShowsFootnotes(modal) {
   ].map((value) => normalizeEditorConflictResolutionValue(value));
 
   return footnotes.some((footnote) => footnote.trim().length > 0) || new Set(footnotes).size > 1;
-}
-
-export function editorConflictResolutionShowsImageCaptions(modal) {
-  const imageCaptions = [
-    modal?.localImageCaption,
-    modal?.remoteImageCaption,
-    modal?.finalImageCaption,
-  ].map((value) => normalizeEditorConflictResolutionValue(value));
-
-  return (
-    imageCaptions.some((imageCaption) => imageCaption.trim().length > 0)
-    || new Set(imageCaptions).size > 1
-  );
-}
-
-export function editorConflictResolutionShowsAttributions(modal) {
-  const attributions = [
-    modal?.localAttribution,
-    modal?.remoteAttribution,
-    modal?.finalAttribution,
-  ].map((value) => normalizeEditorConflictResolutionValue(value));
-
-  return (
-    attributions.some((attribution) => attribution.trim().length > 0)
-    || new Set(attributions).size > 1
-  );
 }
 
 export function editorConflictResolutionShowsImages(modal) {

@@ -11,6 +11,8 @@ import {
 } from "../editor-write-permission.js";
 import { waitForNextPaint } from "../runtime.js";
 import { state } from "../state.js";
+import { chooseEditorConflictPassage, editEditorConflictPassage, toggleEditorConflictMarkup } from "../editor-conflict-resolution-flow.js";
+import { conflictReviewTargets } from "../editor-conflict-review.js";
 import { dismissSrtMarkerModal } from "../editor-srt-group-edit-flow.js";
 import {
   forceCloseFromEditorCloseWait,
@@ -214,6 +216,8 @@ const SESSION_WRITE_PREFIXES = [
   "open-merge-editor-rows:",
   "resolve-editor-row-conflict:",
   "open-editor-conflict-resolution:",
+  "choose-editor-conflict-passage:",
+  "edit-editor-conflict-passage:",
 ];
 
 const CURRENT_WRITE_PREFIXES = [
@@ -505,6 +509,35 @@ export function createTranslateActions(render) {
 
     if (action === "save-editor-conflict-resolution") {
       await saveEditorConflictResolution(render);
+      return true;
+    }
+
+    if (action === "toggle-editor-conflict-markup") {
+      toggleEditorConflictMarkup(render);
+      return true;
+    }
+    const passageChoice = actionSuffix(action, "choose-editor-conflict-passage:");
+    if (passageChoice !== null) {
+      const [id, side] = passageChoice.split(":");
+      chooseEditorConflictPassage(render, id, side);
+      return true;
+    }
+    const passageEdit = actionSuffix(action, "edit-editor-conflict-passage:");
+    if (passageEdit !== null) {
+      editEditorConflictPassage(render, passageEdit);
+      return true;
+    }
+    const conflictNavigation = actionSuffix(action, "navigate-editor-conflict:");
+    if (conflictNavigation !== null) {
+      const modal = state.editorChapter?.conflictResolutionModal;
+      if (!modal?.isOpen || modal.status === "loading") return true;
+      const targets = conflictReviewTargets(state.editorChapter);
+      const index = targets.findIndex((t) => t.rowId === modal.rowId && t.languageCode === modal.languageCode);
+      const target = targets[index + (conflictNavigation === "previous" ? -1 : 1)];
+      if (target) {
+        document.querySelector(".modal-card--editor-conflict")?.scrollTo(0, 0);
+        openEditorConflictResolutionModal(render, target.rowId, target.languageCode);
+      }
       return true;
     }
 
