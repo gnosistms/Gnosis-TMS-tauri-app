@@ -17,11 +17,15 @@ import {
 function historyEntry({
   commitSha,
   authorName = "gnosistms",
+  authorLogin = "",
+  authorEmail = "",
   operationType = "editor-update",
   aiModel = null,
   plainText = "text",
   footnote = "",
   imageCaption = "",
+  attribution = "",
+  image = null,
   textStyle = "paragraph",
   reviewed = false,
   pleaseCheck = false,
@@ -30,6 +34,8 @@ function historyEntry({
   return {
     commitSha,
     authorName,
+    authorLogin,
+    authorEmail,
     committedAt: "2026-04-09T00:00:00Z",
     message: "Update row",
     operationType,
@@ -38,11 +44,19 @@ function historyEntry({
     plainText,
     footnote,
     imageCaption,
+    attribution,
+    image,
     textStyle,
     reviewed,
     pleaseCheck,
   };
 }
+
+test("an attribution-only edit does not mark the previous attribution as Current", () => {
+  const entry = historyEntry({ commitSha: "old", plainText: "Quote", attribution: "Old author" });
+  assert.equal(editorHistoryEntryMatchesSection(entry, { text: "Quote", attribution: "New author" }), false);
+  assert.equal(editorHistoryEntryMatchesSection(entry, { text: "Quote", attribution: "Old author" }), true);
+});
 
 test("historyLastUpdateLabel labels imports as file import", () => {
   assert.equal(historyLastUpdateLabel(historyEntry({ commitSha: "c1", operationType: "import" })), "file import");
@@ -89,7 +103,7 @@ test("optimistic history entries cannot open committed-history actions", () => {
   assert.equal(historyEntryCanUndoReplace(optimisticEntry), false);
 });
 
-test("marker-only runs that return to the baseline state disappear from grouped history", () => {
+test("marker toggles that cancel out remain available in a collapsed group", () => {
   const model = buildEditorHistoryViewModel([
     historyEntry({ commitSha: "c3", pleaseCheck: false, operationType: "field-status", statusNote: 'Removed "Please check"' }),
     historyEntry({ commitSha: "c2", pleaseCheck: true, operationType: "field-status", statusNote: 'Marked "Please check"' }),
@@ -97,11 +111,14 @@ test("marker-only runs that return to the baseline state disappear from grouped 
   ], new Set());
 
   assert.equal(model.groups.length, 1);
-  assert.equal(model.groups[0].entries.length, 1);
-  assert.equal(model.groups[0].entries[0].commitSha, "c1");
+  assert.deepEqual(model.groups[0].entries.map((entry) => entry.commitSha), ["c3", "c2", "c1"]);
+  assert.deepEqual(model.visibleEntries.map((entry) => entry.commitSha), ["c3"]);
+  const expanded = buildEditorHistoryViewModel(model.groups[0].entries, new Set([model.groups[0].key]));
+  assert.deepEqual(expanded.visibleEntries.map((entry) => entry.commitSha), ["c3", "c2", "c1"]);
+  assert.equal(expanded.olderVisibleEntryByCommitSha.get("c3").commitSha, "c2");
 });
 
-test("marker-only runs collapse to the final net state within a same-author group", () => {
+test("marker-only runs keep every revision in a same-user group", () => {
   const collapsedModel = buildEditorHistoryViewModel([
     historyEntry({ commitSha: "c4", reviewed: false, pleaseCheck: true, operationType: "field-status", statusNote: "Marked unreviewed" }),
     historyEntry({ commitSha: "c3", reviewed: true, pleaseCheck: true, operationType: "field-status", statusNote: 'Marked "Please check"' }),
@@ -110,15 +127,10 @@ test("marker-only runs collapse to the final net state within a same-author grou
   ], new Set());
 
   assert.equal(collapsedModel.groups.length, 1);
-  assert.equal(collapsedModel.groups[0].entries.length, 2);
+  assert.equal(collapsedModel.groups[0].entries.length, 4);
   assert.equal(collapsedModel.groups[0].entries[0].commitSha, "c4");
-  assert.deepEqual(collapsedModel.groups[0].entries[0].markerNoteActions, [
-    {
-      kind: "please-check",
-      enabled: true,
-    },
-  ]);
-  assert.equal(collapsedModel.groups[0].entries[1].commitSha, "c1");
+  assert.equal(collapsedModel.groups[0].entries[1].statusNote, 'Marked "Please check"');
+  assert.equal(collapsedModel.groups[0].entries[3].commitSha, "c1");
 });
 
 test("current-entry matching requires text, marker state, and style equality", () => {
@@ -260,18 +272,18 @@ test("image-caption-only history updates stay visible instead of collapsing as m
   assert.equal(model.groups[1].entries[0].commitSha, "c1");
 });
 
-test("style-only history updates stay visible instead of collapsing as marker-only changes", () => {
+test("formatting and image changes can group when text is unchanged", () => {
   const model = buildEditorHistoryViewModel([
-    historyEntry({ commitSha: "c3", textStyle: "paragraph" }),
+    historyEntry({ commitSha: "c3", textStyle: "paragraph", image: { kind: "url", url: "https://example.com/figure.png" } }),
     historyEntry({ commitSha: "c2", textStyle: "heading1" }),
     historyEntry({ commitSha: "c1", operationType: "import", textStyle: "paragraph" }),
   ], new Set(["c1"]));
 
-  assert.equal(model.groups.length, 2);
-  assert.equal(model.groups[0].entries.length, 2);
+  assert.equal(model.groups.length, 1);
+  assert.equal(model.groups[0].entries.length, 3);
   assert.equal(model.groups[0].entries[0].commitSha, "c3");
   assert.equal(model.groups[0].entries[1].commitSha, "c2");
-  assert.equal(model.groups[1].entries[0].commitSha, "c1");
+  assert.equal(model.groups[0].entries[2].commitSha, "c1");
 });
 
 test("footnote-only history updates stay visible instead of collapsing as marker-only changes", () => {
@@ -285,35 +297,37 @@ test("footnote-only history updates stay visible instead of collapsing as marker
   assert.equal(model.groups[1].entries[0].commitSha, "c1");
 });
 
-test("AI translation history groups use the model and author as the effective author label", () => {
+test("human and AI revisions chain by controlling user and credit the latest actor", () => {
   const model = buildEditorHistoryViewModel([
     historyEntry({ commitSha: "c4", authorName: "sirhans", operationType: "ai-translation", aiModel: "gpt-5.4" }),
-    historyEntry({ commitSha: "c3", authorName: "sirhans", operationType: "ai-translation", aiModel: "gpt-5.4" }),
+    historyEntry({ commitSha: "c3", authorName: "sirhans", operationType: "ai-review", aiModel: "claude-sonnet-4.6" }),
     historyEntry({ commitSha: "c2", authorName: "sirhans", operationType: "editor-update" }),
     historyEntry({ commitSha: "c1", operationType: "import" }),
   ], new Set());
 
-  assert.equal(model.groups.length, 3);
+  assert.equal(model.groups.length, 2);
   assert.equal(model.groups[0].authorName, "GPT 5.4 - sirhans");
-  assert.equal(model.groups[0].entries.length, 2);
-  assert.equal(model.groups[1].authorName, "sirhans");
-  assert.equal(model.groups[1].entries.length, 1);
-  assert.equal(model.groups[2].authorName, "Import file");
+  assert.equal(model.groups[0].entries.length, 3);
+  assert.equal(model.groups[1].authorName, "Import file");
+  const humanLatest = buildEditorHistoryViewModel([
+    historyEntry({ commitSha: "c5", authorName: "sirhans" }),
+    ...model.groups.flatMap((group) => group.entries),
+  ], new Set());
+  assert.equal(humanLatest.groups[0].authorName, "sirhans");
+  assert.equal(humanLatest.groups[0].entries.length, 4);
 });
 
-test("expanded history groups stay expanded when new entries are added to the same author run", () => {
+test("expanded history groups stay expanded when unchanged-text revisions extend the run", () => {
   const previousEntries = [
     historyEntry({ commitSha: "c3", plainText: "Newest" }),
-    historyEntry({ commitSha: "c2", plainText: "Older" }),
+    historyEntry({ commitSha: "c2", plainText: "Newest" }),
     historyEntry({ commitSha: "c1", authorName: "another-user", plainText: "Baseline" }),
   ];
   const previousModel = buildEditorHistoryViewModel(previousEntries, new Set());
 
   const nextEntries = [
-    historyEntry({ commitSha: "c4", plainText: "Newest plus one" }),
-    historyEntry({ commitSha: "c3", plainText: "Newest" }),
-    historyEntry({ commitSha: "c2", plainText: "Older" }),
-    historyEntry({ commitSha: "c1", authorName: "another-user", plainText: "Baseline" }),
+    historyEntry({ commitSha: "c4", plainText: "Newest", aiModel: "gpt-5.4", reviewed: true }),
+    ...previousEntries,
   ];
 
   const reconciledKeys = reconcileExpandedEditorHistoryGroupKeys(
@@ -407,6 +421,77 @@ test("findEditorHistoryPreviousVisibleEntry compares against the prior visible r
       reviewed: false,
       pleaseCheck: false,
     })?.commitSha,
-    "c1",
+    "c2",
   );
+});
+
+for (const field of ["plainText", "footnote", "imageCaption", "attribution"]) {
+  test(`a change in ${field} breaks the group even for the same human and AI`, () => {
+    const entries = [
+      historyEntry({ commitSha: "c4", [field]: "changed", aiModel: "gpt-5.4", reviewed: true }),
+      historyEntry({ commitSha: "c3", [field]: "changed" }),
+      historyEntry({ commitSha: "c2", [field]: "original", aiModel: "gpt-5.4", pleaseCheck: true }),
+      historyEntry({ commitSha: "c1", [field]: "original" }),
+    ];
+    const model = buildEditorHistoryViewModel(entries, new Set());
+    assert.deepEqual(model.groups.map((group) => group.entries.map((entry) => entry.commitSha)), [
+      ["c4", "c3"], ["c2", "c1"],
+    ]);
+    assert.equal(model.olderVisibleEntryByCommitSha.get("c4").commitSha, "c2");
+    assert.deepEqual(entries.map((entry) => entry.commitSha), ["c4", "c3", "c2", "c1"]);
+  });
+}
+
+test("changing text and changing it back do not chain across the intervening edit", () => {
+  const model = buildEditorHistoryViewModel([
+    historyEntry({ commitSha: "c3", plainText: "original" }),
+    historyEntry({ commitSha: "c2", plainText: "changed" }),
+    historyEntry({ commitSha: "c1", plainText: "original" }),
+  ], new Set());
+  assert.equal(model.groups.length, 3);
+});
+
+test("a different controlling user breaks the chain even for the same AI model", () => {
+  const model = buildEditorHistoryViewModel([
+    historyEntry({ commitSha: "c3", authorName: "Hans", aiModel: "gpt-5.4" }),
+    historyEntry({ commitSha: "c2", authorName: "Other", aiModel: "gpt-5.4" }),
+    historyEntry({ commitSha: "c1", authorName: "Hans" }),
+  ], new Set());
+  assert.equal(model.groups.length, 3);
+});
+
+for (const field of ["authorLogin", "authorEmail"]) {
+  test(`${field} identifies the user independently of display name`, () => {
+    const model = buildEditorHistoryViewModel([
+      historyEntry({ commitSha: "c3", authorName: "New name", [field]: "SAME", aiModel: "gpt-5.4" }),
+      historyEntry({ commitSha: "c2", authorName: "Old name", [field]: "same" }),
+      historyEntry({ commitSha: "c1", authorName: "Old name", [field]: "other" }),
+    ], new Set());
+    assert.equal(model.groups.length, 2);
+    assert.equal(model.groups[0].entries.length, 2);
+    assert.equal(model.groups[0].authorName, "GPT 5.4 - New name");
+  });
+}
+
+test("unknown authors and pending saves do not group with committed entries", () => {
+  const model = buildEditorHistoryViewModel([
+    historyEntry({ commitSha: "optimistic:op-1" }),
+    historyEntry({ commitSha: "c3" }),
+    historyEntry({ commitSha: "c2", authorName: "" }),
+    historyEntry({ commitSha: "c1", authorName: "" }),
+  ], new Set());
+  assert.equal(model.groups.length, 4);
+});
+
+test("a new text edit starts collapsed without closing the previously expanded group", () => {
+  const previous = [
+    historyEntry({ commitSha: "c2", reviewed: true }),
+    historyEntry({ commitSha: "c1" }),
+  ];
+  const next = [historyEntry({ commitSha: "c3", plainText: "new text" }), ...previous];
+  const keys = reconcileExpandedEditorHistoryGroupKeys(previous, next, new Set(["c1"]));
+  const model = buildEditorHistoryViewModel(next, keys);
+  assert.equal(keys.has(model.groups[0].key), false);
+  assert.equal(keys.has(model.groups[1].key), true);
+  assert.deepEqual(model.visibleEntries.map((entry) => entry.commitSha), ["c3", "c2", "c1"]);
 });

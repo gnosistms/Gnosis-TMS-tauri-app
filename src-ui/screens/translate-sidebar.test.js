@@ -26,6 +26,9 @@ const {
 const {
   renderTranslateSidebar,
 } = await import("./translate-sidebar.js");
+const {
+  applyEditorHistoryGroupExpandedToggle,
+} = await import("../app/editor-history-state.js");
 
 function activeEditorChapter(overrides = {}) {
   return {
@@ -55,6 +58,87 @@ const languages = [
   { code: "es", name: "Spanish", role: "source" },
   { code: "vi", name: "Vietnamese", role: "target" },
 ];
+
+for (const aiLatest of [true, false]) {
+  test(`history keeps human/AI status revisions expandable and credits the latest ${aiLatest ? "AI" : "human"}`, () => {
+    const entry = (commitSha, overrides = {}) => ({
+      commitSha,
+      authorName: "translator",
+      authorLogin: "translator",
+      plainText: "Xin chao",
+      operationType: "field-status",
+      committedAt: "2026-11-06T00:00:00Z",
+      ...overrides,
+    });
+    const chapter = activeEditorChapter({
+      sidebarTab: "history",
+      history: {
+        status: "ready",
+        entries: [
+          entry("latest", { aiModel: aiLatest ? "gpt-5.4" : null, reviewed: true }),
+          entry("middle", { aiModel: aiLatest ? null : "gpt-5.4", pleaseCheck: true }),
+          entry("oldest", { operationType: "editor-update" }),
+          entry("previous-text", { plainText: "Xin chau" }),
+        ],
+      },
+    });
+    const historyRows = [{
+      id: "row-1",
+      sections: [{ code: "vi", text: "Xin chao", reviewed: true }],
+    }];
+    const render = (current) => renderTranslateSidebar(
+      current, historyRows, languages, "es", "vi", createAiActionConfigurationState(),
+    );
+    const collapsed = render(chapter);
+    assert.equal((collapsed.match(/<section class="history-group">/g) ?? []).length, 2);
+    assert.equal((collapsed.match(/<article class="history-item">/g) ?? []).length, 2);
+    assert.match(collapsed, /data-action="toggle-editor-history-group:oldest" aria-expanded="false"/);
+    assert.match(collapsed, /3 revisions/);
+    const latestCredit = aiLatest ? "GPT 5.4 - translator" : "translator";
+    assert.ok(collapsed.includes(`<span class="history-group__author">${latestCredit}</span>`));
+    assert.doesNotMatch(collapsed, /class="history-item__author"/);
+    assert.doesNotMatch(collapsed, /restore-editor-history:middle/);
+
+    const expandedChapter = applyEditorHistoryGroupExpandedToggle(chapter, "oldest");
+    const expanded = render(expandedChapter);
+    assert.match(expanded, /data-action="toggle-editor-history-group:oldest" aria-expanded="true"/);
+    assert.equal((expanded.match(/<article class="history-item">/g) ?? []).length, 4);
+    assert.match(expanded, /restore-editor-history:middle/);
+    assert.match(expanded, /restore-editor-history:oldest/);
+    const authors = [...expanded.matchAll(/<p class="history-item__author">([^<]*)<\/p>/g)].map((match) => match[1]);
+    assert.deepEqual(authors, [latestCredit, aiLatest ? "translator" : "GPT 5.4 - translator", "translator"]);
+    assert.equal(render(applyEditorHistoryGroupExpandedToggle(expandedChapter, "oldest")), collapsed);
+  });
+}
+
+test("collapsed history retains style changes against hidden previous commits", () => {
+  const entry = (commitSha, textStyle) => ({
+    commitSha,
+    authorName: "translator",
+    plainText: "Xin chao",
+    textStyle,
+  });
+  const chapter = activeEditorChapter({
+    sidebarTab: "history",
+    history: {
+      status: "ready",
+      entries: [entry("latest", "heading1"), entry("oldest", "paragraph")],
+    },
+  });
+  const historyRows = [{
+    id: "row-1",
+    textStyle: "heading1",
+    sections: [{ code: "vi", text: "Xin chao" }],
+  }];
+  for (const current of [chapter, applyEditorHistoryGroupExpandedToggle(chapter, "oldest")]) {
+    const html = renderTranslateSidebar(
+      current, historyRows, languages, "es", "vi", createAiActionConfigurationState(),
+    );
+    assert.match(html, /Style change/);
+    assert.match(html, /history-diff__delete">P<\/span>/);
+    assert.match(html, /history-diff__insert">H1<\/span>/);
+  }
+});
 
 test("assistant sidebar disables AI translate and composer while offline", () => {
   const html = renderTranslateSidebar(

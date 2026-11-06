@@ -970,6 +970,8 @@ function renderWithOptionsImpl(options = {}) {
     || (shouldRestoreFocusedInputStateForScope(focusSnapshot, "full")
       ? restoreFocusedInputState(focusSnapshot)
       : false);
+  // Restore modal scroll only after its textareas have their final heights.
+  syncEditorConflictResolutionTextareaHeights(app);
   // An open research window or media player owns the dialog focus; see
   // research-modal-host.js and editor-media-player-host.js.
   if (!researchModalOpen() && !editorMediaPlayerOpen()) {
@@ -980,7 +982,6 @@ function renderWithOptionsImpl(options = {}) {
   }
   syncEditorRowTextareaHeights(app);
   restorePendingEditorSelection(app);
-  syncEditorConflictResolutionTextareaHeights(app);
   syncEditorAssistantDraftTextareaHeights(app);
   syncEditorCommentDraftTextareaHeights(app);
   restoreAssistantTranscriptScrollTop(assistantTranscriptScrollTop, app);

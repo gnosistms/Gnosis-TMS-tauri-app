@@ -960,6 +960,7 @@ async function installImportedConflictBackgroundReloadMock(page, options = {}) {
     conflictKind = "text-conflict",
     localRowPatch = {},
     remoteRowPatch = {},
+    baseRowPatch = {},
     newHeadSha = "mock-sync-head-imported-conflict",
     loadDelayMs = 200,
   } = options;
@@ -969,6 +970,7 @@ async function installImportedConflictBackgroundReloadMock(page, options = {}) {
     nextConflictKind,
     nextLocalRowPatch,
     nextRemoteRowPatch,
+    nextBaseRowPatch,
     nextHeadSha,
     nextLoadDelayMs,
   }) => {
@@ -1054,7 +1056,7 @@ async function installImportedConflictBackgroundReloadMock(page, options = {}) {
               ...applyRowPatch(baseRow, nextLocalRowPatch),
               importedConflict: {
                 conflictKind: nextConflictKind,
-                baseRow,
+                baseRow: nextBaseRowPatch === null ? null : applyRowPatch(baseRow, nextBaseRowPatch),
                 remoteRow: applyRowPatch(baseRow, nextRemoteRowPatch),
               },
             };
@@ -1081,6 +1083,7 @@ async function installImportedConflictBackgroundReloadMock(page, options = {}) {
     nextConflictKind: conflictKind,
     nextLocalRowPatch: localRowPatch,
     nextRemoteRowPatch: remoteRowPatch,
+    nextBaseRowPatch: baseRowPatch,
     nextHeadSha: newHeadSha,
     nextLoadDelayMs: loadDelayMs,
   });
@@ -4910,9 +4913,7 @@ test.describe("editor regressions", () => {
     await expect(
       page.locator(".editor-conflict-modal__column").nth(0),
     ).toContainText(localTargetText);
-    await expect(
-      page.locator(".editor-conflict-modal__column").nth(1),
-    ).toContainText(remoteTargetText);
+    await expect(page.locator(".editor-conflict-modal__column").nth(1).locator("ins").first()).toContainText("remote");
     await expect(
       page.locator("[data-editor-conflict-final-input]"),
     ).toHaveValue(remoteTargetText);
@@ -4925,6 +4926,153 @@ test.describe("editor regressions", () => {
     expect(mockState.invocations.some((entry) => entry.command === "sync_gtms_project_editor_repo")).toBe(true);
     expect(mockState.invocations.some((entry) => entry.command === "load_gtms_chapter_editor_data")).toBe(true);
     expect(mockState.invocations.some((entry) => entry.command === "load_gtms_editor_row")).toBe(false);
+  });
+
+  test("conflict finalize responds to the first click after editing a long footnote", async ({ page }) => {
+    const rowId = "fixture-row-0001";
+    const body = "Identical translation paragraph.\n\n".repeat(8).trim();
+    const footnote = "Footnote paragraph with enough text to wrap onto another line in the dialog.\n\n".repeat(14).trim();
+    await mountEditorFixture(page, { rowCount: 3 }, { mockTauri: true });
+    await installImportedConflictBackgroundReloadMock(page, {
+      targetRowId: rowId,
+      localRowPatch: { targetText: body, footnoteTargetText: `${footnote}\n\nLocal link.` },
+      remoteRowPatch: { targetText: body, footnoteTargetText: `${footnote}\n\nRemote link.` },
+    });
+    await runEditorBackgroundSync(page, { skipDirtyFlush: true, afterLocalCommit: true });
+    await page.locator(`[data-action="open-editor-conflict-resolution:${rowId}:vi"]`).click();
+    await page.evaluate(() => {
+      globalThis.__gnosisMockTauriHandlers.update_gtms_editor_row_fields = async ({ input }) => {
+        globalThis.__conflictSaveInput = input;
+        await new Promise((resolve) => { globalThis.__releaseConflictSave = resolve; });
+        throw new Error("Fixture save failed. Try again.");
+      };
+    });
+
+    const resolvedFootnote = `${footnote}\n\nResolved link.`;
+    await page.locator('[data-action="edit-editor-conflict-passage:footnote-1"]').click();
+    const input = page.locator("[data-editor-conflict-final-footnote-input]");
+    await input.fill(resolvedFootnote);
+    const dialog = page.locator(".modal-card--editor-conflict");
+    const save = dialog.getByRole("button", { name: /Sav(e|ing).*finaliz/ });
+    await save.scrollIntoViewIfNeeded();
+    const scrollTop = await dialog.evaluate((element) => element.scrollTop);
+    expect(scrollTop).toBeGreaterThan(100);
+    const box = await save.boundingBox();
+    // A single physical click catches a change/blur resize moving the button
+    // between mousedown and mouseup, without locator retries hiding the failure.
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+
+    await expect.poll(() => page.evaluate(() => globalThis.__conflictSaveInput?.footnotes?.vi))
+      .toBe(resolvedFootnote);
+    await expect(save).toBeDisabled();
+    await expect(save.locator(".button__spinner")).toBeVisible();
+    expect(Math.abs(await dialog.evaluate((element) => element.scrollTop) - scrollTop)).toBeLessThan(2);
+
+    await page.evaluate(() => globalThis.__releaseConflictSave());
+    await expect(dialog.locator(".modal__error")).toHaveText("Fixture save failed. Try again.");
+    await expect(save).toBeEnabled();
+    await expect(input).toHaveValue(resolvedFootnote);
+    expect(Math.abs(await dialog.evaluate((element) => element.scrollTop) - scrollTop)).toBeLessThan(2);
+  });
+
+  test("focused conflict review combines spacing and links and saves independent footnote choices", async ({ page }) => {
+    const rowId = "fixture-row-0001";
+    const base = '[1] First\nhttps://example.test/note\n\n[2] Old wording\n\n[3] Unchanged note';
+    const local = '[1] First\n\nhttps://example.test/note\n\n[2] Local wording\n\n[3] Unchanged note';
+    const remote = '[1] First\n<a href="https://example.test/note">Xem thêm.</a>\n\n[2] Remote wording\n\n[3] Unchanged note';
+    await mountEditorFixture(page, { rowCount: 3 }, { mockTauri: true });
+    await installImportedConflictBackgroundReloadMock(page, {
+      targetRowId: rowId,
+      baseRowPatch: { targetText: "Identical translation", footnoteTargetText: base },
+      localRowPatch: { targetText: "Identical translation", footnoteTargetText: local },
+      remoteRowPatch: { targetText: "Identical translation", footnoteTargetText: remote },
+    });
+    await runEditorBackgroundSync(page, { skipDirtyFlush: true, afterLocalCommit: true });
+    await page.locator(`[data-action="open-editor-conflict-resolution:${rowId}:vi"]`).click();
+    const dialog = page.locator(".modal-card--editor-conflict");
+    const first = dialog.locator('[data-editor-conflict-passage="footnote-1"]');
+    const second = dialog.locator('[data-editor-conflict-passage="footnote-2"]');
+    const save = dialog.getByRole("button", { name: "Save and finalize" });
+    await expect(dialog.locator(".modal__title")).toHaveText("Resolve footnote changes");
+    await expect(dialog.locator(".editor-conflict-modal__unchanged")).not.toHaveAttribute("open");
+    await expect(dialog.locator('[data-editor-conflict-passage="text"]')).toHaveCount(0);
+    await expect(first.locator(".editor-conflict-paragraph-marker")).toHaveCount(1);
+    await expect(first.locator('ins')).not.toHaveCount(0);
+    await expect(second.getByRole("button", { name: "Combine changes" })).toHaveCount(0);
+    await expect(save).toBeDisabled();
+    await first.getByRole("button", { name: "Combine changes" }).click();
+    await expect(save).toBeDisabled();
+    await first.getByRole("button", { name: "Undo choice" }).click();
+    await expect(first.locator("[data-editor-conflict-result-status]")).toHaveText("Suggested · not accepted");
+    await first.getByRole("button", { name: "Combine changes" }).click();
+    await second.getByRole("button", { name: "Use GitHub changes" }).click();
+    await expect(save).toBeEnabled();
+    await dialog.getByRole("button", { name: "Show markup" }).click();
+    await expect(first.locator(".editor-conflict-modal__source").nth(1)).toContainText('<a href="https://example.test/note">');
+    await dialog.getByRole("button", { name: "Hide markup" }).click();
+    await expect(first.locator(".editor-conflict-modal__result-preview a")).toHaveAttribute("href", "https://example.test/note");
+    await dialog.screenshot({ path: test.info().outputPath("focused-comparison.png") });
+    const paneTops = await first.locator(".editor-conflict-modal__column .editor-conflict-modal__version-text")
+      .evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().top));
+    expect(Math.abs(paneTops[0] - paneTops[1])).toBeLessThan(1);
+    for (const width of [760, 320]) {
+      await page.setViewportSize({ width, height: 800 });
+      const size = await dialog.evaluate((element) => ({ width: element.clientWidth, scroll: element.scrollWidth }));
+      expect(size.scroll).toBeLessThanOrEqual(size.width + 1);
+    }
+    await page.setViewportSize({ width: 1280, height: 720 });
+
+    await page.evaluate(() => {
+      const handlers = globalThis.__gnosisMockTauriHandlers;
+      handlers.update_gtms_editor_row_fields = async ({ input }) => {
+        globalThis.__focusedSaveInput = input;
+        const row = window.__gnosisDebug.readEditorState().rows.find((r) => r.rowId === input.rowId);
+        globalThis.__focusedSavedRow = { ...row, fields: input.fields, footnotes: input.footnotes, importedConflict: null };
+        return { status: "saved", row: globalThis.__focusedSavedRow, chapterBaseCommitSha: "focused-saved" };
+      };
+      handlers.sync_gtms_project_editor_repo = async () => ({ changedRowIds: [], deletedRowIds: [], insertedRowIds: [], newHeadSha: "focused-saved" });
+      handlers.load_gtms_editor_row = async () => ({ row: globalThis.__focusedSavedRow, chapterBaseCommitSha: "focused-saved" });
+    });
+    await save.click();
+    await expect(dialog).toHaveCount(0);
+    const input = await page.evaluate(() => globalThis.__focusedSaveInput);
+    expect(input.footnotes.vi).toBe('[1] First\n\n<a href="https://example.test/note">Xem thêm.</a>\n\n[2] Remote wording\n\n[3] Unchanged note');
+    expect(input.fields.vi).toBe("Identical translation");
+    expect(input.baseFootnotes.vi).toBe(remote);
+  });
+
+  test("focused conflict navigation preserves unsaved decisions and edited drafts", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 3 }, { mockTauri: true });
+    await installImportedConflictBackgroundReloadMock(page, { targetRowId: "fixture-row-0001", baseRowPatch: null,
+      localRowPatch: { targetText: "Local first" }, remoteRowPatch: { targetText: "Remote first" } });
+    await page.evaluate(() => {
+      const handlers = globalThis.__gnosisMockTauriHandlers;
+      const load = handlers.load_gtms_chapter_editor_data;
+      handlers.load_gtms_chapter_editor_data = async () => {
+        const payload = await load();
+        const row = payload.rows[1];
+        row.importedConflict = { baseRow: structuredClone(row), remoteRow: { ...structuredClone(row), fields: { ...row.fields, vi: "Remote second" } } };
+        row.fields.vi = "Local second";
+        return payload;
+      };
+    });
+    await runEditorBackgroundSync(page, { skipDirtyFlush: true, afterLocalCommit: true });
+    await page.locator('[data-action="open-editor-conflict-resolution:fixture-row-0001:vi"]').click();
+    const dialog = page.locator(".modal-card--editor-conflict");
+    await expect(dialog.locator(".editor-conflict-modal__toolbar")).toContainText("Shared original unavailable");
+    await expect(dialog.getByRole("button", { name: "Combine changes" })).toHaveCount(0);
+    await dialog.getByRole("button", { name: "Edit text" }).click();
+    await dialog.locator('[data-editor-conflict-final-input]').fill('Manual draft <script>alert(1)</script>');
+    await dialog.getByRole("button", { name: "Next", exact: true }).click();
+    await dialog.getByRole("button", { name: "Use local changes" }).click();
+    await dialog.getByRole("button", { name: "Previous", exact: true }).click();
+    await expect(dialog.locator('[data-editor-conflict-final-input]')).toHaveValue('Manual draft <script>alert(1)</script>');
+    await expect(dialog.getByRole("button", { name: "Save and finalize" })).toBeEnabled();
+    await dialog.getByRole("button", { name: "Preview", exact: true }).click();
+    await expect(dialog.locator('.editor-conflict-modal__result-preview')).toContainText('<script>alert(1)</script>');
+    await expect(dialog.locator('script')).toHaveCount(0);
+    await dialog.getByRole("button", { name: "Next", exact: true }).click();
+    await expect(dialog.getByRole("button", { name: "Use local changes" })).toHaveAttribute("aria-pressed", "true");
   });
 
   test("refreshing the translate editor shows a blocking reload when sync finds inserted rows", async ({ page }) => {
@@ -6050,6 +6198,50 @@ test.describe("editor regressions", () => {
     await expect.poll(async () => {
       return await page.evaluate(() => window.__gnosisDebug.readEditorState().dirtyRowIds);
     }).toEqual([]);
+  });
+
+  test("unreview all closes at once and clears markers while its commit is still waiting", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 6 }, { mockTauri: true });
+    const rowIds = ["fixture-row-0001", "fixture-row-0002"];
+    const reviewedButton = (rowId) => page.locator(
+      `[data-action="toggle-editor-reviewed"][data-row-id="${rowId}"][data-language-code="vi"]`,
+    );
+    const readDirtyRowIds = () => page.evaluate(() => window.__gnosisDebug.readEditorState().dirtyRowIds);
+
+    for (const rowId of rowIds) {
+      await reviewedButton(rowId).click();
+      await expect(reviewedButton(rowId)).toHaveAttribute("aria-pressed", "true");
+    }
+    await expect.poll(readDirtyRowIds).toEqual([]);
+
+    // Hold the commit open, as the backend does while a GitHub sync owns the repo lock.
+    await page.evaluate((changedRowIds) => {
+      const pending = new Promise((resolve) => { globalThis.__releaseUnreviewAll = resolve; });
+      globalThis.__gnosisMockTauriHandlers = {
+        ...(globalThis.__gnosisMockTauriHandlers ?? {}),
+        async clear_gtms_editor_reviewed_markers() {
+          globalThis.__unreviewAllStarted = true;
+          await pending;
+          return { rowIds: changedRowIds, languageCode: "vi", chapterBaseCommitSha: "unreview-all-commit" };
+        },
+      };
+    }, rowIds);
+
+    await page.locator('[data-action="open-editor-unreview-all"]').click();
+    await page.locator('[data-action="confirm-editor-unreview-all"]').click();
+    await page.waitForFunction(() => globalThis.__unreviewAllStarted === true);
+
+    await expect(page.locator('[data-modal-dialog="editor-unreview-all"]')).toHaveCount(0);
+    for (const rowId of rowIds) {
+      await expect(reviewedButton(rowId)).toHaveAttribute("aria-pressed", "false");
+    }
+    expect(await readDirtyRowIds()).toEqual(expect.arrayContaining(rowIds));
+
+    await page.evaluate(() => globalThis.__releaseUnreviewAll());
+    await expect.poll(readDirtyRowIds).toEqual([]);
+    for (const rowId of rowIds) {
+      await expect(reviewedButton(rowId)).toHaveAttribute("aria-pressed", "false");
+    }
   });
 
   test("opening the image url editor keeps the scroll position stable", async ({ page }) => {

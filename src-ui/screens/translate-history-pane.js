@@ -8,6 +8,7 @@ import {
 import {
   buildEditorHistoryViewModel,
   editorHistoryEntryMatchesSection,
+  historyAuthorLabel,
   historyEntryCanUndoReplace,
   isOptimisticEditorHistoryEntry,
 } from "../app/editor-history.js";
@@ -33,7 +34,7 @@ function pendingLocalSaveIsOverdue(entry) {
     && pendingLocalSaveAgeMs(entry) >= PENDING_LOCAL_SAVE_ERROR_AFTER_MS;
 }
 
-function renderHistoryEntry(entry, previousEntry, activeLanguage, activeSection, canRestore, history, replaceUndoModal) {
+function renderHistoryEntry(entry, previousEntry, activeLanguage, activeSection, canRestore, history, replaceUndoModal, showAuthor = false, previousCommitEntry = previousEntry) {
   const isCurrentValue = editorHistoryEntryMatchesSection(entry, activeSection);
   const isRestoring =
     history.status === "restoring" && history.restoringCommitSha === entry.commitSha;
@@ -93,11 +94,12 @@ function renderHistoryEntry(entry, previousEntry, activeLanguage, activeSection,
 
   return `
     <article class="history-item">
+      ${showAuthor ? `<p class="history-item__author">${escapeHtml(historyAuthorLabel(entry))}</p>` : ""}
       ${pendingLocalSaveMessage}
       ${renderHistoryEntryContent(entry, previousEntry, activeLanguage.code, {
         paragraphs: activeSection?.textHasParagraphs === true,
       })}
-      ${renderHistoryNote(entry, previousEntry, { includeStatusNote: !isOptimisticEntry })}
+      ${renderHistoryNote(entry, previousCommitEntry, { includeStatusNote: !isOptimisticEntry })}
       ${entryFooter}
     </article>
   `;
@@ -139,9 +141,15 @@ export function renderHistoryPane(editorChapter, rows, languages) {
         };
   const expandedGroupKeys = history.expandedGroupKeys instanceof Set ? history.expandedGroupKeys : new Set();
   const canRestore = Boolean(activeRow && activeSection);
-  const historyView = buildEditorHistoryViewModel(history.entries, expandedGroupKeys);
+  const historyEntries = Array.isArray(history.entries) ? history.entries : [];
+  const historyView = buildEditorHistoryViewModel(historyEntries, expandedGroupKeys);
   const historyGroups = historyView.groups;
   const olderVisibleEntryByCommitSha = historyView.olderVisibleEntryByCommitSha;
+  // Notes describe the revision itself, even when its predecessor is collapsed.
+  const previousCommitEntryByCommitSha = new Map(historyEntries.map((entry, index) => [
+    entry.commitSha,
+    historyEntries[index + 1] ?? null,
+  ]));
 
   return !activeRow || !activeLanguage
     ? `
@@ -216,6 +224,8 @@ export function renderHistoryPane(editorChapter, rows, languages) {
                                 canRestore,
                                 history,
                                 replaceUndoModal,
+                                isExpanded,
+                                previousCommitEntryByCommitSha.get(entry.commitSha) ?? null,
                               ),
                             )
                             .join("")}

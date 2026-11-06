@@ -31,8 +31,10 @@ test("conflict modal renders only final text and final footnote as editable text
   assert.match(html, /data-editor-conflict-final-input[\s\S]*rows="1"/);
   assert.match(html, /data-editor-conflict-final-footnote-input[\s\S]*rows="1"/);
   assert.doesNotMatch(html, /<textarea[^>]*editor-conflict-modal__version-text/);
-  assert.match(html, /<div class="field__textarea editor-conflict-modal__version-text">Local text<\/div>/);
-  assert.match(html, /<div class="field__textarea editor-conflict-modal__version-text">Remote text<\/div>/);
+  assert.match(html, /class="editor-conflict-modal__version-text">Local text<\/div>/);
+  assert.match(html, /editor-conflict-change--delete/);
+  assert.match(html, /editor-conflict-change--insert/);
+  assert.match(html, /data-editor-conflict-passage-input="text"/);
 });
 
 test("conflict modal renders the resolved image URL field for image conflicts", () => {
@@ -60,7 +62,7 @@ test("conflict modal renders the resolved image URL field for image conflicts", 
   });
 
   assert.match(html, /data-editor-conflict-final-image-input/);
-  assert.match(html, /Resolved image, audio, or video URL/);
+  assert.match(html, /Resolved image, audio, or video url/);
   assert.match(html, /https:\/\/example\.com\/local\.png/);
   assert.match(html, /https:\/\/example\.com\/remote\.png/);
 });
@@ -92,14 +94,14 @@ test("conflict modal hides the image URL field without an image conflict", () =>
   assert.doesNotMatch(html, /data-editor-conflict-final-image-input/);
 });
 
-test("conflict modal omits empty read-only version blocks", () => {
+test("conflict modal distinguishes a deleted footnote from an empty version", () => {
   const html = renderEditorConflictResolutionModal({
     editorChapter: {
       conflictResolutionModal: {
         isOpen: true,
         status: "idle",
         error: "",
-        localText: "Local text",
+        localText: "Remote text",
         localFootnote: "",
         remoteText: "Remote text",
         remoteFootnote: "Remote footnote",
@@ -113,8 +115,8 @@ test("conflict modal omits empty read-only version blocks", () => {
     },
   });
 
-  const readonlyFootnoteCount =
-    (html.match(/editor-conflict-modal__version-text--footnote/g) ?? []).length;
-  assert.equal(readonlyFootnoteCount, 1);
-  assert.doesNotMatch(html, /editor-conflict-modal__version-text--footnote"><\/div>/);
+  assert.match(html, /Deleted in this version/);
+  assert.match(html, /data-editor-conflict-passage="footnote-1"/);
+  assert.match(html, /unchanged passage/);
+  assert.doesNotMatch(html, /data-editor-conflict-passage-input="text"/);
 });

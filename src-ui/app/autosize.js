@@ -125,10 +125,14 @@ export function syncEditorConflictResolutionTextareaHeight(textarea) {
   if (!(textarea instanceof HTMLTextAreaElement)) {
     return;
   }
+  if (textarea.closest?.("[hidden]")) return;
 
   syncAutoSizeTextarea(textarea, {
     minHeight: singleLineTextareaHeight(textarea, 44),
     maxHeight: null,
+    // A live height reset can clamp the scrolled dialog during change/blur,
+    // moving Save and finalize between mousedown and mouseup.
+    measureOffscreen: true,
   });
 }
 

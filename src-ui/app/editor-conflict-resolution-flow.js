@@ -29,6 +29,7 @@ import {
   normalizeEditorConflictResolutionValue,
 } from "./editor-conflict-resolution-model.js";
 import { invokeEditorWriteCommand } from "./editor-write-permission.js";
+import { chooseConflictPassage, conflictReviewPendingCount } from "./editor-conflict-review.js";
 
 function lockConflictFilter() {
   if (!state.editorChapter?.chapterId) {
@@ -69,8 +70,12 @@ function resetConflictFilterIfClear() {
 }
 
 function closeConflictResolutionModalState() {
+  const modal = state.editorChapter?.conflictResolutionModal;
+  const drafts = { ...state.editorChapter?.conflictResolutionDrafts };
+  delete drafts[`${modal?.rowId}:${modal?.languageCode}`];
   state.editorChapter = {
     ...state.editorChapter,
+    conflictResolutionDrafts: drafts,
     conflictResolutionModal: createEditorConflictResolutionModalState(),
   };
 }
@@ -117,15 +122,59 @@ export function openEditorConflictResolutionModal(render, rowId, languageCode, o
     return;
   }
 
+  const previous = state.editorChapter.conflictResolutionModal;
+  if (previous?.status === "loading") return;
+  const drafts = { ...state.editorChapter.conflictResolutionDrafts };
+  if (previous?.isOpen) drafts[`${previous.rowId}:${previous.languageCode}`] = previous;
+  const draft = drafts[`${rowId}:${languageCode}`];
+  const fresh = buildEditorConflictResolutionModalState(row, languageCode);
+  // Only restore a draft against exactly the same inputs. A new remote edit
+  // requires a fresh comparison rather than silently reusing old decisions.
+  const sameInputs = draft && draft.hasSharedBase === fresh.hasSharedBase && ["Text", "Footnote", "ImageCaption", "Attribution", "ImageUrl"]
+    .every((suffix) => draft[`local${suffix}`] === fresh[`local${suffix}`]
+      && draft[`remote${suffix}`] === fresh[`remote${suffix}`]
+      && draft[`base${suffix}`] === fresh[`base${suffix}`]);
   state.editorChapter = {
     ...state.editorChapter,
     activeRowId: rowId,
     activeLanguageCode: languageCode,
-    conflictResolutionModal: buildEditorConflictResolutionModalState(row, languageCode),
+    conflictResolutionDrafts: drafts,
+    conflictResolutionModal: sameInputs ? draft : fresh,
   };
   render?.();
   if (typeof operations.loadActiveEditorFieldHistory === "function") {
     operations.loadActiveEditorFieldHistory(render);
+  }
+}
+
+export function chooseEditorConflictPassage(render, id, choice) {
+  const modal = state.editorChapter?.conflictResolutionModal;
+  if (!modal?.isOpen || modal.status === "loading") return;
+  state.editorChapter = { ...state.editorChapter, conflictResolutionModal: chooseConflictPassage(modal, id, choice) };
+  render?.();
+}
+
+export function updateEditorConflictPassage(id, value) {
+  const modal = state.editorChapter?.conflictResolutionModal;
+  if (!modal?.isOpen || modal.status === "loading") return;
+  state.editorChapter = { ...state.editorChapter, conflictResolutionModal: chooseConflictPassage(modal, id, "manual", value) };
+}
+
+export function toggleEditorConflictMarkup(render) {
+  const modal = state.editorChapter?.conflictResolutionModal;
+  if (!modal?.isOpen || modal.status === "loading") return;
+  state.editorChapter = { ...state.editorChapter, conflictResolutionModal: { ...modal, showMarkup: !modal.showMarkup } };
+  render?.();
+}
+
+export function editEditorConflictPassage(render, id) {
+  const modal = state.editorChapter?.conflictResolutionModal;
+  if (!modal?.isOpen || modal.status === "loading" || !modal.review?.some((p) => p.id === id)) return;
+  const editingPassageId = modal.editingPassageId === id ? null : id;
+  state.editorChapter = { ...state.editorChapter, conflictResolutionModal: { ...modal, editingPassageId } };
+  render?.();
+  if (editingPassageId && typeof document !== "undefined") {
+    document.querySelector(`[data-editor-conflict-passage-input="${editingPassageId}"]`)?.focus({ preventScroll: true });
   }
 }
 
@@ -184,7 +233,7 @@ export function copyEditorConflictResolutionVersion(render, side) {
   state.editorChapter = {
     ...state.editorChapter,
     conflictResolutionModal: {
-      ...modal,
+      ...chooseConflictPassage(modal, "all", side),
       finalText,
       finalFootnote,
       finalImageCaption,
@@ -200,6 +249,7 @@ export async function saveEditorConflictResolution(render, operations = {}) {
   if (!modal?.isOpen || modal.status === "loading") {
     return;
   }
+  if (modal.review && conflictReviewPendingCount(modal) > 0) return;
 
   const rowId = modal.rowId ?? "";
   const languageCode = modal.languageCode ?? "";

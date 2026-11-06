@@ -567,10 +567,12 @@ export function normalizeEditorRow(row) {
     remotelyDeleted: false,
     conflictState: importedConflict
       ? {
+        hasSharedBase: Boolean(importedConflict.baseRow),
         baseFields: cloneRowFields(importedConflict.baseRow?.fields),
         baseFootnotes: cloneRowFootnotes(importedConflict.baseRow?.footnotes),
         baseImageCaptions: cloneRowFields(importedConflict.baseRow?.imageCaptions),
         baseAttributions: cloneRowFields(importedConflict.baseRow?.attributions),
+        baseImages: cloneRowImages(importedConflict.baseRow?.images),
         remoteRow: importedConflict.remoteRow,
         remoteVersion: null,
       }
