@@ -1,7 +1,7 @@
 import { editorRowTextStyleLabel, normalizeEditorRowTextStyle } from "../app/editor-row-text-style.js";
 import { rowTextParagraphsHtml } from "../app/editor-footnote-paragraphs.js";
 import { renderTranslationMarkerIcon } from "../app/editor-row-render.js";
-import { editorFieldImageMetadataText } from "../app/editor-images.js";
+import { editorFieldImageEqual, editorFieldImageMetadataText } from "../app/editor-images.js";
 import { capitalizeMediaWord, editorFieldMediaThing } from "../app/editor-media-kind.js";
 import {
   extractInlineMarkupHistoryText,
@@ -155,6 +155,14 @@ export function renderHistoryContent(entry, previousEntry, options = {}) {
 }
 
 export function renderHistoryEntryContent(entry, previousEntry, languageCode, options = {}) {
+  const contentUnchanged = previousEntry && entry
+    && ["plainText", "footnote", "imageCaption", "attribution"].every(
+      (field) => String(entry[field] ?? "") === String(previousEntry[field] ?? ""),
+    )
+    && editorFieldImageEqual(entry.image, previousEntry.image)
+    && normalizeEditorRowTextStyle(entry.textStyle) === normalizeEditorRowTextStyle(previousEntry.textStyle);
+  if (contentUnchanged) return '<p class="history-item__unchanged">Text unchanged.</p>';
+
   const currentImageText = editorFieldImageMetadataText(entry?.image);
   const previousImageText = editorFieldImageMetadataText(previousEntry?.image);
   const hasVisibleImage =

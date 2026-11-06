@@ -1075,13 +1075,15 @@
 
 .translation-marker-button--comments.is-unread .translation-marker-button__active-fill,
 .translation-marker-button--reviewed.is-active .translation-marker-button__active-fill,
-.translation-marker-button--please-check.is-active .translation-marker-button__active-fill {
+.translation-marker-button--please-check.is-active .translation-marker-button__active-fill,
+.history-item__marker-note-icon:not(.history-item__marker-note-icon--removed) .translation-marker-button__active-fill {
   display: block;
 }
 
 .translation-marker-button--comments.is-unread .translation-marker-button__glyph,
 .translation-marker-button--reviewed.is-active .translation-marker-button__glyph,
-.translation-marker-button--please-check.is-active .translation-marker-button__glyph {
+.translation-marker-button--please-check.is-active .translation-marker-button__glyph,
+.history-item__marker-note-icon:not(.history-item__marker-note-icon--removed) .translation-marker-button__glyph {
   display: none;
 }
 
@@ -2556,6 +2558,12 @@
   gap: 14px;
 }
 
+.history-group__toggle[aria-expanded="true"] + .history-group__entries {
+  margin-inline-start: 8px;
+  padding-inline-start: 16px;
+  border-inline-start: 2px solid rgba(164, 112, 41, 0.32);
+}
+
 .history-item {
   display: grid;
   gap: 10px;
@@ -2568,6 +2576,20 @@
 
 .history-item p {
   margin: 0;
+}
+
+.history-item__author {
+  color: var(--muted);
+  font-size: 0.95rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.history-item__unchanged {
+  color: var(--muted);
+  font-family: var(--font-sans);
+  font-size: 0.95rem;
+  font-style: normal;
 }
 
 .history-item__content-stack {

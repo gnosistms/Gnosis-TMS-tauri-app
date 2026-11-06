@@ -83,3 +83,46 @@ test("only the main row text takes paragraphs in a history entry", () => {
   assert.equal(html.match(/translation-language-panel__paragraph/g)?.length, 2);
   assert.match(html, /Note one\n\nNote two/);
 });
+
+const completeRevision = {
+  plainText: "Body text",
+  footnote: "Footnote text",
+  imageCaption: "Caption text",
+  attribution: "Attribution text",
+  image: { kind: "url", url: "https://example.test/image.png" },
+  textStyle: "paragraph",
+};
+
+test("status-only revisions replace every repeated content block with Text unchanged", () => {
+  const previous = { ...completeRevision, reviewed: false, pleaseCheck: true };
+  const current = { ...completeRevision, reviewed: true, pleaseCheck: false };
+  assert.equal(renderHistoryEntryContent(current, previous, "vi"), '<p class="history-item__unchanged">Text unchanged.</p>');
+});
+
+for (const field of ["plainText", "footnote", "imageCaption", "attribution"]) {
+  test(`a ${field} change keeps history content visible`, () => {
+    const current = { ...completeRevision, [field]: `${completeRevision[field]} changed` };
+    const html = renderHistoryEntryContent(current, completeRevision, "vi");
+    assert.doesNotMatch(html, /Text unchanged\./);
+    assert.match(html, /changed/);
+  });
+}
+
+test("media and formatting changes are not mistaken for status-only revisions", () => {
+  for (const change of [
+    { image: { kind: "url", url: "https://example.test/other.png" } },
+    { textStyle: "heading1" },
+    { plainText: "<strong>Body text</strong>" },
+  ]) {
+    assert.doesNotMatch(renderHistoryEntryContent({ ...completeRevision, ...change }, completeRevision, "vi"), /Text unchanged\./);
+  }
+});
+
+test("a first revision has no comparison baseline and keeps its content", () => {
+  const html = renderHistoryEntryContent(completeRevision, null, "vi");
+  assert.doesNotMatch(html, /Text unchanged\./);
+  assert.match(html, /Body text/);
+  assert.match(html, /Footnote text/);
+  assert.match(html, /Caption text/);
+  assert.match(html, /Attribution text/);
+});

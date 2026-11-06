@@ -76,131 +76,27 @@ export function historyLastUpdateHeadingLabel(entry) {
   return authorName ? `Last update - ${authorName}` : "Last update";
 }
 
-function isImportHistoryEntry(entry) {
-  return String(entry?.operationType ?? "").trim().toLowerCase() === "import";
-}
-
 export function isOptimisticEditorHistoryEntry(entry) {
   return entry?.optimistic === true || String(entry?.commitSha ?? "").startsWith("optimistic:");
 }
 
-function buildMarkerRunActions(initialEntry, finalEntry) {
-  const actions = [];
-  if ((initialEntry?.reviewed === true) !== (finalEntry?.reviewed === true)) {
-    actions.push({
-      kind: "reviewed",
-      enabled: finalEntry?.reviewed === true,
-    });
+function historyEntriesHaveSameUser(left, right) {
+  // AI commits retain the controlling user's Git identity; aiModel only affects
+  // the displayed credit. Prefer identity over the potentially shared name.
+  for (const field of ["authorLogin", "authorEmail", "authorName"]) {
+    const leftIdentity = String(left?.[field] ?? "").trim().toLowerCase();
+    const rightIdentity = String(right?.[field] ?? "").trim().toLowerCase();
+    if (leftIdentity && rightIdentity) {
+      return leftIdentity === rightIdentity;
+    }
   }
-
-  if ((initialEntry?.pleaseCheck === true) !== (finalEntry?.pleaseCheck === true)) {
-    actions.push({
-      kind: "please-check",
-      enabled: finalEntry?.pleaseCheck === true,
-    });
-  }
-
-  return actions;
+  return false;
 }
 
-function isMarkerStateChangeOnly(previousEntry, currentEntry) {
-  if (!previousEntry || !currentEntry) {
-    return false;
-  }
-
-  if (isImportHistoryEntry(currentEntry)) {
-    return false;
-  }
-
-  if (String(previousEntry?.plainText ?? "") !== String(currentEntry?.plainText ?? "")) {
-    return false;
-  }
-
-  if (String(previousEntry?.footnote ?? "") !== String(currentEntry?.footnote ?? "")) {
-    return false;
-  }
-
-  if (String(previousEntry?.imageCaption ?? "") !== String(currentEntry?.imageCaption ?? "")) {
-    return false;
-  }
-
-  if (
-    normalizeEditorRowTextStyle(previousEntry?.textStyle)
-    !== normalizeEditorRowTextStyle(currentEntry?.textStyle)
-  ) {
-    return false;
-  }
-
-  if (!editorFieldImageEqual(previousEntry?.image, currentEntry?.image)) {
-    return false;
-  }
-
-  return (
-    (previousEntry?.reviewed === true) !== (currentEntry?.reviewed === true)
-    || (previousEntry?.pleaseCheck === true) !== (currentEntry?.pleaseCheck === true)
+function historyTextFieldsEqual(left, right) {
+  return ["plainText", "footnote", "imageCaption", "attribution"].every(
+    (field) => String(left?.[field] ?? "") === String(right?.[field] ?? ""),
   );
-}
-
-function buildMarkerRunEntry(initialEntry, finalEntry) {
-  const markerNoteActions = buildMarkerRunActions(initialEntry, finalEntry);
-  if (markerNoteActions.length === 0) {
-    return null;
-  }
-
-  return {
-    ...finalEntry,
-    statusNote: "",
-    markerNoteActions,
-  };
-}
-
-function compressHistoryEntries(entries) {
-  const chronologicalEntries = [...entries].reverse();
-  if (chronologicalEntries.length <= 1) {
-    return [...entries];
-  }
-
-  const compressedChronologicalEntries = [chronologicalEntries[0]];
-  let index = 1;
-
-  while (index < chronologicalEntries.length) {
-    const baselineEntry = chronologicalEntries[index - 1];
-    const currentEntry = chronologicalEntries[index];
-
-    if (!isMarkerStateChangeOnly(baselineEntry, currentEntry)) {
-      compressedChronologicalEntries.push(currentEntry);
-      index += 1;
-      continue;
-    }
-
-    const runAuthor = historyAuthorLabel(currentEntry);
-    let finalRunEntry = currentEntry;
-    let previousRunEntry = currentEntry;
-    let nextIndex = index + 1;
-
-    while (nextIndex < chronologicalEntries.length) {
-      const nextEntry = chronologicalEntries[nextIndex];
-      if (historyAuthorLabel(nextEntry) !== runAuthor) {
-        break;
-      }
-      if (!isMarkerStateChangeOnly(previousRunEntry, nextEntry)) {
-        break;
-      }
-
-      finalRunEntry = nextEntry;
-      previousRunEntry = nextEntry;
-      nextIndex += 1;
-    }
-
-    const markerRunEntry = buildMarkerRunEntry(baselineEntry, finalRunEntry);
-    if (markerRunEntry) {
-      compressedChronologicalEntries.push(markerRunEntry);
-    }
-
-    index = nextIndex;
-  }
-
-  return compressedChronologicalEntries.reverse();
 }
 
 function buildHistoryGroups(entries) {
@@ -212,7 +108,14 @@ function buildHistoryGroups(entries) {
     const isImport = operationType === "import";
     const previousGroup = groups[groups.length - 1] ?? null;
 
-    if (!isImport && previousGroup?.authorName === authorName && previousGroup?.isImport !== true) {
+    const adjacentEntry = previousGroup?.entries.at(-1);
+    if (
+      adjacentEntry
+      && !isOptimisticEditorHistoryEntry(entry)
+      && !isOptimisticEditorHistoryEntry(adjacentEntry)
+      && historyEntriesHaveSameUser(adjacentEntry, entry)
+      && historyTextFieldsEqual(adjacentEntry, entry)
+    ) {
       previousGroup.entries.push(entry);
       previousGroup.key = previousGroup.entries[previousGroup.entries.length - 1]?.commitSha ?? previousGroup.key;
       continue;
@@ -274,6 +177,7 @@ export function editorHistoryEntryMatchesSection(entry, section) {
     && String(entry.footnote ?? "")
       === serializeEditorFootnotesForLegacy(section.footnotes ?? section.footnote ?? "")
     && String(entry.imageCaption ?? "") === String(section.imageCaption ?? "")
+    && String(entry.attribution ?? "") === String(section.attribution ?? "")
     && editorFieldImageEqual(entry.image, section.image)
     && (entry.reviewed === true) === (section.reviewed === true)
     && (entry.pleaseCheck === true) === (section.pleaseCheck === true)
@@ -317,8 +221,7 @@ export function findEditorHistoryPreviousVisibleEntry(entries, section) {
 }
 
 export function buildEditorHistoryViewModel(entries, expandedGroupKeys) {
-  const compressedEntries = compressHistoryEntries(Array.isArray(entries) ? entries : []);
-  const groups = buildHistoryGroups(compressedEntries);
+  const groups = buildHistoryGroups(Array.isArray(entries) ? entries : []);
   const visibleEntries = buildVisibleHistoryEntries(groups, expandedGroupKeys);
 
   return {
@@ -334,8 +237,8 @@ export function reconcileExpandedEditorHistoryGroupKeys(previousEntries, nextEnt
     return new Set();
   }
 
-  const previousGroups = buildHistoryGroups(compressHistoryEntries(Array.isArray(previousEntries) ? previousEntries : []));
-  const nextGroups = buildHistoryGroups(compressHistoryEntries(Array.isArray(nextEntries) ? nextEntries : []));
+  const previousGroups = buildHistoryGroups(Array.isArray(previousEntries) ? previousEntries : []);
+  const nextGroups = buildHistoryGroups(Array.isArray(nextEntries) ? nextEntries : []);
   const nextGroupKeyByCommitSha = buildGroupKeyByCommitSha(nextGroups);
   const reconciledKeys = new Set();
 

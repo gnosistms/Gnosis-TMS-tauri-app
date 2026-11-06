@@ -8,6 +8,7 @@ import {
 import {
   buildEditorHistoryViewModel,
   editorHistoryEntryMatchesSection,
+  historyAuthorLabel,
   historyEntryCanUndoReplace,
   isOptimisticEditorHistoryEntry,
 } from "../app/editor-history.js";
@@ -33,7 +34,7 @@ function pendingLocalSaveIsOverdue(entry) {
     && pendingLocalSaveAgeMs(entry) >= PENDING_LOCAL_SAVE_ERROR_AFTER_MS;
 }
 
-function renderHistoryEntry(entry, previousEntry, activeLanguage, activeSection, canRestore, history, replaceUndoModal) {
+function renderHistoryEntry(entry, previousEntry, activeLanguage, activeSection, canRestore, history, replaceUndoModal, showAuthor = false) {
   const isCurrentValue = editorHistoryEntryMatchesSection(entry, activeSection);
   const isRestoring =
     history.status === "restoring" && history.restoringCommitSha === entry.commitSha;
@@ -93,6 +94,7 @@ function renderHistoryEntry(entry, previousEntry, activeLanguage, activeSection,
 
   return `
     <article class="history-item">
+      ${showAuthor ? `<p class="history-item__author">${escapeHtml(historyAuthorLabel(entry))}</p>` : ""}
       ${pendingLocalSaveMessage}
       ${renderHistoryEntryContent(entry, previousEntry, activeLanguage.code, {
         paragraphs: activeSection?.textHasParagraphs === true,
@@ -216,6 +218,7 @@ export function renderHistoryPane(editorChapter, rows, languages) {
                                 canRestore,
                                 history,
                                 replaceUndoModal,
+                                isExpanded,
                               ),
                             )
                             .join("")}

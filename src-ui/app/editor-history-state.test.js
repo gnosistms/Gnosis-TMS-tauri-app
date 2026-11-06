@@ -115,7 +115,7 @@ test("applyActiveEditorFieldHistoryLoading scopes loading state to the active fi
   assert.deepEqual([...updatedChapter.history.expandedGroupKeys], ["group-a"]);
 });
 
-test("applyActiveEditorFieldHistoryLoaded reconciles expanded same-author groups across new entries", () => {
+test("applyActiveEditorFieldHistoryLoaded reconciles expanded unchanged-text groups across new entries", () => {
   const previousEntries = [
     historyEntry({ commitSha: "c2", plainText: "newer" }),
     historyEntry({ commitSha: "c1", authorName: "other-user", plainText: "baseline" }),
@@ -137,7 +137,7 @@ test("applyActiveEditorFieldHistoryLoaded reconciles expanded same-author groups
     "es",
     "chapter-1:row-1:es",
     [
-      historyEntry({ commitSha: "c3", plainText: "newest" }),
+      historyEntry({ commitSha: "c3", plainText: "newer", reviewed: true }),
       ...previousEntries,
     ],
   );
