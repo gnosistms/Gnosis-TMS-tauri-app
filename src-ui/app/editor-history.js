@@ -81,8 +81,8 @@ export function isOptimisticEditorHistoryEntry(entry) {
 }
 
 function historyEntriesHaveSameUser(left, right) {
-  // AI commits retain the controlling user's Git identity; aiModel only affects
-  // the displayed credit. Prefer identity over the potentially shared name.
+  // AI commits retain the controlling user's Git identity. Prefer that identity
+  // over the potentially shared display name.
   for (const field of ["authorLogin", "authorEmail", "authorName"]) {
     const leftIdentity = String(left?.[field] ?? "").trim().toLowerCase();
     const rightIdentity = String(right?.[field] ?? "").trim().toLowerCase();
@@ -99,14 +99,22 @@ function historyTextFieldsEqual(left, right) {
   );
 }
 
+function historyActorKey(entry) {
+  if (String(entry?.operationType ?? "").trim().toLowerCase() === "import") {
+    return "import";
+  }
+  const aiModel = String(entry?.aiModel ?? "").trim().toLowerCase();
+  return aiModel ? `ai:${aiModel}` : "human";
+}
+
 function buildHistoryGroups(entries) {
-  const groups = [];
+  const actorGroups = [];
 
   for (const entry of entries) {
     const authorName = historyAuthorLabel(entry);
     const operationType = String(entry?.operationType ?? "").trim().toLowerCase();
     const isImport = operationType === "import";
-    const previousGroup = groups[groups.length - 1] ?? null;
+    const previousGroup = actorGroups[actorGroups.length - 1] ?? null;
 
     const adjacentEntry = previousGroup?.entries.at(-1);
     if (
@@ -114,20 +122,54 @@ function buildHistoryGroups(entries) {
       && !isOptimisticEditorHistoryEntry(entry)
       && !isOptimisticEditorHistoryEntry(adjacentEntry)
       && historyEntriesHaveSameUser(adjacentEntry, entry)
-      && historyTextFieldsEqual(adjacentEntry, entry)
+      && historyActorKey(adjacentEntry) === historyActorKey(entry)
+      && (!isImport || historyTextFieldsEqual(adjacentEntry, entry))
     ) {
       previousGroup.entries.push(entry);
       previousGroup.key = previousGroup.entries[previousGroup.entries.length - 1]?.commitSha ?? previousGroup.key;
       continue;
     }
 
-    groups.push({
+    actorGroups.push({
       key: entry.commitSha,
       authorName,
       operationType,
       isImport,
       entries: [entry],
     });
+  }
+
+  const olderEntryByCommitSha = buildOlderVisibleEntryByCommitSha(entries);
+  const groups = [];
+  let previousCanMergeActors = false;
+  for (const group of actorGroups) {
+    // Preserve same-author runs first. Only AI runs that leave text unchanged
+    // from their older revisions may additionally join a neighboring actor.
+    const canMergeActors = group.entries.every((entry) => {
+      if (!String(entry.aiModel ?? "").trim()) return true;
+      const olderEntry = olderEntryByCommitSha.get(entry.commitSha);
+      return olderEntry && historyTextFieldsEqual(entry, olderEntry);
+    });
+    const previousGroup = groups.at(-1);
+    const adjacentEntry = previousGroup?.entries.at(-1);
+    const entry = group.entries[0];
+    if (
+      adjacentEntry
+      && previousCanMergeActors
+      && canMergeActors
+      && !isOptimisticEditorHistoryEntry(adjacentEntry)
+      && !isOptimisticEditorHistoryEntry(entry)
+      && historyEntriesHaveSameUser(adjacentEntry, entry)
+      && (String(adjacentEntry.aiModel ?? "").trim()
+        || String(entry.aiModel ?? "").trim()
+        || historyTextFieldsEqual(adjacentEntry, entry))
+    ) {
+      previousGroup.entries.push(...group.entries);
+      previousGroup.key = group.key;
+    } else {
+      groups.push(group);
+    }
+    previousCanMergeActors = canMergeActors;
   }
 
   return groups;
@@ -247,12 +289,11 @@ export function reconcileExpandedEditorHistoryGroupKeys(previousEntries, nextEnt
       continue;
     }
 
-    const matchingNextKey = group.entries
-      .map((entry) => nextGroupKeyByCommitSha.get(entry.commitSha))
-      .find(Boolean);
-
-    if (matchingNextKey) {
-      reconciledKeys.add(matchingNextKey);
+    for (const entry of group.entries) {
+      const matchingNextKey = nextGroupKeyByCommitSha.get(entry.commitSha);
+      if (matchingNextKey) {
+        reconciledKeys.add(matchingNextKey);
+      }
     }
   }
 

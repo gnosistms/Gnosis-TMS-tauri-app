@@ -410,7 +410,7 @@ test("findEditorHistoryPreviousVisibleEntry compares against the prior visible r
   const entries = [
     historyEntry({ commitSha: "c3", plainText: "Hello", footnote: "Note", textStyle: "heading1" }),
     historyEntry({ commitSha: "c2", plainText: "Hello", footnote: "", textStyle: "heading1" }),
-    historyEntry({ commitSha: "c1", operationType: "import", plainText: "Hello", footnote: "", textStyle: "paragraph" }),
+    historyEntry({ commitSha: "c1", authorName: "Importer", operationType: "import", plainText: "Hello", footnote: "", textStyle: "paragraph" }),
   ];
 
   assert.equal(
@@ -421,34 +421,113 @@ test("findEditorHistoryPreviousVisibleEntry compares against the prior visible r
       reviewed: false,
       pleaseCheck: false,
     })?.commitSha,
-    "c2",
+    "c1",
   );
 });
 
 for (const field of ["plainText", "footnote", "imageCaption", "attribution"]) {
-  test(`a change in ${field} breaks the group even for the same human and AI`, () => {
+  test(`an AI change in ${field} keeps adjacent human groups separate`, () => {
     const entries = [
-      historyEntry({ commitSha: "c4", [field]: "changed", aiModel: "gpt-5.4", reviewed: true }),
       historyEntry({ commitSha: "c3", [field]: "changed" }),
-      historyEntry({ commitSha: "c2", [field]: "original", aiModel: "gpt-5.4", pleaseCheck: true }),
+      historyEntry({ commitSha: "c2", [field]: "changed", aiModel: "gpt-5.4", pleaseCheck: true }),
       historyEntry({ commitSha: "c1", [field]: "original" }),
     ];
     const model = buildEditorHistoryViewModel(entries, new Set());
     assert.deepEqual(model.groups.map((group) => group.entries.map((entry) => entry.commitSha)), [
-      ["c4", "c3"], ["c2", "c1"],
+      ["c3"], ["c2"], ["c1"],
     ]);
-    assert.equal(model.olderVisibleEntryByCommitSha.get("c4").commitSha, "c2");
-    assert.deepEqual(entries.map((entry) => entry.commitSha), ["c4", "c3", "c2", "c1"]);
+    assert.equal(model.olderVisibleEntryByCommitSha.get("c3").commitSha, "c2");
+    assert.deepEqual(entries.map((entry) => entry.commitSha), ["c3", "c2", "c1"]);
+  });
+
+  test(`a human change in ${field} can join an adjacent unchanged AI run`, () => {
+    const entries = [
+      historyEntry({ commitSha: "c3", [field]: "changed by human" }),
+      historyEntry({ commitSha: "c2", [field]: "original", aiModel: "gpt-5.4" }),
+      historyEntry({ commitSha: "c1", [field]: "original" }),
+    ];
+    const model = buildEditorHistoryViewModel(entries, new Set());
+    assert.equal(model.groups.length, 1);
+    assert.deepEqual(model.groups[0].entries, entries);
+  });
+
+  for (const aiModel of [null, "gpt-5.4"]) {
+    test(`a change in ${field} stays grouped for the same ${aiModel ? "AI actor" : "human"}`, () => {
+      const entries = [
+        historyEntry({ commitSha: "c3", aiModel, [field]: "newest" }),
+        historyEntry({ commitSha: "c2", aiModel, [field]: "middle" }),
+        historyEntry({ commitSha: "c1", aiModel, [field]: "oldest" }),
+      ];
+      const collapsed = buildEditorHistoryViewModel(entries, new Set());
+      assert.equal(collapsed.groups.length, 1);
+      assert.deepEqual(collapsed.groups[0].entries, entries);
+      assert.deepEqual(collapsed.visibleEntries, [entries[0]]);
+      const expanded = buildEditorHistoryViewModel(entries, new Set([collapsed.groups[0].key]));
+      assert.deepEqual(expanded.visibleEntries, entries);
+    });
+  }
+}
+
+test("human text edits can merge with contiguous unchanged AI edits", () => {
+  const model = buildEditorHistoryViewModel([
+    historyEntry({ commitSha: "c5", plainText: "new human text" }),
+    historyEntry({ commitSha: "c4", plainText: "shared text" }),
+    historyEntry({ commitSha: "c3", plainText: "shared text", aiModel: "gpt-5.4" }),
+    historyEntry({ commitSha: "c2", plainText: "shared text" }),
+    historyEntry({ commitSha: "c1", plainText: "earlier human text", authorName: "Other" }),
+  ], new Set());
+  assert.deepEqual(model.groups.map((group) => group.entries.map((entry) => entry.commitSha)), [
+    ["c5", "c4", "c3", "c2"], ["c1"],
+  ]);
+});
+
+for (const humanAfterAi of [true, false]) {
+  test(`AI runs that change text stay separate from ${humanAfterAi ? "later" : "earlier"} human edits`, () => {
+    const aiEntries = [
+      historyEntry({ commitSha: "ai-2", plainText: "AI text", aiModel: "gpt-5.4" }),
+      historyEntry({ commitSha: "ai-1", plainText: "intermediate AI text", aiModel: "gpt-5.4" }),
+    ];
+    const entries = [
+      ...(humanAfterAi ? [historyEntry({ commitSha: "human-after", plainText: "AI text" })] : []),
+      ...aiEntries,
+      historyEntry({ commitSha: "human-before", plainText: "intermediate AI text" }),
+    ];
+    const model = buildEditorHistoryViewModel(entries, new Set());
+    assert.deepEqual(model.groups.map((group) => group.entries.map((entry) => entry.commitSha)), [
+      ...(humanAfterAi ? [["human-after"]] : []),
+      ["ai-2", "ai-1"],
+      ["human-before"],
+    ]);
   });
 }
 
-test("changing text and changing it back do not chain across the intervening edit", () => {
+test("a text-changing AI edit stays separate even when the later human keeps its text", () => {
+  const model = buildEditorHistoryViewModel([
+    historyEntry({ commitSha: "human-after", plainText: "AI text" }),
+    historyEntry({ commitSha: "ai", plainText: "AI text", aiModel: "gpt-5.4" }),
+    historyEntry({ commitSha: "human-before", plainText: "original text" }),
+  ], new Set());
+  assert.equal(model.groups.length, 3);
+});
+
+test("another user's intervening edit keeps same-name human runs separate", () => {
+  const model = buildEditorHistoryViewModel([
+    historyEntry({ commitSha: "c3", authorLogin: "hans" }),
+    historyEntry({ commitSha: "c2", authorLogin: "other" }),
+    historyEntry({ commitSha: "c1", authorLogin: "hans" }),
+  ], new Set());
+  assert.equal(model.groups.length, 3);
+});
+
+test("consecutive edits by one human collapse even when text changes and changes back", () => {
   const model = buildEditorHistoryViewModel([
     historyEntry({ commitSha: "c3", plainText: "original" }),
     historyEntry({ commitSha: "c2", plainText: "changed" }),
     historyEntry({ commitSha: "c1", plainText: "original" }),
   ], new Set());
-  assert.equal(model.groups.length, 3);
+  assert.equal(model.groups.length, 1);
+  assert.deepEqual(model.groups[0].entries.map((entry) => entry.commitSha), ["c3", "c2", "c1"]);
+  assert.deepEqual(model.visibleEntries.map((entry) => entry.commitSha), ["c3"]);
 });
 
 test("a different controlling user breaks the chain even for the same AI model", () => {
@@ -461,6 +540,21 @@ test("a different controlling user breaks the chain even for the same AI model",
 });
 
 for (const field of ["authorLogin", "authorEmail"]) {
+  for (const aiModel of [null, "gpt-5.4"]) {
+    test(`${field} keeps a contiguous ${aiModel ? "AI" : "human"} run grouped across display-name and text changes`, () => {
+      const entries = [
+        historyEntry({ commitSha: "c3", authorName: "New name", [field]: "SAME", aiModel, plainText: "new text" }),
+        historyEntry({ commitSha: "c2", authorName: "Old name", [field]: "same", aiModel, plainText: "old text" }),
+        historyEntry({ commitSha: "c1", authorName: "Old name", [field]: "other", aiModel, plainText: "old text" }),
+      ];
+      const model = buildEditorHistoryViewModel(entries, new Set());
+      assert.deepEqual(model.groups.map((group) => group.entries.map((entry) => entry.commitSha)), [
+        ["c3", "c2"], ["c1"],
+      ]);
+      assert.equal(model.groups[0].authorName, aiModel ? "GPT 5.4 - New name" : "New name");
+    });
+  }
+
   test(`${field} identifies the user independently of display name`, () => {
     const model = buildEditorHistoryViewModel([
       historyEntry({ commitSha: "c3", authorName: "New name", [field]: "SAME", aiModel: "gpt-5.4" }),
@@ -483,7 +577,7 @@ test("unknown authors and pending saves do not group with committed entries", ()
   assert.equal(model.groups.length, 4);
 });
 
-test("a new text edit starts collapsed without closing the previously expanded group", () => {
+test("a new text edit by the same human extends the expanded group", () => {
   const previous = [
     historyEntry({ commitSha: "c2", reviewed: true }),
     historyEntry({ commitSha: "c1" }),
@@ -491,7 +585,36 @@ test("a new text edit starts collapsed without closing the previously expanded g
   const next = [historyEntry({ commitSha: "c3", plainText: "new text" }), ...previous];
   const keys = reconcileExpandedEditorHistoryGroupKeys(previous, next, new Set(["c1"]));
   const model = buildEditorHistoryViewModel(next, keys);
-  assert.equal(keys.has(model.groups[0].key), false);
-  assert.equal(keys.has(model.groups[1].key), true);
+  assert.equal(model.groups.length, 1);
+  assert.equal(keys.has(model.groups[0].key), true);
   assert.deepEqual(model.visibleEntries.map((entry) => entry.commitSha), ["c3", "c2", "c1"]);
+});
+
+test("an expanded merged group stays fully expanded when a new AI text edit splits it", () => {
+  const previous = [
+    historyEntry({ commitSha: "ai-old", aiModel: "gpt-5.4", plainText: "human text", reviewed: true }),
+    historyEntry({ commitSha: "human-2", plainText: "human text" }),
+    historyEntry({ commitSha: "human-1", plainText: "earlier human text" }),
+  ];
+  const next = [historyEntry({ commitSha: "ai-new", aiModel: "gpt-5.4", plainText: "AI rewrite" }), ...previous];
+  const previousModel = buildEditorHistoryViewModel(previous, new Set());
+  assert.equal(previousModel.groups.length, 1);
+  const keys = reconcileExpandedEditorHistoryGroupKeys(previous, next, new Set([previousModel.groups[0].key]));
+  const model = buildEditorHistoryViewModel(next, keys);
+  assert.equal(model.groups.length, 2);
+  assert.ok(model.groups.every((group) => keys.has(group.key)));
+  assert.deepEqual(model.visibleEntries, next);
+});
+
+test("a collapsed merged group stays collapsed when a new AI text edit splits it", () => {
+  const previous = [
+    historyEntry({ commitSha: "ai-old", aiModel: "gpt-5.4" }),
+    historyEntry({ commitSha: "human-2" }),
+    historyEntry({ commitSha: "human-1", plainText: "earlier text" }),
+  ];
+  const next = [historyEntry({ commitSha: "ai-new", aiModel: "gpt-5.4", plainText: "AI rewrite" }), ...previous];
+  const keys = reconcileExpandedEditorHistoryGroupKeys(previous, next, new Set());
+  const model = buildEditorHistoryViewModel(next, keys);
+  assert.equal(keys.size, 0);
+  assert.deepEqual(model.visibleEntries.map((entry) => entry.commitSha), ["ai-new", "human-2"]);
 });

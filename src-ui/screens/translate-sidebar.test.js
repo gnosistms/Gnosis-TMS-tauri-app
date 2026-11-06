@@ -78,7 +78,7 @@ for (const aiLatest of [true, false]) {
           entry("latest", { aiModel: aiLatest ? "gpt-5.4" : null, reviewed: true }),
           entry("middle", { aiModel: aiLatest ? null : "gpt-5.4", pleaseCheck: true }),
           entry("oldest", { operationType: "editor-update" }),
-          entry("previous-text", { plainText: "Xin chau" }),
+          entry("previous-text", { authorLogin: "other", plainText: "Xin chau" }),
         ],
       },
     });
