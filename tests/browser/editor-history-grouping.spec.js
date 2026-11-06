@@ -1,8 +1,15 @@
 import { expect, test } from "./test.js";
 
-for (const aiLatest of [true, false]) {
-  test(`unchanged-text history groups expand and credit the latest ${aiLatest ? "AI" : "human"}`, async ({ page }) => {
-    await page.addInitScript((aiLatest) => {
+for (const { aiLatest, humanTextChanges } of [
+  { aiLatest: true, humanTextChanges: false },
+  { aiLatest: false, humanTextChanges: false },
+  { aiLatest: true, humanTextChanges: true },
+  { aiLatest: false, humanTextChanges: true },
+]) {
+  test(`history groups ${humanTextChanges ? "with" : "without"} human text changes expand and credit the latest ${aiLatest ? "AI" : "human"}`, async ({ page }) => {
+    const humanChangedAfterAi = humanTextChanges && !aiLatest;
+    await page.addInitScript(({ aiLatest, humanTextChanges }) => {
+      const humanChangedAfterAi = humanTextChanges && !aiLatest;
       const entry = (commitSha, overrides = {}) => ({
         commitSha,
         authorName: "translator",
@@ -19,9 +26,10 @@ for (const aiLatest of [true, false]) {
       });
       const entries = [
         entry("latest", { aiModel: aiLatest ? "gpt-5.4" : null, reviewed: true }),
-        entry("middle", { aiModel: aiLatest ? null : "gpt-5.4", pleaseCheck: true }),
-        entry("oldest", { operationType: "editor-update" }),
-        entry("previous-text", { plainText: "Previous translation", reviewed: true }),
+        entry("middle", { aiModel: aiLatest ? null : "gpt-5.4", pleaseCheck: true, plainText: humanChangedAfterAi ? "Earlier translation" : "Current translation" }),
+        entry("oldest", { operationType: "editor-update", plainText: humanChangedAfterAi ? "Earlier translation" : "Current translation" }),
+        ...(humanTextChanges ? [entry("earlier-human", { operationType: "editor-update", plainText: humanChangedAfterAi ? "Initial translation" : "Earlier translation" })] : []),
+        entry("previous-text", { authorLogin: "other", plainText: "Previous translation", reviewed: true }),
       ];
       window.__TAURI__ = {
         event: { listen: async () => () => {} },
@@ -34,7 +42,7 @@ for (const aiLatest of [true, false]) {
         } },
       };
       localStorage.clear();
-    }, aiLatest);
+    }, { aiLatest, humanTextChanges });
 
     await page.goto("/");
     await page.waitForFunction(() => typeof window.__gnosisDebug?.mountEditorFixture === "function");
@@ -56,29 +64,35 @@ for (const aiLatest of [true, false]) {
     const toggle = group.locator("button.history-group__toggle");
     await expect(toggle).toHaveAttribute("aria-expanded", "false");
     await expect(group.locator(".history-group__author")).toHaveText(aiLatest ? "GPT 5.4 - translator" : "translator");
-    await expect(group.locator(".history-group__meta")).toHaveText("3 revisions");
+    await expect(group.locator(".history-group__meta")).toHaveText(`${humanTextChanges ? 4 : 3} revisions`);
     await expect(group.locator(".history-item")).toHaveCount(1);
     await expect(group.locator(".history-item__author")).toHaveCount(0);
 
     await toggle.click();
     await expect(toggle).toHaveAttribute("aria-expanded", "true");
-    await expect(group.locator(".history-item")).toHaveCount(3);
+    await expect(group.locator(".history-item")).toHaveCount(humanTextChanges ? 4 : 3);
     await expect(group.locator(".history-item__author")).toHaveText([
       aiLatest ? "GPT 5.4 - translator" : "translator",
       aiLatest ? "translator" : "GPT 5.4 - translator",
       "translator",
+      ...(humanTextChanges ? ["translator"] : []),
     ]);
-    await expect(group.locator(".history-item__unchanged")).toHaveText(["Text unchanged.", "Text unchanged."]);
-    await expect(group.locator(".history-item").nth(0).locator(".history-item__content-stack")).toHaveCount(0);
+    await expect(group.locator(".history-item__unchanged")).toHaveText(humanChangedAfterAi ? ["Text unchanged."] : ["Text unchanged.", "Text unchanged."]);
+    await expect(group.locator(".history-item").nth(0).locator(".history-item__content-stack")).toHaveCount(humanChangedAfterAi ? 1 : 0);
     await expect(group.locator(".history-item").nth(1).locator(".history-item__content-stack")).toHaveCount(0);
-    await expect(group.locator(".history-item").nth(2).locator(".history-item__content-stack")).toContainText("Current translation");
+    await expect(group.locator(".history-item").nth(2).locator(".history-item__content-stack")).toContainText(humanChangedAfterAi ? "Earlier translation" : "Current translation");
     const fonts = await group.locator(".history-item__unchanged").first().evaluate((element) => ({
       actual: getComputedStyle(element).fontFamily,
       expected: getComputedStyle(document.documentElement).getPropertyValue("--font-sans").trim(),
     }));
     expect(fonts.actual).toBe(fonts.expected);
     await expect(group.locator('[data-action="restore-editor-history:middle"]')).toBeVisible();
-    await expect(group.locator(".history-item").last().getByRole("button", { name: "Current", exact: true })).toBeDisabled();
+    if (!humanChangedAfterAi) {
+      await expect(group.locator(".history-item").nth(2).getByRole("button", { name: "Current", exact: true })).toBeDisabled();
+    }
+    if (humanTextChanges) {
+      await expect(group.locator('[data-action="restore-editor-history:earlier-human"]')).toBeVisible();
+    }
 
     for (const kind of ["reviewed", "please-check"]) {
       const enabled = group.locator(`.history-item__marker-note-icon--${kind}:not(.history-item__marker-note-icon--removed)`).first();

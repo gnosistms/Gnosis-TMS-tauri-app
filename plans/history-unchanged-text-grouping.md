@@ -56,3 +56,43 @@ and sidebar tests, both browser cases, lint, and `git diff --check` pass.
 Completed: status-only comparisons now show “Text unchanged.” in `--font-sans`.
 All 102 focused tests and both browser cases pass, including typography and the
 retained author/status controls. Lint and `git diff --check` pass.
+
+## Preserve consecutive same-author grouping (2026-11-06)
+
+1. Restore grouping of contiguous revisions by the same author even when text
+   changes. Additionally merge contiguous actor groups under the same controlling
+   user when the AI edits leave text unchanged relative to their older revisions.
+   An AI run that changes text stays separate from human runs. Another user's
+   intervening edit always breaks the run.
+2. Cover same-author text changes, mixed human/AI boundaries, expansion state,
+   and collapsed/expanded rendering. Preserve every revision and status control.
+3. Run focused history tests, browser grouping cases, the frontend/workflow
+   suite, JS lint, and the unused-code audit; record results.
+
+Completed: contiguous same-author runs collapse even when text changes. Adjacent
+human/AI groups under the same user additionally merge only when every AI edit
+leaves its text fields unchanged from its older revision. A text-changing AI run
+stays separate, including when a later human keeps the AI's text. Human text
+changes do not prevent merging with an unchanged AI run. Every revision remains
+available on expansion; another user's intervening edit breaks the run.
+
+Validation: all 3,526 frontend tests, 26 workflow tests, 121 focused history/sidebar
+tests, and four browser grouping cases pass. Browser cases cover human text
+changes before and after unchanged AI edits, individual author credits, status
+controls, and restore actions. JS lint and `git diff --check` pass. The workflow
+and browser tests required localhost access after sandboxed server checks failed.
+The unused-code audit still reports repository-wide findings (345 unused files
+plus other findings); none names the changed history modules, and this change
+adds no exports or imports.
+
+This corrects the first section's overly broad text-equality requirement;
+unchanged AI text is an additional way to group different actors.
+
+## Release review (2026-11-06)
+
+- Actor grouping now uses the actor kind/model independently of the display
+  label, while stable user identity continues to come from login/email/name.
+  This keeps a contiguous run together across a display-name change.
+- When a new AI text change splits an expanded human/AI group, every resulting
+  group containing previously expanded revisions retains its expansion state.
+- All 127 focused history/sidebar tests pass, including both review regressions.
