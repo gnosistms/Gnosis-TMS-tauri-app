@@ -1973,40 +1973,64 @@ test.describe("editor regressions", () => {
     });
   });
 
-  test("AI Assistant tab renders persisted transcript items and the chat composer", async ({ page }) => {
-    await mountEditorFixture(page, {
-      rowCount: 1,
-      assistant: {
-        threadsByKey: {
-          "fixture-row-0001::es::vi": {
-            rowId: "fixture-row-0001",
-            sourceLanguageCode: "es",
-            targetLanguageCode: "vi",
-            items: [{
-              id: "assistant-1",
-              type: "assistant-message",
-              createdAt: "2026-04-21T12:00:00.000Z",
-              text: "The source line is describing an inner transformation.",
-              summary: "The source line is describing an inner transformation.",
+  for (const platform of ["macos", "windows"]) {
+    test(`AI Assistant transcript fills the sidebar below the tabs as the row banner appears and disappears (${platform})`, async ({ page }) => {
+      await mountEditorFixture(page, {
+        rowCount: 6,
+        assistant: {
+          threadsByKey: {
+            "fixture-row-0001::es::vi": {
+              rowId: "fixture-row-0001",
               sourceLanguageCode: "es",
               targetLanguageCode: "vi",
-              details: {
-                providerId: "openai",
-                modelId: "gpt-5.4",
-                sourceText: "alpha 0001 source text",
-              },
-            }],
+              items: [{
+                id: "assistant-1",
+                type: "assistant-message",
+                createdAt: "2026-04-21T12:00:00.000Z",
+                text: "The source line is describing an inner transformation.",
+                summary: "The source line is describing an inner transformation.",
+                sourceLanguageCode: "es",
+                targetLanguageCode: "vi",
+                details: {
+                  providerId: "openai",
+                  modelId: "gpt-5.4",
+                  sourceText: "alpha 0001 source text",
+                },
+              }],
+            },
           },
         },
-      },
-    });
+      }, { path: `/?platform=${platform}` });
 
-    await page.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
-    await expect(page.locator(".assistant-item")).toContainText("inner transformation");
-    await expect(page.locator("[data-editor-assistant-draft]")).toBeVisible();
-    // The composer sends via Return; there is no separate send button.
-    await expect(page.locator(".assistant-composer__hint")).toContainText("Return to send, Shift + Return for new line");
-  });
+      await page.locator('[data-action="switch-editor-sidebar-tab:translate"]').click();
+      await expect(page.locator(".assistant-item")).toContainText("inner transformation");
+      await expect(page.locator("[data-editor-assistant-draft]")).toBeVisible();
+      // The composer sends via Return; there is no separate send button.
+      await expect(page.locator(".assistant-composer__hint")).toContainText("Return to send, Shift + Return for new line");
+
+      const notice = page.locator("[data-editor-row-connection]");
+      const tabs = page.locator(".history-tabs");
+      const transcript = page.locator(".assistant-transcript");
+      await expect(notice).toBeHidden();
+      const tabsBefore = await tabs.boundingBox();
+      const chatBefore = await transcript.boundingBox();
+
+      await setTranslateScrollTop(page, 1000000);
+      await expect(notice).toBeVisible();
+      const bannerSpace = await notice.evaluate((el) =>
+        el.getBoundingClientRect().height + parseFloat(getComputedStyle(el.parentElement).rowGap));
+      const tabsAfter = await tabs.boundingBox();
+      const chatAfter = await transcript.boundingBox();
+      expect(tabsAfter.height).toBe(tabsBefore.height);
+      expect(tabsAfter.y).toBeCloseTo(tabsBefore.y + bannerSpace, 0);
+      expect(chatAfter.y).toBeCloseTo(chatBefore.y + bannerSpace, 0);
+      expect(chatAfter.height).toBeCloseTo(chatBefore.height - bannerSpace, 0);
+
+      await notice.click();
+      await expect(notice).toBeHidden();
+      expect(await transcript.boundingBox()).toEqual(chatBefore);
+    });
+  }
 
   test("sending assistant messages clears the composer and preserves the next draft", async ({ page }) => {
     await page.addInitScript(() => {
@@ -5662,7 +5686,7 @@ test.describe("editor regressions", () => {
 
     const heading3Button = page.locator('[data-editor-row-text-style-button][data-row-id="fixture-row-0001"][data-language-code="vi"][data-text-style="heading3"]');
     for (const [button, tooltip] of [
-      [heading1Button, "Use this style for the chapter title"],
+      [heading1Button, "Chapter title"],
       [heading2Button, "Section heading"],
       [heading3Button, "Subheading"],
     ]) {

@@ -714,13 +714,6 @@
   height: 100%;
 }
 
-.translate-sidebar--assistant .card__body {
-  height: 100%;
-  min-height: 0;
-  padding-bottom: 18px;
-  grid-template-rows: auto minmax(0, 1fr);
-}
-
 .translate-ai-tools {
   display: grid;
   gap: 12px;
@@ -2461,6 +2454,14 @@
   gap: 18px;
 }
 
+.translate-sidebar--assistant > .card__body {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding-bottom: 18px;
+}
+
 .history-tabs {
   display: flex;
   justify-content: center;
@@ -3288,6 +3289,7 @@
 }
 
 .assistant-pane {
+  flex: 1;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 18px;
