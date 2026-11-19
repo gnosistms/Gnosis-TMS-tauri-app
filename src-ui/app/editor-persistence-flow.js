@@ -322,7 +322,17 @@ function rebaseRowTextInputForRun(operationValue) {
 
   input.baseFields = cloneRowFields(currentRow.persistedFields ?? currentRow.baseFields);
   input.baseFootnotes = serializeFootnoteMapForLegacy(currentRow.persistedFootnotes ?? currentRow.baseFootnotes);
-  input.baseImageCaptions = cloneRowFields(currentRow.persistedImageCaptions ?? currentRow.baseImageCaptions);
+  const persistedCaptions = cloneRowFields(currentRow.persistedImageCaptions ?? currentRow.baseImageCaptions);
+  for (const [code, caption] of Object.entries(persistedCaptions)) {
+    const queuedCaption = input.imageCaptions[code] ?? "";
+    // Carry a background import through a queued text save. A queued caption
+    // edit (including an intentional clear) still owns its submitted value.
+    if (queuedCaption === (input.baseImageCaptions[code] ?? "")
+      && queuedCaption !== (currentRow.imageCaptions?.[code] ?? "")) {
+      input.imageCaptions[code] = caption;
+    }
+  }
+  input.baseImageCaptions = persistedCaptions;
   input.baseAttributions = cloneRowFields(currentRow.persistedAttributions ?? currentRow.baseAttributions);
   input.baseTimings = cloneRowTimings(currentRow.persistedTimings ?? currentRow.baseTimings);
   return input;

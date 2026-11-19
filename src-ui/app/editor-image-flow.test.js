@@ -367,6 +367,7 @@ test("WordPress caption enrichment preserves imported links in the background ro
     rowId: "row-1",
     languageCode: "vi",
     imageUrl,
+    baseCaption: "Previous image caption",
     row: payloadRow,
     chapterBaseCommitSha: "caption-commit",
   }, render), true);
@@ -403,11 +404,28 @@ test("WordPress caption enrichment preserves a newer unsaved caption edit", () =
     rowId: "row-1",
     languageCode: "vi",
     imageUrl,
+    baseCaption: "Previous image caption",
     row: payloadRow,
   }, createRenderSpy()), true);
 
   assert.equal(state.editorChapter.rows[0].imageCaptions.vi, "New local caption");
   assert.equal(state.editorChapter.rows[0].persistedImageCaptions.vi, "WordPress caption");
+});
+
+test("a delayed WordPress lookup preserves a caption already saved on the same recording", () => {
+  installEditorFixture();
+  const imageUrl = "https://example.com/wp-content/uploads/talk.mp3";
+  installFixtureImage(imageUrl);
+  updateEditorChapterRow("row-1", (row) => ({
+    ...row,
+    imageCaptions: { vi: "Translator's caption" },
+    persistedImageCaptions: { vi: "Translator's caption" },
+  }));
+  assert.equal(handleEditorImageCaptionEnrichedEvent({
+    chapterId: "chapter-1", rowId: "row-1", languageCode: "vi", imageUrl, baseCaption: "",
+    row: { imageCaptions: { vi: "Library caption" } },
+  }, createRenderSpy()), false);
+  assert.equal(state.editorChapter.rows[0].imageCaptions.vi, "Translator's caption");
 });
 
 test("WordPress caption enrichment ignores an event for a replaced image", () => {
