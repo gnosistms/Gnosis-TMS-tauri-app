@@ -27,6 +27,7 @@ import { getNoticeBadgeText } from "../app/status-feedback.js";
 import { MANAGE_CHAPTER_LANGUAGES_OPTION_VALUE } from "../app/translate-flow.js";
 import { renderEditorRowInsertModal } from "./editor-row-insert-modal.js";
 import { renderEditorRowMergeModal } from "./editor-row-merge-modal.js";
+import { renderEditorMultipleH1Modal } from "./editor-multiple-h1-modal.js";
 import { renderEditorRowPermanentDeletionModal } from "./editor-row-permanent-deletion-modal.js";
 import { renderEditorUnreviewAllModal } from "./editor-unreview-all-modal.js";
 import { renderEditorExportModal } from "./editor-export-modal.js";
@@ -401,6 +402,7 @@ export function renderTranslateScreen(state) {
   }) + renderTargetLanguageManagerModal(state)
     + renderEditorRowInsertModal(state)
     + renderEditorRowMergeModal(state)
+    + renderEditorMultipleH1Modal(state)
     + renderEditorRowPermanentDeletionModal(state)
     + renderEditorUnreviewAllModal(state)
     + renderEditorExportModal(state)

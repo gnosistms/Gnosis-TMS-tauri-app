@@ -521,6 +521,7 @@ export function createEditorChapterState() {
     expandedDeletedRowGroupIds: new Set(),
     insertRowModal: createEditorInsertRowModalState(),
     mergeRowModal: createEditorMergeRowModalState(),
+    pendingH1RowId: null,
     rowPermanentDeletionModal: createEditorRowPermanentDeletionModalState(),
     rows: [],
   };
