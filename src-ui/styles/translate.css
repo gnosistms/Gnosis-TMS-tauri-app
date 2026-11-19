@@ -499,8 +499,8 @@
 .translation-language-panel__field-highlight,
 .translation-language-panel__field-static,
 .translate-preview__block {
-  --heading1-scale: calc(14.5 / 11.5);
-  --heading2-scale: calc(12 / 11.5);
+  --section-heading-scale: calc(14.5 / 11.5);
+  --subsection-heading-scale: calc(12 / 11.5);
   --heading-weight: 400;
   --heading-case: uppercase;
 }
@@ -511,22 +511,22 @@
   .translation-language-panel__field-static,
   .translate-preview__block
 ):is([lang^="ja" i], [lang^="ko" i], [lang^="zh" i], [lang^="ar" i], [lang^="fa" i]) {
-  --heading1-scale: 1.4;
-  --heading2-scale: 1.2;
+  --section-heading-scale: 1.4;
+  --subsection-heading-scale: 1.2;
   --heading-weight: 700;
   --heading-case: none;
 }
 
-.translate-preview__block--heading1 {
-  font-size: calc(var(--translation-editor-font-size, 14px) * var(--heading1-scale));
+.translate-preview__block--heading1,
+.translate-preview__block--heading2 {
+  font-size: calc(var(--translation-editor-font-size, 14px) * var(--section-heading-scale));
   font-weight: var(--heading-weight);
   line-height: 1.3;
   text-transform: var(--heading-case);
 }
 
-.translate-preview__block--heading2,
 .translate-preview__block--heading3 {
-  font-size: calc(var(--translation-editor-font-size, 14px) * var(--heading2-scale));
+  font-size: calc(var(--translation-editor-font-size, 14px) * var(--subsection-heading-scale));
   font-weight: var(--heading-weight);
   line-height: 1.35;
   text-transform: var(--heading-case);
@@ -2141,28 +2141,22 @@
   background: rgba(243, 156, 24, 0.2);
 }
 
-.translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style="heading1"] .translation-language-panel__field,
-.translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style="heading1"] .translation-language-panel__field-highlight,
-.translation-language-panel__field-static[data-row-text-style="heading1"] {
-  font-size: calc(var(--translation-editor-font-size, 14px) * var(--heading1-scale));
+.translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote):is([data-row-text-style="heading1"], [data-row-text-style="heading2"]) .translation-language-panel__field,
+.translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote):is([data-row-text-style="heading1"], [data-row-text-style="heading2"]) .translation-language-panel__field-highlight,
+.translation-language-panel__field-static:is([data-row-text-style="heading1"], [data-row-text-style="heading2"]) {
+  font-size: calc(var(--translation-editor-font-size, 14px) * var(--section-heading-scale));
   font-weight: var(--heading-weight);
   line-height: 1.3;
   text-transform: var(--heading-case);
 }
 
-.translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote):is([data-row-text-style="heading2"], [data-row-text-style="heading3"]) .translation-language-panel__field,
-.translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote):is([data-row-text-style="heading2"], [data-row-text-style="heading3"]) .translation-language-panel__field-highlight,
-.translation-language-panel__field-static:is([data-row-text-style="heading2"], [data-row-text-style="heading3"]) {
-  font-size: calc(var(--translation-editor-font-size, 14px) * var(--heading2-scale));
+.translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style="heading3"] .translation-language-panel__field,
+.translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style="heading3"] .translation-language-panel__field-highlight,
+.translation-language-panel__field-static[data-row-text-style="heading3"] {
+  font-size: calc(var(--translation-editor-font-size, 14px) * var(--subsection-heading-scale));
   font-weight: var(--heading-weight);
   line-height: 1.35;
   text-transform: var(--heading-case);
-}
-
-.translate-preview__block--heading3,
-.translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style="heading3"] :is(.translation-language-panel__field, .translation-language-panel__field-highlight),
-.translation-language-panel__field-static[data-row-text-style="heading3"] {
-  font-size: var(--translation-editor-font-size, 14px);
 }
 
 .translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style="quote"],

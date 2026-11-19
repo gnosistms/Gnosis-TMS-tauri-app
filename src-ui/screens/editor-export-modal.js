@@ -330,9 +330,7 @@ function wordpressDetail(wordpress, isExporting, wholeBook) {
       </div>
       ${createSection}
       ${overwriteSection}
-      ${supportingText(wholeBook
-        ? "The book title is the post title. Chapter titles export as H2, sections as H3, and subsections as H4."
-        : "Sections export as H2 and subsections as H3. Any H1 retained in the post body exports as H2.")}
+      ${wholeBook ? supportingText("The book title is the post title. Chapter titles export as H2, sections as H3, and subsections as H4.") : ""}
       ${isExporting && wordpress.exportStage
         ? `<p class="modal__supporting editor-export-modal__wordpress-stage">${escapeHtml(wordpress.exportStage)}</p>`
         : ""}

@@ -117,11 +117,11 @@ export function bookChapterNumbers(items) {
     .map((item, index) => [item.id, index + 1]));
 }
 
-export function bookContentsEntries(items, headings = {}, includeH1 = false) {
+export function bookContentsEntries(items, headings = {}, includeSections = false) {
   const numbers = bookChapterNumbers(items);
   return bookContentsItems(items).flatMap((item) => [
     { title: `${numbers.has(item.id) ? `${numbers.get(item.id)}. ` : ""}${bookItemTitle(item)}`, level: 0 },
-    ...(includeH1 ? (headings[item.chapterId] || []).map((title) => ({ title, level: 1 })) : []),
+    ...(includeSections ? (headings[item.chapterId] || []).map((title) => ({ title, level: 1 })) : []),
   ]);
 }
 
@@ -135,6 +135,7 @@ export function bookExportItems(modal) {
     ...(item.kind === "chapter" ? { titleOverride: item.title?.trim() || null, numbered: item.numbered !== false } : {}),
     subtitle: item.subtitle || "", author: item.author || "", translator: item.translator || "",
     text: item.text || "", caption: item.caption || "", imageAssetId: item.image?.assetId || "",
+    // Saved layouts and the native export command use the original key for section headings.
     ...(item.kind === "contents" ? { includeH1Headings: item.includeH1Headings === true } : {}),
   }));
 }

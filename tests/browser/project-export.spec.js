@@ -479,11 +479,11 @@ test("background migration progress updates without rebuilding the projects page
   }))).toEqual({ page: true, modal: true });
 });
 
-test("book contents include H1 headings only when the saved checkbox is selected", async ({ page }) => {
+test("book contents include section headings only when the saved checkbox is selected", async ({ page }) => {
   await mountProjectExport(page);
   const modal = page.getByRole("dialog", { name: "Export project", exact: true });
   await addSection(modal, "contents");
-  const checkbox = modal.getByRole("checkbox", { name: "Include H1 headings", exact: true });
+  const checkbox = modal.getByRole("checkbox", { name: "Include section headings (H2)", exact: true });
   await expect(checkbox).not.toBeChecked();
   await expect.poll(async () => (await lastContentsPreview(page))?.item.includeH1Headings).toBe(false);
   await checkbox.check();
@@ -977,7 +977,7 @@ test("book preview uses print typography for body, headings, quotes, captions, a
     window.__bookHeadingRows = { "fixture-chapter-0-0": [
       row("paragraph", "An opening paragraph to compare with the print edition. ".repeat(5)),
       row("paragraph", "The next paragraph uses a first-line indent without an empty line."),
-      row("heading1", "A mixed-case Heading"), row("heading2", "A smaller Heading"),
+      row("heading2", "A mixed-case Heading"), row("heading3", "A smaller Heading"),
       row("quote", "An upright quotation with <i>explicit italics</i>.", { attributions: { en: "— An Author" } }),
       row("centered", "Centered text"), row("indented", "Indented text"),
       row("paragraph", "A reference [1] in ordinary text.", { footnotes: { en: "A footnote with <i>italic</i> words. ".repeat(4) } }),
@@ -1001,7 +1001,7 @@ test("book preview uses print typography for body, headings, quotes, captions, a
     const contentEnd = (element) => element.getBoundingClientRect().right - parseFloat(getComputedStyle(element).paddingRight);
     const contentTop = (element) => element.getBoundingClientRect().top + parseFloat(getComputedStyle(element).paddingTop);
     return { trimmed: CSS.supports("text-box", "trim-both cap alphabetic"), body: read(".translate-preview__block--paragraph"), indent: read(".book-print-indent"),
-      title: read(".book-chapter__header h1"), h1: read(".translate-preview__block--heading1"), h2: read(".translate-preview__block--heading2"),
+      title: read(".book-chapter__header h1"), section: read(".translate-preview__block--heading2"), subsection: read(".translate-preview__block--heading3"),
       quote: read("blockquote"), attribution: read("cite"), caption: read("figcaption"),
       note: read(".book-footnote__text"), noteItem: read(".book-chapter__footnotes li"), centered: read(".translate-preview__block--centered"),
       quoteEnd: contentEnd(page.querySelector("blockquote")), attributionEnd: contentEnd(page.querySelector("cite")),
@@ -1016,15 +1016,15 @@ test("book preview uses print typography for body, headings, quotes, captions, a
   expect(styles.title.family).toContain("Alegreya");
   expect(styles.title.caps).toBe("uppercase");
   expect(styles.title.tracking / styles.title.size).toBeCloseTo(.1, 3);
-  expect(styles.h1.family).toContain("Alegreya");
-  expect(styles.h1.size / styles.body.size).toBeCloseTo(14.5 / 11.5, 3);
-  expect(styles.h2.size / styles.body.size).toBeCloseTo(12 / 11.5, 3);
-  expect(styles.h1.caps).toBe("uppercase");
-  expect(styles.h2.caps).toBe("uppercase");
+  expect(styles.section.family).toContain("Alegreya");
+  expect(styles.section.size / styles.body.size).toBeCloseTo(14.5 / 11.5, 3);
+  expect(styles.subsection.size / styles.body.size).toBeCloseTo(12 / 11.5, 3);
+  expect(styles.section.caps).toBe("uppercase");
+  expect(styles.subsection.caps).toBe("uppercase");
   // One body line below each heading: trimmed boxes add it as margin.
-  expect(styles.h1.after / styles.body.size).toBeCloseTo(styles.trimmed ? .78 : 0, 3);
-  expect(styles.h2.after / styles.body.size).toBeCloseTo(styles.trimmed ? .78 : 0, 3);
-  expect(styles.h1.weight).toBe("400");
+  expect(styles.section.after / styles.body.size).toBeCloseTo(styles.trimmed ? .78 : 0, 3);
+  expect(styles.subsection.after / styles.body.size).toBeCloseTo(styles.trimmed ? .78 : 0, 3);
+  expect(styles.section.weight).toBe("400");
   expect(styles.quote.italic).toBe("normal");
   expect(styles.quote.size / styles.body.size).toBeCloseTo(.9, 3);
   expect(styles.attribution.size / styles.body.size).toBeCloseTo(.8, 3);

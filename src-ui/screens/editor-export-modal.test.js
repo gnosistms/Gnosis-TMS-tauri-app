@@ -435,6 +435,7 @@ test("editor export modal shows the WordPress create pane with a title field", (
   const html = renderEditorExportModal(wordpressState());
 
   assert.match(html, /Connected to <strong>https:\/\/example\.wordpress\.com<\/strong>/);
+  assert.doesNotMatch(html, /Sections export as H2|Any H1 retained/);
   assert.match(html, /data-action="show-wordpress-site-picker"/);
   assert.match(html, />Switch site<\/button>/);
   assert.match(html, /editor-export-modal__wordpress-mode is-selected/);

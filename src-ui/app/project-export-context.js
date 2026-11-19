@@ -62,7 +62,7 @@ export async function loadProjectExportBlocks(modal, operations = {}, { numberCh
     const chapterBlocks = buildEditorPreviewDocument(normalizeEditorRows(payload.rows), modal.languageCode);
     if (modal.book) {
       const titled = bookChapterPreviewBlocks(item, chapterBlocks, modal.languageCode);
-      headings[chapterId] = titled.slice(1).filter((block) => block.kind === "text" && block.textStyle === "heading1")
+      headings[chapterId] = titled.slice(1).filter((block) => block.kind === "text" && block.textStyle === "heading2")
         .map((block) => extractInlineMarkupVisibleText(block.text));
       chapterDocuments.set(item.id, titled.map((block, index) => ({ ...block,
         ...(index === 0 && numberChapters && numbers.has(item.id) ? { text: `${numbers.get(item.id)}. ${block.text}` } : {}),
@@ -85,7 +85,7 @@ export async function loadProjectExportBlocks(modal, operations = {}, { numberCh
 function bookSectionPreviewBlocks(item, modal, contentsItems, headings) {
   const text = (value, textStyle = "paragraph") => ({ kind: "text", rowId: item.id, languageCode: modal.languageCode, text: value || "", textStyle, footnotes: [] });
   const result = [];
-  if (item.kind === "title") result.push(text(item.title, "heading1"), text(item.subtitle, "heading2"), text(item.author, "centered"), text(item.translator, "centered"));
+  if (item.kind === "title") result.push(text(item.title, "heading1"), { ...text(item.subtitle, "heading2"), bookSubtitle: true }, text(item.author, "centered"), text(item.translator, "centered"));
   if (item.kind === "contents") result.push(text(item.title, "heading1"),
     ...bookContentsEntries(contentsItems, headings, item.includeH1Headings).map((entry) => text(entry.title, entry.level ? "indented" : "paragraph")));
   if (["copyright", "dedication"].includes(item.kind)) result.push(...bookTextParts(item.text).map((part) => part.kind === "separator"
