@@ -1026,8 +1026,9 @@ test("serializeEditorPreviewWordPress maps every text style to its block markup"
   // being promoted to the post title.
   const blocks = buildEditorPreviewDocument([
     styleRow("row-p", "paragraph", "Plain paragraph"),
-    styleRow("row-h1", "heading1", "Large heading"),
-    styleRow("row-h2", "heading2", "Subheading"),
+    styleRow("row-h1", "heading1", "Another chapter"),
+    styleRow("row-h2", "heading2", "Section"),
+    styleRow("row-h3", "heading3", "Subsection"),
     styleRow("row-q", "quote", "Quoted passage"),
     styleRow("row-i", "indented", "Indented passage"),
     styleRow("row-c", "centered", "Centered passage"),
@@ -1037,8 +1038,12 @@ test("serializeEditorPreviewWordPress maps every text style to its block markup"
 
   assert.equal(title, null);
   assert.ok(content.includes("<!-- wp:paragraph -->\n<p>Plain paragraph</p>\n<!-- /wp:paragraph -->"));
-  assert.ok(content.includes('<!-- wp:heading {"level":1} -->\n<h1 class="wp-block-heading">Large heading</h1>\n<!-- /wp:heading -->'));
-  assert.ok(content.includes('<!-- wp:heading -->\n<h2 class="wp-block-heading">Subheading</h2>\n<!-- /wp:heading -->'));
+  assert.ok(content.includes('<!-- wp:heading -->\n<h2 class="wp-block-heading">Another chapter</h2>\n<!-- /wp:heading -->'));
+  assert.ok(content.includes('<!-- wp:heading -->\n<h2 class="wp-block-heading">Section</h2>\n<!-- /wp:heading -->'));
+  assert.ok(content.includes('<!-- wp:heading {"level":3} -->\n<h3 class="wp-block-heading">Subsection</h3>\n<!-- /wp:heading -->'));
+  assert.doesNotMatch(content, /<h1\b/);
+  assert.match(renderEditorPreviewDocumentHtml(blocks).html, /<h3\b[^>]*>Subsection<\/h3>/);
+  assert.match(serializeEditorPreviewHtml(blocks), /<h1 class="wp-block-heading">Another chapter<\/h1>/);
   assert.ok(content.includes(
     '<!-- wp:quote -->\n<blockquote class="wp-block-quote"><!-- wp:paragraph -->\n<p>Quoted passage</p>\n<!-- /wp:paragraph --></blockquote>\n<!-- /wp:quote -->',
   ));
@@ -1048,7 +1053,6 @@ test("serializeEditorPreviewWordPress maps every text style to its block markup"
   assert.ok(content.includes(
     '<!-- wp:paragraph {"style":{"typography":{"textAlign":"center"}}} -->\n<p class="has-text-align-center">Centered passage</p>\n<!-- /wp:paragraph -->',
   ));
-  // An in-body H1 means the table-of-contents suppression shortcode is omitted.
   assert.doesNotMatch(content, /no_toc/);
 });
 
@@ -1106,7 +1110,7 @@ test("serializeEditorPreviewWordPress promotes a leading H1 to the post title", 
   assert.doesNotMatch(content, /no_toc/);
 });
 
-test("serializeEditorPreviewWordPress keeps internal H1 headings in the article", () => {
+test("serializeEditorPreviewWordPress keeps additional chapter titles in the article as H2", () => {
   const rows = [
     ...wordPressTitleFixtureRows(),
     {
@@ -1124,7 +1128,8 @@ test("serializeEditorPreviewWordPress keeps internal H1 headings in the article"
   const { content, title } = serializeEditorPreviewWordPress(blocks);
 
   assert.equal(title, "Chương 3 – Trận chiến");
-  assert.match(content, /<!-- wp:heading \{"level":1\} -->/);
+  assert.match(content, /<h2 class="wp-block-heading">Second chapter heading<\/h2>/);
+  assert.doesNotMatch(content, /<h1\b/);
   assert.doesNotMatch(content, /no_toc/);
 });
 
@@ -1140,7 +1145,8 @@ test("serializeEditorPreviewWordPress does not promote H1s that are not first or
   }], "vi");
   const withFootnoteResult = serializeEditorPreviewWordPress(h1WithFootnote);
   assert.equal(withFootnoteResult.title, null);
-  assert.match(withFootnoteResult.content, /<!-- wp:heading \{"level":1\} -->/);
+  assert.match(withFootnoteResult.content, /<h2 class="wp-block-heading">Heading <sup data-fn=/);
+  assert.equal(withFootnoteResult.footnotes[0].content, "A note");
   assert.doesNotMatch(withFootnoteResult.content, /no_toc/);
 
   const imageFirst = buildEditorPreviewDocument([
@@ -1165,7 +1171,17 @@ test("serializeEditorPreviewWordPress does not promote H1s that are not first or
   ], "vi");
   const imageFirstResult = serializeEditorPreviewWordPress(imageFirst);
   assert.equal(imageFirstResult.title, null);
-  assert.match(imageFirstResult.content, /Not a title/);
+  assert.match(imageFirstResult.content, /<h2 class="wp-block-heading">Not a title<\/h2>/);
+});
+
+test("WordPress nests custom HTML headings and preserves hand-authored markup around them", () => {
+  const literal = '<!-- <h1> -->\n<script>const tag = "<h1>";</script><textarea><h2></textarea>';
+  const markup = '<H1 id="one" title="a > <h1>">One</H1><h2>Two</h2><h3>Three</h3><h6>Six</h6>';
+  const blocks = [{ kind: "text", textStyle: "custom_html", text: literal + markup }];
+  const expected = '<H2 id="one" title="a > <h1>">One</H2>';
+  assert.ok(serializeEditorPreviewWordPress(blocks).content.includes(literal + expected + '<h2>Two</h2><h3>Three</h3><h6>Six</h6>'));
+  assert.ok(serializeEditorPreviewWordPress(blocks, { wholeBook: true }).content.includes(literal + expected + '<h3>Two</h3><h4>Three</h4><h6>Six</h6>'));
+  assert.ok(serializeEditorPreviewHtml(blocks).includes(literal + markup));
 });
 
 test("quote attribution stays attached in preview, WordPress, HTML and plain text", () => {

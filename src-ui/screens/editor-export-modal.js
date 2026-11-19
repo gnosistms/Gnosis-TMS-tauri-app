@@ -247,7 +247,7 @@ function renderWordPressSitePicker(wordpress) {
   `;
 }
 
-function wordpressDetail(wordpress, isExporting) {
+function wordpressDetail(wordpress, isExporting, wholeBook) {
   if (!wordpress || wordpress.connectionStatus === "unknown" || wordpress.connectionStatus === "loading") {
     return {
       bodyMarkup: supportingText("Checking the WordPress connections..."),
@@ -330,6 +330,9 @@ function wordpressDetail(wordpress, isExporting) {
       </div>
       ${createSection}
       ${overwriteSection}
+      ${supportingText(wholeBook
+        ? "The book title is the post title. Chapter titles export as H2, sections as H3, and subsections as H4."
+        : "Sections export as H2 and subsections as H3. Any H1 retained in the post body exports as H2.")}
       ${isExporting && wordpress.exportStage
         ? `<p class="modal__supporting editor-export-modal__wordpress-stage">${escapeHtml(wordpress.exportStage)}</p>`
         : ""}
@@ -569,7 +572,7 @@ function exportDetail(option, isExporting, modal, appState) {
   }
 
   if (option.kind === "link" && option.format === "wordpress") {
-    const detail = wordpressDetail(modal.wordpress, isExporting);
+    const detail = wordpressDetail(modal.wordpress, isExporting, Boolean(modal.projectId));
     if (modal.projectId) detail.bodyMarkup = fileExportLanguageSection(option, modal, appState) + detail.bodyMarkup;
     return detail;
   }

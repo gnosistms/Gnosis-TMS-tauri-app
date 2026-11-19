@@ -15,8 +15,7 @@ import {
 } from "./editor-footnotes.js";
 import {
   EDITOR_ROW_TEXT_STYLE_CENTERED,
-  EDITOR_ROW_TEXT_STYLE_HEADING1,
-  EDITOR_ROW_TEXT_STYLE_HEADING2,
+  editorRowHeadingLevel,
   EDITOR_ROW_TEXT_STYLE_INDENTED,
   EDITOR_ROW_TEXT_STYLE_QUOTE,
   isListRowTextStyle,
@@ -947,10 +946,8 @@ function imageMetadataEntries(builder, image) {
 }
 
 function blockAttributeKey(block) {
+  if (editorRowHeadingLevel(block?.textStyle)) return "bold";
   switch (normalizeEditorRowTextStyle(block?.textStyle)) {
-    case EDITOR_ROW_TEXT_STYLE_HEADING1:
-    case EDITOR_ROW_TEXT_STYLE_HEADING2:
-      return "bold";
     case EDITOR_ROW_TEXT_STYLE_QUOTE:
       return "quote";
     case EDITOR_ROW_TEXT_STYLE_CENTERED:
@@ -1191,20 +1188,9 @@ function createFootnoteContext(block, target, showFootnoteLinkUrls = false) {
   };
 }
 
-function headingLevel(block) {
-  switch (normalizeEditorRowTextStyle(block?.textStyle)) {
-    case EDITOR_ROW_TEXT_STYLE_HEADING1:
-      return 1;
-    case EDITOR_ROW_TEXT_STYLE_HEADING2:
-      return 2;
-    default:
-      return 0;
-  }
-}
-
 function leadingChapterTitleBlock(blocks) {
   const first = (Array.isArray(blocks) ? blocks : [])[0];
-  if (headingLevel(first) !== 1 || normalizeEditorFootnotes(first?.footnotes).length > 0) {
+  if (editorRowHeadingLevel(first?.textStyle) !== 1 || normalizeEditorFootnotes(first?.footnotes).length > 0) {
     return null;
   }
 
@@ -1554,7 +1540,7 @@ function appendInlineNodeRuns(nodes, target, fallbackKey, active = {}, footnoteC
 
 function appendBlockRuns(block, target, options = {}) {
   const fallbackKey = blockAttributeKey(block);
-  const level = headingLevel(block);
+  const level = editorRowHeadingLevel(block?.textStyle);
   if (level > 0) {
     appendSubheadRuns(block, target, level);
     return;

@@ -61,7 +61,7 @@ pub(super) fn prepare(
             ExportBlock::Text { text_style, text } => {
                 let heading = matches!(
                     normalize_editor_text_style_value(Some(text_style)).as_str(),
-                    "heading1" | "heading2"
+                    "heading1" | "heading2" | "heading3"
                 );
                 if heading {
                     heading_number += 1;

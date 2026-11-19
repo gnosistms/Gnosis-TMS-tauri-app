@@ -485,7 +485,14 @@ fn apply_docx_paragraph_style(
     };
     paragraph.original_style = Some(style.clone());
     let normalized = style.to_ascii_lowercase();
-    if normalized.starts_with("heading") || normalized == "title" {
+    if let Some(level) = normalized.strip_prefix("heading") {
+        let style = match level.trim().parse::<u8>() {
+            Ok(2) => "heading2",
+            Ok(3..=9) => "heading3",
+            _ => "heading1",
+        };
+        paragraph.text_style = Some(style.to_string());
+    } else if normalized == "title" {
         paragraph.text_style = Some("heading1".to_string());
     }
     if normalized.contains("list") {
@@ -547,7 +554,10 @@ fn finish_docx_paragraph(
         return Ok(());
     }
     ensure_docx_row_budget(parsed.rows.len(), &text)?;
-    if paragraph.text_style.as_deref() == Some("heading1") {
+    if matches!(
+        paragraph.text_style.as_deref(),
+        Some("heading1" | "heading2" | "heading3")
+    ) {
         parsed.summary.heading_count += 1;
     }
     if paragraph.is_list_item {

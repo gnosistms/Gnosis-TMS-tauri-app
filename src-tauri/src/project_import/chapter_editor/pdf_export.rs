@@ -1602,7 +1602,13 @@ fn render_typst_chapter(
                 let style = export_text_style(Some(text_style));
                 let plain = !matches!(
                     style.as_str(),
-                    "heading1" | "heading2" | "quote" | "blockquote" | "centered" | "indented"
+                    "heading1"
+                        | "heading2"
+                        | "heading3"
+                        | "quote"
+                        | "blockquote"
+                        | "centered"
+                        | "indented"
                 ) && !is_list_text_style(&style);
                 // Every body paragraph is indented, whatever precedes it, except
                 // the drop-cap opening.
@@ -2097,7 +2103,13 @@ fn dropcap_block_index(
                 let style = export_text_style(Some(text_style));
                 let plain = !matches!(
                     style.as_str(),
-                    "heading1" | "heading2" | "quote" | "blockquote" | "centered" | "indented"
+                    "heading1"
+                        | "heading2"
+                        | "heading3"
+                        | "quote"
+                        | "blockquote"
+                        | "centered"
+                        | "indented"
                 ) && !is_list_text_style(&style);
                 return (plain && first.is_alphabetic()).then_some(index);
             }
@@ -2242,6 +2254,7 @@ fn render_typst_text_block(style: &str, inline: &str, dropcap: bool, cover: bool
     match export_text_style(Some(style)).as_str() {
         "heading1" => format!("= {inline}\n\n"),
         "heading2" => format!("== {inline}\n\n"),
+        "heading3" => format!("=== {inline}\n\n"),
         "quote" | "blockquote" if cover => format!("#gnosis-quote(cover: true)[{inline}]\n\n"),
         "quote" | "blockquote" => format!("#gnosis-quote[{inline}]\n\n"),
         "centered" => format!("#align(center)[{inline}]\n\n"),
@@ -2286,7 +2299,7 @@ fn render_typst_cited_text_block(
     let citation_line = format!("#gnosis-citation[{citation}]");
     let cover_argument = if cover { ", cover: true" } else { "" };
     match export_text_style(Some(style)).as_str() {
-        "heading1" | "heading2" => None,
+        "heading1" | "heading2" | "heading3" => None,
         // Only quotes have citations.
         list if is_list_text_style(list) => None,
         "quote" | "blockquote" => Some(format!(
@@ -2956,7 +2969,7 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     let heading_rule = if latin {
-        format!("#show heading: set text(font: ({heading_family_list}), weight: \"regular\")\n#show heading: upper\n#show heading.where(level: 1): set text(size: 14.5pt)\n#show heading.where(level: 2): set text(size: 12pt)\n#show heading: set block(above: 1.3em, below: {size_pt}pt * {leading_em})\n")
+        format!("#show heading: set text(font: ({heading_family_list}), weight: \"regular\")\n#show heading: upper\n#show heading.where(level: 1): set text(size: 14.5pt)\n#show heading.where(level: 2): set text(size: 12pt)\n#show heading.where(level: 3): set text(size: {size_pt}pt)\n#show heading: set block(above: 1.3em, below: {size_pt}pt * {leading_em})\n")
     } else {
         String::new()
     };

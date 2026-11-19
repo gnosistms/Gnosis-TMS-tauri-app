@@ -31,7 +31,7 @@ const IMAGE_WORKERS: usize = 6;
 // Readers' own heading rules beat inherited alignment, so title headings set it.
 // The publisher logo fits about the PDF's 1.105in x 0.595in box; auto width and
 // height with both maxima keep its ratio without object-fit, which old readers lack.
-const STYLES: &str = "body{font-family:serif;line-height:1.5;margin:1em;}h1,h2{line-height:1.2;break-after:avoid;}blockquote{margin:1em 2em;}.quote-attribution{display:block;text-align:right;font-style:normal;}.indented{margin-inline-start:2em;}.centered,.title,.title h1,.title h2{text-align:center;}figure{text-align:center;break-inside:avoid;}img{max-width:100%;height:auto;}.title img{max-width:7em;max-height:4em;}figcaption{margin-top:.5em;}audio{width:100%;}.missing-image{border:1px solid;padding:.5em;font-size:.9em;}.footnote{font-size:.9em;}hr{width:30%;margin:1.5em auto;}.noteref{vertical-align:super;font-size:.75em;}";
+const STYLES: &str = "body{font-family:serif;line-height:1.5;margin:1em;}h1,h2,h3{line-height:1.2;break-after:avoid;}blockquote{margin:1em 2em;}.quote-attribution{display:block;text-align:right;font-style:normal;}.indented{margin-inline-start:2em;}.centered,.title,.title h1,.title h2{text-align:center;}figure{text-align:center;break-inside:avoid;}img{max-width:100%;height:auto;}.title img{max-width:7em;max-height:4em;}figcaption{margin-top:.5em;}audio{width:100%;}.missing-image{border:1px solid;padding:.5em;font-size:.9em;}.footnote{font-size:.9em;}hr{width:30%;margin:1.5em auto;}.noteref{vertical-align:super;font-size:.75em;}";
 
 struct Section {
     document: ExportDocument,
@@ -507,6 +507,7 @@ fn section_body(
                 let (tag, class) = match export_text_style(Some(text_style)).as_str() {
                     "heading1" | "chapter_heading" => ("h1", ""),
                     "heading2" => ("h2", ""),
+                    "heading3" => ("h3", ""),
                     "quote" => ("blockquote", ""),
                     "indented" => ("p", "indented"),
                     "centered" => ("p", "centered"),

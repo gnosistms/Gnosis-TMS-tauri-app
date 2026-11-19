@@ -524,7 +524,8 @@
   text-transform: var(--heading-case);
 }
 
-.translate-preview__block--heading2 {
+.translate-preview__block--heading2,
+.translate-preview__block--heading3 {
   font-size: calc(var(--translation-editor-font-size, 14px) * var(--heading2-scale));
   font-weight: var(--heading-weight);
   line-height: 1.35;
@@ -1975,7 +1976,7 @@
 /* Preview headings keep their heading weight over the heavier non-Latin body
    weight above, so non-Latin headings stay bold as in the PDF. The book
    preview's own heading rules load later and still win. */
-.translate-preview__block:is(.translate-preview__block--heading1, .translate-preview__block--heading2) {
+.translate-preview__block:is(.translate-preview__block--heading1, .translate-preview__block--heading2, .translate-preview__block--heading3) {
   font-weight: var(--heading-weight);
 }
 
@@ -2156,13 +2157,19 @@
   text-transform: var(--heading-case);
 }
 
-.translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style="heading2"] .translation-language-panel__field,
-.translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style="heading2"] .translation-language-panel__field-highlight,
-.translation-language-panel__field-static[data-row-text-style="heading2"] {
+.translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote):is([data-row-text-style="heading2"], [data-row-text-style="heading3"]) .translation-language-panel__field,
+.translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote):is([data-row-text-style="heading2"], [data-row-text-style="heading3"]) .translation-language-panel__field-highlight,
+.translation-language-panel__field-static:is([data-row-text-style="heading2"], [data-row-text-style="heading3"]) {
   font-size: calc(var(--translation-editor-font-size, 14px) * var(--heading2-scale));
   font-weight: var(--heading-weight);
   line-height: 1.35;
   text-transform: var(--heading-case);
+}
+
+.translate-preview__block--heading3,
+.translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style="heading3"] :is(.translation-language-panel__field, .translation-language-panel__field-highlight),
+.translation-language-panel__field-static[data-row-text-style="heading3"] {
+  font-size: var(--translation-editor-font-size, 14px);
 }
 
 .translation-language-panel__field-stack:not(.translation-language-panel__field-stack--footnote)[data-row-text-style="quote"],
