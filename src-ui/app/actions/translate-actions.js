@@ -116,6 +116,7 @@ import {
   runEditorAiAssistant,
   runEditorAiReview,
   saveEditorConflictResolution,
+  resolveEditorMultipleH1Warning,
   resolveEditorRowConflict,
   restoreEditorFieldHistory,
   restoreEditorRow,
@@ -202,6 +203,7 @@ const CURRENT_WRITE_ACTIONS = new Set([
   "duplicate-editor-language-image-with-caption",
   "confirm-editor-image-duplicate-overwrite",
   "confirm-editor-image-reuse",
+  "confirm-editor-multiple-h1",
 ]);
 
 const SESSION_WRITE_PREFIXES = [
@@ -263,6 +265,7 @@ function blockReadOnlyWriteAction(action, render, event = null) {
     ?? state.editorChapter?.imageDuplicateOverwriteModal?.rowId
     ?? state.editorChapter?.imageReuseModal?.rowId
     ?? state.editorChapter?.rowPermanentDeletionModal?.rowId
+    ?? state.editorChapter?.pendingH1RowId
     ?? state.editorChapter?.activeRowId
     ?? null;
   const restoreRow = action.startsWith("restore-editor-row:");
@@ -651,6 +654,11 @@ export function createTranslateActions(render) {
       const rowId = button?.dataset.rowId ?? null;
       const textStyle = button?.dataset.textStyle ?? null;
       await updateEditorRowTextStyle(render, rowId, textStyle);
+      return true;
+    }
+
+    if (action === "confirm-editor-multiple-h1" || action === "cancel-editor-multiple-h1") {
+      await resolveEditorMultipleH1Warning(render, action === "confirm-editor-multiple-h1");
       return true;
     }
 

@@ -180,6 +180,8 @@ function applyEditorPayloadToState(
   const { rows: reconciledRows, dirtyRowIds: preservedDirtyRowIds } = isSameChapterReload
     ? mergeInFlightDirtyEditorRows(visibleRows, state.editorChapter, payload.chapterId, payload.languages)
     : { rows: visibleRows, dirtyRowIds: new Set() };
+  // The user can open or dismiss the warning while a refresh is in flight.
+  const pendingH1RowId = state.editorChapter?.chapterId === payload.chapterId ? state.editorChapter.pendingH1RowId : null;
   const hasImportedEditorConflicts = visibleRows.some((row) =>
     row?.freshness === "conflict"
     || row?.saveStatus === "conflict"
@@ -215,6 +217,8 @@ function applyEditorPayloadToState(
     deferredStructuralChanges: false,
     backgroundSyncStatus: "idle",
     backgroundSyncError: "",
+    pendingH1RowId: pendingH1RowId && reconciledRows.some((row) => row.rowId === pendingH1RowId && row.lifecycleState !== "deleted")
+      ? pendingH1RowId : null,
     rows: reconciledRows,
   }, previousEditorChapter);
 
@@ -423,6 +427,7 @@ export async function loadSelectedChapterEditorData(render, options = {}, operat
       : {},
     activeRowId: preserveVisibleRows ? state.editorChapter.activeRowId : null,
     activeLanguageCode: preserveVisibleRows ? state.editorChapter.activeLanguageCode : null,
+    pendingH1RowId: preserveVisibleRows ? state.editorChapter.pendingH1RowId : null,
     mainFieldEditor: preserveVisibleRows
       ? state.editorChapter.mainFieldEditor
       : createEditorMainFieldEditorState(),

@@ -53,7 +53,7 @@ import {
   state,
 } from "./state.js";
 import { showNoticeBadge } from "./status-feedback.js";
-import { normalizeEditorRowTextStyle } from "./editor-row-text-style.js";
+import { EDITOR_ROW_TEXT_STYLE_HEADING1, normalizeEditorRowTextStyle } from "./editor-row-text-style.js";
 import { requestEditorOperation } from "./editor-operation-queue.js";
 import { mergeEditorRowVersions } from "./editor-row-merge.js";
 import {
@@ -1056,7 +1056,20 @@ export function collapseEditorImageCaption(render, rowId, languageCode) {
   renderEditorRowScoped(render, rowId, "image-caption-collapse");
 }
 
-export async function updateEditorRowTextStyle(render, rowId, nextTextStyle, operations = {}) {
+export async function resolveEditorMultipleH1Warning(render, confirmed, operations) {
+  const rowId = state.editorChapter?.pendingH1RowId;
+  if (!rowId) return;
+
+  state.editorChapter = { ...state.editorChapter, pendingH1RowId: null };
+  render?.({ scope: "translate-multiple-h1-modal" });
+  if (confirmed) {
+    await updateEditorRowTextStyle(render, rowId, EDITOR_ROW_TEXT_STYLE_HEADING1, operations, {
+      multipleH1Confirmed: true,
+    });
+  }
+}
+
+export async function updateEditorRowTextStyle(render, rowId, nextTextStyle, operations = {}, options = {}) {
   if (chapterHasSrtSourceFormat(state.editorChapter?.sourceFormats)) return;
   const { updateEditorChapterRow } = operations;
   if (!rowId || typeof updateEditorChapterRow !== "function") {
@@ -1070,7 +1083,7 @@ export async function updateEditorRowTextStyle(render, rowId, nextTextStyle, ope
 
   const normalizedTextStyle = normalizeEditorRowTextStyle(nextTextStyle);
   const row = await ensureEditorRowReadyForWrite(render, rowId);
-  if (!row) {
+  if (!row || state.editorChapter?.chapterId !== editorChapter.chapterId) {
     return;
   }
 
@@ -1096,6 +1109,23 @@ export async function updateEditorRowTextStyle(render, rowId, nextTextStyle, ope
   } catch (error) {
     if (!handleEditorPermissionDenied(error, render)) {
       showNoticeBadge(error?.message ?? String(error), render);
+    }
+    return;
+  }
+
+  if (
+    normalizedTextStyle === EDITOR_ROW_TEXT_STYLE_HEADING1
+    && !options.multipleH1Confirmed
+    && state.editorChapter.rows.some((other) =>
+      other.rowId !== rowId
+      && other.lifecycleState !== "deleted"
+      && !other.remotelyDeleted
+      && normalizeEditorRowTextStyle(other.textStyle) === EDITOR_ROW_TEXT_STYLE_HEADING1
+    )
+  ) {
+    if (!state.editorChapter.pendingH1RowId) {
+      state.editorChapter = { ...state.editorChapter, pendingH1RowId: rowId };
+      render?.({ scope: "translate-multiple-h1-modal" });
     }
     return;
   }
