@@ -497,6 +497,7 @@ pub(super) fn normalize_editor_text_style_value(value: Option<&str>) -> String {
     match value.unwrap_or_default().trim() {
         "h1" | "heading1" => "heading1".to_string(),
         "h2" | "heading2" => "heading2".to_string(),
+        "h3" | "heading3" => "heading3".to_string(),
         "q" | "quote" => "quote".to_string(),
         "i" | "indented" => "indented".to_string(),
         "c" | "center" | "centered" => "centered".to_string(),

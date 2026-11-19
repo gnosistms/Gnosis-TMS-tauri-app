@@ -1761,6 +1761,20 @@ mod tests {
     }
 
     #[test]
+    fn apply_editor_text_style_update_round_trips_subheadings() {
+        let mut data = json!({
+            "row_id": "r", "structure": { "order_key": "0001" },
+            "origin": { "source_row_number": 1 }, "fields": {},
+            "status": { "review_state": "unreviewed" }
+        });
+        let (style, changed) = apply_editor_text_style_update(&mut data, "h3").unwrap();
+        assert!(changed);
+        assert_eq!(style, "heading3");
+        let row: StoredRowFile = serde_json::from_value(data).unwrap();
+        assert_eq!(row_text_style(&row), "heading3");
+    }
+
+    #[test]
     fn apply_editor_text_style_update_accepts_centered_style() {
         let mut row_value = json!({
           "text_style": "paragraph",

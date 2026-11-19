@@ -1,6 +1,7 @@
 export const EDITOR_ROW_TEXT_STYLE_PARAGRAPH = "paragraph";
 export const EDITOR_ROW_TEXT_STYLE_HEADING1 = "heading1";
 export const EDITOR_ROW_TEXT_STYLE_HEADING2 = "heading2";
+export const EDITOR_ROW_TEXT_STYLE_HEADING3 = "heading3";
 export const EDITOR_ROW_TEXT_STYLE_QUOTE = "quote";
 export const EDITOR_ROW_TEXT_STYLE_INDENTED = "indented";
 export const EDITOR_ROW_TEXT_STYLE_CENTERED = "centered";
@@ -40,11 +41,16 @@ export const EDITOR_ROW_TEXT_STYLE_OPTIONS = [
   {
     value: EDITOR_ROW_TEXT_STYLE_HEADING1,
     label: "H1",
-    tooltip: "Large heading",
+    tooltip: "Use this style for the chapter title",
   },
   {
     value: EDITOR_ROW_TEXT_STYLE_HEADING2,
     label: "H2",
+    tooltip: "Section heading",
+  },
+  {
+    value: EDITOR_ROW_TEXT_STYLE_HEADING3,
+    label: "H3",
     tooltip: "Subheading",
   },
   {
@@ -102,6 +108,9 @@ export function normalizeEditorRowTextStyle(value) {
     case "h2":
     case EDITOR_ROW_TEXT_STYLE_HEADING2:
       return EDITOR_ROW_TEXT_STYLE_HEADING2;
+    case "h3":
+    case EDITOR_ROW_TEXT_STYLE_HEADING3:
+      return EDITOR_ROW_TEXT_STYLE_HEADING3;
     case "q":
     case EDITOR_ROW_TEXT_STYLE_QUOTE:
       return EDITOR_ROW_TEXT_STYLE_QUOTE;
@@ -133,5 +142,14 @@ export function normalizeEditorRowTextStyle(value) {
       return EDITOR_ROW_TEXT_STYLE_CUSTOM_HTML;
     default:
       return EDITOR_ROW_TEXT_STYLE_PARAGRAPH;
+  }
+}
+
+export function editorRowHeadingLevel(textStyle) {
+  switch (normalizeEditorRowTextStyle(textStyle)) {
+    case EDITOR_ROW_TEXT_STYLE_HEADING1: return 1;
+    case EDITOR_ROW_TEXT_STYLE_HEADING2: return 2;
+    case EDITOR_ROW_TEXT_STYLE_HEADING3: return 3;
+    default: return 0;
   }
 }

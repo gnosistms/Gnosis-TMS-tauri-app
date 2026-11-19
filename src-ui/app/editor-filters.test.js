@@ -605,7 +605,7 @@ test("changed-after-my-edit filter shows the snapshot's rows, not deleted ones",
 
 for (const { mode, label, styles } of [
   { mode: EDITOR_ROW_FILTER_MODE_QUOTE_BLOCK, label: "Quote block", styles: ["quote", "q"] },
-  { mode: EDITOR_ROW_FILTER_MODE_HEADING, label: "Heading", styles: ["heading1", "heading2", "h1", "h2"] },
+  { mode: EDITOR_ROW_FILTER_MODE_HEADING, label: "Heading", styles: ["heading1", "heading2", "heading3", "h1", "h2", "h3"] },
 ]) {
   test(`${label} filter matches row styles and combines with search`, () => {
     assert.ok(editorRowFilterOptionsForChapter().some((option) => option.value === mode && option.label === label));

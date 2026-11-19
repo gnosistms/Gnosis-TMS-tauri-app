@@ -838,7 +838,8 @@ fn meaningful_alt_caption(element: ElementRef<'_>) -> Option<String> {
 fn html_text_style_for_tag(tag: &str) -> (Option<String>, &'static str) {
     match tag {
         "h1" => (Some("heading1".to_string()), "heading"),
-        "h2" | "h3" | "h4" | "h5" | "h6" => (Some("heading2".to_string()), "heading"),
+        "h2" => (Some("heading2".to_string()), "heading"),
+        "h3" | "h4" | "h5" | "h6" => (Some("heading3".to_string()), "heading"),
         "blockquote" => (Some("quote".to_string()), "quote"),
         _ => (None, "paragraph"),
     }
@@ -1025,6 +1026,7 @@ mod tests {
             2
         );
         assert!(styles.contains(&Some("heading2")));
+        assert!(styles.contains(&Some("heading3")));
         assert!(styles.contains(&Some("quote")));
         assert!(styles.contains(&Some("centered")));
         assert_eq!(parsed.rows[0].text_style.as_deref(), Some("heading1"));

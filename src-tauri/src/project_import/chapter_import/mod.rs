@@ -1320,6 +1320,8 @@ mod tests {
                   <w:tc><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc>
                 </w:tr>
               </w:tbl>
+              <w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t>Section</w:t></w:r></w:p>
+              <w:p><w:pPr><w:pStyle w:val="Heading3"/></w:pPr><w:r><w:t>Subsection</w:t></w:r></w:p>
             </w:body>
           </w:document>
         "#;
@@ -1336,7 +1338,9 @@ mod tests {
 
         assert_eq!(parsed.source_format, "docx");
         assert_eq!(parsed.languages[0].code, "en");
-        assert_eq!(parsed.rows.len(), 4);
+        assert_eq!(parsed.rows.len(), 6);
+        assert_eq!(parsed.rows[4].text_style.as_deref(), Some("heading2"));
+        assert_eq!(parsed.rows[5].text_style.as_deref(), Some("heading3"));
         assert_eq!(
             parsed.rows[0]
                 .fields
@@ -1368,8 +1372,8 @@ mod tests {
         );
 
         let summary = parsed.import_summary.expect("DOCX summary should exist");
-        assert_eq!(summary.imported_rows, 4);
-        assert_eq!(summary.heading_count, 1);
+        assert_eq!(summary.imported_rows, 6);
+        assert_eq!(summary.heading_count, 3);
         assert_eq!(summary.imported_footnotes, 1);
         assert_eq!(summary.flattened_list_items, 1);
         assert_eq!(summary.flattened_table_rows, 1);

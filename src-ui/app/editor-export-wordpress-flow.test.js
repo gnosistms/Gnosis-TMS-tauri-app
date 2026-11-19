@@ -939,13 +939,24 @@ test("project WordPress export combines saved chapter snapshots without changing
       if (command === "load_gtms_chapter_editor_data") return {
         fileTitle: args.input.chapterId,
         languages: [{ code: "vi" }],
-        rows: [{ rowId: args.input.chapterId, fields: { vi: `Saved ${args.input.chapterId}` } }],
+        rows: [
+          ...(args.input.chapterId === "chapter-1" ? [{ rowId: "title", textStyle: "heading1", fields: { vi: "First chapter" } }] : []),
+          { rowId: "section", textStyle: "heading2", fields: { vi: "Section" } },
+          { rowId: "subsection", textStyle: "heading3", fields: { vi: "Subsection" } },
+          { rowId: args.input.chapterId, fields: { vi: `Saved ${args.input.chapterId}` } },
+        ],
       };
     },
   });
   assert.deepEqual(calls.map((call) => call.command), ["load_gtms_chapter_editor_data", "load_gtms_chapter_editor_data", "export_chapter_to_wordpress"]);
   assert.match(calls[2].input.content, /Saved chapter-1[\s\S]*Saved chapter-2/);
   assert.equal(calls[2].input.title, "Book");
+  const headings = [...calls[2].input.content.matchAll(/<h(\d) class="wp-block-heading">([^<]+)<\/h\1>/g)];
+  assert.deepEqual(headings.map(([, level, title]) => [level, title]), [
+    ["2", "1. First chapter"], ["3", "Section"], ["4", "Subsection"],
+    ["2", "2. Chapter 2"], ["3", "Section"], ["4", "Subsection"],
+  ]);
+  assert.ok(calls[2].input.content.includes('<!-- wp:heading {"level":4} -->\n<h4 class="wp-block-heading">'));
   assert.equal(state.editorChapter.chapterId, "chapter-1");
   assert.equal(state.editorChapter.rows[0].fields.vi, "Text one[1]");
 });

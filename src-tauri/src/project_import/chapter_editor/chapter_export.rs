@@ -1791,6 +1791,7 @@ fn render_html_document(document: &ExportDocument) -> Result<String, String> {
                 let (open, close) = match export_text_style(Some(text_style)).as_str() {
                     "heading1" => ("<h1>", "</h1>"),
                     "heading2" => ("<h2>", "</h2>"),
+                    "heading3" => ("<h3>", "</h3>"),
                     "quote" => ("<blockquote>", "</blockquote>"),
                     "indented" => ("<p class=\"indented\">", "</p>"),
                     "centered" => ("<p class=\"centered\">", "</p>"),
@@ -2070,6 +2071,7 @@ fn render_txt_document(document: &ExportDocument) -> String {
                 let rendered = match export_text_style(Some(text_style)).as_str() {
                     "heading1" => text.to_uppercase(),
                     "heading2" => format!(">>> {}", text.to_uppercase()),
+                    "heading3" => format!(">>>> {}", text.to_uppercase()),
                     "quote" => format!("<blockquote>\n{text}\n</blockquote>"),
                     _ => text,
                 };
@@ -2211,6 +2213,7 @@ fn render_md_document(document: &ExportDocument) -> String {
                 let rendered = match export_text_style(Some(text_style)).as_str() {
                     "heading1" => format!("# {}", md_single_line(&inline)),
                     "heading2" => format!("## {}", md_single_line(&inline)),
+                    "heading3" => format!("### {}", md_single_line(&inline)),
                     // A bare ">" line keeps a quote's paragraphs in one quotation.
                     "quote" => inline
                         .lines()
@@ -2954,6 +2957,7 @@ fn docx_paragraph_runs_xml(text_style: Option<&str>, runs: &str) -> String {
     match normalized.as_str() {
         "heading1" => properties.push_str(r#"<w:pStyle w:val="Heading1"/>"#),
         "heading2" => properties.push_str(r#"<w:pStyle w:val="Heading2"/>"#),
+        "heading3" => properties.push_str(r#"<w:pStyle w:val="Heading3"/>"#),
         "quote" => properties.push_str(r#"<w:pStyle w:val="Quote"/>"#),
         "indented" => properties.push_str(r#"<w:ind w:left="720"/>"#),
         "centered" => properties.push_str(r#"<w:jc w:val="center"/>"#),
@@ -3615,6 +3619,7 @@ fn rtf_text_paragraph(text_style: Option<&str>, text: &str, forced_italic: bool)
     let properties = match export_text_style(text_style).as_str() {
         "heading1" => "\\sb240\\b\\fs32",
         "heading2" => "\\sb240\\b\\fs26",
+        "heading3" => "\\sb200\\b\\fs24",
         "quote" => "\\li720\\ri720",
         "indented" => "\\li720",
         "centered" => "\\qc",
@@ -3934,7 +3939,7 @@ fn package_rels_xml() -> &'static str {
 }
 
 fn styles_xml() -> &'static str {
-    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="32"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:pPr><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:sz w:val="26"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:pPr><w:ind w:left="720" w:right="720"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="VellumAttribution"><w:name w:val="Vellum Attribution"/><w:pPr><w:jc w:val="right"/></w:pPr><w:rPr><w:sz w:val="20"/></w:rPr></w:style></w:styles>"#
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="32"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:pPr><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:sz w:val="26"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/><w:pPr><w:outlineLvl w:val="2"/></w:pPr><w:rPr><w:b/><w:sz w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:pPr><w:ind w:left="720" w:right="720"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="VellumAttribution"><w:name w:val="Vellum Attribution"/><w:pPr><w:jc w:val="right"/></w:pPr><w:rPr><w:sz w:val="20"/></w:rPr></w:style></w:styles>"#
 }
 
 #[cfg(test)]

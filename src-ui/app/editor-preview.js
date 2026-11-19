@@ -20,7 +20,7 @@ import { parseInlineMarkup } from "./editor-inline-markup/parser.js";
 import {
   EDITOR_ROW_TEXT_STYLE_CENTERED,
   EDITOR_ROW_TEXT_STYLE_HEADING1,
-  EDITOR_ROW_TEXT_STYLE_HEADING2,
+  editorRowHeadingLevel,
   EDITOR_ROW_TEXT_STYLE_INDENTED,
   EDITOR_ROW_TEXT_STYLE_PARAGRAPH,
   EDITOR_ROW_TEXT_STYLE_QUOTE,
@@ -172,8 +172,7 @@ function previewCitableBlockIndex(blocks) {
       && !block.attribution
       && !isCustomHtmlRowTextStyle(style)
       && !isListRowTextStyle(style)
-      && style !== EDITOR_ROW_TEXT_STYLE_HEADING1
-      && style !== EDITOR_ROW_TEXT_STYLE_HEADING2;
+      && !editorRowHeadingLevel(style);
     return citable ? index : -1;
   }
   return -1;
@@ -428,24 +427,15 @@ function footnoteAppendPartIndex(parts, footnotes) {
 }
 
 function previewTextTagForStyle(textStyle) {
-  switch (normalizeEditorRowTextStyle(textStyle)) {
-    case EDITOR_ROW_TEXT_STYLE_HEADING1:
-      return "h1";
-    case EDITOR_ROW_TEXT_STYLE_HEADING2:
-      return "h2";
-    case EDITOR_ROW_TEXT_STYLE_QUOTE:
-      return "blockquote";
-    default:
-      return "p";
-  }
+  const level = editorRowHeadingLevel(textStyle);
+  if (level) return `h${level}`;
+  return normalizeEditorRowTextStyle(textStyle) === EDITOR_ROW_TEXT_STYLE_QUOTE ? "blockquote" : "p";
 }
 
 function previewTextVariantForStyle(textStyle) {
+  const level = editorRowHeadingLevel(textStyle);
+  if (level) return `heading${level}`;
   switch (normalizeEditorRowTextStyle(textStyle)) {
-    case EDITOR_ROW_TEXT_STYLE_HEADING1:
-      return "heading1";
-    case EDITOR_ROW_TEXT_STYLE_HEADING2:
-      return "heading2";
     case EDITOR_ROW_TEXT_STYLE_QUOTE:
       return "quote";
     case EDITOR_ROW_TEXT_STYLE_INDENTED:
@@ -929,17 +919,13 @@ function serializePreviewTextBlockHtml(block, footnoteState, options = {}) {
   // generates (verified by editor-preview-wordpress-validation.test.js), so
   // the Gutenberg editor accepts the post without rewriting or recovery.
   const normalizedStyle = normalizeEditorRowTextStyle(block?.textStyle);
-  if (normalizedStyle === EDITOR_ROW_TEXT_STYLE_HEADING1) {
+  const sourceLevel = editorRowHeadingLevel(normalizedStyle);
+  if (sourceLevel) {
+    const level = options.wordPressHeadingLevel?.(sourceLevel) ?? sourceLevel;
     return {
       blockName: "heading",
-      attributes: { level: 1 },
-      html: `<h1 class="wp-block-heading">${textHtml}</h1>`,
-    };
-  }
-  if (normalizedStyle === EDITOR_ROW_TEXT_STYLE_HEADING2) {
-    return {
-      blockName: "heading",
-      html: `<h2 class="wp-block-heading">${textHtml}</h2>`,
+      attributes: level === 2 ? undefined : { level },
+      html: `<h${level} class="wp-block-heading">${textHtml}</h${level}>`,
     };
   }
   if (normalizedStyle === EDITOR_ROW_TEXT_STYLE_INDENTED) {
@@ -1084,11 +1070,39 @@ function serializePreviewTextBlockParts(block, footnoteState, options = {}) {
     const textBlock = serializePreviewTextBlock(part.block, footnoteState, {
       preRenderedTextHtml: textHtml,
       localFormatting: options.localFormatting,
+      wordPressHeadingLevel: options.wordPressHeadingLevel,
     });
     return attribution
       ? [textBlock, serializePreviewCitationParagraph(attribution, "", options)]
       : [textBlock];
   });
+}
+
+// Keep hand-authored markup byte-for-byte except for heading tag names. Quoted
+// attributes, comments and raw-text elements can themselves contain "<h1>".
+function wordPressCustomHtmlHeadings(html, headingLevel) {
+  if (!headingLevel || !/<\/?h[1-6](?=[\s/>])/i.test(html)) return html;
+  const tags = /<!--[\s\S]*?(?:--!?>|$)|<!\[CDATA\[[\s\S]*?(?:\]\]>|$)|<[!?](?:[^"'>]|"[^"]*"|'[^']*')*>|<(\/?)([a-z][^\t\n\f\r /><]*)(?=[\t\n\f\r />])(?:[^"'>]|"[^"]*"|'[^']*')*>/gi;
+  const rawTextElements = /^(?:script|style|textarea|title|iframe|noembed|noframes|noscript|xmp)$/i;
+  let result = "";
+  let copied = 0;
+  for (let match; (match = tags.exec(html));) {
+    const [, closing, name] = match;
+    if (!name) continue;
+    if (!closing && rawTextElements.test(name)) {
+      const end = new RegExp(`</${name}(?=[\\s/>])[^>]*>`, "ig");
+      end.lastIndex = tags.lastIndex;
+      if (!end.exec(html)) break;
+      tags.lastIndex = end.lastIndex;
+    } else if (!closing && name.toLowerCase() === "plaintext") {
+      break;
+    } else if (/^h[1-6]$/i.test(name)) {
+      const digit = match.index + closing.length + 2;
+      result += html.slice(copied, digit) + headingLevel(Number(name[1]));
+      copied = digit + 1;
+    }
+  }
+  return result + html.slice(copied);
 }
 
 function serializeEditorPreviewBlocks(blocks, options = {}) {
@@ -1099,11 +1113,8 @@ function serializeEditorPreviewBlocks(blocks, options = {}) {
         return [serializePreviewImageHtml(block)];
       }
 
-      // Custom-HTML rows export the author's raw HTML verbatim, wrapped as a
-      // WordPress Custom HTML block (the comment markers are inert in plain
-      // clipboard HTML and make it a native block on WordPress.com).
       if (block?.kind === "text" && isCustomHtmlRowTextStyle(block.textStyle)) {
-        const rawHtml = String(block.text ?? "").trim();
+        const rawHtml = wordPressCustomHtmlHeadings(String(block.text ?? "").trim(), options.wordPressHeadingLevel);
         return [rawHtml ? `<!-- wp:html -->\n${rawHtml}\n<!-- /wp:html -->` : ""];
       }
 
@@ -1186,11 +1197,13 @@ const WORDPRESS_SEPARATOR_BLOCK = [
 // that the core footnotes block stores in the `footnotes` post meta (ids match the
 // `data-fn` refs already present in the markup). A leading H1 is promoted to
 // `title` and removed from the content.
-export function serializeEditorPreviewWordPress(blocks) {
+export function serializeEditorPreviewWordPress(blocks, { wholeBook = false } = {}) {
   const allBlocks = Array.isArray(blocks) ? blocks : [];
   const titleEntry = wordPressLeadingTitleBlock(allBlocks);
   const bodyBlocks = titleEntry ? allBlocks.slice(1) : allBlocks;
-  const { bodyHtml, footnotesHtml, footnoteState } = serializeEditorPreviewBlocks(bodyBlocks);
+  const { bodyHtml, footnotesHtml, footnoteState } = serializeEditorPreviewBlocks(bodyBlocks, {
+    wordPressHeadingLevel: (level) => wholeBook ? Math.min(6, level + 1) : Math.max(2, level),
+  });
 
   return {
     content: [bodyHtml, footnotesHtml]

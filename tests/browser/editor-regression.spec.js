@@ -5660,6 +5660,19 @@ test.describe("editor regressions", () => {
     const paragraphMetrics = await readEditorFieldMetrics(page, "fixture-row-0001", "vi");
     expect(paragraphMetrics).not.toBeNull();
 
+    const heading3Button = page.locator('[data-editor-row-text-style-button][data-row-id="fixture-row-0001"][data-language-code="vi"][data-text-style="heading3"]');
+    for (const [button, tooltip] of [
+      [heading1Button, "Use this style for the chapter title"],
+      [heading2Button, "Section heading"],
+      [heading3Button, "Subheading"],
+    ]) {
+      await button.hover();
+      await expect.poll(() => button.evaluate((element) => getComputedStyle(element, "::before").content)).toBe(JSON.stringify(tooltip));
+    }
+    await heading3Button.click();
+    await expect(heading3Button).toHaveAttribute("aria-checked", "true");
+    await expect.poll(async () => (await readMockTauriState(page)).textStyles["fixture-chapter"]["fixture-row-0001"]).toBe("heading3");
+
     await heading2Button.click();
     await expect.poll(async () => {
       return (await readEditorFieldMetrics(page, "fixture-row-0001", "vi"))?.fontSizePx ?? 0;

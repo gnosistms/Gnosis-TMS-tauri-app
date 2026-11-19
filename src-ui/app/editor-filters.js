@@ -2,8 +2,7 @@ import { editorRowHasUnreadComments } from "./editor-comments.js";
 import { rowHasUnresolvedEditorConflict } from "./editor-conflicts.js";
 import { extractInlineMarkupVisibleText } from "./editor-inline-markup.js";
 import {
-  EDITOR_ROW_TEXT_STYLE_HEADING1,
-  EDITOR_ROW_TEXT_STYLE_HEADING2,
+  editorRowHeadingLevel,
   EDITOR_ROW_TEXT_STYLE_QUOTE,
   normalizeEditorRowTextStyle,
 } from "./editor-row-text-style.js";
@@ -224,10 +223,8 @@ function rowMatchesFilterMode(
         .every((text) => extractInlineMarkupVisibleText(text).trim().length === 0);
     case EDITOR_ROW_FILTER_MODE_QUOTE_BLOCK:
       return normalizeEditorRowTextStyle(row.textStyle) === EDITOR_ROW_TEXT_STYLE_QUOTE;
-    case EDITOR_ROW_FILTER_MODE_HEADING: {
-      const style = normalizeEditorRowTextStyle(row.textStyle);
-      return style === EDITOR_ROW_TEXT_STYLE_HEADING1 || style === EDITOR_ROW_TEXT_STYLE_HEADING2;
-    }
+    case EDITOR_ROW_FILTER_MODE_HEADING:
+      return editorRowHeadingLevel(row.textStyle) > 0;
     case EDITOR_ROW_FILTER_MODE_HAS_IMAGE:
       return Boolean(targetSection?.image);
     case EDITOR_ROW_FILTER_MODE_HAS_FOOTNOTE:

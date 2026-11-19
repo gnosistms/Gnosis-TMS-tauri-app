@@ -556,7 +556,9 @@ export async function submitWordPressExport(render, operations = {}, options = {
 
   const blocks = projectBlocks ?? buildEditorPreviewDocument(state.editorChapter?.rows, refreshedLanguageCode);
   if (projectBlocks) blocks.unshift({ kind: "text", textStyle: "heading1", text: modal.projectTitle, rowId: `project-title:${modal.projectId}`, languageCode: refreshedLanguageCode, footnotes: [] });
-  const { content, footnotes, title: headingTitle } = serializeEditorPreviewWordPress(blocks);
+  const { content, footnotes, title: headingTitle } = serializeEditorPreviewWordPress(blocks, {
+    wholeBook: Boolean(modal.projectId),
+  });
   if (!content.trim()) {
     failWordPressAction(render, "There is nothing to export.");
     return;
