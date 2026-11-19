@@ -347,22 +347,33 @@ export function handleEditorImageCaptionEnrichedEvent(payload, render, operation
   const rowId = String(payload?.rowId ?? "");
   const languageCode = String(payload?.languageCode ?? "");
   const imageUrl = String(payload?.imageUrl ?? "");
+  const row = findEditorRowById(rowId, state.editorChapter);
+  const caption = payload?.row?.imageCaptions?.[languageCode];
+  const persistedCaption = row?.persistedImageCaptions?.[languageCode] ?? "";
   if (
-    !rowId
+    !row
     || !languageCode
     || !imageUrl
+    || typeof caption !== "string"
+    || (typeof payload.baseCaption === "string" && payload.baseCaption !== persistedCaption)
     || state.editorChapter?.chapterId !== payload?.chapterId
-    || !editorFieldImageEqual(
-      currentImage(rowId, languageCode),
-      { kind: "url", url: imageUrl },
-    )
+    || !editorFieldImageEqual(row.images?.[languageCode], { kind: "url", url: imageUrl })
   ) {
     return false;
   }
 
-  if (!updateRowForImagePayload(rowId, payload?.row, operations)) {
-    return false;
-  }
+  // The lookup committed one caption. Other fields may already have pending edits.
+  const updateRow = operations.updateEditorChapterRow ?? updateEditorChapterRow;
+  updateRow(rowId, (current) => ({
+    ...current,
+    imageCaptions: (current.imageCaptions?.[languageCode] ?? "") === persistedCaption
+      ? { ...current.imageCaptions, [languageCode]: caption }
+      : current.imageCaptions,
+    persistedImageCaptions: { ...current.persistedImageCaptions, [languageCode]: caption },
+    baseImageCaptions: { ...current.baseImageCaptions, [languageCode]: caption },
+    revisionToken: payload.row.revisionToken ?? current.revisionToken,
+    lastUpdate: payload.row.lastUpdate ?? current.lastUpdate,
+  }));
   state.editorChapter = {
     ...state.editorChapter,
     chapterBaseCommitSha: nextChapterBaseCommitSha(payload, state.editorChapter),

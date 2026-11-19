@@ -489,7 +489,8 @@ export function applyEditorRowPersistSucceeded(row, payloadRow, persistedSnapsho
   if (!rowChangedDuringSave) {
     const savedFields = hasPersistedSnapshot ? snapshotFields : normalizedRow.fields;
     const savedFootnotes = hasPersistedSnapshot ? snapshotFootnotes : normalizedRow.footnotes;
-    const savedImageCaptions = hasPersistedSnapshot ? snapshotImageCaptions : normalizedRow.imageCaptions;
+    // The backend can merge a WordPress caption while an unrelated text save is in flight.
+    const savedImageCaptions = payloadRow.imageCaptions ?? snapshotImageCaptions;
     const savedAttributions = hasPersistedSnapshot ? snapshotAttributions : normalizedRow.attributions;
     const savedImages = hasPersistedSnapshot ? snapshotImages : normalizedRow.images;
     return preservePendingRowWrites({

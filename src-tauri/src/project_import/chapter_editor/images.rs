@@ -7,7 +7,7 @@ use scraper::{ElementRef, Html, Selector};
 use std::{io::Read as _, time::Duration};
 use tauri::Emitter;
 
-use super::media_kind::{EditorMedia, VideoSource};
+use super::media_kind::{media_for_url, EditorMedia, VideoSource};
 use super::*;
 
 const WORDPRESS_CAPTION_USER_AGENT: &str = concat!(
@@ -52,6 +52,7 @@ struct EditorImageCaptionEnrichedEvent {
     row_id: String,
     language_code: String,
     image_url: String,
+    base_caption: String,
     row: EditorRow,
     chapter_base_commit_sha: Option<String>,
 }
@@ -280,11 +281,16 @@ fn wordpress_caption_response(
 fn wordpress_media_lookup(image_url: &str) -> Option<WordPressMediaLookup> {
     // Audio and video files live in the same media library; YouTube, Vimeo and
     // VideoPress links have no library entry to look up.
-    let media_type = match super::media_kind::media_for_url(image_url) {
+    let media_type = match media_for_url(image_url) {
         EditorMedia::Image => "image",
         EditorMedia::Audio => "audio",
         EditorMedia::Video(VideoSource::File) => "video",
         EditorMedia::Video(_) => return None,
+    };
+    let fields = if media_type == "audio" {
+        "caption,description,source_url"
+    } else {
+        "caption,source_url,media_details"
     };
     let image = url::Url::parse(image_url).ok()?;
     if !matches!(image.scheme(), "http" | "https") {
@@ -329,7 +335,7 @@ fn wordpress_media_lookup(image_url: &str) -> Option<WordPressMediaLookup> {
         .append_pair("slug", &slug)
         .append_pair("per_page", "1")
         .append_pair("media_type", media_type)
-        .append_pair("_fields", "caption,source_url,media_details");
+        .append_pair("_fields", fields);
     let mut endpoints = vec![exact_endpoint];
     endpoints.extend(searches.into_iter().map(|search| {
         let mut search_endpoint = endpoint.clone();
@@ -338,7 +344,7 @@ fn wordpress_media_lookup(image_url: &str) -> Option<WordPressMediaLookup> {
             .append_pair("search", &search)
             .append_pair("per_page", "100")
             .append_pair("media_type", media_type)
-            .append_pair("_fields", "caption,source_url,media_details");
+            .append_pair("_fields", fields);
         search_endpoint
     }));
     Some(WordPressMediaLookup {
@@ -444,22 +450,56 @@ fn wordpress_caption_from_media_response(
     else {
         return Some(WordPressCaptionMatch::NoMatch);
     };
-    let caption = media
-        .pointer("/caption/rendered")
+    let source_url = media
+        .get("source_url")
         .and_then(Value::as_str)
-        .and_then(|rendered| {
-            wordpress_caption_inline_markup(
-                rendered,
-                media
-                    .get("source_url")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default(),
-            )
-        });
+        .unwrap_or_default();
+    let rendered_text = |path| {
+        media
+            .pointer(path)
+            .and_then(Value::as_str)
+            .and_then(|html| wordpress_caption_inline_markup(html, source_url))
+    };
+    let caption = rendered_text("/caption/rendered");
+    let caption = match media_for_url(source_url) {
+        EditorMedia::Audio => {
+            wordpress_audio_caption(caption, rendered_text("/description/rendered"), source_url)
+        }
+        _ => caption,
+    };
     Some(match caption {
         Some(caption) => WordPressCaptionMatch::Caption(caption),
         None => WordPressCaptionMatch::MatchedWithoutCaption,
     })
+}
+
+fn wordpress_audio_caption(
+    caption: Option<String>,
+    description: Option<String>,
+    source_url: &str,
+) -> Option<String> {
+    let Some(caption) = caption else {
+        return description;
+    };
+    // With no authored caption, WordPress can generate an excerpt starting
+    // with the player's fallback URL, followed by part of the description.
+    let visible = super::chapter_export::inline_visible_text(&caption);
+    let Some(remainder) = visible
+        .strip_prefix(source_url)
+        .filter(|rest| rest.is_empty() || rest.starts_with(char::is_whitespace))
+    else {
+        return Some(caption);
+    };
+    let excerpt = strip_wordpress_generated_more_ellipsis(remainder);
+    if excerpt.trim().is_empty()
+        || description.as_ref().is_some_and(|text| {
+            super::chapter_export::inline_visible_text(text).starts_with(excerpt.trim())
+        })
+    {
+        description
+    } else {
+        Some(caption)
+    }
 }
 
 fn wordpress_media_item_matches_url(item: &Value, image_identity: &str) -> bool {
@@ -586,6 +626,8 @@ fn wordpress_caption_inline_markup(rendered: &str, source_url: &str) -> Option<S
             continue;
         };
         if trailing_more_link.is_some_and(|more_link| more_link.id() == element.id())
+            // WordPress prepends the recording's player and download link to its description.
+            || (element.value().name() == "audio" && media_for_url(source_url) == EditorMedia::Audio)
             || matches!(
                 element.value().name(),
                 "script" | "style" | "template" | "noscript"
@@ -814,6 +856,7 @@ fn enrich_wordpress_caption_sync(
         row_id: input.row_id,
         language_code: input.language_code,
         image_url: input.image_url,
+        base_caption: input.base_caption,
         row,
         chapter_base_commit_sha: current_repo_head_sha(&repo_path),
     }))
@@ -2318,6 +2361,18 @@ mod tests {
     }
 
     #[test]
+    fn wordpress_audio_lookups_request_the_description_for_slug_and_search() {
+        let lookup = wordpress_media_lookup("https://example.org/wp-content/uploads/talk.mp3")
+            .expect("WordPress audio lookup");
+        for key in ["slug", "search"] {
+            let endpoint = lookup_endpoint_with_query(&lookup, key);
+            assert!(endpoint.query_pairs().any(|(key, value)| {
+                key == "_fields" && value.split(',').any(|field| field == "description")
+            }));
+        }
+    }
+
+    #[test]
     fn wordpress_media_lookup_supports_self_hosted_subdirectories_and_thumbnails() {
         let lookup = wordpress_media_lookup(
             "https://example.com/news/wp-content/uploads/2026/07/Temple-Entrance-1024x683.jpg?fit=800",
@@ -2578,7 +2633,8 @@ mod tests {
         let response = json!([{
             "source_url": "https://example.com/wp-content/uploads/2026/07/Temple-Entrance.jpg",
             "media_details": { "sizes": {} },
-            "caption": { "rendered": "" }
+            "caption": { "rendered": "" },
+            "description": { "rendered": "<p>Image attachment page</p>" }
         }]);
 
         assert_eq!(
@@ -2588,6 +2644,50 @@ mod tests {
             ),
             Some(WordPressCaptionMatch::MatchedWithoutCaption)
         );
+    }
+
+    #[test]
+    fn wordpress_audio_imports_the_description_and_preserves_an_authored_caption() {
+        let url = "https://example.org/wp-content/uploads/evening-talk.mp3";
+        let identity = wordpress_image_identity(url).unwrap();
+        let file_link = format!(r#"<a href="{url}">{url}</a>"#);
+        let player = format!(r#"<audio controls><source src="{url}">{file_link}</audio>"#);
+        let description = format!(
+            r#"{player}<p>Evening talk &amp; discussion. <a href="/credits" rel="nofollow">Music credits</a>.</p>"#
+        );
+        let expected = r#"Evening talk & discussion. <a href="https://example.org/credits">Music credits</a>."#;
+        let excerpt = format!("<p>{file_link} Evening talk &amp; discussion. [&hellip;]</p>");
+        for (caption, description, expected) in [
+            ("<p>&nbsp;</p>", description.as_str(), Some(expected)),
+            (file_link.as_str(), &description, Some(expected)),
+            (&excerpt, &description, Some(expected)),
+            (
+                "<p>Listen at dusk.</p>",
+                &description,
+                Some("Listen at dusk."),
+            ),
+            (&file_link, &player, None),
+        ] {
+            let response = json!([
+                {
+                    "source_url": "https://example.org/wp-content/uploads/other-talk.mp3",
+                    "description": { "rendered": "<p>Another recording</p>" }
+                },
+                {
+                    "source_url": url,
+                    "caption": { "rendered": caption },
+                    "description": { "rendered": description }
+                }
+            ]);
+            assert_eq!(
+                wordpress_caption_from_media_response(&response, &identity),
+                Some(match expected {
+                    Some(text) => WordPressCaptionMatch::Caption(text.into()),
+                    None => WordPressCaptionMatch::MatchedWithoutCaption,
+                }),
+                "caption {caption}"
+            );
+        }
     }
 
     #[test]
