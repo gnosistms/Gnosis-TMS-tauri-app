@@ -30,17 +30,19 @@ const operations = {
   invoke: async (_command, { input }) => ({ languages: [{ code: "en" }], rows: [
     { rowId: `${input.chapterId}-title`, textStyle: "heading1", fields: { en: `Title ${input.chapterId}` } },
     { rowId: `${input.chapterId}-body`, fields: { en: "Body [1]" }, footnotes: { en: "Note" } },
-    { rowId: `${input.chapterId}-heading`, textStyle: "heading1", fields: { en: `Inside ${input.chapterId}` } },
+    { rowId: `${input.chapterId}-heading`, textStyle: "heading2", fields: { en: `Inside ${input.chapterId}` } },
+    { rowId: `${input.chapterId}-subheading`, textStyle: "heading3", fields: { en: "A subsection" } },
+    { rowId: `${input.chapterId}-extra-title`, textStyle: "heading1", fields: { en: "An extra title" } },
   ] }),
 };
 
-test("project document exports share chapter numbering and optional H1 contents with the preview", async () => {
-  for (const includeH1 of [false, true]) {
-    const modal = fixture(includeH1);
+test("project document exports share chapter numbering and optional section headings in the contents with the preview", async () => {
+  for (const includeSections of [false, true]) {
+    const modal = fixture(includeSections);
     modal.book.items.find((item) => item.id === "first").title = "Edited First";
     const blocks = await loadProjectExportBlocks(modal, operations);
     const contents = blocks.filter((block) => block.bookItemId === "contents");
-    assert.deepEqual(contents.map((block) => block.text), ["Contents", "1. Edited First", ...(includeH1 ? ["Inside first"] : []), "Title interlude", ...(includeH1 ? ["Inside interlude"] : []), "2. Title last", ...(includeH1 ? ["Inside last"] : [])]);
+    assert.deepEqual(contents.map((block) => block.text), ["Contents", "1. Edited First", ...(includeSections ? ["Inside first"] : []), "Title interlude", ...(includeSections ? ["Inside interlude"] : []), "2. Title last", ...(includeSections ? ["Inside last"] : [])]);
     assert.ok(contents.filter((block) => block.text.startsWith("Inside")).every((block) => block.textStyle === "indented"));
     assert.equal(blocks.find((block) => block.bookItemId === "first").text, "1. Edited First");
     assert.equal(blocks.find((block) => block.bookItemId === "interlude").text, "Title interlude");

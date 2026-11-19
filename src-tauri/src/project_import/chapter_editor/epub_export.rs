@@ -31,12 +31,23 @@ const IMAGE_WORKERS: usize = 6;
 // Readers' own heading rules beat inherited alignment, so title headings set it.
 // The publisher logo fits about the PDF's 1.105in x 0.595in box; auto width and
 // height with both maxima keep its ratio without object-fit, which old readers lack.
-const STYLES: &str = "body{font-family:serif;line-height:1.5;margin:1em;}h1,h2,h3{line-height:1.2;break-after:avoid;}blockquote{margin:1em 2em;}.quote-attribution{display:block;text-align:right;font-style:normal;}.indented{margin-inline-start:2em;}.centered,.title,.title h1,.title h2{text-align:center;}figure{text-align:center;break-inside:avoid;}img{max-width:100%;height:auto;}.title img{max-width:7em;max-height:4em;}figcaption{margin-top:.5em;}audio{width:100%;}.missing-image{border:1px solid;padding:.5em;font-size:.9em;}.footnote{font-size:.9em;}hr{width:30%;margin:1.5em auto;}.noteref{vertical-align:super;font-size:.75em;}";
+const STYLES: &str = concat!(
+    "body{font-family:serif;line-height:1.5;margin:1em;}",
+    "h1,h2,h3{line-height:1.2;break-after:avoid;}",
+    ".chapter>h2{font-size:2em;margin-top:.67em;margin-bottom:.67em;}",
+    ".chapter>h3{font-size:1.5em;margin-top:.83em;margin-bottom:.83em;}",
+    "blockquote{margin:1em 2em;}.quote-attribution{display:block;text-align:right;font-style:normal;}",
+    ".indented{margin-inline-start:2em;}.centered,.title,.title h1,.title h2{text-align:center;}",
+    "figure{text-align:center;break-inside:avoid;}img{max-width:100%;height:auto;}",
+    ".title img{max-width:7em;max-height:4em;}figcaption{margin-top:.5em;}audio{width:100%;}",
+    ".missing-image{border:1px solid;padding:.5em;font-size:.9em;}.footnote{font-size:.9em;}",
+    "hr{width:30%;margin:1.5em auto;}.noteref{vertical-align:super;font-size:.75em;}"
+);
 
 struct Section {
     document: ExportDocument,
     kind: String,
-    include_h1: bool,
+    include_sections: bool,
 }
 
 struct ImageAsset {
@@ -659,7 +670,51 @@ fn section_body(
     body
 }
 
-fn navigation(sections: &[Section], chapters_only: bool, include_h1: bool) -> String {
+fn chapter_heading_links(
+    document: &ExportDocument,
+    section_number: usize,
+    include_subsections: bool,
+) -> String {
+    let mut headings = document
+        .blocks
+        .iter()
+        .enumerate()
+        .filter_map(|(index, block)| {
+            let ExportBlock::Text { text_style, text } = block else {
+                return None;
+            };
+            let subsection = match export_text_style(Some(text_style)).as_str() {
+                "heading2" => false,
+                "heading3" if include_subsections => true,
+                _ => return None,
+            };
+            let link = format!(
+                "<a href=\"section-{section_number}.xhtml#block-{index}\">{}</a>",
+                xml(&title(text))
+            );
+            Some((subsection, link))
+        })
+        .peekable();
+    let mut items = String::new();
+    while let Some((subsection, link)) = headings.next() {
+        let _ = write!(items, "<li>{link}");
+        if !subsection && headings.peek().is_some_and(|(sub, _)| *sub) {
+            items.push_str("<ol>");
+            while let Some((_, child)) = headings.next_if(|(sub, _)| *sub) {
+                let _ = write!(items, "<li>{child}</li>");
+            }
+            items.push_str("</ol>");
+        }
+        items.push_str("</li>");
+    }
+    if items.is_empty() {
+        items
+    } else {
+        format!("<ol>{items}</ol>")
+    }
+}
+
+fn navigation(sections: &[Section], chapters_only: bool, include_sections: bool) -> String {
     let mut output = String::from("<ol>");
     for (index, section) in sections.iter().enumerate() {
         if chapters_only && section.kind != "chapter" {
@@ -671,26 +726,12 @@ fn navigation(sections: &[Section], chapters_only: bool, include_h1: bool) -> St
             index + 1,
             xml(&title(&section.document.title))
         );
-        let mut headings = String::new();
-        for (block_index, block) in section.document.blocks.iter().enumerate() {
-            if let ExportBlock::Text { text_style, text } = block {
-                let style = export_text_style(Some(text_style));
-                // The opening chapter title already has its own navigation entry.
-                if block_index > 0
-                    && (style == "heading1" || (!chapters_only && style == "heading2"))
-                    && (include_h1 || !chapters_only)
-                {
-                    let _ = write!(
-                        headings,
-                        "<li><a href=\"section-{}.xhtml#block-{block_index}\">{}</a></li>",
-                        index + 1,
-                        xml(&title(text))
-                    );
-                }
-            }
-        }
-        if !headings.is_empty() {
-            let _ = write!(output, "<ol>{headings}</ol>");
+        if section.kind == "chapter" && include_sections {
+            output.push_str(&chapter_heading_links(
+                &section.document,
+                index + 1,
+                !chapters_only,
+            ));
         }
         output.push_str("</li>");
     }
@@ -724,7 +765,7 @@ pub(super) fn render_epub_document(
         vec![Section {
             document: document.clone(),
             kind: "chapter".into(),
-            include_h1: false,
+            include_sections: false,
         }]
     } else {
         numbered_book_documents(&document.book_parts)
@@ -748,7 +789,7 @@ pub(super) fn render_epub_document(
                 Section {
                     document,
                     kind: part.item.kind.clone(),
-                    include_h1: part.item.include_h1_headings,
+                    include_sections: part.item.include_section_headings,
                 }
             })
             .collect()
@@ -828,7 +869,7 @@ pub(super) fn render_epub_document(
     let mut spine = String::new();
     for (index, section) in sections.iter().enumerate() {
         let contents = if section.kind == "contents" {
-            navigation(&sections, true, section.include_h1)
+            navigation(&sections, true, section.include_sections)
         } else {
             String::new()
         };

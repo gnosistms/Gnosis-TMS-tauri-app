@@ -517,7 +517,7 @@ fn book_chapter_numbers(parts: &[BookPart]) -> Vec<Option<usize>> {
         .collect()
 }
 
-fn book_contents_entries(parts: &[BookPart], include_h1: bool) -> Vec<BookContentsEntry> {
+fn book_contents_entries(parts: &[BookPart], include_sections: bool) -> Vec<BookContentsEntry> {
     let numbers = book_chapter_numbers(parts);
     let mut entries = Vec::new();
     for (index, part) in parts
@@ -532,10 +532,10 @@ fn book_contents_entries(parts: &[BookPart], include_h1: bool) -> Vec<BookConten
             part_index: index,
             block_index: None,
         });
-        if include_h1 {
+        if include_sections {
             for (block_index, block) in part.document.blocks.iter().enumerate().skip(1) {
                 if let ExportBlock::Text { text_style, text } = block {
-                    if export_text_style(Some(text_style)) == "heading1" {
+                    if export_text_style(Some(text_style)) == "heading2" {
                         entries.push(BookContentsEntry {
                             title: inline_visible_text(text),
                             part_index: index,
@@ -591,7 +591,7 @@ fn compose_book_document(title: &str, language: &str, mut parts: Vec<BookPart>) 
         if parts[index].item.kind != "contents" {
             continue;
         }
-        let entries = book_contents_entries(&parts, parts[index].item.include_h1_headings);
+        let entries = book_contents_entries(&parts, parts[index].item.include_section_headings);
         let mut blocks = vec![ExportBlock::Text {
             text_style: "heading1".into(),
             text: parts[index].item.title.clone(),
@@ -799,10 +799,10 @@ fn remap_visible_footnote_markers(text: &str, markers: &BTreeMap<usize, usize>) 
 // Chapter boundaries use normal heading formatting in document formats; PDF
 // additionally starts each chapter on a new page.
 pub(super) fn export_text_style(style: Option<&str>) -> String {
-    if style == Some("chapter_heading") {
-        "heading1".into()
-    } else {
-        normalize_editor_text_style_value(style)
+    match style {
+        Some("chapter_heading") => "heading1".into(),
+        Some("book_subtitle") => "heading2".into(),
+        _ => normalize_editor_text_style_value(style),
     }
 }
 
@@ -1790,6 +1790,9 @@ fn render_html_document(document: &ExportDocument) -> Result<String, String> {
                 let text = sanitize_inline_html(text).replace('\n', "<br>");
                 let (open, close) = match export_text_style(Some(text_style)).as_str() {
                     "heading1" => ("<h1>", "</h1>"),
+                    "heading2" if text_style == "book_subtitle" => {
+                        ("<h2 class=\"book-subtitle\">", "</h2>")
+                    }
                     "heading2" => ("<h2>", "</h2>"),
                     "heading3" => ("<h3>", "</h3>"),
                     "quote" => ("<blockquote>", "</blockquote>"),
@@ -1888,7 +1891,7 @@ fn render_html_document(document: &ExportDocument) -> Result<String, String> {
     }
 
     Ok(format!(
-        "<!doctype html>\n<html lang=\"{}\">\n<head>\n<meta charset=\"utf-8\">\n<title>{}</title>\n<style>body{{max-width:760px;margin:40px auto;padding:0 24px;font-family:serif;line-height:1.6;color:#2f2117;}}h1{{font-size:2rem;}}h2{{font-size:1.4rem;}}blockquote{{margin:1em 2em;}}.quote-attribution{{display:block;font-size:90%;text-align:right;font-style:normal;}}.indented{{padding-left:2em;}}.centered{{text-align:center;}}.footnote{{font-size:.95em;}}figure{{margin:1.5em auto;text-align:center;}}img{{display:block;margin:0 auto;max-width:100%;height:auto;}}figcaption{{margin-top:.6em;text-align:center;}}audio{{display:block;width:100%;}}video{{display:block;width:100%;height:auto;}}.video-frame{{aspect-ratio:16/9;}}.video-frame iframe{{display:block;width:100%;height:100%;border:0;}}</style>\n</head>\n<body>\n{}\n</body>\n</html>\n",
+        "<!doctype html>\n<html lang=\"{}\">\n<head>\n<meta charset=\"utf-8\">\n<title>{}</title>\n<style>body{{max-width:760px;margin:40px auto;padding:0 24px;font-family:serif;line-height:1.6;color:#2f2117;}}h1,h2{{font-size:2rem;margin-block:.67em;}}h3,.book-subtitle{{font-size:1.4rem;margin-block:.83em;}}blockquote{{margin:1em 2em;}}.quote-attribution{{display:block;font-size:90%;text-align:right;font-style:normal;}}.indented{{padding-left:2em;}}.centered{{text-align:center;}}.footnote{{font-size:.95em;}}figure{{margin:1.5em auto;text-align:center;}}img{{display:block;margin:0 auto;max-width:100%;height:auto;}}figcaption{{margin-top:.6em;text-align:center;}}audio{{display:block;width:100%;}}video{{display:block;width:100%;height:auto;}}.video-frame{{aspect-ratio:16/9;}}.video-frame iframe{{display:block;width:100%;height:100%;border:0;}}</style>\n</head>\n<body>\n{}\n</body>\n</html>\n",
         escape_html(&document.language_code),
         escape_html(&document.title),
         body
@@ -2069,9 +2072,11 @@ fn render_txt_document(document: &ExportDocument) -> String {
                     continue;
                 }
                 let rendered = match export_text_style(Some(text_style)).as_str() {
-                    "heading1" => text.to_uppercase(),
-                    "heading2" => format!(">>> {}", text.to_uppercase()),
-                    "heading3" => format!(">>>> {}", text.to_uppercase()),
+                    "heading2" if text_style == "book_subtitle" => {
+                        format!(">>> {}", text.to_uppercase())
+                    }
+                    "heading1" | "heading2" => text.to_uppercase(),
+                    "heading3" => format!(">>> {}", text.to_uppercase()),
                     "quote" => format!("<blockquote>\n{text}\n</blockquote>"),
                     _ => text,
                 };
@@ -2688,7 +2693,7 @@ fn render_docx_document(
             ));
             for entry in book_contents_entries(
                 &document.book_parts,
-                part.is_some_and(|part| part.item.include_h1_headings),
+                part.is_some_and(|part| part.item.include_section_headings),
             ) {
                 let target = entry
                     .block_index
@@ -2705,7 +2710,7 @@ fn render_docx_document(
             for (block_index, block) in section.blocks.iter().enumerate() {
                 let bookmark = if part_kind == "chapter"
                     && block_index > 0
-                    && matches!(block, ExportBlock::Text { text_style, .. } if export_text_style(Some(text_style)) == "heading1")
+                    && matches!(block, ExportBlock::Text { text_style, .. } if export_text_style(Some(text_style)) == "heading2")
                 {
                     let bookmark = format!("<w:bookmarkStart w:id=\"{bookmark_index}\" w:name=\"BookItem{section_index}Block{block_index}\"/><w:bookmarkEnd w:id=\"{bookmark_index}\"/>");
                     bookmark_index += 1;
@@ -3617,9 +3622,9 @@ fn render_rtf_document(document: &ExportDocument, footnote_links_as_plain_text: 
 
 fn rtf_text_paragraph(text_style: Option<&str>, text: &str, forced_italic: bool) -> String {
     let properties = match export_text_style(text_style).as_str() {
-        "heading1" => "\\sb240\\b\\fs32",
-        "heading2" => "\\sb240\\b\\fs26",
-        "heading3" => "\\sb200\\b\\fs24",
+        "heading2" if text_style == Some("book_subtitle") => "\\sb240\\b\\fs26",
+        "heading1" | "heading2" => "\\sb240\\b\\fs32",
+        "heading3" => "\\sb240\\b\\fs26",
         "quote" => "\\li720\\ri720",
         "indented" => "\\li720",
         "centered" => "\\qc",
@@ -3939,7 +3944,7 @@ fn package_rels_xml() -> &'static str {
 }
 
 fn styles_xml() -> &'static str {
-    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="32"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:pPr><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:sz w:val="26"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/><w:pPr><w:outlineLvl w:val="2"/></w:pPr><w:rPr><w:b/><w:sz w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:pPr><w:ind w:left="720" w:right="720"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="VellumAttribution"><w:name w:val="Vellum Attribution"/><w:pPr><w:jc w:val="right"/></w:pPr><w:rPr><w:sz w:val="20"/></w:rPr></w:style></w:styles>"#
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="32"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:pPr><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:sz w:val="32"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/><w:pPr><w:outlineLvl w:val="2"/></w:pPr><w:rPr><w:b/><w:sz w:val="26"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:pPr><w:ind w:left="720" w:right="720"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="VellumAttribution"><w:name w:val="Vellum Attribution"/><w:pPr><w:jc w:val="right"/></w:pPr><w:rPr><w:sz w:val="20"/></w:rPr></w:style></w:styles>"#
 }
 
 #[cfg(test)]
@@ -3948,14 +3953,14 @@ mod tests {
     use std::io::Read;
     use zip::ZipArchive;
 
-    fn review_book(include_h1: bool) -> ExportDocument {
+    fn review_book(include_sections: bool) -> ExportDocument {
         let part = |kind: &str, title: &str, numbered: bool| BookPart {
             item: BookItemInput {
                 id: title.into(),
                 kind: kind.into(),
                 title: title.into(),
                 numbered: Some(numbered),
-                include_h1_headings: include_h1,
+                include_section_headings: include_sections,
                 ..Default::default()
             },
             document: ExportDocument {
@@ -3978,7 +3983,7 @@ mod tests {
                         text: "Preserved note".into(),
                     },
                     ExportBlock::Text {
-                        text_style: "heading1".into(),
+                        text_style: "heading2".into(),
                         text: format!("Inside {title}"),
                     },
                 ],
@@ -4000,8 +4005,8 @@ mod tests {
 
     #[test]
     fn composed_documents_share_contents_and_chapter_numbering_without_mutating_pdf_parts() {
-        for include_h1 in [false, true] {
-            let book = review_book(include_h1);
+        for include_sections in [false, true] {
+            let book = review_book(include_sections);
             let entries: Vec<_> = book.book_parts[0]
                 .document
                 .blocks
@@ -4011,7 +4016,7 @@ mod tests {
                     _ => None,
                 })
                 .collect();
-            let expected = if include_h1 {
+            let expected = if include_sections {
                 vec![
                     "Contents",
                     "1. First",
@@ -4049,7 +4054,7 @@ mod tests {
             assert!(xml.contains(" PAGEREF BookItem2 "));
             assert!(!xml.contains(" PAGEREF BookItem1 "));
             assert!(!xml.contains(" PAGEREF BookItem5 "));
-            assert_eq!(xml.contains(" PAGEREF BookItem2Block3 "), include_h1);
+            assert_eq!(xml.contains(" PAGEREF BookItem2Block3 "), include_sections);
             assert!(xml.contains("w:name=\"BookItem2Block3\""));
             assert!(xml.contains("Preserved note"));
         }
@@ -4970,6 +4975,56 @@ mod tests {
     }
 
     #[test]
+    fn document_exports_keep_semantic_heading_levels_and_their_print_sizes() {
+        let document = document(
+            [
+                ("heading1", "Chapter"),
+                ("heading2", "Section"),
+                ("heading3", "Subsection"),
+            ]
+            .into_iter()
+            .map(|(style, text)| ExportBlock::Text {
+                text_style: style.into(),
+                text: text.into(),
+            })
+            .collect(),
+        );
+        let html = render_html_document(&document).unwrap();
+        let markdown = render_md_document(&document);
+        let mut docx =
+            ZipArchive::new(Cursor::new(render_docx_document(&document, false).unwrap())).unwrap();
+        let mut body = String::new();
+        let mut styles = String::new();
+        docx.by_name("word/document.xml")
+            .unwrap()
+            .read_to_string(&mut body)
+            .unwrap();
+        docx.by_name("word/styles.xml")
+            .unwrap()
+            .read_to_string(&mut styles)
+            .unwrap();
+        for (level, text, half_points) in [
+            (1, "Chapter", 32),
+            (2, "Section", 32),
+            (3, "Subsection", 26),
+        ] {
+            assert!(html.contains(&format!("<h{level}>{text}</h{level}>")));
+            assert!(markdown
+                .lines()
+                .any(|line| line == format!("{} {text}", "#".repeat(level))));
+            assert!(body.contains(&format!("<w:pStyle w:val=\"Heading{level}\"/>")));
+            let (_, definition) = styles
+                .split_once(&format!("w:styleId=\"Heading{level}\""))
+                .unwrap();
+            let (definition, _) = definition.split_once("</w:style>").unwrap();
+            assert!(definition.contains(&format!("<w:outlineLvl w:val=\"{}\"/>", level - 1)));
+            assert!(definition.contains(&format!("<w:sz w:val=\"{half_points}\"/>")));
+        }
+        assert!(html.contains("h1,h2{font-size:2rem"));
+        assert!(html.contains("h3,.book-subtitle{font-size:1.4rem"));
+    }
+
+    #[test]
     fn txt_export_applies_text_style_rules_and_ignores_images() {
         let output = render_txt_document(&document(vec![
             ExportBlock::Text {
@@ -4982,6 +5037,10 @@ mod tests {
             },
             ExportBlock::Text {
                 text_style: "heading2".to_string(),
+                text: "Section".to_string(),
+            },
+            ExportBlock::Text {
+                text_style: "heading3".to_string(),
                 text: "Subhead".to_string(),
             },
             ExportBlock::Text {
@@ -5001,8 +5060,9 @@ mod tests {
         ]));
 
         assert!(output.contains("Plain"));
-        assert!(output.contains("HEADING"));
-        assert!(output.contains(">>> SUBHEAD"));
+        assert!(output.lines().any(|line| line == "HEADING"));
+        assert!(output.lines().any(|line| line == "SECTION"));
+        assert!(output.lines().any(|line| line == ">>> SUBHEAD"));
         assert!(output.contains("<blockquote>\nQuote\n</blockquote>"));
         assert!(output.contains("[1] Note"));
         assert!(!output.contains("Caption"));
@@ -6502,6 +6562,10 @@ mod tests {
                     text: "<b>Bold</b> <u>Under</u>".to_string(),
                 },
                 ExportBlock::Text {
+                    text_style: "heading3".into(),
+                    text: "Subsection".into(),
+                },
+                ExportBlock::Text {
                     text_style: "quote".to_string(),
                     text: "Quote".to_string(),
                 },
@@ -6520,7 +6584,8 @@ mod tests {
         );
 
         assert!(output.starts_with("{\\rtf1\\ansi"));
-        assert!(output.contains("\\sb240\\b\\fs26"));
+        assert!(output.contains("\\sb240\\b\\fs32 {\\b Bold}"));
+        assert!(output.contains("\\sb240\\b\\fs26 Subsection"));
         assert!(output.contains("{\\b Bold}"));
         assert!(output.contains("{\\ul Under}"));
         assert!(output.contains("\\li720\\ri720 Quote"));

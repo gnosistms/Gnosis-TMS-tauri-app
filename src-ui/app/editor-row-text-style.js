@@ -41,7 +41,7 @@ export const EDITOR_ROW_TEXT_STYLE_OPTIONS = [
   {
     value: EDITOR_ROW_TEXT_STYLE_HEADING1,
     label: "H1",
-    tooltip: "Use this style for the chapter title",
+    tooltip: "Chapter title",
   },
   {
     value: EDITOR_ROW_TEXT_STYLE_HEADING2,

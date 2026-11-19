@@ -312,7 +312,7 @@ fn epub_book_preserves_order_numbering_metadata_and_live_contents() {
             paragraph("paragraph", "stale entry"),
         ],
     );
-    contents.item.include_h1_headings = true;
+    contents.item.include_section_headings = true;
     let mut unnumbered = part("chapter", "Afterword", vec![paragraph("paragraph", "End")]);
     unnumbered.item.numbered = Some(false);
     doc.book_parts = vec![
@@ -323,7 +323,8 @@ fn epub_book_preserves_order_numbering_metadata_and_live_contents() {
             "Chapter One",
             vec![
                 paragraph("heading1", "Chapter One"),
-                paragraph("heading1", "Subsection"),
+                paragraph("heading2", "Section"),
+                paragraph("heading3", "Subsection"),
             ],
         ),
         unnumbered,
@@ -335,10 +336,18 @@ fn epub_book_preserves_order_numbering_metadata_and_live_contents() {
     assert!(package.contains("<spine page-progression-direction=\"ltr\"><itemref idref=\"section-1\"/><itemref idref=\"section-2\"/><itemref idref=\"section-3\"/><itemref idref=\"section-4\"/>"));
     let contents = file(&files, "EPUB/section-2.xhtml");
     assert!(contents.contains("href=\"section-3.xhtml#start\">1. Chapter One</a>"));
-    assert!(contents.contains("href=\"section-3.xhtml#block-1\">Subsection</a>"));
+    assert!(contents.contains("href=\"section-3.xhtml#block-1\">Section</a>"));
     assert!(contents.contains("href=\"section-4.xhtml#start\">Afterword</a>"));
     assert!(!contents.contains("stale entry"));
-    assert!(file(&files, "EPUB/section-3.xhtml").contains(">1. Chapter One</h1>"));
+    assert!(!contents.contains("Subsection"));
+    assert!(file(&files, "EPUB/nav.xhtml").contains("section-3.xhtml#block-1\">Section</a><ol><li><a href=\"section-3.xhtml#block-2\">Subsection</a>"));
+    let chapter = file(&files, "EPUB/section-3.xhtml");
+    assert!(chapter.contains(">1. Chapter One</h1>"));
+    assert!(chapter.contains("<h2 id=\"block-1\" class=\"\">Section</h2>"));
+    assert!(chapter.contains("<h3 id=\"block-2\" class=\"\">Subsection</h3>"));
+    let styles = file(&files, "EPUB/styles.css");
+    assert!(styles.contains(".chapter>h2{font-size:2em;"));
+    assert!(styles.contains(".chapter>h3{font-size:1.5em;"));
     assert!(!file(&files, "EPUB/section-4.xhtml").contains("2. Afterword"));
     assert!(file(&files, "EPUB/section-4.xhtml").contains(">Afterword</h1>"));
     assert!(file(&files, "EPUB/nav.xhtml").contains("epub:type=\"toc\""));

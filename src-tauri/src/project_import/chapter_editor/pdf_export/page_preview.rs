@@ -271,7 +271,7 @@ async fn contents_proof(
     })
 }
 
-/// The book scope as PDF export loads it. Contents titles and H1 inclusion are
+/// The book scope as PDF export loads it. Contents titles and section inclusion are
 /// cleared: neither moves a chapter, so editing them reuses the cached pass.
 fn book_export_input(
     book: &ContentsBookScope,
@@ -285,7 +285,7 @@ fn book_export_input(
             let mut item = item.clone();
             if item.kind == "contents" {
                 item.title.clear();
-                item.include_h1_headings = false;
+                item.include_section_headings = false;
             }
             item
         })
@@ -541,7 +541,7 @@ mod tests {
         // A missing asset would fail a real export; pagination leaves it out.
         title.image_asset_id = "missing.png".into();
         let mut contents = book_item("toc", "contents", "Contents");
-        contents.include_h1_headings = true;
+        contents.include_section_headings = true;
         let long = "Words that fill the page. ".repeat(400);
         let document = book(vec![
             part(title, Vec::new()),
@@ -556,7 +556,7 @@ mod tests {
                         image: ExportImage::Url("http://127.0.0.1:9/never.png".into()),
                         caption: "Never fetched".into(),
                     },
-                    text("heading1", "Inside one"),
+                    text("heading2", "Inside one"),
                     text("paragraph", &long),
                 ],
             ),
@@ -597,7 +597,7 @@ mod tests {
             .iter()
             .map(|entry| (entry.title.as_str(), entry.level, entry.page.as_str()))
             .collect::<Vec<_>>();
-        // Title on i, contents on iii; One starts the arabic numbering, its H1
+        // Title on i, contents on iii; One starts the arabic numbering, its H2
         // follows several pages of text, and Two opens on the next odd page.
         assert_eq!(pages[0], ("One", 0, "1"));
         assert_eq!(pages[1].0, "Inside one");
@@ -626,7 +626,7 @@ mod tests {
         let proof_workspace = pdf_workspace().unwrap();
         let _proof_cleanup = WorkspaceCleanup(proof_workspace.clone());
         let mut contents = book_item("toc", "contents", "Contents");
-        contents.include_h1_headings = true;
+        contents.include_section_headings = true;
         let proof_document = book(vec![part(contents, vec![text("heading1", "Contents")])]);
         let options = PdfWorkspacePreparationOptions {
             layout: TypstLayout::ContentsProof(&proof),
@@ -712,7 +712,7 @@ mod tests {
             },
         }))
         .unwrap();
-        assert!(input.item.include_h1_headings);
+        assert!(input.item.include_section_headings);
         let book = input.book.unwrap();
         assert_eq!(book.installation_id, 7);
         let export = book_export_input(&book, &input.language_code, "a5");
@@ -728,9 +728,9 @@ mod tests {
     }
 
     #[test]
-    fn contents_title_and_h1_choice_reuse_the_cached_pagination() {
+    fn contents_title_and_section_choice_reuse_the_cached_pagination() {
         let mut contents = book_item("toc", "contents", "Contents");
-        contents.include_h1_headings = true;
+        contents.include_section_headings = true;
         let scope = ContentsBookScope {
             installation_id: 1,
             repo_name: "book".into(),
@@ -742,7 +742,7 @@ mod tests {
         let input = book_export_input(&scope, "vi", "a5");
         assert_eq!(input.chapter_ids, vec!["one".to_string()]);
         assert_eq!(input.book_items[0].title, "");
-        assert!(!input.book_items[0].include_h1_headings);
+        assert!(!input.book_items[0].include_section_headings);
         assert_eq!(input.book_items[1].title, "One");
     }
 

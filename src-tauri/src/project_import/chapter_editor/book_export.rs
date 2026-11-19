@@ -33,8 +33,9 @@ pub(super) struct BookItemInput {
     pub(super) caption: String,
     #[serde(default)]
     pub(super) image_asset_id: String,
-    #[serde(default)]
-    pub(super) include_h1_headings: bool,
+    // Keep the existing key in shared book layouts and export requests.
+    #[serde(default, rename = "includeH1Headings")]
+    pub(super) include_section_headings: bool,
 }
 
 // Return export-only metadata as well as filtering document blocks: the PDF
@@ -287,7 +288,7 @@ pub(super) fn section_document(
     match item.kind.as_str() {
         "title" => {
             text(&item.title, "heading1");
-            text(&item.subtitle, "heading2");
+            text(&item.subtitle, "book_subtitle");
             text(&item.author, "centered");
             text(&item.translator, "centered");
         }
