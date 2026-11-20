@@ -119,7 +119,7 @@ function renderSrtReviewSuggestions(review, group, language) {
   return `<p class="history-item__content" data-srt-review-suggestion lang="${escapeHtml(code)}">${text}</p>${attachments}`;
 }
 
-export function renderReviewPane(editorChapter, rows, languages, offlineMode = false) {
+export function renderReviewPane(editorChapter, rows, languages, offlineMode = false, readOnly = false) {
   const activeRow = rows.find((row) => row.id === editorChapter?.activeRowId || row.srtGroup?.memberRowIds.includes(editorChapter?.activeRowId)) ?? null;
   const activeLanguage =
     languages.find((language) => language.code === editorChapter?.activeLanguageCode) ?? null;
@@ -243,7 +243,7 @@ export function renderReviewPane(editorChapter, rows, languages, offlineMode = f
         reviewMode: "meaning",
         tooltip: "Check to see if the translation is correct in addition to checking spelling and grammar.",
         isLoading: aiReview.status === "loading" && aiReview.reviewMode === "meaning",
-        disabled: offlineMode === true || aiReview.status === "loading",
+        disabled: readOnly || offlineMode === true || aiReview.status === "loading",
       })
       : ""}
     ${showGrammarReviewButton
@@ -253,7 +253,7 @@ export function renderReviewPane(editorChapter, rows, languages, offlineMode = f
         reviewMode: "grammar",
         tooltip: "Check only for spelling and grammar errors.",
         isLoading: aiReview.status === "loading" && aiReview.reviewMode !== "meaning",
-        disabled: offlineMode === true || aiReview.status === "loading",
+        disabled: readOnly || offlineMode === true || aiReview.status === "loading",
       })
       : ""}
   `;
@@ -270,7 +270,7 @@ export function renderReviewPane(editorChapter, rows, languages, offlineMode = f
     aiReview.status === "applying" ? "Applying..." : "Apply",
     "apply-editor-ai-review",
     {
-      disabled: aiReview.status === "applying",
+      disabled: readOnly || aiReview.status === "applying",
       compact: true,
       className: "button--replace-toolbar",
       tooltip: "Update the translation to match this AI suggested revision",

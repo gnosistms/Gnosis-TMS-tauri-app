@@ -40,6 +40,7 @@ import {
 import { renderEditorListMarkerOverlayHtml } from "./editor-list.js";
 
 const PREVIEW_EDITABLE_BLOCK_SELECTOR = "[data-editor-preview-document] [data-preview-block][data-row-id]";
+const ROW_LIFECYCLE_BUTTON_SELECTOR = '[data-action^="soft-delete-editor-row:"], [data-action^="restore-editor-row:"]';
 
 function previewEditableBlockFromTarget(target) {
   if (!(target instanceof Element)) {
@@ -54,10 +55,10 @@ function previewEditableBlockFromTarget(target) {
   return block instanceof HTMLElement ? block : null;
 }
 
-function cardWhitespaceLanguageFromPointer(event) {
+function selectableCardLanguageFromPointer(event) {
   const target = event.target;
   if (!(target instanceof Element) || target.closest(
-    'button, a, input, textarea, select, label, [contenteditable], [data-action], [data-stop-row-action], [data-editor-glossary-field-stack]',
+    'button, a, input, textarea, select, label, [contenteditable], [data-action], [data-stop-row-action]',
   )) {
     return null;
   }
@@ -65,6 +66,9 @@ function cardWhitespaceLanguageFromPointer(event) {
   const card = target.closest("[data-editor-row-card] .card--translation");
   if (!(card instanceof HTMLElement)) {
     return null;
+  }
+  if (target.closest("[data-editor-glossary-field-stack]")) {
+    return card.classList.contains("is-deleted") ? target.closest("[data-editor-language-panel]") : null;
   }
 
   const panels = Array.from(card.querySelectorAll("[data-editor-language-panel]"));
@@ -428,6 +432,13 @@ export function registerTranslateEditorDomEvents(app, render) {
       return;
     }
 
+    // Blurring an open field can replace its row between pointerdown and click.
+    // Move focus when the click arrives so both the row action and blur-save run.
+    if (closestEventTarget(event.target, ROW_LIFECYCLE_BUTTON_SELECTOR) && activeEditorControl()) {
+      event.preventDefault();
+      return;
+    }
+
     const externalLink = closestEventTarget(event.target, "a[href]");
     if (
       externalLink instanceof HTMLAnchorElement
@@ -437,7 +448,7 @@ export function registerTranslateEditorDomEvents(app, render) {
       return;
     }
 
-    const cardLanguage = cardWhitespaceLanguageFromPointer(event);
+    const cardLanguage = selectableCardLanguageFromPointer(event);
     if (cardLanguage) {
       const rowId = cardLanguage.dataset.rowId ?? "";
       const languageCode = cardLanguage.dataset.languageCode ?? "";
@@ -558,6 +569,10 @@ export function registerTranslateEditorDomEvents(app, render) {
   });
 
   app.addEventListener("click", (event) => {
+    const lifecycleButton = closestEventTarget(event.target, ROW_LIFECYCLE_BUTTON_SELECTOR);
+    if (lifecycleButton && activeEditorControl()) {
+      lifecycleButton.focus({ preventScroll: true });
+    }
     if (closestEventTarget(event.target, ".editor-image-context-menu__item")) {
       dismissEditorImageContextMenu(app);
     }

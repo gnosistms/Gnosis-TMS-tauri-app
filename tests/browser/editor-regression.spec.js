@@ -2891,13 +2891,62 @@ test.describe("editor regressions", () => {
     await expect(page.locator('[data-editor-row-card][data-row-id="fixture-row-0003"]')).toBeVisible();
     await search.fill("");
 
-    await restoreFixtureRow(page, "fixture-row-0003");
+    await page.locator('[data-action="restore-editor-row:fixture-row-0003"]').click();
     await expect(page.locator("[data-editor-row-card]")).toHaveCount(1);
     await expect(page.locator('[data-editor-row-card][data-row-id="fixture-row-0008"]')).toBeVisible();
 
     await filter.selectOption("show-all");
     await expect(page.locator("[data-editor-deleted-group]")).toHaveCount(1);
     await expect(page.locator('[data-editor-row-card][data-row-id="fixture-row-0008"]')).toHaveCount(0);
+  });
+
+  test("a deleted row's footnote stays readable while the chapter stays editable", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 4 }, { mockTauri: true });
+    const deletedId = "fixture-row-0002";
+    const neighborId = "fixture-row-0003";
+    const row = page.locator(`[data-editor-row-card][data-row-id="${deletedId}"]`);
+    const neighbor = page.locator(`[data-editor-row-card][data-row-id="${neighborId}"]`);
+    const target = row.locator('[data-editor-language-panel][data-language-code="vi"]');
+    const note = "Footnote on a deleted row";
+    await activateMainEditorField(page, deletedId, "vi");
+    await target.locator("[data-editor-footnote-button]").click();
+    await target.locator('[data-editor-row-field][data-content-kind="footnote"]').fill(note);
+    await page.locator("[data-editor-search-input]").click();
+    await flushDirtyRows(page);
+    const beforeText = await target.locator("[data-editor-display-field]").innerText();
+    await row.locator(`[data-action="soft-delete-editor-row:${deletedId}"]`).click();
+    await page.locator("[data-editor-deleted-group] .section-separator").click();
+    await target.getByText(note, { exact: true }).click();
+    await expect(row.locator(`[data-action="restore-editor-row:${deletedId}"]`)).toBeVisible();
+    await expect(row).toHaveClass(/is-connected/);
+    await expect(row.locator('[data-editor-row-field], [data-action="toggle-editor-reviewed"]')).toHaveCount(0);
+    await page.locator('[data-action="switch-editor-sidebar-tab:history"]').click();
+    await expect(page.locator(".history-stack")).toBeVisible();
+    await expect(page.locator('[data-action^="restore-editor-history:"]:enabled')).toHaveCount(0);
+    await page.locator('[data-action="open-editor-unreview-all"]').click();
+    await expect(page.locator('[data-action="confirm-editor-unreview-all"]')).toBeVisible();
+    await page.locator('[data-action="cancel-editor-unreview-all"]').click();
+
+    const savedNeighborText = async () => {
+      const { histories } = await readMockTauriState(page);
+      return histories[`fixture-chapter::${neighborId}::vi`]?.[0]?.plainText;
+    };
+    const editedText = "Edited beside a deleted row";
+    await (await activateMainEditorField(page, neighborId, "vi")).fill(editedText);
+    await page.locator("[data-editor-search-input]").click();
+    await flushDirtyRows(page);
+    await expect.poll(savedNeighborText).toBe(editedText);
+    const reviewed = neighbor.locator('[data-language-code="vi"][data-action="toggle-editor-reviewed"]');
+    await reviewed.click();
+    await expect(reviewed).toHaveAttribute("aria-pressed", "true");
+    const finalText = "Saved while restoring the other row";
+    await (await activateMainEditorField(page, neighborId, "vi")).fill(finalText);
+    await row.locator(`[data-action="restore-editor-row:${deletedId}"]`).click({ delay: 100 });
+    await expect(target.locator("[data-editor-display-field]")).toHaveText(beforeText);
+    await expect(target.getByRole("button", { name: "Edit footnote 1" })).toHaveText(note);
+    await expect(target.locator('[data-action="toggle-editor-reviewed"]')).toBeVisible();
+    await expect(page.locator("[data-editor-row-card]").nth(1)).toHaveAttribute("data-row-id", deletedId);
+    await expect.poll(savedNeighborText).toBe(finalText);
   });
 
   test("a new deleted section starts closed even after restoring a previously opened one", async ({ page }) => {
@@ -7740,7 +7789,8 @@ test("connected deleted rows disconnect on section close and permanent deletion"
   const group = page.locator(`[data-editor-deleted-group][data-row-id="deleted-group:${rowId}"]`);
   await group.locator(".section-separator").click();
   const row = page.locator(`[data-editor-row-card][data-row-id="${rowId}"]`);
-  await row.locator('[data-editor-display-field][data-language-code="vi"]').click();
+  const selectDeletedRow = row.locator('[data-action="select-editor-row-language"][data-language-code="vi"]');
+  await selectDeletedRow.click();
   await expect(row).toHaveClass(/is-connected/);
   await page.locator('[data-action="switch-editor-sidebar-tab:history"]').click();
   await page.locator("[data-editor-search-input]").focus();
@@ -7761,7 +7811,7 @@ test("connected deleted rows disconnect on section close and permanent deletion"
   await expect(notice).toBeHidden();
   await group.locator(".section-separator").click();
   await expect(row).not.toHaveClass(/is-connected/);
-  await row.locator('[data-editor-display-field][data-language-code="vi"]').click();
+  await selectDeletedRow.press("Enter");
   await expect(row).toHaveClass(/is-connected/);
   await page.locator(`[data-action="open-editor-row-permanent-delete:${rowId}"]`).click();
   await page.locator('[data-action="confirm-editor-row-permanent-delete"]').click();
@@ -7777,7 +7827,8 @@ test("connected row remains selected when soft deletion joins an expanded sectio
   const rowId = "fixture-row-0003";
   const row = page.locator(`[data-editor-row-card][data-row-id="${rowId}"]`);
   await row.locator('[data-editor-display-field][data-language-code="vi"]').click();
-  await row.locator(`[data-action="soft-delete-editor-row:${rowId}"]`).click();
+  // A press that spans a frame must survive the open text field losing focus.
+  await row.locator(`[data-action="soft-delete-editor-row:${rowId}"]`).click({ delay: 100 });
   await expect(row).toHaveClass(/is-deleted/);
   await expect(row).toHaveClass(/is-connected/);
   await expect.poll(() => page.evaluate(() => window.__gnosisDebug.readEditorState().activeRowId)).toBe(rowId);

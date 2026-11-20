@@ -11,6 +11,7 @@ import {
   invokeEditorWriteCommand,
 } from "./editor-write-permission.js";
 import { flushDirtyEditorRows } from "./editor-persistence-flow.js";
+import { createTranslateActions } from "./actions/translate-actions.js";
 import { createEditorChapterState, state } from "./state.js";
 
 globalThis.window ??= {
@@ -69,6 +70,24 @@ test("editor session write permission stays stable after a background role refre
   assert.equal(editorSessionCanWrite(state.editorChapter), true);
   assert.doesNotThrow(() => assertEditorSessionWritePermission({ rowId: "row-1" }));
   assert.throws(() => assertCurrentEditorWritePermission({ rowId: "row-1" }), /Cannot save changes/);
+});
+
+test("the dispatcher uses the session role to open a row modal and the current role for writes", async () => {
+  const dispatch = createTranslateActions(() => {});
+  const writes = [
+    "save-editor-comment", "confirm-editor-ai-review-all", "replace-selected-editor-rows",
+    "duplicate-editor-language-image-with-caption", "restore-editor-history:commit-1",
+    "delete-editor-comment:comment-1", "soft-delete-editor-row:row-1", "restore-editor-row:row-1",
+  ];
+  for (const action of writes) {
+    resetEditorPermissionFixture();
+    state.teams = [writerTeam({ membershipRole: "viewer" })];
+    await dispatch("open-insert-editor-row:row-1");
+    assert.equal(state.editorChapter.insertRowModal.isOpen, true);
+    assert.equal(state.editorChapter.writeLock.status, "idle");
+    await dispatch(action);
+    assert.equal(state.editorChapter.writeLock.status, "locked", action);
+  }
 });
 
 test("current viewer role blocks the next editor write and locks pending rows", async () => {

@@ -1091,6 +1091,7 @@ function renderEditorLanguageField(row, language) {
     const staticFieldClassName =
       `translation-language-panel__field-static`
       + `${language.isAiTranslating ? " translation-language-panel__field-static--loading" : ""}`;
+    const canEditField = row.canEdit === true && language.canEdit === true;
     const staticFieldMarkup = language.isAiTranslating
       ? `
           <div
@@ -1106,11 +1107,12 @@ function renderEditorLanguageField(row, language) {
             ${language.textHasParagraphs === true ? "data-text-has-paragraphs" : ""}
           >${staticFieldTextHtml}</span></div>
         `
-      : row.canEdit === true && language.canEdit === true ? `
+      : canEditField || row.lifecycleState === "deleted" ? `
           <button
-            class="${staticFieldClassName} translation-language-panel__field-static--editable"
+            class="${staticFieldClassName}${canEditField ? " translation-language-panel__field-static--editable" : ""}"
             type="button"
-            data-editor-display-field
+            ${canEditField ? "data-editor-display-field" : 'data-action="select-editor-row-language"'}
+            ${!canEditField && !language.text?.trim() ? `aria-label="Select ${escapeHtml(language.name)}"` : ""}
             data-row-id="${escapeHtml(row.id)}"
             data-language-code="${escapeHtml(language.code)}"
             data-row-text-style="${escapeHtml(textStyle)}"
