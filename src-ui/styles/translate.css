@@ -1680,6 +1680,8 @@
 }
 
 .translation-language-panel__field-static {
+  appearance: none;
+  -webkit-appearance: none;
   display: block;
   width: 100%;
   min-height: calc(1.5em + 12px);
@@ -1710,8 +1712,6 @@
 }
 
 .translation-language-panel__field-static--editable {
-  appearance: none;
-  -webkit-appearance: none;
   position: relative;
   z-index: 0;
   cursor: text;

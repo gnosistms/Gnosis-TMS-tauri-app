@@ -504,16 +504,15 @@ function buildEditorDisplayItems(contentRows, editorChapter, team, editorReplace
   };
 
   for (const row of rows) {
+    const canEdit = row.lifecycleState === "active" && canEditRows;
     const nextRow = {
       ...row,
-      canEdit: canEditRows,
-      canInsert: row.lifecycleState === "active" && canEditRows,
-      canMerge: row.lifecycleState === "active" && canEditRows && !srtGroupingEnabled(editorChapter),
-      canMergePrevious:
-        row.lifecycleState === "active" && canEditRows && hasActiveRowBefore.get(row.rowId) === true,
-      canMergeNext:
-        row.lifecycleState === "active" && canEditRows && hasActiveRowAfter.get(row.rowId) === true,
-      canSoftDelete: row.lifecycleState === "active" && canEditRows,
+      canEdit,
+      canInsert: canEdit,
+      canMerge: canEdit && !srtGroupingEnabled(editorChapter),
+      canMergePrevious: canEdit && hasActiveRowBefore.get(row.rowId) === true,
+      canMergeNext: canEdit && hasActiveRowAfter.get(row.rowId) === true,
+      canSoftDelete: canEdit,
       canRestore: row.lifecycleState === "deleted" && sessionCanWrite && getProjectLifecycleWritePolicy({
         team,
         project: chapterContext?.project ?? null,
@@ -529,7 +528,7 @@ function buildEditorDisplayItems(contentRows, editorChapter, team, editorReplace
         actionKind: "permanentRow",
       }).allowed,
       showContextAction: row.lifecycleState === "active" && showContextAction,
-      canReplaceSelect: row.lifecycleState === "active" && canEditRows && editorReplace?.isEnabled === true,
+      canReplaceSelect: canEdit && editorReplace?.isEnabled === true,
       replaceSelected: selectedReplaceRowIds.has(row.id),
       replaceSelectionDisabled: editorReplace?.status === "saving",
     };

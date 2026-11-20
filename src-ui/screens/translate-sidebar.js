@@ -521,7 +521,7 @@ function assistantDraftMatchesCurrentTarget(item, currentTargetText) {
     === normalizeAssistantDraftComparisonText(currentTargetText);
 }
 
-function renderAssistantTranscriptItem(item, currentTargetText = "", captionLabel = "Image caption") {
+function renderAssistantTranscriptItem(item, currentTargetText, captionLabel, readOnly) {
   const itemType = item?.type ?? "assistant-message";
   const text = typeof item?.text === "string" ? item.text.trim() : "";
 
@@ -549,7 +549,7 @@ function renderAssistantTranscriptItem(item, currentTargetText = "", captionLabe
         : isAppliedToCurrentText
           ? "Applied"
           : "Apply";
-    const isDisabled = isApplying || isAppliedToCurrentText;
+    const isDisabled = readOnly || isApplying || isAppliedToCurrentText;
     return `
       <article class="assistant-item assistant-item--assistant">
         <p class="assistant-item__label">Draft Translation</p>
@@ -659,7 +659,7 @@ function assistantTranscriptStatusText(assistant, threadKey) {
   return "";
 }
 
-function renderAssistantTranscript(editorChapter, rows, languages, sourceCode, targetCode) {
+function renderAssistantTranscript(editorChapter, rows, languages, sourceCode, targetCode, readOnly) {
   const activeRow = rows.find((row) => (row.id === editorChapter?.activeRowId || row.srtGroup?.memberRowIds.includes(editorChapter?.activeRowId))) ?? null;
   const translateLanguages = resolveEditorAiTranslateLanguages(editorChapter);
   const sourceLanguage =
@@ -709,7 +709,7 @@ function renderAssistantTranscript(editorChapter, rows, languages, sourceCode, t
           message: assistant.error,
         })
         : ""}
-      ${items.map((item) => renderAssistantTranscriptItem(item, currentTargetText, captionLabel)).join("")}
+      ${items.map((item) => renderAssistantTranscriptItem(item, currentTargetText, captionLabel, readOnly)).join("")}
       ${statusText ? `<p class="assistant-transcript__status">${escapeHtml(statusText)}</p>` : ""}
     </div>
   `;
@@ -753,7 +753,7 @@ function renderAssistantPane(editorChapter, rows, languages, sourceCode, targetC
   return `
     <div class="assistant-pane">
       ${renderTranslateTools(editorChapter, rows, languages, sourceCode, targetCode, actionConfig, offlineMode, readOnly)}
-      ${renderAssistantTranscript(editorChapter, rows, languages, sourceCode, targetCode)}
+      ${renderAssistantTranscript(editorChapter, rows, languages, sourceCode, targetCode, readOnly)}
       ${readOnly ? "" : renderAssistantComposer(editorChapter, rows, languages, targetCode, offlineMode)}
     </div>
   `;
@@ -771,20 +771,21 @@ export function renderTranslateSidebar(
   writeActionsAvailable = true,
 ) {
   const requestedTab = normalizeEditorSidebarTab(editorChapter?.sidebarTab);
-  const hasActiveRow = rows.some((row) => (row.id === editorChapter?.activeRowId || row.srtGroup?.memberRowIds.includes(editorChapter?.activeRowId)));
+  const activeRow = rows.find((row) => row.id === editorChapter?.activeRowId || row.srtGroup?.memberRowIds.includes(editorChapter?.activeRowId));
+  const readOnly = !writeActionsAvailable || activeRow?.canEdit === false;
   const activeTab = !writeActionsAvailable && (requestedTab === "assistant" || requestedTab === "review")
     ? "history"
     : requestedTab;
   const body = activeTab === "assistant"
-    ? renderAssistantPane(editorChapter, rows, languages, sourceCode, targetCode, actionConfig, offlineMode, !writeActionsAvailable)
+    ? renderAssistantPane(editorChapter, rows, languages, sourceCode, targetCode, actionConfig, offlineMode, readOnly)
     : activeTab === "comments"
-    ? renderCommentsPane(editorChapter, rows, session, { readOnly: !writeActionsAvailable })
+    ? renderCommentsPane(editorChapter, rows, session, { readOnly })
     : activeTab === "review"
-      ? renderReviewPane(editorChapter, rows, languages, offlineMode)
+      ? renderReviewPane(editorChapter, rows, languages, offlineMode, readOnly)
       : renderHistoryPane(editorChapter, rows, languages);
 
   return `
-    <aside class="translate-sidebar card card--history${activeTab === "assistant" && hasActiveRow ? " translate-sidebar--assistant" : ""}">
+    <aside class="translate-sidebar card card--history${activeTab === "assistant" && activeRow ? " translate-sidebar--assistant" : ""}">
       <div class="card__body">
         <button type="button" class="editor-row-connection" data-editor-row-connection
           data-action="show-connected-editor-row" hidden>

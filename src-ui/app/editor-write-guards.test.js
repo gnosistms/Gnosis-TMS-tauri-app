@@ -148,7 +148,13 @@ const {
 } = await import("./editor-operation-queue.js");
 const {
   assertQueuedEditorRowsReady,
+  invokeQueuedEditorWriteCommand,
 } = await import("./editor-queued-write.js");
+const {
+  assertEditorSessionWritePermission,
+  invokeEditorWriteCommand,
+} = await import("./editor-write-permission.js");
+const { createTranslateActions } = await import("./actions/translate-actions.js");
 const {
   deleteActiveEditorRowComment,
   saveActiveEditorRowComment,
@@ -199,6 +205,43 @@ test.afterEach(() => {
   resetEditorOperationQueue();
   resetRepoWriteQueue();
   resetSessionState();
+});
+
+test("deleted row writes preserve the lifecycle rejection and unrelated pending saves", async () => {
+  installEditorFixture();
+  const pending = state.editorChapter.rows[0];
+  pending.saveStatus = "saving";
+  const row = { rowId: "deleted-row", lifecycleState: "deleted" };
+  state.editorChapter.rows.push(row);
+  const expected = { reason: "softDeleted", message: "This item is deleted and read-only. Restore it before making changes." };
+  const command = "update_gtms_editor_row_fields";
+  const payload = { input: { rowId: row.rowId } };
+  // A control from the previous render can still dispatch after the row is deleted.
+  const target = { closest: () => ({ dataset: { rowId: row.rowId } }) };
+  await createTranslateActions(() => {})("open-editor-footnote-entry", { target });
+  assert.equal(state.editorChapter.writeLock.status, "idle");
+  assert.throws(() => assertEditorSessionWritePermission({ rowId: row.rowId }), expected);
+  await assert.rejects(invokeEditorWriteCommand(command, payload, { rowId: row.rowId }), expected);
+  const project = state.projects[0];
+  await assert.rejects(invokeQueuedEditorWriteCommand(command, payload, {
+    team: state.teams[0], project, chapter: project.chapters[0], row,
+  }), expected);
+  assert.deepEqual(invokeLog, []);
+  assert.equal(state.editorChapter.writeLock.status, "idle");
+  assert.equal(state.editorChapter.rows[0].saveStatus, "saving");
+});
+
+test("only a native chapter-content access denial locks the session", async () => {
+  installEditorFixture();
+  const write = () => invokeEditorWriteCommand("update_gtms_editor_row_fields", { input: {} }, { rowId: "row-1" });
+  for (const message of ["Permission denied opening a local file", "The repository is read-only"]) {
+    invokeHandler = async () => { throw new Error(message); };
+    await assert.rejects(write(), { message });
+    assert.equal(state.editorChapter.writeLock.status, "idle");
+  }
+  invokeHandler = async () => { throw "Your account type cannot edit shared content."; };
+  await assert.rejects(write(), { code: "EDITOR_PERMISSION_DENIED" });
+  assert.equal(state.editorChapter.writeLock.status, "locked");
 });
 
 test("flushDirtyEditorRows blocks while a style save is in flight even without dirty row tracking", async () => {
@@ -1846,17 +1889,17 @@ test("unreview all accepts a chapter containing a settled soft-deleted row", asy
     fields: { es: "deleted text" },
     fieldStates: { es: { reviewed: true, pleaseCheck: true } },
   }]));
-  state.editorChapter.unreviewAllModal = {
-    ...state.editorChapter.unreviewAllModal,
-    isOpen: true,
-    languageCode: "es",
-  };
+  state.editorChapter.activeRowId = "deleted-row";
+  state.editorChapter.selectedTargetLanguageCode = "es";
+  const dispatch = createTranslateActions(() => {});
+  await dispatch("open-editor-unreview-all");
+  assert.equal(state.editorChapter.unreviewAllModal.isOpen, true);
   invokeHandler = async (command) => {
     assert.equal(command, "clear_gtms_editor_reviewed_markers");
     return { rowIds: ["row-1", "deleted-row"], chapterBaseCommitSha: "head-unreview" };
   };
 
-  await confirmEditorUnreviewAll(() => {});
+  await dispatch("confirm-editor-unreview-all");
   await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
 
   assert.deepEqual(invokeLog.map((entry) => entry.command), ["clear_gtms_editor_reviewed_markers"]);
