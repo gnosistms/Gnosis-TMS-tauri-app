@@ -135,6 +135,7 @@ import {
   persistEditorRowOnBlur as persistEditorRowOnBlurFlow,
   persistEditorRowsBatch as persistEditorRowsBatchFlow,
   reviewEditorClearTranslations as reviewEditorClearTranslationsFlow,
+  resolveEditorMultipleH1Warning as resolveEditorMultipleH1WarningFlow,
   resolveEditorRowConflict as resolveEditorRowConflictFlow,
   scheduleDirtyEditorRowScan as scheduleDirtyEditorRowScanFlow,
   toggleEditorRowFieldMarker as toggleEditorRowFieldMarkerFlow,
@@ -1393,10 +1394,11 @@ export async function updateEditorRowTextStyle(render, rowId, nextTextStyle) {
   if (await applySrtGroupAction(render, rowId, "text-style", { textStyle: nextTextStyle }, {
     ...editorPersistenceOperations(), flushDirtyEditorRows,
   })) return;
-  await updateEditorRowTextStyleFlow(render, rowId, nextTextStyle, {
-    updateEditorChapterRow,
-    applyEditorSelectionsToProjectState,
-  });
+  await updateEditorRowTextStyleFlow(render, rowId, nextTextStyle, editorPersistenceOperations());
+}
+
+export async function resolveEditorMultipleH1Warning(render, confirmed) {
+  await resolveEditorMultipleH1WarningFlow(render, confirmed, editorPersistenceOperations());
 }
 
 export function updateEditorSearchFilterQuery(render, nextValue) {

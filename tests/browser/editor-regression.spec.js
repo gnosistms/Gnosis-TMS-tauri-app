@@ -5452,6 +5452,62 @@ test.describe("editor regressions", () => {
     await expect(headingButton).toBeHidden();
   });
 
+  test("setting another H1 asks for confirmation even when the page title is filtered out", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 4 }, { mockTauri: true });
+    const titleId = fixtureRowId(1);
+    const targetId = fixtureRowId(4);
+    const h1 = (rowId) => page.locator(
+      `[data-editor-row-text-style-button][data-row-id="${rowId}"][data-language-code="vi"][data-text-style="heading1"]`,
+    );
+    const styleWrites = async () => (await readMockTauriState(page)).invocations
+      .filter((entry) => entry.command === "update_gtms_editor_row_text_style")
+      .map((entry) => entry.payload.input.rowId);
+    const dialog = page.getByRole("dialog", { name: "Multiple H1 headings on this page", exact: true });
+
+    await activateMainEditorField(page, titleId, "vi");
+    await h1(titleId).click();
+    await expect.poll(styleWrites).toEqual([titleId]);
+    await page.locator("[data-editor-search-input]").fill("0004");
+    await expect(page.locator("[data-editor-row-card]")).toHaveAttribute("data-row-id", targetId);
+    const field = await activateMainEditorField(page, targetId, "vi");
+    const draft = "0004 edited section heading";
+    await field.fill(draft);
+    await h1(targetId).click();
+    await expect(dialog).toHaveAccessibleDescription("The H1 heading should be used for the page title only. All other headings on a page should be H2 and H3. Do you still want to set this text style to H1?");
+    await expect(dialog.getByRole("button")).toHaveText(["Cancel", "Set H1"]);
+    const cancel = dialog.getByRole("button", { name: "Cancel" });
+    await expect(cancel).toBeFocused();
+    await cancel.click();
+    await expect(dialog).toHaveCount(0);
+    await expect(field).toBeFocused();
+    await expect(field).toHaveValue(draft);
+    await expect(h1(targetId)).toHaveAttribute("aria-checked", "false");
+    expect(await styleWrites()).toEqual([titleId]);
+
+    await h1(targetId).click();
+    await dialog.getByRole("button", { name: "Set H1", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect.poll(async () => (await readMockTauriState(page)).textStyles["fixture-chapter"])
+      .toMatchObject({ [titleId]: "heading1", [targetId]: "heading1" });
+
+    await activateMainEditorField(page, targetId, "vi");
+    await field.focus();
+    await h1(targetId).click();
+    await expect(dialog).toHaveCount(0);
+    expect(await styleWrites()).toEqual([titleId, targetId]);
+  });
+
+  test("a deleted H1 does not trigger the multiple-heading warning", async ({ page }) => {
+    await mountEditorFixture(page, { rowCount: 3 }, { mockTauri: true });
+    await patchFixtureRow(page, fixtureRowId(3), { textStyle: "heading1" });
+    await softDeleteFixtureRow(page, fixtureRowId(3));
+    await activateMainEditorField(page, fixtureRowId(1), "vi");
+    await page.getByRole("radio", { name: "H1", exact: true }).click();
+    await expect.poll(async () => (await readMockTauriState(page)).textStyles["fixture-chapter"][fixtureRowId(1)])
+      .toBe("heading1");
+    await expect(page.getByRole("dialog", { name: "Multiple H1 headings on this page" })).toHaveCount(0);
+  });
+
   test("a List row nests items with Tab and takes its list style from the settings menu", async ({ page }) => {
     const rowId = "fixture-row-0001";
     await mountEditorFixture(page, { rowCount: 40, chapterStatus: "ready" }, { mockTauri: true });

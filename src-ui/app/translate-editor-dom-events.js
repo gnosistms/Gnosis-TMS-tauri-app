@@ -102,6 +102,10 @@ export function activeElementKeepsEditorControlOpen(
     return true;
   }
 
+  if (chapterState?.pendingH1RowId === rowId && activeElement.closest('[data-modal-dialog="editor-multiple-h1"]')) {
+    return true;
+  }
+
   const insertLinkInput = activeElement.closest("[data-editor-insert-link-url-input]");
   const insertLinkModal = chapterState?.insertLinkModal;
   return Boolean(
