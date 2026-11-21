@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::AppHandle;
 
+mod recovery;
+
 use crate::state::ProjectRepoSyncStore;
 use crate::{
     installation_access::ensure_repo_allows_writes,
@@ -103,6 +105,8 @@ pub(crate) struct ProjectRepoSyncSnapshot {
     pub(crate) project_id: String,
     pub(crate) repo_name: String,
     pub(crate) repo_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) saved_checkout: Option<PathBuf>,
     pub(crate) local_head_oid: Option<String>,
     pub(crate) remote_head_oid: Option<String>,
     pub(crate) status: String,
@@ -348,7 +352,11 @@ fn project_repo_snapshot_needs_transport(snapshot: &ProjectRepoSyncSnapshot) -> 
         PROJECT_REPO_SYNC_STATUS_NOT_CLONED
             | PROJECT_REPO_SYNC_STATUS_OUT_OF_SYNC
             | PROJECT_REPO_SYNC_STATUS_DIRTY_LOCAL
-    )
+    ) || (snapshot.status == PROJECT_REPO_SYNC_STATUS_UNRESOLVED_CONFLICT
+        && snapshot
+            .remote_head_oid
+            .as_deref()
+            .is_some_and(|head| !head.trim().is_empty()))
 }
 
 fn project_repo_syncing_message_for_status(status: &str) -> String {
@@ -499,9 +507,6 @@ pub(crate) fn sync_gtms_project_editor_repo_sync(
     // editor-driven sync does not participate in.
     let repo_lock = repo_sync_lock(&repo_path);
     let _repo_lock_guard = acquire_repo_sync_lock(&repo_lock);
-    ensure_project_origin_remote(&project, &repo_path)?;
-    ensure_repo_local_git_identity(app, &repo_path)?;
-    backup_dirty_project_worktree(&repo_path, project_branch_name(&project).as_str())?;
     let old_head_sha = read_current_head_oid(&repo_path);
 
     let git_transport_token = load_git_transport_token(input.installation_id, session_token)?;
@@ -591,6 +596,7 @@ fn spawn_project_repo_sync_job(
                 project_id: project.project_id.clone(),
                 repo_name: project.repo_name.clone(),
                 repo_path: repo_path.display().to_string(),
+                saved_checkout: recovery::latest_saved_checkout(&repo_path, &project.project_id),
                 local_head_oid: outcome.current_head_oid.clone(),
                 remote_head_oid: outcome.current_head_oid.clone(),
                 status: outcome.repo_sync_status,
@@ -615,6 +621,7 @@ fn snapshot_from_project_sync_error(
             project_id: project.project_id.clone(),
             repo_name: project.repo_name.clone(),
             repo_path: repo_path.display().to_string(),
+            saved_checkout: recovery::latest_saved_checkout(repo_path, &project.project_id),
             local_head_oid: read_current_head_oid(repo_path),
             remote_head_oid: project.default_branch_head_oid.clone(),
             status: PROJECT_REPO_SYNC_STATUS_REMOTE_MIGRATED_LOCAL_CHANGES.to_string(),
@@ -632,6 +639,7 @@ fn snapshot_from_project_sync_error(
             project_id: project.project_id.clone(),
             repo_name: project.repo_name.clone(),
             repo_path: repo_path.display().to_string(),
+            saved_checkout: recovery::latest_saved_checkout(repo_path, &project.project_id),
             local_head_oid: read_current_head_oid(repo_path),
             remote_head_oid: project.default_branch_head_oid.clone(),
             status: PROJECT_REPO_SYNC_STATUS_UPDATE_REQUIRED.to_string(),
@@ -906,6 +914,7 @@ fn inspect_project_repo_state(
         project_id: project.project_id.clone(),
         repo_name: project.repo_name.clone(),
         repo_path: repo_path.display().to_string(),
+        saved_checkout: recovery::latest_saved_checkout(repo_path, &project.project_id),
         local_head_oid: None,
         remote_head_oid: project.default_branch_head_oid.clone(),
         status: PROJECT_REPO_SYNC_STATUS_NOT_CLONED.to_string(),
@@ -998,6 +1007,13 @@ fn inspect_project_repo_state(
         };
     };
 
+    if local_head_oid.as_deref() != Some(remote_head_oid_value.as_str()) {
+        return ProjectRepoSyncSnapshot {
+            local_head_oid,
+            status: PROJECT_REPO_SYNC_STATUS_OUT_OF_SYNC.to_string(),
+            ..default_snapshot()
+        };
+    }
     // Pending migrations run inside sync_project_repo, but the reconcile loop
     // only spawns a sync when this snapshot needs transport — a head-equal
     // repo would otherwise read upToDate and never migrate.
@@ -1027,16 +1043,10 @@ fn inspect_project_repo_state(
         }
     }
 
-    let status = if local_head_oid.as_deref() == Some(remote_head_oid_value.as_str()) {
-        PROJECT_REPO_SYNC_STATUS_UP_TO_DATE
-    } else {
-        PROJECT_REPO_SYNC_STATUS_OUT_OF_SYNC
-    };
-
     ProjectRepoSyncSnapshot {
         local_head_oid,
         remote_head_oid,
-        status: status.to_string(),
+        status: PROJECT_REPO_SYNC_STATUS_UP_TO_DATE.to_string(),
         ..default_snapshot()
     }
 }
@@ -1081,6 +1091,7 @@ pub(crate) fn sync_project_repo(
         });
     }
 
+    recovery::finish_interrupted_replacement(project, repo_path)?;
     if !repo_path.exists() {
         let current_head_oid = clone_project_repo(
             app,
@@ -1099,9 +1110,10 @@ pub(crate) fn sync_project_repo(
 
     ensure_project_origin_remote(project, repo_path)?;
     ensure_repo_local_git_identity(app, repo_path)?;
-    restore_checkout_if_working_tree_empty(repo_path)?;
+    let status = git_output(repo_path, &["status", "--porcelain"], None)?;
+    let unresolved = detect_unresolved_project_repo_conflict(repo_path, &status);
 
-    if repo_has_imported_editor_conflicts(repo_path)? {
+    if unresolved.is_none() && repo_has_imported_editor_conflicts(repo_path)? {
         let imported_conflicts = list_imported_editor_conflict_refs(repo_path)?;
         return Ok(ProjectRepoSyncOutcome {
             current_head_oid: read_current_head_oid(repo_path),
@@ -1120,14 +1132,42 @@ pub(crate) fn sync_project_repo(
         .filter(|value| !value.trim().is_empty())
         .unwrap_or("main");
     let git_transport_auth = GitTransportAuth::from_token(git_transport_token)?;
-    enforce_remote_project_app_version(repo_path, project, branch_name, &git_transport_auth)?;
-    run_pending_repo_migrations(
+    let fetched_head =
+        enforce_remote_project_app_version(repo_path, project, branch_name, &git_transport_auth)?;
+    if let Some(conflict) = unresolved {
+        let head = fetched_head.as_deref().ok_or(conflict)?;
+        ensure_repo_allows_writes(app, repo_path)?;
+        return recovery::recover_project(project, repo_path, branch_name, head);
+    }
+    let restored = restore_checkout_if_working_tree_empty(repo_path)?;
+    if let Some(head) = &fetched_head {
+        if (status.is_empty() || restored)
+            && recovery::fast_forward_clean_project(repo_path, branch_name, head)?
+            && pending_repo_migrations(repo_path, &RepoKind::Project)?.is_empty()
+        {
+            mark_project_repo_synced(project, repo_path)?;
+            return Ok(ProjectRepoSyncOutcome {
+                current_head_oid: Some(head.clone()),
+                repo_sync_status: PROJECT_REPO_SYNC_STATUS_UP_TO_DATE.into(),
+                message: None,
+                imported_conflicts: Vec::new(),
+            });
+        }
+    }
+    let migration = run_pending_repo_migrations(
         app,
         repo_path,
         RepoKind::Project,
         branch_name,
         remote_head_oid,
-    )?;
+    );
+    if let (Err(error), Some(head)) = (&migration, &fetched_head) {
+        if is_remote_migrated_local_old_layout_changes_error(error) {
+            ensure_repo_allows_writes(app, repo_path)?;
+            return recovery::recover_project(project, repo_path, branch_name, head);
+        }
+    }
+    migration?;
     backup_dirty_project_worktree(repo_path, branch_name)?;
     let local_head_oid = git_output(repo_path, &["rev-parse", "HEAD"], None).ok();
     let local_sync_state = read_local_repo_sync_state(repo_path)?;
@@ -1617,6 +1657,8 @@ fn overwrite_conflicted_gtms_project_repos_sync(
             Some(&project.project_id),
             &project.repo_name,
         )?;
+        let lock = repo_sync_lock(&repo_path);
+        let _guard = acquire_repo_sync_lock(&lock);
         let snapshot = inspect_project_repo_state(&project, &repo_path);
         if snapshot.status != PROJECT_REPO_SYNC_STATUS_UNRESOLVED_CONFLICT {
             skipped_project_ids.push(project.project_id.clone());
@@ -1624,7 +1666,6 @@ fn overwrite_conflicted_gtms_project_repos_sync(
         }
 
         overwrite_project_repo_with_remote(app, &project, &repo_path, &git_transport_auth)?;
-        mark_project_repo_synced(&project, &repo_path)?;
         resolved_project_ids.push(project.project_id);
     }
 
@@ -1694,33 +1735,12 @@ fn overwrite_project_repo_with_remote(
     repo_path: &Path,
     git_transport_auth: &GitTransportAuth,
 ) -> Result<(), String> {
-    if !repo_path.exists() || git_output(repo_path, &["rev-parse", "--git-dir"], None).is_err() {
-        return Err("Could not find the local project repo to overwrite.".to_string());
-    }
-
     ensure_repo_allows_writes(app, repo_path)?;
     ensure_project_origin_remote(project, repo_path)?;
-    ensure_repo_local_git_identity(app, repo_path)?;
-    abort_in_progress_git_operations(repo_path)?;
-
-    let branch_name = project_branch_name(project);
-    let remote_tracking_ref = format!("origin/{branch_name}");
-
-    let _ = git_output(repo_path, &["reset", "--hard"], None);
-    let _ = git_output(repo_path, &["clean", "-fd"], None);
-    git_output(
-        repo_path,
-        &["fetch", "origin", &branch_name],
-        Some(git_transport_auth),
-    )?;
-    git_output(
-        repo_path,
-        &["checkout", "-B", &branch_name, &remote_tracking_ref],
-        None,
-    )?;
-    git_output(repo_path, &["reset", "--hard", &remote_tracking_ref], None)?;
-    git_output(repo_path, &["clean", "-fd"], None)?;
-
+    let branch = project_branch_name(project);
+    let head = enforce_remote_project_app_version(repo_path, project, &branch, git_transport_auth)?
+        .ok_or("The server has no project revision to recover.")?;
+    recovery::recover_project(project, repo_path, &branch, &head)?;
     Ok(())
 }
 
@@ -1955,15 +1975,14 @@ fn ensure_project_origin_remote(
 /// When the working tree is empty but `HEAD` resolves, restoring the checkout from
 /// `HEAD` is always lossless: an empty working tree cannot hold uncommitted work, and
 /// `reset --hard HEAD` never drops commits. So do it automatically and quietly.
-fn restore_checkout_if_working_tree_empty(repo_path: &Path) -> Result<(), String> {
-    if git_output(repo_path, &["rev-parse", "--verify", "HEAD"], None).is_err() {
-        return Ok(());
-    }
-    if working_tree_has_files(repo_path) {
-        return Ok(());
+fn restore_checkout_if_working_tree_empty(repo_path: &Path) -> Result<bool, String> {
+    if working_tree_has_files(repo_path)
+        || git_output(repo_path, &["rev-parse", "--verify", "HEAD"], None).is_err()
+    {
+        return Ok(false);
     }
     git_output(repo_path, &["reset", "--hard", "HEAD"], None)?;
-    Ok(())
+    Ok(true)
 }
 
 /// Whether the working tree holds any tracked-or-untracked file other than `.git`.
@@ -2098,28 +2117,32 @@ fn enforce_remote_project_app_version(
     project: &ProjectRepoSyncDescriptor,
     branch_name: &str,
     git_transport_auth: &GitTransportAuth,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     match git_output(
         repo_path,
         &["fetch", "origin", branch_name],
         Some(git_transport_auth),
     ) {
         Ok(_) => {}
-        Err(error) if git_error_indicates_missing_remote_ref(&error) => return Ok(()),
+        Err(error) if git_error_indicates_missing_remote_ref(&error) => return Ok(None),
         Err(error) => return Err(error),
     }
-    let remote_tracking_ref = format!("origin/{branch_name}");
+    let fetched_head = git_output(
+        repo_path,
+        &["rev-parse", "--verify", "FETCH_HEAD^{commit}"],
+        None,
+    )?;
     let resource_name = if project.repo_name.trim().is_empty() {
         project.project_id.trim()
     } else {
         project.repo_name.trim()
     };
     if let Some(requirement) =
-        remote_ref_requires_newer_app(repo_path, &remote_tracking_ref, "project", resource_name)?
+        remote_ref_requires_newer_app(repo_path, &fetched_head, "project", resource_name)?
     {
         return Err(encode_repo_app_update_requirement(&requirement));
     }
-    Ok(())
+    Ok(Some(fetched_head))
 }
 
 fn mark_project_repo_synced(
@@ -2226,6 +2249,7 @@ mod tests {
             project_id: "p1".to_string(),
             repo_name: "repo".to_string(),
             repo_path: "/tmp/repo".to_string(),
+            saved_checkout: None,
             local_head_oid: None,
             remote_head_oid: None,
             status: status.to_string(),
@@ -2610,6 +2634,146 @@ mod tests {
             super::PROJECT_REPO_SYNC_STATUS_UP_TO_DATE
         );
         let _ = fs::remove_dir_all(repo_path);
+    }
+
+    #[test]
+    fn project_recovery_preserves_the_worktree_and_offers_the_local_row_in_the_editor() {
+        use super::recovery::{
+            finish_interrupted_replacement, latest_saved_checkout, recover_project,
+        };
+        for operation in ["merge", "rebase"] {
+            let root = env::temp_dir().join(format!("gnosis-project-recovery-{}", Uuid::now_v7()));
+            let repo = root.join("projects").join("book");
+            let chapter = repo.join("chapters/abc");
+            let row = chapter.join("rows/one.json");
+            fs::create_dir_all(row.parent().unwrap()).unwrap();
+            run_git(&repo, &["init", "-b", "main"]);
+            run_git(&repo, &["config", "user.email", "editor@example.invalid"]);
+            run_git(&repo, &["config", "user.name", "Test Editor"]);
+            fs::write(repo.join("project.json"), r#"{"title":"Book"}"#).unwrap();
+            fs::write(
+                chapter.join("chapter.json"),
+                r#"{"chapter_id":"chapter","title":"Chapter"}"#,
+            )
+            .unwrap();
+            let write_row = |text: &str| {
+                let value = serde_json::json!({"row_id":"one","structure":{"order_key":"001"},
+                    "status":{"review_state":"unreviewed"},"origin":{"source_row_number":1},
+                    "fields":{"en":{"plain_text":text}}});
+                fs::write(&row, value.to_string()).unwrap();
+                run_git(&repo, &["add", "."]);
+                run_git(&repo, &["commit", "-m", text]);
+            };
+            write_row("initial");
+            run_git(&repo, &["switch", "-c", "server"]);
+            write_row("published");
+            let head = git_stdout(&repo, &["rev-parse", "HEAD"]);
+            run_git(&repo, &["switch", "main"]);
+            write_row("unpublished");
+            let local = git_stdout(&repo, &["rev-parse", "HEAD"]);
+            assert!(super::git_output(&repo, &[operation, "server"], None).is_err());
+            let stages = git_stdout(&repo, &["ls-files", "-u"]);
+            assert!(!stages.is_empty());
+            fs::write(repo.join("untracked.txt"), "draft").unwrap();
+            let descriptor: ProjectRepoSyncDescriptor = serde_json::from_value(serde_json::json!({
+                "projectId":"p1", "repoName":"book", "fullName":"fixture/book","defaultBranchHeadOid":head
+            })).unwrap();
+            let before = super::inspect_project_repo_state(&descriptor, &repo);
+            assert!(super::project_repo_snapshot_needs_transport(&before));
+            assert!(recover_project(&descriptor, &repo, "main", "missing-target").is_err());
+            assert_eq!(git_stdout(&repo, &["ls-files", "-u"]), stages);
+            assert!(latest_saved_checkout(&repo, &descriptor.project_id).is_none());
+
+            let outcome = recover_project(&descriptor, &repo, "main", &head).unwrap();
+            assert_eq!(outcome.imported_conflicts.len(), 1);
+            assert_eq!(outcome.imported_conflicts[0].chapter_id, "chapter");
+            assert_eq!(git_stdout(&repo, &["status", "--porcelain"]), "");
+            assert_eq!(git_stdout(&repo, &["rev-parse", "HEAD"]), head);
+            assert!(fs::read_to_string(&row).unwrap().contains("published"));
+            let journal: serde_json::Value = serde_json::from_slice(
+                &fs::read(repo.join(".git/gnosis-project-editor-imported-conflicts.json")).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                journal["entries"][0]["localRow"]["fields"]["en"]["plain_text"],
+                "unpublished"
+            );
+            let saved = latest_saved_checkout(&repo, &descriptor.project_id).unwrap();
+            assert_eq!(git_stdout(&saved, &["ls-files", "-u"]), stages);
+            assert_eq!(git_stdout(&saved, &["rev-parse", "main"]), local);
+            assert_eq!(
+                fs::read_to_string(saved.join("untracked.txt")).unwrap(),
+                "draft"
+            );
+            assert_eq!(
+                super::inspect_project_repo_state(&descriptor, &repo).saved_checkout,
+                Some(saved.clone())
+            );
+
+            // Model the process ending between the two directory renames.
+            let prepared = saved.with_file_name("ready").join("book");
+            fs::rename(&repo, &prepared).unwrap();
+            let repo = root.join("projects").join("shorter");
+            finish_interrupted_replacement(&descriptor, &repo).unwrap();
+            finish_interrupted_replacement(&descriptor, &repo).unwrap();
+            assert_eq!(git_stdout(&repo, &["rev-parse", "HEAD"]), head);
+            assert!(!super::project_repo_snapshot_needs_transport(
+                &super::inspect_project_repo_state(&descriptor, &repo)
+            ));
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn project_fast_forward_adopts_remote_migrations_and_leaves_divergence_for_normal_sync() {
+        let (root, seed, _) = new_project_first_sync_fixture();
+        let old = git_stdout(&seed, &["rev-parse", "HEAD"]);
+        let remote = root.join("remote.git");
+        let repo = root.join("returning");
+        run_git(
+            &root,
+            &["clone", remote.to_str().unwrap(), repo.to_str().unwrap()],
+        );
+        let mut metadata =
+            crate::repo_layout_metadata::new_v2_repo_layout_metadata(super::RepoKind::Project);
+        crate::repo_layout_metadata::write_repo_layout_metadata(&seed, &metadata).unwrap();
+        for migration in super::pending_repo_migrations(&seed, &super::RepoKind::Project).unwrap() {
+            metadata.applied_migrations.push(migration.id.into());
+        }
+        crate::repo_layout_metadata::write_repo_layout_metadata(&seed, &metadata).unwrap();
+        run_git(&seed, &["add", "."]);
+        run_git(&seed, &["commit", "-m", "Migrate server copy"]);
+        run_git(&seed, &["push", "origin", "main"]);
+        run_git(&repo, &["fetch", "origin", "main"]);
+        let head = git_stdout(&repo, &["rev-parse", "FETCH_HEAD"]);
+        assert_ne!(head, old);
+        assert!(super::recovery::fast_forward_clean_project(&repo, "main", &head).unwrap());
+        assert_eq!(git_stdout(&repo, &["rev-parse", "HEAD"]), head);
+        assert!(
+            super::pending_repo_migrations(&repo, &super::RepoKind::Project)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(super::recovery::fast_forward_clean_project(&repo, "main", &head).unwrap());
+        run_git(&repo, &["switch", "-C", "main", &old]);
+        run_git(
+            &repo,
+            &[
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "Local change",
+            ],
+        );
+        let local = git_stdout(&repo, &["rev-parse", "HEAD"]);
+        assert!(!super::recovery::fast_forward_clean_project(&repo, "main", &head).unwrap());
+        assert_eq!(git_stdout(&repo, &["rev-parse", "HEAD"]), local);
+        assert_eq!(git_stdout(&remote, &["rev-parse", "main"]), head);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

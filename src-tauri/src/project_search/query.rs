@@ -41,7 +41,10 @@ pub(super) fn search_projects_sync(
     ensure_project_search_schema(&connection)?;
     let requires_refresh = project_search_index_requires_refresh(&connection)?;
     let has_documents = project_search_index_has_documents(&connection)?;
-    if requires_refresh && !has_documents {
+    if requires_refresh
+        && !has_documents
+        && !super::schema::project_search_index_refresh_completed(&connection)?
+    {
         let mut response = empty_search_response(false, false);
         response.index_status = "indexing".to_string();
         return Ok(response);
