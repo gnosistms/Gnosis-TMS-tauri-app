@@ -6,10 +6,15 @@ on:
         description: Published version to install after the previous copy
         required: true
         default: "0.8.154"
+      candidate:
+        description: Optional commit to package for a Windows preflight
+        required: false
+        default: ""
 permissions:
   contents: read
 jobs:
   reinstall:
+    if: inputs.candidate == ''
     runs-on: windows-latest
     env:
       MSI_VERSION: ${{ inputs.version }}
@@ -36,6 +41,90 @@ jobs:
           }
           $previous = Download-Package '${{ matrix.previous }}'
           $current = Download-Package $env:MSI_VERSION
+          Run-Msi '/i' $previous
+          $repo = Join-Path $env:APPDATA 'com.gnosis.tms/installations/installation-7/projects/returning-test'
+          New-Item -ItemType Directory -Force $repo | Out-Null
+          git -C $repo init -b main
+          'Local unpublished translation' | Set-Content "$repo/translation.txt"
+          git -C $repo add translation.txt
+          git -C $repo -c user.name=Test -c user.email=test@example.invalid commit -m "Local work"
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to create the previous local project' }
+          'Unpublished working copy' | Add-Content "$repo/translation.txt"
+          'Private draft' | Set-Content "$repo/untracked.txt"
+          $headBefore = git -C $repo rev-parse HEAD
+          $indexBefore = (Get-FileHash "$repo/.git/index").Hash
+          $rowBefore = (Get-FileHash "$repo/translation.txt").Hash
+          $draftBefore = (Get-FileHash "$repo/untracked.txt").Hash
+          Run-Msi '/x' $previous
+          Run-Msi '/i' $current
+          $exe = Get-ChildItem -Path "$env:ProgramFiles/*Gnosis*/*.exe", "${env:ProgramFiles(x86)}/*Gnosis*/*.exe", "$env:LOCALAPPDATA/*Gnosis*/*.exe" -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^gnosis[ -]?tms\.exe$' } | Select-Object -First 1
+          if (-not $exe) { throw 'Could not locate the installed Gnosis TMS executable.' }
+          Write-Host "Installed executable $($exe.FullName) version $($exe.VersionInfo.ProductVersion)"
+          $expectedVersion = [regex]::Escape($env:MSI_VERSION)
+          if ($exe.VersionInfo.ProductVersion -notmatch "^$expectedVersion(\.|$)") { throw 'Incorrect installed version' }
+          $app = Start-Process $exe.FullName -PassThru
+          try {
+            for ($i = 0; $i -lt 45; $i++) {
+              Start-Sleep -Seconds 1
+              $app.Refresh()
+              if ($app.HasExited) { throw "Installed app exited during startup ($($app.ExitCode))." }
+              if ($app.MainWindowHandle -ne 0 -and $i -ge 14) { break }
+            }
+            if ($app.MainWindowHandle -eq 0) { throw 'Installed app did not open a desktop window.' }
+            if ((git -C $repo rev-parse HEAD) -ne $headBefore -or (Get-FileHash "$repo/.git/index").Hash -ne $indexBefore -or (Get-FileHash "$repo/translation.txt").Hash -ne $rowBefore -or (Get-FileHash "$repo/untracked.txt").Hash -ne $draftBefore) { throw 'Reinstall failed to preserve local project contents.' }
+            Write-Host "The installed app opened after reinstall. Local commit, index, edited file and untracked file survived."
+          } finally {
+            if (-not $app.HasExited) { $app.Kill() }
+          }
+  candidate-package:
+    if: inputs.candidate != ''
+    runs-on: windows-latest
+    timeout-minutes: 40
+    env:
+      MSI_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.candidate }}
+      - uses: dtolnay/rust-toolchain@1.99.1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: node scripts/prepare-typst-sidecar.mjs x86_64-pc-windows-msvc
+      - name: Stage bundled Git and package the candidate through the release pre-bundle check
+        shell: pwsh
+        run: |
+          $release = Invoke-RestMethod https://api.github.com/repos/git-for-windows/git/releases/latest
+          $asset = $release.assets | Where-Object { $_.name -match '^MinGit-.*-64-bit\.zip$' -and $_.name -notmatch 'busybox' } | Select-Object -First 1
+          if (-not $asset) { throw 'MinGit runtime is missing.' }
+          $zip = Join-Path $env:RUNNER_TEMP $asset.name
+          Invoke-WebRequest $asset.browser_download_url -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath src-tauri/resources/windows/git -Force
+          '{"build":{"beforeBuildCommand":"npm run build"},"bundle":{"createUpdaterArtifacts":false}}' | Set-Content -Encoding utf8 .github/unsigned-preflight.conf.json
+          npx tauri build --bundles msi --config .github/windows-release.conf.json --config .github/unsigned-preflight.conf.json
+      - name: Uninstall the published copy, then install and open the candidate with local data
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Download-Package([string]$version) {
+            $asset = "Gnosis.TMS_${version}_x64_en-US.msi"
+            $url = "https://github.com/gnosistms/Gnosis-TMS-tauri-app/releases/download/v$version/$asset"
+            $dest = Join-Path $env:RUNNER_TEMP $asset
+            Invoke-WebRequest $url -OutFile $dest
+            return $dest
+          }
+          function Run-Msi([string]$operation, [string]$package) {
+            $proc = Start-Process msiexec.exe -ArgumentList @($operation, ('"{0}"' -f $package), '/qn', '/norestart') -Wait -PassThru
+            if ($proc.ExitCode -notin @(0, 3010)) { throw "Installer failed ($operation) with $($proc.ExitCode)." }
+          }
+          $previous = Download-Package '0.8.153'
+          $current = (Get-ChildItem 'src-tauri/target/release/bundle/msi/*.msi' | Select-Object -First 1).FullName
+          if (-not $current) { throw 'The candidate MSI is missing.' }
           Run-Msi '/i' $previous
           $repo = Join-Path $env:APPDATA 'com.gnosis.tms/installations/installation-7/projects/returning-test'
           New-Item -ItemType Directory -Force $repo | Out-Null
