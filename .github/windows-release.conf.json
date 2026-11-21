@@ -1,0 +1,5 @@
+{
+  "build": {
+    "beforeBundleCommand": "pwsh -NoProfile -File .github/scripts/check-windows-desktop-imports.ps1"
+  }
+}

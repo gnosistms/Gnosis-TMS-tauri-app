@@ -24,7 +24,7 @@ jobs:
             typstTarget: x86_64-apple-darwin
             uploadSentrySourcemaps: "0"
           - platform: windows-latest
-            args: ""
+            args: --config .github/windows-release.conf.json
             typstTarget: x86_64-pc-windows-msvc
             uploadSentrySourcemaps: "0"
     runs-on: ${{ matrix.platform }}
