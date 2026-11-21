@@ -1,58 +1,54 @@
-name: Windows native diagnostics
+name: Windows desktop verification
 on: workflow_dispatch
+permissions:
+  contents: read
 jobs:
-  native:
+  desktop:
     runs-on: windows-latest
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        profile: [debug, release]
-    permissions:
-      contents: read
+        toolchain: [stable, "1.99.1"]
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
+        with:
+          ref: ade25401d9e297abca83cd2282549f6f967e4758
+          fetch-depth: 0
+      - name: Use the unmodified linker for the older compiler comparison
+        if: matrix.toolchain == '1.99.1'
+        run: git checkout f03a4e554a5d6a6aa260c861224428b5fee5318a -- src-tauri/build.rs
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: "src-tauri"
           cache-on-failure: true
       - run: npm ci
       - run: npm run build
-      - name: Build the matching native test executable
+      - name: Compile the release app
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force src-tauri/binaries | Out-Null
           New-Item -ItemType File -Force src-tauri/binaries/typst-x86_64-pc-windows-msvc.exe | Out-Null
-          $flags = @()
-          if ('${{ matrix.profile }}' -eq 'release') { $flags += '--release' }
-          cargo test --locked --manifest-path src-tauri/Cargo.toml --lib --no-run --message-format=json @flags > "$env:RUNNER_TEMP/artifacts.jsonl"
-          if ($LASTEXITCODE -ne 0) { Get-Content "$env:RUNNER_TEMP/artifacts.jsonl" -Tail 5; exit $LASTEXITCODE }
-          $testBin = Get-Content "$env:RUNNER_TEMP/artifacts.jsonl" | ConvertFrom-Json | Where-Object { $_.executable -and $_.target.name -eq 'gnosis_tms_lib' } | Select-Object -Last 1 -ExpandProperty executable
-          if (-not $testBin) { throw 'Test executable missing' }
-          "NATIVE_TEST=$testBin" >> $env:GITHUB_ENV
-      - name: Exercise the native process on ordinary startup operations
+          cargo build --locked --release --manifest-path src-tauri/Cargo.toml --bin gnosis-tms --features tauri/custom-protocol
+      - name: Check the desktop runtime and open the release executable
         shell: pwsh
         run: |
-          $cdb = "${env:ProgramFiles(x86)}\Windows Kits\10\Debuggers\x64\cdb.exe"
-          $lldb = Get-Command lldb -ErrorAction SilentlyContinue
-          $cdbFile = "$env:RUNNER_TEMP/exception.txt"
-          @'
-          sxe -c ".echo NATIVE_EXCEPTION; .exr -1; .ecxr; kp 30; q" av
-          g
-          '@ | Set-Content -Encoding ascii $cdbFile
-          $failed = $false
-          foreach ($filter in @('windows_native_probe', 'project_repo_sync::tests::project_recovery_preserves', 'project_repo_sync::tests::project_fast_forward', 'project_repo_sync::tests::backup_dirty_project_worktree_preserves', 'project_repo_sync')) {
-            Write-Host "RUN $filter"
-            & $env:NATIVE_TEST $filter --test-threads=1 --nocapture
-            $code = $LASTEXITCODE
-            Write-Host "RESULT $filter $code"
-            if ($code -ne 0) {
-              $failed = $true
-              if ($code -lt 0 -and (Test-Path $cdb)) { & $cdb -cf $cdbFile $env:NATIVE_TEST $filter --test-threads=1 --nocapture }
-              elseif ($code -lt 0 -and $lldb) { & $lldb.Source -b -o "run" -k "thread backtrace all" -- $env:NATIVE_TEST $filter --test-threads=1 --nocapture }
+          & ./.github/scripts/check-windows-desktop-imports.ps1
+          $app = Start-Process -FilePath (Resolve-Path src-tauri/target/release/gnosis-tms.exe) -PassThru
+          try {
+            for ($i = 0; $i -lt 30; $i++) {
+              Start-Sleep -Seconds 1
+              $app.Refresh()
+              if ($app.HasExited) { throw "App closed during startup with exit code $($app.ExitCode)" }
+              if ($app.MainWindowHandle -ne 0 -and $i -gt 9) { break }
             }
+            if ($app.MainWindowHandle -eq 0) { throw 'App did not open a desktop window.' }
+            Write-Host "Desktop window opened and stayed alive: $($app.MainWindowTitle)"
+          } finally {
+            if (-not $app.HasExited) { $app.Kill() }
           }
-          if ($failed) { exit 1 }
-          exit 0
-
+      - name: Exercise the returning project on Windows
+        run: cargo test --release --locked --manifest-path src-tauri/Cargo.toml --lib project_repo_sync
