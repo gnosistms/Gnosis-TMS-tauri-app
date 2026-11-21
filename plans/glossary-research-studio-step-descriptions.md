@@ -42,7 +42,7 @@ T = research term, C = research corpus, N = sample size, L = target language.
 | 5 Compounds and phrases | Find recurring compounds and phrases with T that should inform its translations. |
 | 6 Translation candidates | Suggest L translations for each meaning of T, and choose which to use. |
 | 7 Standardize spelling | Check the spelling of translations that may be uncertain, such as borrowed names. |
-| 8 Test each meaning | Translate each meaning's sample paragraphs with its translations, and revise translations that fail. |
+| 8 Test each meaning | Translate the sample paragraphs and check that each translation of T conveys its intended meaning in context. |
 | 9 Test complete entry | Translate the sample paragraphs with the complete entry, as translators will see it, to check that it leads to the right translation. |
 | 10a Review usage | Count how often each translation was used, and choose which to keep. |
 | 10b Resolve collisions | Decide what to do where a form of T is already a source form of another glossary entry. |

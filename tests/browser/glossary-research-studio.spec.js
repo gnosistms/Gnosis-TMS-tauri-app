@@ -114,9 +114,12 @@ async function mountStudio(page) {
             ...(window.studioOrphanTranslation ? [{ id: "c2", text: "cứng đầu", meaningIds: [], groupId: "g2", note: "" }] : [])] };
           else if (prompt.includes("Which supplied target forms")) value = { candidateIds: [] };
           else if (prompt.includes("Select one initial")) value = { candidateId: "c1" };
-          else if (prompt.includes("Assess EACH")) value = { choices: evidence.assignments.map((a) => ({ ...a, candidateId: "c1", rendered: "đi bộ",
-            problem: window.studioEntryRepair && ["p15", "p30"].includes(a.paragraphId) && !evidence.candidates.some((c) => c.note === "Coordinated conditions for both usages") ? "Missing selection condition" : "",
-          })) };
+          else if (prompt.includes("Assess EACH")) value = { choices: evidence.assignments.map((a) => {
+            const missingCondition = window.studioEntryRepair && ["p15", "p30"].includes(a.paragraphId)
+              && !evidence.candidates.some((c) => c.note === "Coordinated conditions for both usages");
+            return { ...a, candidateId: "c1", rendered: "đi bộ", ...(args.input.step === "8" ? { termCorrect: !missingCondition } : {}),
+              problem: missingCondition ? "Missing selection condition" : "" };
+          }) };
           else if (prompt.includes("Repair selection by")) value = { order: evidence.candidates.map((c) => c.id), notes: [{ candidateId: "c1", note: "Coordinated conditions for both usages" }] };
           else throw new Error(`Unexpected test question: ${prompt.slice(0, 200)}`);
         } else throw new Error(`Unexpected tool ${kind}`);
@@ -1042,9 +1045,15 @@ test("five-round Stop checkpoints survive reload and reopen for an explicit deci
   await mountStudio(page); await seedCollision(page);
   await page.evaluate(async () => {
     const { state } = await import(`/${"app"}/state.js`);
+    const { meaningTrialSignature } = await import(`/${"app"}/glossary-research-studio-workflow.js`);
     const { renderGlossaryResearchStudio } = await import(`/${"screens"}/glossary-research-studio.js`);
     const s = state.glossaryResearchStudio.study;
-    s.step = "8"; s.rounds["8:m1"] = 5; s.reports["m1:5"] = { report: "Five rounds completed. Verb forms still need review." };
+    const problem = "Đi bộ is correct, but the translation omits home.";
+    s.step = "8"; s.translationRuntimeVersion = "0.8.125"; s.rounds["8:m1"] = 5;
+    s.tests["8:m1"] = { phase: "8", signature: meaningTrialSignature(s, "m1"), rounds: 5, passed: false,
+      translations: [{ paragraphId: "p1", source: "I walk home.", translation: "Tôi đi bộ." }],
+      choices: [{ paragraphId: "p1", occurrenceId: "o0", candidateId: "c1", rendered: "đi bộ", problem, passed: false }] };
+    s.reports["m1:5"] = { report: problem };
     s.pendingDecision = { kind: "progress", reportKey: "m1:5", rounds: 5, report: s.reports["m1:5"].report };
     document.querySelector("#app").innerHTML = renderGlossaryResearchStudio(state);
   });
@@ -1053,8 +1062,15 @@ test("five-round Stop checkpoints survive reload and reopen for an explicit deci
   await expect(page.getByRole("button", { name: "Review paused research", exact: true })).toBeVisible();
   await mountStudio(page);
   await page.getByRole("button", { name: "Open study", exact: true }).click();
-  await expect(page.getByRole("dialog").getByText("Five rounds completed. Verb forms still need review.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("dialog").getByText("Đi bộ is correct, but the translation omits home.", { exact: true })).toBeVisible();
   expect(await page.evaluate(() => window.studioCalls.filter((c) => c.command === "start_glossary_studio_tool").length)).toBe(0);
+  await page.getByRole("button", { name: "Continue 5 more rounds with AI", exact: true }).click();
+  await expect(page.getByText("1 of 1 occurrences passed.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Save and continue", exact: true })).toBeEnabled();
+  const calls = await page.evaluate(() => window.studioCalls.filter((c) => c.command === "start_glossary_studio_tool").map((c) => c.args.input));
+  expect(calls.map((call) => call.kind)).toEqual(["ai"]);
+  expect(calls[0].payload.prompt).toContain('"termCorrect":true');
+  expect(calls[0].payload.prompt).toContain("Tôi đi bộ.");
 });
 
 test("split studies retain their parent and shared temporary glossary without automatically running optional compounds", async ({ page }) => {
