@@ -144,6 +144,7 @@ import { renderGlossariesScreen } from "./screens/glossaries.js";
 import { renderGlossaryEditorScreen } from "./screens/glossary-editor.js";
 import { renderGlossaryResearchReportScreen } from "./screens/glossary-research-report.js";
 import { renderGlossaryResearchStudio } from "./screens/glossary-research-studio.js";
+import { cleanResearchDisplay } from "./app/glossary-research-studio-citations.js";
 import { captureStudioDisclosures, restoreStudioDisclosures } from "./app/glossary-research-studio-disclosures.js";
 import { renderNavigationLoadingModal } from "./screens/navigation-loading-modal.js";
 import { buildProjectsScreenListState, renderProjectsScreen } from "./screens/projects.js";
@@ -929,6 +930,11 @@ function renderWithOptionsImpl(options = {}) {
   if (!commitProjectsPageHtml(app, html, state, options)) {
     renderStatusSurfaceOnly();
     return;
+  }
+  if (state.screen === "glossaryResearchReport") {
+    cleanResearchDisplay(app, state.glossaryResearchReport?.run?.sample?.items, true);
+  } else if (state.glossaryTermEditor?.researchOrigin || state.glossaryTermEditor?.studioEntry) {
+    cleanResearchDisplay(app.querySelector('[data-modal-dialog="glossary-term-editor"]'), state.glossaryResearchStudio?.study?.passages);
   }
   restoreStudioDisclosures(app, studioDisclosures);
   renderAppUpdateSurface(app, state.appUpdate);

@@ -10,6 +10,7 @@ import { openGlossaryEditor, loadSelectedGlossaryEditorData } from "./glossary-e
 import { openGlossaryTermEditor, openStudioEntryEditor } from "./glossary-term-draft.js";
 import { setStudioEditorHandler } from "./glossary-research-studio-editor-bridge.js";
 import { loadStudioHistory, loadStudioStudy, saveStudioStudy, deleteStudioStudy, studioGlossaryEntries, refreshStudioGlossary, exportStudioStudy } from "./glossary-research-studio-query.js";
+import { applyResearchTextEdit, studioCitationText, toggleStudioCitation, visibleResearchEntry } from "./glossary-research-studio-citations.js";
 import { hydrateStudioStep, resolveStudioEvidence } from "./glossary-research-studio-evidence.js";
 import { createStudioTools } from "./glossary-research-studio-tools.js";
 import { studioStepNeedsReview } from "./glossary-research-studio-review.js";
@@ -673,7 +674,7 @@ async function openDraftEditor(s) {
   await openGlossaryTermEditor(renderStudio, s.savedTermId ?? null);
   if (!state.glossaryTermEditor.isOpen) { state.screen = "glossaryResearchStudio"; return; }
   const restoreDraft = s.editorDraftSignature === stableSignature(s.draft) ? s.editorDraft : null;
-  const draft = restoreDraft ?? s.draft;
+  const draft = visibleResearchEntry(restoreDraft ?? s.draft, s.passages);
   const editable = Object.fromEntries(["sourceTerms", "targetTerms", "targetVariantNotes",
     "notesToTranslators", "footnote", "untranslated"].filter((key) => key in draft).map((key) => [key, draft[key]]));
   Object.assign(state.glossaryTermEditor, editable, {
@@ -883,7 +884,17 @@ export function updateStudioInput(target) {
   const owner = path?.slice(0, -1).reduce((value, key) => value?.[key], s);
   let proposed = target.type === "checkbox" ? target.checked : target.type === "number" ? Number(target.value) : target.value;
   let previous = field ? owner?.[path.at(-1)] : undefined;
-  if (field === "scope.forms") proposed = uniqueSourceTexts(target.value.split(/[\n,]/u), s.scope.sourceLanguage.code);
+  const textInput = target.tagName === "TEXTAREA" || target.type === "text";
+  if (textInput) {
+    const visible = studioCitationText(target.value, s.passages, true);
+    if (target.value !== visible) target.value = visible;
+    const decision = target.dataset.studioDecision;
+    const original = field === "scope.forms" ? previous.join("\n") : field ? previous : s.decisionInput?.[decision]
+      ?? (decision === "definition" ? s.pendingDecision?.recommendation?.definition
+        : s.pendingDecision?.suggestions?.find((m) => decision === `definition:${m.id}`)?.definition);
+    proposed = applyResearchTextEdit(original, visible, s.passages);
+  }
+  if (field === "scope.forms") proposed = uniqueSourceTexts(proposed.split(/[\n,]/u), s.scope.sourceLanguage.code);
   if (field === "scope.projectIds") proposed = [...target.selectedOptions].map((option) => option.value);
   if (/^candidates\.\d+\.meaningIds$/u.test(field) && target.dataset.studioMeaning) {
     const meanings = owner.selected === false ? [] : previous;
@@ -926,21 +937,21 @@ export function updateStudioInput(target) {
       owner.selected = true;
       owner[key] = target.checked ? uniqueTexts([...meanings, target.dataset.studioMeaning])
         : meanings.filter((id) => id !== target.dataset.studioMeaning);
-    } else owner[key] = target.type === "checkbox" ? target.checked : target.type === "number" ? Number(target.value) : target.value;
+    } else owner[key] = proposed;
     if (/^forms\.\d+\.selected$/u.test(field)) owner.selectionOverride = target.checked;
     if (/^candidates\.\d+\.text$/u.test(field)) {
       for (const input of globalThis.document?.querySelectorAll?.("[data-studio-field]") ?? []) {
         if (input.dataset.studioField !== field) continue;
-        if (input !== target) input.value = owner.text;
+        if (input !== target) input.value = target.value;
         const note = input.closest?.(".studio-candidate")?.querySelector?.("[data-studio-shared-note]");
         if (note) note.dataset.studioSharedNote = owner.text;
       }
       for (const label of globalThis.document?.querySelectorAll?.("[data-studio-candidate-text]") ?? []) {
-        if (label.dataset.studioCandidateText === path[1]) label.textContent = owner.text || "New translation";
+        if (label.dataset.studioCandidateText === path[1]) label.textContent = target.value || "New translation";
       }
     }
     if (target.dataset.studioSharedNote && /^candidates\.\d+\.note$/u.test(field)) {
-      for (const candidate of s.candidates) if (candidate.text === owner.text) candidate.note = target.value;
+      for (const candidate of s.candidates) if (candidate !== owner && candidate.text === owner.text) candidate.note = applyResearchTextEdit(candidate.note, target.value, s.passages);
       // Update duplicate visible fields without replacing the input being edited.
       for (const input of globalThis.document?.querySelectorAll?.("[data-studio-shared-note]") ?? []) {
         if (input !== target && input.dataset.studioSharedNote === owner.text) input.value = target.value;
@@ -965,8 +976,6 @@ export function updateStudioInput(target) {
     if (/^forms\.\d+\.text$/u.test(field) && previous !== owner[key]) {
       delete owner.paragraphCount; delete owner.found; delete owner.discoveryStatus; delete owner.reason;
     }
-    if (field === "scope.forms") owner[key] = uniqueSourceTexts(target.value.split(/[\n,]/u), s.scope.sourceLanguage.code);
-    if (field === "scope.projectIds") owner[key] = [...target.selectedOptions].map((o) => o.value);
     if (s.status === "complete" && stableSignature(previous) !== stableSignature(owner[key])) s.status = "active";
     if (target.type === "checkbox" || target.tagName === "SELECT") renderInputChange();
   }
@@ -977,7 +986,7 @@ export function updateStudioInput(target) {
   }
   if (target.dataset.studioCollision) s.collisions[target.dataset.studioCollision] = target.value;
   if (target.dataset.studioDecision) s.decisionInput ??= {};
-  if (target.dataset.studioDecision) s.decisionInput[target.dataset.studioDecision] = target.type === "checkbox" ? target.checked : target.value;
+  if (target.dataset.studioDecision) s.decisionInput[target.dataset.studioDecision] = proposed;
   if (target.dataset.studioBranch || target.dataset.studioCollision
     || (target.dataset.studioDecision && target.tagName === "SELECT")) renderInputChange();
   globalThis.clearTimeout(editSaveTimer);
@@ -1122,7 +1131,7 @@ export async function resolveStudioDecision(action) {
 // Unanswered AI advice is taken after a countdown, as if its button were clicked.
 const startAutoChoice = () => startStudioAutoChoice(studioView, (choice) => studioAction(`studio:${choice}`, renderStudio));
 
-export async function studioAction(action, render) {
+export async function studioAction(action, render, event) {
   renderStudio = render;
   if (action === "open-glossary-research") { await openStudio(render); return true; }
   if (!action.startsWith("studio:")) return false;
@@ -1130,6 +1139,24 @@ export async function studioAction(action, render) {
   // Any action shows the translator is here, and the timer must not overtake a
   // slow one such as leaving the studio, so pending advice waits for them.
   answerStudioAutoChoice(studioView());
+  if (action === "studio:toggle-citation") {
+    const button = event?.target?.closest("[data-studio-paragraph]");
+    const study = studioView().study;
+    if (!button || !study) return true;
+    if (study.passages?._studioArtifact) {
+      const reference = study.passages;
+      try {
+        const passages = await resolveStudioEvidence(study, reference);
+        if (!button.isConnected || studioView().study !== study) return true;
+        if (study.passages === reference) study.passages = passages;
+      } catch (error) {
+        if (button.isConnected) showNoticeBadge(studioCitationText(error?.message ?? "Source evidence could not be read.", study.passages, true), render, 6000);
+        return true;
+      }
+    }
+    toggleStudioCitation(button, study);
+    return true;
+  }
   if (action === "studio:export") { await exportCurrentResearch(); return true; }
   await guarded(async () => {
     const name = action.slice(7); const s = studioView().study;
@@ -1337,13 +1364,13 @@ async function exportCurrentResearch() {
   try {
     const save = globalThis.window?.__TAURI__?.dialog?.save;
     if (typeof save !== "function") throw new Error("The native file save dialog is not available.");
-    const term = String(study.scope.term ?? "").replace(/[<>:"/\\|?*\x00-\x1f]/gu, "-").trim().replace(/\.+$/u, "").slice(0, 80) || study.id;
+    const term = studioCitationText(study.scope.term, study.passages, true).replace(/[<>:"/\\|?*\x00-\x1f]/gu, "-").trim().replace(/\.+$/u, "").slice(0, 80) || study.id;
     const outputPath = await save({ title: "Export research", defaultPath: `glossary-research-${term}.json`,
       filters: [{ name: "JSON", extensions: ["json"] }] });
     if (!outputPath) return;
     await exportStudioStudy(study, outputPath);
     showNoticeBadge("Research exported.", renderStudio);
   } catch (error) {
-    showNoticeBadge(error?.message ?? String(error), renderStudio, 6000);
+    showNoticeBadge(studioCitationText(error?.message ?? String(error), study.passages, true), renderStudio, 6000);
   } finally { view.exporting = false; renderStudio(); }
 }

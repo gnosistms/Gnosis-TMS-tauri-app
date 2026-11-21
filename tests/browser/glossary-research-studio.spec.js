@@ -2856,3 +2856,130 @@ test("an unmatched occurrence takes one meaning, existing or typed in, assigned 
     return { decision: s.pendingDecision?.kind ?? null, assigned: Boolean(added) && s.assignments.find((a) => a.paragraphId === "p0").meaningId === added.id };
   })).toEqual({ decision: null, assigned: true });
 });
+
+test("paragraph citations open independently beside a saved split decision", async ({ page }) => {
+  await mountStudio(page);
+  await page.evaluate(async () => {
+    const { state } = await import("/app/state.js");
+    const { newStudioStudy } = await import("/app/glossary-research-studio-workflow.js");
+    const { renderGlossaryResearchStudio } = await import("/screens/glossary-research-studio.js");
+    const { captureStudioDisclosures, restoreStudioDisclosures } = await import("/app/glossary-research-studio-disclosures.js");
+    const study = newStudioStudy({ term: "tenebroso", sourceLanguage: { name: "Spanish", code: "es" },
+      targetLanguage: { name: "Vietnamese", code: "vi" } }, "citations");
+    study.step = "4.7";
+    study.meanings = [{ id: "m4", definition: "Example meaning" }];
+    study.passages = [
+      { id: "4e2800126bc0e8c6", text: "Considera los tenebrosos progresos.", reference: { title: "Magia de las runas", chapter_title: "La tragedia de la reina Dido" } },
+      { id: "49063cb94894ff79", text: "Se menciona a los tenebrosos e impuros.", references: [{ projectTitle: "El matrimonio perfecto", chapterTitle: "Dos rituales" }] },
+    ];
+    const summary = '“los tenebrosos progresos” (4e2800126bc0e8c6), “los tenebrosos e impuros” vẫn được gán m4 (49063cb94894ff79). «otra frase» (00000000deadbeef).';
+    study.steps["4.7"] = { value: { summary } };
+    study.activitySteps = { "4.7": { items: [{ id: "split", label: "Checking split entries", result: summary, status: "complete", children: [] }] } };
+    state.glossaryResearchStudio = { study, history: [] };
+    window.rerenderCitations = () => {
+      const root = document.querySelector("#app");
+      const snapshot = captureStudioDisclosures(root);
+      root.innerHTML = renderGlossaryResearchStudio(state);
+      restoreStudioDisclosures(root, snapshot);
+    };
+    window.rerenderCitations();
+  });
+  const step = page.locator(".studio-step");
+  const buttons = step.locator(".studio-citation");
+  await expect(buttons).toHaveCount(2);
+  await expect(page.locator(".studio-content")).not.toContainText(/4e2800126bc0e8c6|49063cb94894ff79|00000000deadbeef/u);
+  await expect(step).toContainText("«otra frase».");
+  await expect(step.locator(".studio-citation-panel")).toHaveCount(0);
+  await buttons.first().focus();
+  await buttons.first().press("Enter");
+  const first = step.locator(".studio-citation-panel").filter({ hasText: "Magia de las runas" });
+  await expect(first).toContainText("La tragedia de la reina Dido");
+  await expect(first.locator("p")).toHaveText("Considera los tenebrosos progresos.");
+  await expect(first.locator("mark")).toHaveText("los tenebrosos progresos");
+  await buttons.last().click();
+  const second = step.locator(".studio-citation-panel").filter({ hasText: "El matrimonio perfecto" });
+  await expect(step.locator(".studio-citation-panel strong")).toHaveText(["Magia de las runas · La tragedia de la reina Dido", "El matrimonio perfecto · Dos rituales"]);
+  await expect(second.locator("mark")).toHaveText("los tenebrosos e impuros");
+  await page.evaluate(() => window.rerenderCitations());
+  await expect(buttons.last()).toBeFocused();
+  await expect(first).toBeVisible();
+  await expect(second).toBeVisible();
+  await expect(page.locator(".studio-work-result .studio-citation").first()).toHaveText("Show source");
+  await buttons.last().press("Space");
+  await expect(second).toHaveCount(0);
+  await expect(first).toBeVisible();
+  await expect(buttons.last()).toHaveAttribute("aria-expanded", "false");
+  await buttons.first().click();
+  await expect(first).toHaveCount(0);
+});
+
+test("a definition hides paragraph hashes during editing and keeps its citation after reopening", async ({ page }) => {
+  await mountStudio(page);
+  await page.evaluate(async () => {
+    const { state } = await import("/app/state.js");
+    const { newStudioStudy } = await import("/app/glossary-research-studio-workflow.js");
+    const { renderGlossaryResearchStudio } = await import("/screens/glossary-research-studio.js");
+    const s = newStudioStudy({ installationId: 7, teamId: "team", glossaryId: "g1", repoName: "glossary", term: "walk",
+      sourceLanguage: { code: "en", name: "English" }, targetLanguage: { code: "vi", name: "Vietnamese" } }, "edited-citation");
+    s.step = "4.5";
+    s.passages = [{ id: "4e2800126bc0e8c6", text: "We walk home.", occurrences: [], reference: { title: "Walking" } }];
+    s.meanings = [{ id: "m1", definition: "Move on foot (4e2800126bc0e8c6).", evidence: ["Used for “walk” (4e2800126bc0e8c6)."] }];
+    state.glossaryResearchStudio.study = s;
+    state.glossaryResearchStudio.error = "Validation failed for 4e2800126bc0e8c6:o1 (00000000deadbeef).";
+    document.querySelector("#app").innerHTML = renderGlossaryResearchStudio(state);
+  });
+  const field = page.getByRole("textbox", { name: "Definition" });
+  await expect(field).toHaveValue("Move on foot.");
+  await expect(page.getByRole("alert")).toHaveText("Validation failed for source paragraph:o1.");
+  await field.fill("Travel on foot (00000000deadbeef).");
+  await expect(field).toHaveValue("Travel on foot.");
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("studio-test-studies") ?? "{}")["edited-citation"]?.revision)).toBe(1);
+  const savedDefinition = await page.evaluate(async () => {
+    const { state } = await import("/app/state.js");
+    const { loadStudioStudy } = await import("/app/glossary-research-studio-query.js");
+    const { renderGlossaryResearchStudio } = await import("/screens/glossary-research-studio.js");
+    const view = state.glossaryResearchStudio;
+    view.study = await loadStudioStudy(view.study.scope, view.study.id);
+    document.querySelector("#app").innerHTML = renderGlossaryResearchStudio(state);
+    return view.study.meanings[0].definition;
+  });
+  expect(savedDefinition).toBe("Travel on foot (4e2800126bc0e8c6).");
+  await expect(field).toHaveValue("Travel on foot.");
+  await page.getByText("Evidence and sources", { exact: true }).click();
+  await page.getByRole("button", { name: "Show source", exact: true }).click();
+  await expect(page.locator(".studio-citation-panel")).toContainText("We walk home.");
+  await expect(page.locator(".studio-citation-panel mark")).toHaveText("walk");
+});
+
+test("the saved research report keeps hashes out of notes and labels and opens cited evidence", async ({ page }) => {
+  await mountStudio(page);
+  await page.evaluate(async () => {
+    const { state } = await import("/app/state.js");
+    const { buildEntryDrafts } = await import("/app/glossary-research-report-flow.js");
+    const { renderGlossaryResearchReportScreen } = await import("/screens/glossary-research-report.js");
+    const id = "4e2800126bc0e8c6";
+    const run = { meta: { term: "walk", sourceLanguage: { code: "en", name: "English" }, targetLanguage: { code: "vi", name: "Vietnamese" }, settings: {} },
+      frozen: { version: "v1", entries: [{ id: "e1", kind: "word", sourceTerms: ["walk"], generalNote: "",
+        variants: [{ id: "v1", target: "đi (" + id + ")", note: "Routine (" + id + ")." }] }] },
+      aggregate: { totals: {}, entries: {} }, counting: { skipped: true, occurrences: [], judgments: {} },
+      sample: { items: { [id]: { text: "We walk home.", reference: { title: "Walking", chapter: "Going home" } } } },
+      prose: { summary: "Used for “walk” (" + id + ")." } };
+    state.screen = "glossaryResearchReport";
+    Object.assign(state.glossaryResearchReport, { status: "ready", run, entryDrafts: buildEntryDrafts(run, []), expandedVariants: {}, showAllExamples: {} });
+    document.querySelector("#app").innerHTML = renderGlossaryResearchReportScreen(state);
+  });
+  // This report action redraws through the app's normal render and event paths.
+  await page.getByRole("button", { name: "How this was measured" }).click();
+  const note = page.getByRole("textbox", { name: "Usage note for đi", exact: true });
+  await expect(note).toHaveValue("Routine.");
+  await expect(page.getByRole("checkbox", { name: "Include đi", exact: true })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Translation", exact: true })).toHaveValue("đi");
+  await expect(page.locator(".rr")).not.toContainText("4e2800126bc0e8c6");
+  await page.getByRole("button", { name: "Show source", exact: true }).click();
+  await expect(page.locator(".studio-citation-panel strong")).toHaveText("Walking · Going home");
+  await expect(page.locator(".studio-citation-panel mark")).toHaveText("walk");
+  await note.fill("Routine (00000000deadbeef). Add guidance.");
+  await expect(note).toHaveValue("Routine. Add guidance.");
+  expect(await page.evaluate(async () => (await import("/app/state.js")).state.glossaryResearchReport.entryDrafts.e1.variants[0].note))
+    .toBe("Routine (4e2800126bc0e8c6). Add guidance.");
+});

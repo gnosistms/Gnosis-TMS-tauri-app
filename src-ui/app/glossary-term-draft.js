@@ -1,3 +1,4 @@
+import { applyResearchTextEdit } from "./glossary-research-studio-citations.js";
 import { invoke } from "./runtime.js";
 import { notifyStudioEditor, researchChangesForDraft } from "./glossary-research-studio-editor-bridge.js";
 import { requireBrokerSession } from "./auth-flow.js";
@@ -533,11 +534,17 @@ export function cancelGlossaryTermEditor(render) {
   render();
 }
 
+function editedTermText(original, value) {
+  return state.glossaryTermEditor?.studioEntry
+    ? applyResearchTextEdit(original, value, state.glossaryResearchStudio?.study?.passages)
+    : value;
+}
+
 export function updateGlossaryTermDraftField(field, value) {
   if (!state.glossaryTermEditor?.isOpen) {
     return;
   }
-  state.glossaryTermEditor[field] = value;
+  state.glossaryTermEditor[field] = typeof value === "string" ? editedTermText(state.glossaryTermEditor[field], value) : value;
   if (state.glossaryTermEditor.error) {
     state.glossaryTermEditor.error = "";
   }
@@ -549,7 +556,7 @@ export function updateGlossaryTermVariant(side, index, value) {
   }
 
   updateGlossaryTermArray(side, (terms) =>
-    terms.map((term, termIndex) => (termIndex === index ? String(value ?? "") : term)),
+    terms.map((term, termIndex) => (termIndex === index ? editedTermText(term, String(value ?? "")) : term)),
   );
   if (side === "source" && shouldRefreshGlossaryTermDuplicateFeedback()) {
     refreshGlossaryTermDuplicateFeedback();
@@ -567,7 +574,7 @@ export function updateGlossaryTermVariantNote(index, value) {
     state.glossaryTermEditor.targetVariantNotes,
   );
   state.glossaryTermEditor.targetVariantNotes = targetTerms.map((_, termIndex) =>
-    termIndex === index ? String(value ?? "") : targetVariantNotes[termIndex] ?? "",
+    termIndex === index ? editedTermText(targetVariantNotes[termIndex], String(value ?? "")) : targetVariantNotes[termIndex] ?? "",
   );
   if (state.glossaryTermEditor.error) {
     state.glossaryTermEditor.error = "";
