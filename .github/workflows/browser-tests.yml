@@ -1,10 +1,18 @@
 name: Windows installer verification
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Published version to install after the previous copy
+        required: true
+        default: "0.8.154"
 permissions:
   contents: read
 jobs:
   reinstall:
     runs-on: windows-latest
+    env:
+      MSI_VERSION: ${{ inputs.version }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -27,7 +35,7 @@ jobs:
             if ($proc.ExitCode -notin @(0, 3010)) { throw "Installer failed ($operation) with $($proc.ExitCode)." }
           }
           $previous = Download-Package '${{ matrix.previous }}'
-          $current = Download-Package '0.8.154'
+          $current = Download-Package $env:MSI_VERSION
           Run-Msi '/i' $previous
           $repo = Join-Path $env:APPDATA 'com.gnosis.tms/installations/installation-7/projects/returning-test'
           New-Item -ItemType Directory -Force $repo | Out-Null
@@ -47,7 +55,8 @@ jobs:
           $exe = Get-ChildItem -Path "$env:ProgramFiles/*Gnosis*/*.exe", "${env:ProgramFiles(x86)}/*Gnosis*/*.exe", "$env:LOCALAPPDATA/*Gnosis*/*.exe" -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^gnosis[ -]?tms\.exe$' } | Select-Object -First 1
           if (-not $exe) { throw 'Could not locate the installed Gnosis TMS executable.' }
           Write-Host "Installed executable $($exe.FullName) version $($exe.VersionInfo.ProductVersion)"
-          if ($exe.VersionInfo.ProductVersion -notmatch '^0\.8\.154\b') { throw 'Incorrect installed version' }
+          $expectedVersion = [regex]::Escape($env:MSI_VERSION)
+          if ($exe.VersionInfo.ProductVersion -notmatch "^$expectedVersion(\.|$)") { throw 'Incorrect installed version' }
           $app = Start-Process $exe.FullName -PassThru
           try {
             for ($i = 0; $i -lt 45; $i++) {
