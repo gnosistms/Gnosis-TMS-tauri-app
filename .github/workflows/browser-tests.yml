@@ -1,65 +1,58 @@
-# Gnosis TMS — Browser Tests
-#
-# Runs the Playwright editor suite (tests/browser) against the Vite dev
-# server on Linux and Windows. The Windows leg is the standing substitute for
-# a manual Windows scroll soak: WebView2 in the shipped app is Chromium, so
-# Chromium-on-Windows exercises the engine plus real Windows compositor,
-# fonts, and scroll timing (see plans/editor-scroll-ownership-redesign-plan.md).
-#
-# Fires on:
-#   - Push to main
-#   - Pull requests marked Ready for Review (drafts are skipped)
-#   - Manual dispatch (any branch)
-
-name: Browser Tests
-
-on:
-  push:
-    branches: [main]
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-  workflow_dispatch:
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
+name: Windows native diagnostics
+on: workflow_dispatch
 jobs:
-  browser-tests:
-    name: Browser Tests (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    timeout-minutes: 30
+  native:
+    runs-on: windows-latest
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        # ubuntu-latest moved to 26.04, which Playwright 1.59 cannot install Chromium on.
-        os: [ubuntu-24.04, windows-latest]
-
+        profile: [debug, release]
+    permissions:
+      contents: read
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
         with:
-          node-version: "24"
-          cache: npm
+          workspaces: "src-tauri"
+          cache-on-failure: true
+      - run: npm ci
+      - run: npm run build
+      - name: Build the matching native test executable
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force src-tauri/binaries | Out-Null
+          New-Item -ItemType File -Force src-tauri/binaries/typst-x86_64-pc-windows-msvc.exe | Out-Null
+          $flags = @()
+          if ('${{ matrix.profile }}' -eq 'release') { $flags += '--release' }
+          cargo test --locked --manifest-path src-tauri/Cargo.toml --lib --no-run --message-format=json @flags > "$env:RUNNER_TEMP/artifacts.jsonl"
+          if ($LASTEXITCODE -ne 0) { Get-Content "$env:RUNNER_TEMP/artifacts.jsonl" -Tail 5; exit $LASTEXITCODE }
+          $testBin = Get-Content "$env:RUNNER_TEMP/artifacts.jsonl" | ConvertFrom-Json | Where-Object { $_.executable -and $_.target.name -eq 'gnosis_tms_lib' } | Select-Object -Last 1 -ExpandProperty executable
+          if (-not $testBin) { throw 'Test executable missing' }
+          "NATIVE_TEST=$testBin" >> $env:GITHUB_ENV
+      - name: Exercise the native process on ordinary startup operations
+        shell: pwsh
+        run: |
+          $cdb = "${env:ProgramFiles(x86)}\Windows Kits\10\Debuggers\x64\cdb.exe"
+          $lldb = Get-Command lldb -ErrorAction SilentlyContinue
+          $cdbFile = "$env:RUNNER_TEMP/exception.txt"
+          @'
+          sxe -c ".echo NATIVE_EXCEPTION; .exr -1; .ecxr; kp 30; q" av
+          g
+          '@ | Set-Content -Encoding ascii $cdbFile
+          $failed = $false
+          foreach ($filter in @('windows_native_probe', 'project_repo_sync::tests::project_recovery_preserves', 'project_repo_sync::tests::project_fast_forward', 'project_repo_sync::tests::backup_dirty_project_worktree_preserves', 'project_repo_sync')) {
+            Write-Host "RUN $filter"
+            & $env:NATIVE_TEST $filter --test-threads=1 --nocapture
+            $code = $LASTEXITCODE
+            Write-Host "RESULT $filter $code"
+            if ($code -ne 0) {
+              $failed = $true
+              if ($code -lt 0 -and (Test-Path $cdb)) { & $cdb -cf $cdbFile $env:NATIVE_TEST $filter --test-threads=1 --nocapture }
+              elseif ($code -lt 0 -and $lldb) { & $lldb.Source -b -o "run" -k "thread backtrace all" -- $env:NATIVE_TEST $filter --test-threads=1 --nocapture }
+            }
+          }
+          if ($failed) { exit 1 }
+          exit 0
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
-
-      - name: Run browser tests
-        run: npm run test:browser
-
-      - name: Upload test results on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-results-${{ matrix.os }}
-          path: test-results/
-          retention-days: 7
-          if-no-files-found: ignore

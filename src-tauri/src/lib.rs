@@ -1,4 +1,6 @@
 mod ai;
+#[cfg(all(windows, test))]
+mod windows_native_probe;
 mod ai_secret_storage;
 mod broker;
 mod broker_auth;
