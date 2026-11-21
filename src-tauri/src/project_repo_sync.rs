@@ -34,8 +34,8 @@ use crate::{
     repo_migrations::{
         discard_local_old_layout_changes_and_adopt_remote, head_requires_0810_migration,
         is_remote_migrated_local_old_layout_changes_error,
-        migrate_no_checkout_project_repo_to_0810, pending_repo_migrations,
-        repo_requires_0810_migration, run_pending_repo_migrations,
+        migrate_no_checkout_project_repo_to_0810, pending_repo_migrations, prepare_repo_layout,
+        repo_requires_0810_migration, run_pending_content_migrations,
     },
     repo_sync_shared::{
         abort_in_progress_git_operations, abort_rebase_after_failed_pull, acquire_repo_sync_lock,
@@ -1154,12 +1154,14 @@ pub(crate) fn sync_project_repo(
             });
         }
     }
-    let migration = run_pending_repo_migrations(
+    // Incompatible storage layouts must be reconciled before replaying changes.
+    // Content migrations operate on the reconciled files below.
+    let migration = prepare_repo_layout(
         app,
         repo_path,
-        RepoKind::Project,
+        &RepoKind::Project,
         branch_name,
-        remote_head_oid,
+        fetched_head.as_deref().unwrap_or_default(),
     );
     if let (Err(error), Some(head)) = (&migration, &fetched_head) {
         if is_remote_migrated_local_old_layout_changes_error(error) {
@@ -1169,11 +1171,11 @@ pub(crate) fn sync_project_repo(
     }
     migration?;
     backup_dirty_project_worktree(repo_path, branch_name)?;
-    let local_head_oid = git_output(repo_path, &["rev-parse", "HEAD"], None).ok();
     let local_sync_state = read_local_repo_sync_state(repo_path)?;
 
-    if remote_head_oid.trim().is_empty() {
-        if local_head_oid.is_some() {
+    if fetched_head.is_none() {
+        run_pending_content_migrations(app, repo_path, &RepoKind::Project)?;
+        if read_current_head_oid(repo_path).is_some() {
             match git_output(
                 repo_path,
                 &["push", "-u", "origin", branch_name],
@@ -1235,7 +1237,9 @@ pub(crate) fn sync_project_repo(
     }
 
     let imported_conflicts =
-        pull_with_semantic_editor_conflict_resolution(repo_path, branch_name, &git_transport_auth)?;
+        reconcile_project_content(repo_path, branch_name, &git_transport_auth, || {
+            run_pending_content_migrations(app, repo_path, &RepoKind::Project)
+        })?;
     git_output(
         repo_path,
         &["push", "origin", branch_name],
@@ -1270,6 +1274,19 @@ fn imported_conflict_chapter_ids(imported_conflicts: &[ImportedEditorConflictRef
     chapter_ids.sort();
     chapter_ids.dedup();
     chapter_ids
+}
+
+fn reconcile_project_content(
+    repo: &Path,
+    branch: &str,
+    auth: &GitTransportAuth,
+    migrate: impl FnOnce() -> Result<(), String>,
+) -> Result<Vec<ImportedEditorConflictRef>, String> {
+    let conflicts = pull_with_semantic_editor_conflict_resolution(repo, branch, auth)?;
+    if conflicts.is_empty() {
+        migrate()?;
+    }
+    Ok(conflicts)
 }
 
 fn pull_with_semantic_editor_conflict_resolution(
@@ -2756,22 +2773,26 @@ mod tests {
         );
         assert!(super::recovery::fast_forward_clean_project(&repo, "main", &head).unwrap());
         run_git(&repo, &["switch", "-C", "main", &old]);
-        run_git(
-            &repo,
-            &[
-                "-c",
-                "user.name=Test",
-                "-c",
-                "user.email=test@example.invalid",
-                "commit",
-                "--allow-empty",
-                "-m",
-                "Local change",
-            ],
-        );
+        run_git(&repo, &["config", "user.name", "Test"]);
+        run_git(&repo, &["config", "user.email", "test@example.invalid"]);
+        fs::write(repo.join("draft.txt"), "unpublished").unwrap();
+        run_git(&repo, &["add", "draft.txt"]);
+        run_git(&repo, &["commit", "-m", "Local change"]);
         let local = git_stdout(&repo, &["rev-parse", "HEAD"]);
         assert!(!super::recovery::fast_forward_clean_project(&repo, "main", &head).unwrap());
         assert_eq!(git_stdout(&repo, &["rev-parse", "HEAD"]), local);
+        let auth = GitTransportAuth::from_token("test-token").unwrap();
+        let conflicts = super::reconcile_project_content(&repo, "main", &auth, || {
+            assert!(super::pending_repo_migrations(&repo, &super::RepoKind::Project)?.is_empty());
+            assert_eq!(git_stdout(&repo, &["rev-parse", "HEAD^"]), head);
+            Ok(())
+        })
+        .unwrap();
+        assert!(conflicts.is_empty());
+        assert_eq!(
+            fs::read_to_string(repo.join("draft.txt")).unwrap(),
+            "unpublished"
+        );
         assert_eq!(git_stdout(&remote, &["rev-parse", "main"]), head);
         fs::remove_dir_all(root).unwrap();
     }
