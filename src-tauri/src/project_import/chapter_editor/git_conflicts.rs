@@ -614,6 +614,12 @@ fn resolve_add_add_row_conflict(
     let remote_value = parse_json_stage(path, remote_text, "remote")?;
     let local_value = parse_json_stage(path, local_text, "local")?;
     let remote_row = parse_row_stage(path, remote_text, "remote")?;
+    let local_row = parse_row_stage(path, local_text, "local")?;
+    if remote_row.row_id != local_row.row_id {
+        return Err(format!(
+            "The conflicting versions of '{path}' have different row IDs."
+        ));
+    }
     if remote_value == local_value {
         return Ok(ResolvedRowGitConflictPlan {
             action: ResolvedEditorConflictAction::Write {

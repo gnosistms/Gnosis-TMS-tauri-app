@@ -118,7 +118,7 @@ test("unresolved conflict state surfaces a sync warning without blocking content
   assert.equal(resolution?.key, "unresolvedConflict");
   assert.equal(resolution?.blockLifecycleActions, false);
   assert.equal(resolution?.blockContentActions, false);
-  assert.match(resolution?.help ?? "", /Automatic sync is paused/i);
+  assert.match(resolution?.help ?? "", /keeps the original local files/i);
 });
 
 test("imported editor conflicts surface a warning without blocking content access", () => {
