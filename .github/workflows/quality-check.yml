@@ -108,7 +108,7 @@ jobs:
           New-Item -ItemType Directory -Force src-tauri/binaries
           New-Item -ItemType File -Force src-tauri/binaries/typst-x86_64-pc-windows-msvc.exe
       - name: Exercise native project sync with Git for Windows
-        run: cargo test --locked --manifest-path src-tauri/Cargo.toml --lib project_repo_sync::
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml --lib project_repo_sync
 
   # ── JavaScript: lint + test ──────────────────────────────────────────
 
