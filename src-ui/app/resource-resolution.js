@@ -26,7 +26,9 @@ function syncIssueResolution(snapshot, resourceLabel, resource = null) {
       key: "unresolvedConflict",
       tone: "error",
       message: `The local ${resourceLabel} repo is stuck in a git conflict state.`,
-      help: "Automatic sync is paused until this conflict is resolved or overwritten from the server.",
+      help: resourceLabel === "project"
+        ? "Refresh Projects while online to recover from GitHub. Gnosis TMS keeps the original local files."
+        : "Automatic sync is paused until this conflict is resolved or overwritten from the server.",
       blockLifecycleActions: false,
       blockContentActions: false,
     };

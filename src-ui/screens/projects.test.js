@@ -359,7 +359,7 @@ test("project conflict recovery preserves idle, loading, and error button contra
   assert.match(loadingHtml, /data-action="noop"/);
   assert.match(loadingHtml, /data-loading-spinner-key="overwrite-conflicted-project-repos"/);
   assert.match(loadingHtml, /disabled aria-busy="true"/);
-  assert.match(loadingHtml, /Overwriting\.\.\./);
+  assert.match(loadingHtml, /Recovering\.\.\./);
 
   const errorHtml = renderProjectsScreen(projectsState({
     ...conflictState,
@@ -372,6 +372,17 @@ test("project conflict recovery preserves idle, loading, and error button contra
   assert.match(errorHtml, /data-action="overwrite-conflicted-project-repos"/);
   assert.match(errorHtml, /Overwrite failed\./);
   assert.doesNotMatch(errorHtml, /data-loading-spinner-key="overwrite-conflicted-project-repos"/);
+});
+
+test("recovered projects display their original local folder on a later refresh", () => {
+  const html = renderProjectsScreen(projectsState({
+    projectRepoSyncByProjectId: {
+      "project-1": { status: "upToDate", savedCheckout: "C:\\saved\\original & drafts" },
+    },
+  }));
+  assert.match(html, /Saved local project copies \(1\)/);
+  assert.match(html, /original &amp; drafts/);
+  assert.doesNotMatch(html, /data-action="overwrite-conflicted-project-repos"/);
 });
 
 test("project discovery loading disables project creation even if refresh flag is stale", () => {

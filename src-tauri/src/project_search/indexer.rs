@@ -35,6 +35,7 @@ pub(super) struct ProjectSearchIndexRefreshStats {
 }
 
 struct SearchDocumentInserter<'conn> {
+    incomplete: bool,
     connection: &'conn Connection,
     insert_document: rusqlite::Statement<'conn>,
     insert_token: rusqlite::Statement<'conn>,
@@ -65,6 +66,7 @@ impl<'conn> SearchDocumentInserter<'conn> {
             )
             .map_err(|error| format!("Could not prepare project search trigram insert: {error}"))?;
         Ok(Self {
+            incomplete: false,
             connection,
             insert_document,
             insert_token,
@@ -292,7 +294,7 @@ fn apply_incremental_repo_refresh(
         index_chapter_dir_from_disk(repo, chapter_dir, &mut inserter)?;
     }
 
-    upsert_indexed_repo_state_tx(&transaction, repo)?;
+    upsert_indexed_repo_state_tx(&transaction, repo, inserter.incomplete)?;
     drop(inserter);
     transaction.commit().map_err(|error| {
         format!("Could not commit the project search incremental transaction: {error}")
@@ -308,7 +310,7 @@ fn reindex_repo(connection: &mut Transaction<'_>, repo: &RepoRecord) -> Result<(
     remove_repo_from_index_tx(&transaction, &repo.repo_key)?;
     let mut inserter = SearchDocumentInserter::new(&transaction)?;
     index_all_repo_chapters(repo, &mut inserter)?;
-    upsert_indexed_repo_state_tx(&transaction, repo)?;
+    upsert_indexed_repo_state_tx(&transaction, repo, inserter.incomplete)?;
     drop(inserter);
     transaction.commit().map_err(|error| {
         format!("Could not commit the project search reindex transaction: {error}")
@@ -398,12 +400,18 @@ fn index_chapter_path(
             continue;
         }
 
-        let row_value = read_json_value(&row_path, "row file")?;
+        let Ok(row_value) = read_json_value(&row_path, "row file") else {
+            inserter.incomplete = true;
+            continue;
+        };
         if lifecycle_state(&row_value) == "deleted" {
             continue;
         }
 
-        let row_id = read_required_string(&row_value, "row_id", "row file")?;
+        let Ok(row_id) = read_required_string(&row_value, "row_id", "row file") else {
+            inserter.incomplete = true;
+            continue;
+        };
         let row_order_key = row_value
             .get("structure")
             .and_then(Value::as_object)
@@ -497,7 +505,11 @@ pub(super) fn row_search_documents_from_value(
     documents
 }
 
-fn upsert_indexed_repo_state_tx(connection: &Connection, repo: &RepoRecord) -> Result<(), String> {
+fn upsert_indexed_repo_state_tx(
+    connection: &Connection,
+    repo: &RepoRecord,
+    incomplete: bool,
+) -> Result<(), String> {
     connection
         .execute(
             "INSERT INTO indexed_repos (repo_key, project_id, repo_name, project_title, head_sha, last_indexed_at, content_version)
@@ -516,7 +528,7 @@ fn upsert_indexed_repo_state_tx(connection: &Connection, repo: &RepoRecord) -> R
                 repo.project_title,
                 repo.head_sha,
                 current_unix_timestamp() as i64,
-                PROJECT_SEARCH_CONTENT_VERSION,
+                if incomplete { 0 } else { PROJECT_SEARCH_CONTENT_VERSION },
             ],
         )
         .map_err(|error| format!("Could not update indexed repo state: {error}"))?;
@@ -761,6 +773,71 @@ mod tests {
             .execute_batch("DROP TRIGGER fail_completion")
             .unwrap();
         refresh_project_index_at_root(&fixture.0.join("projects"), &mut connection).unwrap();
+    }
+
+    #[test]
+    fn unreadable_row_keeps_other_search_results_and_is_retried_after_repair() {
+        use crate::project_search::schema::project_search_index_requires_refresh;
+        use crate::repo_sync_shared::git_output;
+        let fixture = SearchFixture::new();
+        let mut db = fixture.open();
+        let projects = fixture.0.join("projects");
+        let write_row = |path: &Path, id: &str| {
+            fs::write(
+                path,
+                serde_json::json!({"row_id":id,
+                "fields":{"en":{"plain_text":id}}})
+                .to_string(),
+            )
+            .unwrap();
+        };
+        for name in ["first", "second"] {
+            let repo = projects.join(name);
+            let chapter = repo.join("chapters/a");
+            fs::create_dir_all(chapter.join("rows")).unwrap();
+            fs::write(repo.join("project.json"), r#"{"title":"Book"}"#).unwrap();
+            fs::write(
+                chapter.join("chapter.json"),
+                r#"{"chapter_id":"a","title":"Chapter"}"#,
+            )
+            .unwrap();
+            write_row(&chapter.join("rows/one.json"), name);
+            git_output(&repo, &["init", "-b", "main"], None).unwrap();
+            git_output(&repo, &["add", "."], None).unwrap();
+            git_output(
+                &repo,
+                &[
+                    "-c",
+                    "user.name=Test",
+                    "-c",
+                    "user.email=test@example.invalid",
+                    "commit",
+                    "-m",
+                    "Rows",
+                ],
+                None,
+            )
+            .unwrap();
+        }
+        let damaged = projects.join("first/chapters/a/rows/two.json");
+        fs::write(&damaged, "<<<<<<< incomplete").unwrap();
+        let stats = refresh_project_index_at_root(&projects, &mut db).unwrap();
+        assert_eq!(stats.full_reindex_count, 2);
+        assert!(project_search_index_requires_refresh(&db).unwrap());
+        let count = || -> i64 {
+            db.query_row("SELECT COUNT(*) FROM search_documents", [], |row| {
+                row.get(0)
+            })
+            .unwrap()
+        };
+        assert_eq!(count(), 2);
+        write_row(&damaged, "repaired");
+        let stats = refresh_project_index_at_root(&projects, &mut db).unwrap();
+        assert_eq!(stats.full_reindex_count, 1);
+        assert!(!project_search_index_requires_refresh(&db).unwrap());
+        let matches =
+            super::super::query::search_projects_in_connection(&db, "repaired", 8, None).unwrap();
+        assert_eq!(matches.results[0].row_id, "repaired");
     }
 
     #[test]

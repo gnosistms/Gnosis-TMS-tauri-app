@@ -127,7 +127,18 @@ pub(crate) fn run_pending_repo_migrations(
     branch_name: &str,
     remote_head_oid: &str,
 ) -> Result<(), String> {
-    if pending_repo_migrations(repo_path, &repo_kind)?
+    prepare_repo_layout(app, repo_path, &repo_kind, branch_name, remote_head_oid)?;
+    run_pending_content_migrations(app, repo_path, &repo_kind)
+}
+
+pub(crate) fn prepare_repo_layout(
+    app: &AppHandle,
+    repo_path: &Path,
+    repo_kind: &RepoKind,
+    branch_name: &str,
+    remote_head_oid: &str,
+) -> Result<(), String> {
+    if pending_repo_migrations(repo_path, repo_kind)?
         .iter()
         .any(|descriptor| descriptor.kind == RepoMigrationKind::Layout)
     {
@@ -139,7 +150,15 @@ pub(crate) fn run_pending_repo_migrations(
             remote_head_oid,
         )?;
     }
-    for descriptor in pending_repo_migrations(repo_path, &repo_kind)? {
+    Ok(())
+}
+
+pub(crate) fn run_pending_content_migrations(
+    app: &AppHandle,
+    repo_path: &Path,
+    repo_kind: &RepoKind,
+) -> Result<(), String> {
+    for descriptor in pending_repo_migrations(repo_path, repo_kind)? {
         if let Some(run) = descriptor.run_content {
             run(app, repo_path)?;
         }
