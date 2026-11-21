@@ -2325,6 +2325,12 @@ mod tests {
         );
     }
 
+    fn checked_out_text(path: std::path::PathBuf) -> String {
+        fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()))
+            .replace("\r\n", "\n")
+    }
+
     fn git_stdout(repo_path: &Path, args: &[&str]) -> String {
         let output = Command::new("git")
             .args(args)
@@ -2933,7 +2939,7 @@ mod tests {
 
         assert_eq!(git_stdout(&repo_path, &["status", "--porcelain"]), "");
         assert_eq!(
-            fs::read_to_string(repo_path.join("chapter.txt")).expect("read restored file"),
+            checked_out_text(repo_path.join("chapter.txt")),
             "server text\n",
         );
         assert!(!repo_path.join("extra.txt").exists());
@@ -2944,11 +2950,11 @@ mod tests {
 
         run_git(&repo_path, &["checkout", &backup_branch]);
         assert_eq!(
-            fs::read_to_string(repo_path.join("chapter.txt")).expect("read backup file"),
+            checked_out_text(repo_path.join("chapter.txt")),
             "local edit\n",
         );
         assert_eq!(
-            fs::read_to_string(repo_path.join("extra.txt")).expect("read backup extra file"),
+            checked_out_text(repo_path.join("extra.txt")),
             "untracked local file\n",
         );
 
@@ -3002,7 +3008,7 @@ mod tests {
 
         assert_eq!(git_stdout(&local_path, &["status", "--porcelain"]), "");
         assert_eq!(
-            fs::read_to_string(local_path.join("chapter.txt")).expect("read recovered file"),
+            checked_out_text(local_path.join("chapter.txt")),
             "remote text\n",
         );
         assert_eq!(
@@ -3063,7 +3069,7 @@ mod tests {
         .expect_err("report conflict without discarding local work");
 
         assert_eq!(
-            fs::read_to_string(local_path.join("chapter.txt")).expect("read attached file"),
+            checked_out_text(local_path.join("chapter.txt")),
             "local committed text\n",
         );
         let backup_branch = git_stdout(
@@ -3159,7 +3165,7 @@ mod tests {
         super::attach_unsynced_local_project_repo_to_remote(&local, "main", &auth).expect("retry");
         assert_eq!(git_stdout(&local, &["rev-parse", "HEAD"]), attached_head);
         assert_eq!(
-            fs::read_to_string(local.join("chapters/local.txt")).expect("local work"),
+            checked_out_text(local.join("chapters/local.txt")),
             "local work\n"
         );
         assert_eq!(
