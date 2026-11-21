@@ -113,6 +113,10 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          # Rust 1.100 and the current Stronghold dependency can bind desktop
+          # thread waits to vertdll.dll. Keep Windows on the verified toolchain.
+          toolchain: ${{ runner.os == 'Windows' && '1.99.1' || 'stable' }}
 
       # Required by scripts/generate-third-party-notices.mjs, which runs in
       # the Tauri beforeBuildCommand to produce the bundled
