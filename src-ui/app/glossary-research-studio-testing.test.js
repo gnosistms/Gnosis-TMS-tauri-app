@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { testMeanings, testCompleteEntry, assessTrial, translateTrial, trialGlossary, STUDIO_UNCONFIRMED_RENDERING, studioNeedsFormOffer, studioTranslationChoices, approveStudioCandidate, rejectStudioCandidate, studioOtherMeaningRenderings, regradeStudioEntryTrials } from "./glossary-research-studio-testing.js";
-import { newStudioStudy, deduplicatePassages, finalUsage, reviseAssignment, buildStudioDraft, stableSignature, meaningTrialsAreCurrent, entryTrialsAreCurrent, studioGlossaryContext, studyAssignments, entryBatchSignature, currentStudioFinding, reviewStudioFinding } from "./glossary-research-studio-workflow.js";
+import { newStudioStudy, deduplicatePassages, finalUsage, reviseAssignment, buildStudioDraft, stableSignature, meaningTrialSignature, meaningTrialsAreCurrent, entryTrialsAreCurrent, studioGlossaryContext, studyAssignments, entryBatchSignature, currentStudioFinding, reviewStudioFinding } from "./glossary-research-studio-workflow.js";
 function fixture(size = 1) {
   const s = newStudioStudy({ term: "caminar", sourceLanguage: { code: "es", name: "Spanish" },
     targetLanguage: { code: "en", name: "English" } }, "test");
@@ -13,7 +13,8 @@ function fixture(size = 1) {
   return s;
 }
 const translations = async (_k, payload) => ({ rows: payload.rows.map((r) => ({ rowId: r.rowId, translatedText: "walk" })) });
-const choices = (data, problem = "") => ({ choices: data.assignments.map((a) => ({ ...a, candidateId: "c", rendered: "walk", problem })) });
+const choices = (data, problem = "") => ({ choices: data.assignments.map((a) => ({ ...a, candidateId: "c", rendered: "walk",
+  ...(data.attempt.startsWith("8:") ? { termCorrect: !problem } : {}), problem })) });
 test("independent research paragraphs carry their own source neighbors to translation and assessment without extra rows or meaning hints", async () => {
   const s = fixture(2);
   const longContext = "Original neighboring source. ".repeat(1000);
@@ -209,7 +210,7 @@ test("the initial candidate selection lists the selected and other candidates in
   const scoped = (path) => ({ run: translations, forActivity: (id) => scoped([...path, id]),
     finishActivity: (summary) => finished.push([path.join(" > "), summary]),
     ask: async (question, data) => question.startsWith("Select one initial candidate") ? { candidateId: "g" }
-      : { choices: data.assignments.map((a) => ({ ...a, candidateId: "a", rendered: "walk", problem: "" })) } });
+      : { choices: data.assignments.map((a) => ({ ...a, candidateId: "a", rendered: "walk", termCorrect: true, problem: "" })) } });
   await testMeanings(s, scoped([]));
   assert.deepEqual(finished.find(([path]) => path.includes("selecting an initial candidate")),
     ["m > operation:Meaning 1 · 1 of 1 active meaning · selecting an initial candidate", "Selected: walk; walks\nOther candidates: stroll"]);
@@ -390,7 +391,7 @@ test("a passing split rendering puts a gap in the candidate and retests it in st
   const assessed = [];
   const tools = { run, ask: async (_question, data) => {
     assessed.push(data.candidates.map((c) => c.text));
-    return { choices: data.assignments.map((a) => ({ ...a, candidateId: "c", rendered: splitRendering, problem: "" })) };
+    return { choices: data.assignments.map((a) => ({ ...a, candidateId: "c", rendered: splitRendering, termCorrect: true, problem: "" })) };
   } };
   await testMeanings(s, tools);
   assert.equal(s.candidates[0].text, "sự giằng co … giữa các mặt đối lập");
@@ -428,22 +429,114 @@ test("human selection defaults reach assessment and repair in both phases and in
   assert(questions.some((q) => q.startsWith("Repair selection") && q.includes("do not weaken")));
 });
 
-test("focused retries receive paragraph feedback while complete-entry tests keep production hints", async () => {
-  const s = fixture(); const payloads = []; let first = true;
-  const tools = { run: async (k, p) => { payloads.push(p); return translations(k, p); }, ask: async (q, data) => {
-    if (q.startsWith("Assess")) {
-      assert(q.includes(data.attempt.startsWith("9:") ? "Unrelated wording elsewhere" : "whole paragraph"));
-      const problem = first ? "Repair the sentence fragment around the occurrence." : "";
-      first = false; return choices(data, problem);
-    }
-    return { confirmIds: [], notes: [] };
-  } };
-  await testMeanings(s, tools);
-  assert(!JSON.stringify(payloads[0]).includes("Repair the sentence fragment"));
-  assert(JSON.stringify(payloads[1]).includes("Repair the sentence fragment"));
+test("step 8 passes Hắc Ám without repair or retry when the review criticizes la esencia", async () => {
+  const s = fixture();
+  s.scope.term = "el tenebroso";
+  s.scope.targetLanguage = { code: "vi", name: "Vietnamese" };
+  s.forms = [{ text: s.scope.term }];
+  s.meanings[0].definition = "Biệt hiệu chỉ mặt tối siêu hình";
+  s.candidates[0].text = "Hắc Ám";
+  const source = "Andrameleck el tenebroso tendrá que volverse polvo. Sólo así podrá libertarse la esencia, el Buddhata, el alma.";
+  const translation = "An-đra-me-lec Hắc Ám sẽ phải hóa thành bụi. Chỉ như thế Phật tính, tức Buddhata, tức linh hồn, mới được giải thoát.";
+  s.passages = deduplicatePassages([{ id: "p0", text: source }], [s.scope.term]);
+  let translationsRequested = 0;
+  const result = await testMeanings(s, {
+    run: async () => { translationsRequested++; return { rows: [{ rowId: "1", translatedText: translation }] }; },
+    ask: async (question, data, shape) => {
+      assert.match(question, /^Assess EACH/, "a correct glossary occurrence must never reach repair");
+      assert.match(question, /[Ii]gnore unrelated/);
+      assert.match(shape, /"termCorrect":true/);
+      assert.equal(data.assignments[0].sourceText, s.scope.term);
+      assert.deepEqual(data.translations, [{ paragraphId: "p0", source, translation }]);
+      return { choices: [{ ...data.assignments[0], candidateId: "c", rendered: "Hắc Ám", termCorrect: true,
+        problem: "Hắc Ám dùng đúng. Tuy nhiên, Phật tính không giữ được cách gọi la esencia." }] };
+    },
+  });
+  assert.equal(result.complete, true);
+  assert.equal(translationsRequested, 1);
+  assert.deepEqual(s.testHistory.map((t) => [t.rounds, t.passed, t.choices[0].problem]), [[0, true, ""]]);
+});
+
+test("a focused term verdict still requires the confirmed form or the human-marked source spelling", async () => {
+  const s = fixture();
+  const assess = (translation, answer) => assessTrial(s, { ask: async () => ({ choices: [{ ...s.assignments[0], ...answer }] }) },
+    [{ paragraphId: "p0", translation }], s.assignments, s.candidates, "8:m:0");
+  const pass = { candidateId: "c", rendered: "walk", termCorrect: true, problem: "An unrelated clause is missing." };
+  assert.equal((await assess("stroll", pass)).passed, false);
+  assert.equal((await assess("walk", { ...pass, problem: undefined })).passed, true);
+  await assert.rejects(assess("walk", { ...pass, termCorrect: undefined }), /verdict/);
+  const wrong = await assess("walk", { ...pass, termCorrect: false, problem: "" });
+  assert.equal(wrong.passed, false);
+  assert(wrong.choices[0].problem);
+  s.assignments[0].preserveSourceSpelling = true;
+  const retained = { ...pass, candidateId: null, rendered: "caminar" };
+  assert.equal((await assess("spelled caminar", retained)).passed, true);
+  assert.equal((await assess("spelled walk", retained)).passed, false);
+});
+
+test("focused retries address only the incorrect occurrence, even when both use the confirmed wording", async () => {
+  const s = fixture();
+  s.passages = deduplicatePassages([{ id: "p0", text: "Ana ve a Luis caminar y Ana decide caminar hasta casa." }], ["caminar"]);
+  s.assignments.push({ ...s.assignments[0], occurrenceId: "o1" });
+  const unrelated = "Friday is absent from the source.";
+  const termError = "The second walk is attributed to Luis, although Ana is the one walking home.";
+  const payloads = [];
+  const tools = {
+    run: async (_kind, payload) => {
+      payloads.push(payload);
+      const who = payloads.length === 1 ? "Luis" : "Ana";
+      return { rows: [{ rowId: "1", translatedText: `Ana sees Luis walk, and ${who} decides to walk home on Friday.` }] };
+    },
+    ask: async (question, data) => {
+      if (question.startsWith("Repair")) {
+        assert.deepEqual(data.trial.choices.map((c) => c.problem), ["", termError]);
+        return {};
+      }
+      if (data.attempt.startsWith("9:")) return choices(data);
+      const wrongReferent = data.translations[0].translation.includes("Luis decides");
+      return { choices: choices(data).choices.map((choice) => choice.occurrenceId === "o0"
+        ? { ...choice, termCorrect: true, problem: unrelated }
+        : { ...choice, termCorrect: !wrongReferent, problem: wrongReferent ? termError : "" }) };
+    },
+  };
+  assert.equal((await testMeanings(s, tools)).complete, true);
+  assert.deepEqual(s.testHistory.map((trial) => trial.choices.map((c) => c.passed)), [[true, false], [true, true]]);
+  assert.equal(payloads.length, 2);
+  const note = payloads[1].glossaryHints[0].globalNotes.find((value) => value.includes(termError));
+  const guidance = JSON.parse(note.match(/\{.*\}/u)[0]);
+  assert.deepEqual(guidance.occurrences.map((o) => [o.sourceStart, o.previousTermProblem]),
+    [[s.passages[0].occurrences[0].start, undefined], [s.passages[0].occurrences[1].start, termError]]);
+  assert(!JSON.stringify(payloads).includes(unrelated));
   await testCompleteEntry(s, tools);
-  assert(!JSON.stringify(payloads.at(-1)).includes("Repair the sentence fragment"));
+  assert(!JSON.stringify(payloads.at(-1)).includes(termError));
   assert(!JSON.stringify(payloads.at(-1)).includes("move by foot"));
+});
+
+test("a saved whole-paragraph failure gets a term review of the same translation before any retry", async () => {
+  for (const round of [0, 1]) {
+    const s = fixture(2);
+    s.rounds["8:m"] = round;
+    const saved = { phase: "8", signature: meaningTrialSignature(s, "m"), rounds: 0, passed: false,
+      translations: s.passages.map((p) => ({ paragraphId: p.id, source: p.text, translation: "a walk on Friday" })),
+      choices: s.assignments.map((a) => ({ ...a, candidateId: "c", rendered: "walk", passed: a.paragraphId === "p0",
+        problem: a.paragraphId === "p0" ? "" : "Friday is absent from the source." })) };
+    s.tests["8:m"] = saved;
+    s.testHistory = [structuredClone(saved)];
+    const reviewed = [];
+    const tools = { run: () => assert.fail("valid saved translations should be reused"),
+      ask: async (question, data) => {
+        assert.match(question, /^Assess EACH/);
+        assert.deepEqual(data.translations, [saved.translations[1]]);
+        assert(!JSON.stringify(data).includes("Friday is absent"));
+        reviewed.push(...data.assignments.map((a) => a.paragraphId));
+        return choices(data);
+      } };
+    assert.equal((await testMeanings(s, tools)).complete, true);
+    assert.equal((await testMeanings(s, tools)).complete, true);
+    assert.deepEqual(reviewed, ["p1"]);
+    assert.equal(meaningTrialsAreCurrent(s), true);
+    assert.equal(s.testHistory[0].passed, false, "keep the original review in history");
+  }
 });
 
 
@@ -553,7 +646,8 @@ test("focused assessment batches full paragraphs and repairs only complete faile
     if (question.startsWith("Assess")) {
       assert(data.translations.length <= 15);
       return { choices: choices(data).choices.map((choice) => ({ ...choice,
-        problem: first && choice.paragraphId === "p0" ? "Fix number agreement" : "" })) };
+        termCorrect: !(first && choice.paragraphId === "p0"),
+        problem: first && choice.paragraphId === "p0" ? "The term has the wrong grammatical number." : "" })) };
     }
     repair = data; first = false; return { confirmIds: [], notes: [] };
   } });
@@ -611,7 +705,8 @@ test("focused retries retain fully passing paragraphs only while all research in
         activities.push(activity);
         assert(q.includes("Do not reconstruct missing source context"));
         return { choices: choices(data).choices.map((choice) => ({ ...choice,
-          problem: fail && choice.paragraphId === "p0" ? "Fix this paragraph's agreement" : "" })) };
+          termCorrect: !(fail && choice.paragraphId === "p0"),
+          problem: fail && choice.paragraphId === "p0" ? "The translated term has the wrong person." : "" })) };
       }
       fail = false; return { confirmIds: [], notes: [] };
     } };
@@ -829,7 +924,7 @@ test("approved candidate previews are assessed once without retranslating unchan
         if (question.startsWith("Assess")) {
           assessed += 1;
           return { choices: data.assignments.map((a) => ({ ...a, candidateId: assessed === 1 ? "c" : s.candidates.find((c) => c.text === "walked").id,
-            rendered: assessed === 1 ? "walk" : "walked", problem: assessed === 1 ? "A past-tense form is needed." : "" })) };
+            rendered: assessed === 1 ? "walk" : "walked", termCorrect: assessed !== 1, problem: assessed === 1 ? "A past-tense form is needed." : "" })) };
         }
         return { newForms: [{ text: "walked", note: "Past tense." }] };
       },

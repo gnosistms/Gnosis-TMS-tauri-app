@@ -64,3 +64,26 @@ test("collapsed previews and expanded findings hide internal locators without dr
   assert.doesNotMatch(result.html, /\/doc\/book|line=21924/u);
   assert.match(result.html, /See Source book and <a href="https:\/\/dle.rae.es\/hierofante"/u);
 });
+
+test("citation controls appear in expanded findings and stay out of the plain preview", () => {
+  const id = "4e2800126bc0e8c6";
+  const passages = [{ id, text: "Source paragraph" }];
+  const original = `**Quoted** (${id}; 00000000deadbeef), again at ${id}.\n\n` + "More findings. ".repeat(30);
+  const result = studioResultPresentation(original, passages);
+  assert.equal(result.preview, "Quoted, again at source paragraph.");
+  assert.equal(((result.details ?? result.html).match(/>Show source<\/button>/gu) ?? []).length, 2);
+  assert.doesNotMatch(result.html, /00000000deadbeef/u);
+  assert.match(result.html, /<strong>Quoted<\/strong>/u);
+  assert.match(studioResultPresentation('“ejemplo” (`4e2800126bc0e8c6`).', { ids: [id] }).html, />Show source<\/button>\./u);
+  assert.equal(studioNarrativeText('Use “ejemplo” (00000000deadbeef).'), 'Use “ejemplo”.');
+  assert.equal(studioNarrativeText("Edition (1960), 0123456789012345 copies."), "Edition (1960), 0123456789012345 copies.");
+});
+
+test("code and public link labels are readable while the public link still works", () => {
+  const id = "4e2800126bc0e8c6";
+  const result = studioResultPresentation(`See [Book (${id})](https://example.org/${id}) and \`${id}\`.\n\n\`\`\`json\n{"items":["${id}"]}\n\`\`\``, { ids: [id] });
+  assert.match(result.html, /<a href="https:\/\/example\.org\/4e2800126bc0e8c6"[^>]*>Book<\/a>/u);
+  assert.match(result.html, /<code><button[^>]*>Show source<\/button><\/code>/u);
+  assert.match(result.html, /<pre><code>\{&quot;items&quot;:\[&quot;source paragraph&quot;\]\}<\/code><\/pre>/u);
+  assert.equal(result.preview, "See Book and source paragraph.");
+});

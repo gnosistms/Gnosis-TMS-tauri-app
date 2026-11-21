@@ -1,4 +1,6 @@
+import { toggleStudioCitation } from "../glossary-research-studio-citations.js";
 import {
+  activeResearchRun,
   addResearchProposalVariant,
   addResearchProposalVariantText,
   addResearchVariant,
@@ -63,6 +65,10 @@ import { state } from "../state.js";
 
 export function createGlossaryResearchActions(render) {
   const exact = {
+    "toggle-research-source": (event) => {
+      const run = state.screen === "glossaryResearchReport" ? state.glossaryResearchReport.run : activeResearchRun()?.store?.data;
+      toggleStudioCitation(event?.target?.closest("[data-studio-paragraph]"), { passages: run?.sample?.items, scope: run?.meta });
+    },
     "open-glossary-research": () => openGlossaryResearch(render),
     "close-glossary-research": () => closeGlossaryResearch(render),
     "start-glossary-research": () => startGlossaryResearch(render),

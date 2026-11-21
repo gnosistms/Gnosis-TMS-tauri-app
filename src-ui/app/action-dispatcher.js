@@ -58,7 +58,7 @@ export function createActionDispatcher(render) {
       return true;
     }
 
-    if (await studioAction(action, render)) return true;
+    if (await studioAction(action, render, event)) return true;
 
     for (const actionMap of exactActionMaps) {
       const handler = actionMap[action];

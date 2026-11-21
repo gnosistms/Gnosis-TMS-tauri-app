@@ -1,3 +1,4 @@
+import { visibleResearchEntry } from "../app/glossary-research-studio-citations.js";
 import {
   escapeHtml,
   loadingPrimaryButton,
@@ -247,7 +248,8 @@ function renderRelatedEntries(editor, terms, isSubmitting) {
 }
 
 export function renderGlossaryTermEditorModal(state) {
-  const editor = state.glossaryTermEditor;
+  const draft = state.glossaryTermEditor;
+  const editor = draft?.studioEntry || draft?.researchOrigin ? visibleResearchEntry(draft, state.glossaryResearchStudio?.study?.passages) : draft;
   if (!editor?.isOpen) {
     return "";
   }

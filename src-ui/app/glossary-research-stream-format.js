@@ -3,6 +3,8 @@
 // out from bracket depth and string state alone, character by character: it
 // never parses, never throws, and works on any truncated prefix.
 
+import { studioCitationText } from "./glossary-research-studio-citations.js";
+
 const INDENT = "  ";
 
 function escapeHtml(text) {
@@ -11,7 +13,7 @@ function escapeHtml(text) {
 
 /** HTML for a (possibly unfinished) JSON answer; plain escaped text if it is not JSON. */
 export function formatJsonStream(text) {
-  const source = String(text ?? "");
+  const source = studioCitationText(text, undefined, true);
   const start = source.search(/\S/);
   if (start < 0) return "";
   if (source[start] !== "{" && source[start] !== "[") return `<span class="research-stream__text">${escapeHtml(source)}</span>`;

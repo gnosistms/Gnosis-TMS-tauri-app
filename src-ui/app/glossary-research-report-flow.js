@@ -1,3 +1,4 @@
+import { applyResearchTextEdit, studioCitationText } from "./glossary-research-studio-citations.js";
 // Glossary Research report page: loading a saved run, the editable entry
 // cards (update / keep existing / add), per-entry Save through the normal
 // glossary term save path, and the Markdown export for other AI tools.
@@ -303,8 +304,11 @@ export function updateResearchEntryField(entryId, field, value, variantIndex = n
   const draft = state.glossaryResearchReport.entryDrafts?.[entryId];
   if (!draft) return;
   if (field === "sourceTerms") draft.sourceTerms = value.split(/[,;\n]/).map((v) => v.trim()).filter(Boolean);
-  else if (field === "generalNote") draft.generalNote = value;
-  else if (field === "target" || field === "note") draft.variants[variantIndex][field] = value;
+  else if (field === "generalNote") draft.generalNote = applyResearchTextEdit(draft.generalNote, value, state.glossaryResearchReport.run?.sample?.items);
+  else if (field === "target" || field === "note") {
+    const variant = draft.variants[variantIndex];
+    variant[field] = applyResearchTextEdit(variant[field], value, state.glossaryResearchReport.run?.sample?.items);
+  }
   else if (field === "include") draft.variants[variantIndex].include = value === true;
   for (const conflict of draft.conflicts ?? []) conflict.retest = null;
   if (draft.saveStatus === "saved") draft.saveStatus = "idle";
@@ -343,6 +347,7 @@ export async function saveResearchEntry(render, entryId) {
   const existing = draft.decision === "update" && draft.existingTermId
     ? (state.glossaryEditor?.terms ?? []).find((term) => term.termId === draft.existingTermId)
     : null;
+  const visible = (text) => studioCitationText(text, report.run?.sample?.items, true);
   const submittedSnapshot = entrySaveSnapshot(draft);
   const submittedForms = [...draft.sourceTerms];
   draft.saveStatus = "saving";
@@ -356,10 +361,10 @@ export async function saveResearchEntry(render, entryId) {
     repoName: state.glossaryEditor?.repoName ?? "",
     termId: existing?.termId ?? null,
     // Forms of the existing entry that this study did not cover stay in it.
-    sourceTerms: [...draft.sourceTerms, ...(existing ? draft.keepForms ?? [] : [])],
-    targetTerms: variants.map((variant) => variant.target.trim()),
-    targetVariantNotes: variants.map((variant) => variant.note.trim()),
-    notesToTranslators: draft.generalNote.trim(),
+    sourceTerms: [...draft.sourceTerms.map(visible), ...(existing ? draft.keepForms ?? [] : [])],
+    targetTerms: variants.map((variant) => visible(variant.target).trim()),
+    targetVariantNotes: variants.map((variant) => visible(variant.note).trim()),
+    notesToTranslators: visible(draft.generalNote).trim(),
     footnote: existing?.footnote ?? "",
     untranslated: false,
   };
@@ -479,7 +484,7 @@ export function researchMarkdown(run) {
     "2. Are the usage notes clear enough for a translator to choose correctly?",
     "3. Which judged occurrences look wrong, and would they change a translation or a note?",
     "4. Should any expression entry be added, merged or dropped?");
-  return `${lines.join("\n")}\n`;
+  return studioCitationText(`${lines.join("\n")}\n`, sample.items, true);
 }
 
 export async function copyResearchMarkdown(render) {

@@ -186,7 +186,7 @@ For corpus-source borrowings, inspect source spellings and original-language boo
 
 ### Step 8 Test candidates within each meaning
 
-Select one initial confirmed candidate per meaning. Test its assigned occurrences using only that meaning's confirmed translations and notes for those occurrences, while translating the whole paragraph as context. Other occurrences in that paragraph retain their own meanings and must not be forced into the meaning currently being tested. Assess the targeted occurrences and full translations for incorrect meaning, grammar, clumsiness, or unnatural wording.
+Select one initial confirmed candidate per meaning. Test its assigned occurrences using only that meaning's confirmed translations and notes for those occurrences, while translating the whole paragraph as context. Other occurrences in that paragraph retain their own meanings and must not be forced into the meaning currently being tested. Grade each marked occurrence on its rendering in context. Only a problem with that use of the glossary term can trigger a repair or retry.
 
 One candidate addition may include several explicitly listed inflections of the same word, such as walk, walked, and walking. Add and test them together in one step-8 iteration; the group counts as one candidate addition and does not consume a separate repair round for each inflection. Each form remains an individual target variant with its own usage notes as needed, counts, and step-10 retention checkbox. This applies to the initial candidate and later additions. Do not collapse their usage counts into one aggregate or treat an unlisted form as explicitly confirmed merely because a related inflection was added.
 
