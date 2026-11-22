@@ -24,8 +24,8 @@ use tauri::{AppHandle, Emitter};
 
 use crate::ai::load_ai_provider_api_key;
 use crate::ai::providers::claude::claude_compatible_schema;
-use crate::ai::providers::shared_http_client;
-use crate::ai::types::AiProviderId;
+use crate::ai::providers::{run_prompt, shared_http_client};
+use crate::ai::types::{AiPromptOutputFormat, AiPromptRequest, AiProviderId};
 
 pub(crate) const RESEARCH_STREAM_EVENT: &str = "glossary-research-stream";
 const CLAUDE_MESSAGES_API_URL: &str = "https://api.anthropic.com/v1/messages";
@@ -144,6 +144,108 @@ pub(crate) fn provider_supports_research(provider_id: AiProviderId) -> bool {
     matches!(provider_id, AiProviderId::Claude | AiProviderId::OpenAi)
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GlossarySourceRequest {
+    installation_id: Option<i64>,
+    provider_id: AiProviderId,
+    model_id: String,
+    request_id: String,
+    instructions: String,
+    content: String,
+    schema: Value,
+}
+
+impl GlossarySourceRequest {
+    fn instructions(&self) -> String {
+        format!(
+            "{}\nReturn only a JSON object matching this schema:\n{}",
+            self.instructions, self.schema
+        )
+    }
+
+    fn prompt(&self) -> AiPromptRequest {
+        AiPromptRequest {
+            provider_id: self.provider_id,
+            model_id: self.model_id.clone(),
+            prompt: format!("{}\n\n{}", self.instructions(), self.content),
+            prompt_blocks: None,
+            output_format: AiPromptOutputFormat::JsonObject,
+        }
+    }
+
+    // Only the chapter passage is needed. Research-specific cache breakpoints,
+    // adaptive thinking and usage reporting would narrow the eligible models.
+    fn stream_body(&self) -> Option<Value> {
+        let model = self.model_id.trim();
+        match self.provider_id {
+            AiProviderId::OpenAi => Some(json!({
+                "model": model, "store": false, "stream": true, "max_output_tokens": 3000,
+                "instructions": self.instructions, "input": self.content,
+                "text": {"format": {"type": "json_schema", "name": "selection_source",
+                    "strict": true, "schema": self.schema}}
+            })),
+            AiProviderId::Claude => Some(json!({
+                "model": model, "stream": true, "max_tokens": 3000,
+                "system": self.instructions(), "messages": [{"role":"user", "content":self.content}]
+            })),
+            AiProviderId::Gemini | AiProviderId::DeepSeek => None,
+        }
+    }
+}
+
+/// A single lookup in a chapter row has no research budget or usage requirement.
+/// Keep the cancellable stream on its supported providers. The other providers
+/// can answer the same question through their ordinary prompt adapters.
+pub(crate) fn find_glossary_source_text(
+    app: &AppHandle,
+    request: GlossarySourceRequest,
+) -> Result<Option<Value>, String> {
+    if request.model_id.trim().is_empty() {
+        return Err("Choose a model in AI Settings to look up the source text.".into());
+    }
+    let text = if let Some(body) = request.stream_body() {
+        match run_streamed_request(
+            app,
+            request.provider_id,
+            request.installation_id,
+            &request.request_id,
+            body,
+        )? {
+            ResearchOutcome::Ok { text, .. } => text,
+            ResearchOutcome::Incomplete { reason, .. } => {
+                return Err(format!(
+                    "The AI could not complete the source lookup ({reason})."
+                ))
+            }
+            ResearchOutcome::Failed { message, .. } => return Err(message),
+            ResearchOutcome::Cancelled { .. } => return Ok(None),
+        }
+    } else {
+        let key = load_ai_provider_api_key(app, request.provider_id, request.installation_id)?;
+        run_prompt(&request.prompt(), &key)?.text
+    };
+    parse_source_match(&text).map(Some)
+}
+
+fn parse_source_match(text: &str) -> Result<Value, String> {
+    let invalid = "The AI returned an invalid source match. Try again.";
+    let answer: Value = serde_json::from_str(super::extract_json_object(text).ok_or(invalid)?)
+        .map_err(|_| invalid)?;
+    let valid_source_text = match answer.get("sourceText") {
+        Some(Value::String(text)) => !text.trim().is_empty() || answer["found"] == false,
+        Some(Value::Null) => answer["found"] == false,
+        _ => false,
+    };
+    if !answer["found"].is_boolean()
+        || !matches!(answer["confidence"].as_str(), Some("high" | "low"))
+        || !valid_source_text
+    {
+        return Err(invalid.into());
+    }
+    Ok(answer)
+}
+
 pub(crate) fn run_research_request(
     app: &AppHandle,
     request: ResearchModelRequest,
@@ -157,37 +259,59 @@ pub(crate) fn run_research_request(
     if request.model_id.trim().is_empty() {
         return Err("Select a Research model on the AI Settings page first.".to_string());
     }
-    let api_key = load_ai_provider_api_key(app, request.provider_id, request.installation_id)?;
+    let body = match request.provider_id {
+        AiProviderId::Claude => claude_body(&request),
+        _ => openai_body(&request),
+    };
+    run_streamed_request(
+        app,
+        request.provider_id,
+        request.installation_id,
+        &request.request_id,
+        body,
+    )
+}
+
+fn run_streamed_request(
+    app: &AppHandle,
+    provider_id: AiProviderId,
+    installation_id: Option<i64>,
+    request_id: &str,
+    body: Value,
+) -> Result<ResearchOutcome, String> {
     let flag = Arc::new(AtomicBool::new(false));
     if let Ok(mut flags) = cancel_flags().lock() {
-        flags.insert(request.request_id.clone(), flag.clone());
+        flags.insert(request_id.to_owned(), flag.clone());
     }
     let _guard = CancelGuard {
-        request_id: request.request_id.clone(),
+        request_id: request_id.to_owned(),
     };
+    let api_key = load_ai_provider_api_key(app, provider_id, installation_id)?;
+    if flag.load(Ordering::SeqCst) {
+        return Ok(ResearchOutcome::Cancelled {
+            billed_unknown: false,
+        });
+    }
     let emit = |kind: &str, delta: &str| {
         let _ = app.emit(
             RESEARCH_STREAM_EVENT,
             StreamEventPayload {
-                request_id: &request.request_id,
+                request_id,
                 kind,
                 delta,
             },
         );
     };
-    let body = match request.provider_id {
-        AiProviderId::Claude => claude_body(&request),
-        _ => openai_body(&request),
-    };
     let client = shared_http_client()?;
-    let mut http = match request.provider_id {
+    let mut http = match provider_id {
         AiProviderId::Claude => client
             .post(CLAUDE_MESSAGES_API_URL)
             .header("x-api-key", api_key.trim())
             .header("anthropic-version", CLAUDE_API_VERSION),
-        _ => client
+        AiProviderId::OpenAi => client
             .post(OPENAI_RESPONSES_API_URL)
             .header("Authorization", format!("Bearer {}", api_key.trim())),
+        _ => return Err("This provider does not support streamed glossary requests.".into()),
     };
     http = http
         .timeout(RESEARCH_REQUEST_TIMEOUT)
@@ -198,7 +322,7 @@ pub(crate) fn run_research_request(
         Err(error) => {
             // Nothing was received; whether the provider started work is unknown.
             return Ok(ResearchOutcome::Failed {
-                message: transport_message(request.provider_id, &error),
+                message: transport_message(provider_id, &error),
                 retryable: true,
                 billed_unknown: !error.is_connect(),
                 usage: None,
@@ -208,11 +332,11 @@ pub(crate) fn run_research_request(
     let status = response.status();
     if !status.is_success() {
         let text = response.text().unwrap_or_default();
-        return Ok(http_failure(request.provider_id, status.as_u16(), &text));
+        return Ok(http_failure(provider_id, status.as_u16(), &text));
     }
     let reader = BufReader::new(response);
     let mut state = StreamState::default();
-    let result = match request.provider_id {
+    let result = match provider_id {
         AiProviderId::Claude => read_sse(reader, &flag, |event, data| {
             claude_event(&mut state, event, data, &emit)
         }),
@@ -220,7 +344,7 @@ pub(crate) fn run_research_request(
             openai_event(&mut state, event, data, &emit)
         }),
     };
-    Ok(finish(request.provider_id, state, result))
+    Ok(finish(provider_id, state, result))
 }
 
 // --- request bodies ------------------------------------------------------------
@@ -527,7 +651,7 @@ fn finish(provider_id: AiProviderId, state: StreamState, end: ReadEnd) -> Resear
         }
         ReadEnd::Broken(error) => {
             return ResearchOutcome::Failed {
-                message: format!("The connection to {name} broke while it was answering: {error}"),
+                message: format!("The connection closed while {name} was answering: {error}"),
                 retryable: true,
                 billed_unknown: true,
                 usage: state.usage_seen.then_some(usage),
@@ -569,7 +693,7 @@ fn finish(provider_id: AiProviderId, state: StreamState, end: ReadEnd) -> Resear
     }
     if !state.completed {
         return ResearchOutcome::Failed {
-            message: format!("{name} ended the answer early."),
+            message: format!("The connection closed before {name} finished answering."),
             retryable: true,
             billed_unknown: true,
             usage: state.usage_seen.then_some(usage),
@@ -594,7 +718,7 @@ fn transport_message(provider_id: AiProviderId, error: &reqwest::Error) -> Strin
     } else if error.is_connect() {
         format!("The app could not reach {name}. Check the internet connection.")
     } else {
-        format!("The {name} request failed before an answer arrived.")
+        format!("The {name} request failed before an answer arrived. Check your internet connection and try again.")
     }
 }
 
@@ -669,6 +793,64 @@ mod tests {
             }),
         };
         (finish(provider, state, end), emitted.into_inner())
+    }
+
+    #[test]
+    fn source_lookup_uses_the_selected_model_for_each_provider() {
+        for provider_id in [
+            AiProviderId::OpenAi,
+            AiProviderId::Claude,
+            AiProviderId::Gemini,
+            AiProviderId::DeepSeek,
+        ] {
+            let lookup = GlossarySourceRequest {
+                installation_id: Some(123),
+                provider_id,
+                model_id: "selected-model-without-research-pricing".into(),
+                request_id: "lookup".into(),
+                instructions: "Find the equivalent Spanish words.".into(),
+                content: "Highlighted: Con của Người".into(),
+                schema: json!({"type": "object", "required": ["found", "confidence", "sourceText"]}),
+            };
+            match provider_id {
+                AiProviderId::OpenAi | AiProviderId::Claude => {
+                    let body = lookup.stream_body().unwrap();
+                    assert_eq!(body["model"], lookup.model_id);
+                    assert!(body.to_string().contains(&lookup.content));
+                    assert!(body.get("tools").is_none());
+                    assert!(body.get("prompt_cache_options").is_none());
+                    assert!(body.get("thinking").is_none());
+                }
+                AiProviderId::Gemini | AiProviderId::DeepSeek => {
+                    assert!(lookup.stream_body().is_none());
+                    let prompt = lookup.prompt();
+                    assert_eq!(prompt.provider_id, provider_id);
+                    assert_eq!(prompt.model_id, lookup.model_id);
+                    assert_eq!(prompt.output_format, AiPromptOutputFormat::JsonObject);
+                    assert!(prompt.prompt.contains(&lookup.content));
+                    assert!(prompt.prompt.contains("sourceText"));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn source_lookup_distinguishes_a_no_match_from_an_invalid_answer() {
+        let found = json!({"found":true,"confidence":"high","sourceText":"Hijo del Hombre"});
+        assert_eq!(
+            parse_source_match(&format!("```json\n{found}\n```")).unwrap(),
+            found
+        );
+        let absent = json!({"found":false,"confidence":"low","sourceText":null});
+        assert_eq!(parse_source_match(&absent.to_string()).unwrap(), absent);
+        for invalid in [
+            "",
+            "{}",
+            r#"{"found":"true","confidence":"high","sourceText":"Hijo"}"#,
+            r#"{"found":true,"confidence":"high","sourceText":null}"#,
+        ] {
+            assert!(parse_source_match(invalid).is_err());
+        }
     }
 
     #[test]

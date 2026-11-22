@@ -12,7 +12,8 @@ import { openGlossaryTermEditor } from "./glossary-term-draft.js";
 import { openStudioForTerm } from "./glossary-research-studio-flow.js";
 import { resolveSelectedChapterGlossary, selectedProjectsTeamInstallationId } from "./project-context.js";
 import { createEditorGlossaryEntryState } from "./glossary-research-state.js";
-import { researchModelStatus } from "./glossary-research-flow.js";
+import { ensureSharedAiActionConfigurationLoaded, resolveAiActionProviderAndModel } from "./ai-settings-flow.js";
+import { classifySyncError } from "./sync-error.js";
 import {
   SELECTION_SOURCE_SCHEMA,
   selectionSourceContent,
@@ -171,42 +172,55 @@ export async function openEditorGlossaryEntry(render, selection) {
 
 // error: why the AI could not be asked or gave no usable answer ("" when it
 // answered that nothing corresponds).
-function noMatch(current, notice, error = "") {
-  const sourceName = current.sourceLanguage?.name ?? "source";
-  if (current.selectionRole === "target") {
-    // The translator knows both texts; let them type the source.
-    current.step = "entry";
-    current.notice = notice || (error
-      ? `Something went wrong while finding the ${sourceName} text. You can type it in above.`
-      : `We could not find the ${sourceName} text that corresponds to “${current.selectedText}”. You can type it in above.`);
-  } else {
-    current.step = "not-found";
-    current.notice = notice || (error
-      ? `Something went wrong while finding the ${sourceName} term that corresponds to “${current.selectedText}”.`
-      : `We could not find the ${sourceName} term that corresponds to “${current.selectedText}”.`);
-  }
+function noMatch(current, notice = "", error = "") {
+  const canTypeSource = current.selectionRole === "target";
+  const what = `${current.sourceLanguage?.name ?? "source"} ${canTypeSource ? "text" : "term"}`;
+  current.step = canTypeSource ? "entry" : "not-found";
+  current.notice = notice || (error
+    ? `Something went wrong while finding the ${what}.`
+    : `We could not find the ${what} that corresponds to “${current.selectedText}”.`);
+  if (canTypeSource) current.notice += ` You can type the ${what} above.`;
   current.error = error;
+}
+
+function sourceLookupIsOffline() {
+  const { isEnabled, checked, hasConnection } = state.offline;
+  const online = globalThis.navigator?.onLine ?? (checked ? hasConnection : true);
+  return isEnabled || online === false;
 }
 
 async function findSourceText(render, current, { sourceText, rowTexts }) {
   const sourceName = current.sourceLanguage?.name ?? "source";
-  const status = researchModelStatus();
-  if (!status.ok) {
-    noMatch(current, current.selectionRole === "target"
-      ? `To find the ${sourceName} text automatically, choose a Research model in AI Settings. You can also type it in above.`
-      : `Finding the ${sourceName} term needs a Research model. Choose one in AI Settings, then try again.`);
+  const offlineNotice = `Connect to the internet to find the ${sourceName} text automatically.`;
+  if (sourceLookupIsOffline()) {
+    noMatch(current, offlineNotice);
     render();
     return;
   }
   current.step = "finding";
-  current.requestId = `selection-source-${Date.now().toString(36)}`;
   render();
+  const installationId = selectedProjectsTeamInstallationId();
+  const isCurrent = () => entry() === current && selectedProjectsTeamInstallationId() === installationId;
   try {
-    const outcome = await invoke("run_glossary_research_request", {
+    await ensureSharedAiActionConfigurationLoaded();
+    if (!isCurrent()) return;
+    const { providerId, modelId } = resolveAiActionProviderAndModel("research");
+    const offline = sourceLookupIsOffline();
+    if (offline || !modelId) {
+      const config = state.aiSettings.actionConfig;
+      const settingsError = config.modelOptionsByProvider?.[providerId]?.error || config.availableProvidersError;
+      if (!offline && settingsError) throw new Error(settingsError);
+      const model = config.detailedConfiguration ? "a Research model" : "a model";
+      noMatch(current, offline ? offlineNotice : `Choose ${model} in AI Settings to find the ${sourceName} text automatically.`);
+      render();
+      return;
+    }
+    current.requestId = crypto.randomUUID();
+    const answer = await invoke("find_glossary_source_text", {
       request: {
-        installationId: selectedProjectsTeamInstallationId(),
-        providerId: status.providerId,
-        modelId: status.modelId,
+        installationId,
+        providerId,
+        modelId,
         requestId: current.requestId,
         instructions: selectionSourceInstructions({ sourceLanguage: sourceName }),
         content: selectionSourceContent({
@@ -215,27 +229,30 @@ async function findSourceText(render, current, { sourceText, rowTexts }) {
           sourceLanguage: sourceName,
           rowTexts,
         }),
-        schemaName: "selection_source",
         schema: SELECTION_SOURCE_SCHEMA,
-        effort: "low",
-        maxOutputTokens: 3000,
-        webSearchDomains: null,
       },
     });
-    if (entry() !== current) return;
-    const answer = outcome?.status === "ok" ? JSON.parse(outcome.text) : null;
+    if (!isCurrent()) return;
     const found = answer?.found === true && answer.confidence === "high"
       ? sourceTextOccurrence(answer.sourceText, sourceText)
       : "";
     if (found) {
       current.sourceTerm = found;
       current.step = "entry";
+    } else if (answer) {
+      noMatch(current);
     } else {
-      noMatch(current, "", answer ? "" : outcome?.message || outcome?.reason || "The AI gave no answer.");
+      noMatch(current, "The source lookup was cancelled.");
     }
   } catch (error) {
-    if (entry() !== current) return;
-    noMatch(current, "", error?.message ?? String(error));
+    if (!isCurrent()) return;
+    if (sourceLookupIsOffline()) {
+      noMatch(current, offlineNotice);
+    } else if (classifySyncError(error).type === "connection_unavailable") {
+      noMatch(current, "Check your internet connection and try the lookup again.");
+    } else {
+      noMatch(current, "", error?.message ?? String(error));
+    }
   }
   render();
 }
