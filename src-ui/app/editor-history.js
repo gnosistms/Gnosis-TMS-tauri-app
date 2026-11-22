@@ -99,6 +99,13 @@ function historyTextFieldsEqual(left, right) {
   );
 }
 
+export function historyEntryContentEqual(left, right) {
+  return Boolean(left && right)
+    && historyTextFieldsEqual(left, right)
+    && editorFieldImageEqual(left.image, right.image)
+    && normalizeEditorRowTextStyle(left.textStyle) === normalizeEditorRowTextStyle(right.textStyle);
+}
+
 function historyActorKey(entry) {
   if (String(entry?.operationType ?? "").trim().toLowerCase() === "import") {
     return "import";
@@ -107,7 +114,7 @@ function historyActorKey(entry) {
   return aiModel ? `ai:${aiModel}` : "human";
 }
 
-function buildHistoryGroups(entries) {
+function groupAdjacentHistoryActors(entries, olderEntryByCommitSha) {
   const actorGroups = [];
 
   for (const entry of entries) {
@@ -139,7 +146,6 @@ function buildHistoryGroups(entries) {
     });
   }
 
-  const olderEntryByCommitSha = buildOlderVisibleEntryByCommitSha(entries);
   const groups = [];
   let previousCanMergeActors = false;
   for (const group of actorGroups) {
@@ -173,6 +179,66 @@ function buildHistoryGroups(entries) {
   }
 
   return groups;
+}
+
+function isHumanMarkerChange(entry, olderEntry) {
+  return historyActorKey(entry) === "human"
+    && historyEntryContentEqual(entry, olderEntry)
+    && ((entry.reviewed === true) !== (olderEntry.reviewed === true)
+      || (entry.pleaseCheck === true) !== (olderEntry.pleaseCheck === true));
+}
+
+function isAiHistoryEdit(entry) {
+  return historyActorKey(entry).startsWith("ai:") && !isOptimisticEditorHistoryEntry(entry);
+}
+
+function buildHistoryGroups(entries) {
+  const olderEntryByCommitSha = buildOlderVisibleEntryByCommitSha(entries);
+  const groups = [];
+  let ungroupedStart = 0;
+  let index = 0;
+  while (index < entries.length) {
+    const newest = entries[index];
+    if (!isAiHistoryEdit(newest)) {
+      index += 1;
+      continue;
+    }
+
+    const start = index;
+    let lastAi = start;
+    let hasInterveningMarker = false;
+    const supervisor = { ...newest };
+    index += 1;
+    while (index < entries.length) {
+      const entry = entries[index];
+      if (isOptimisticEditorHistoryEntry(entry) || !historyEntriesHaveSameUser(supervisor, entry)) break;
+      if (isAiHistoryEdit(entry)) {
+        hasInterveningMarker ||= index > lastAi + 1;
+        lastAi = index;
+      } else if (!isHumanMarkerChange(entry, entries[index + 1])) {
+        break;
+      }
+      // Keep the strongest available identity across older entries missing a login.
+      supervisor.authorLogin = entry.authorLogin || supervisor.authorLogin;
+      supervisor.authorEmail = entry.authorEmail || supervisor.authorEmail;
+      supervisor.authorName = entry.authorName || supervisor.authorName;
+      index += 1;
+    }
+
+    if (hasInterveningMarker) {
+      groups.push(...groupAdjacentHistoryActors(entries.slice(ungroupedStart, start), olderEntryByCommitSha));
+      groups.push({
+        key: entries[lastAi].commitSha,
+        authorName: `AI edits · ${newest.authorName?.trim() || supervisor.authorLogin || "Unknown author"}`,
+        operationType: newest.operationType,
+        isImport: false,
+        entries: entries.slice(start, lastAi + 1),
+      });
+      // Only markers between two AI edits belong to the group.
+      ungroupedStart = lastAi + 1;
+    }
+  }
+  return groups.concat(groupAdjacentHistoryActors(entries.slice(ungroupedStart), olderEntryByCommitSha));
 }
 
 function buildGroupKeyByCommitSha(groups) {

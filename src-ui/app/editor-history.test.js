@@ -510,6 +510,70 @@ test("a text-changing AI edit stays separate even when the later human keeps its
   assert.equal(model.groups.length, 3);
 });
 
+function aiAndMarkerHistory(...revisions) {
+  // Fixtures read in the order the edits happened. History shows the newest first.
+  return revisions.map(([commitSha, plainText, changes]) => historyEntry({
+    authorLogin: "gnosistms", commitSha, plainText, ...changes,
+  })).reverse();
+}
+
+test("human markers between supervised AI edits join the run while the final review stays visible", () => {
+  const entries = aiAndMarkerHistory(
+    ["base", "original"],
+    ["ai-1", "first wording", { aiModel: "gpt-6.2-sol" }],
+    ["review", "first wording", { reviewed: true }],
+    ["unreview", "first wording"],
+    ["check", "first wording", { pleaseCheck: true }],
+    ["ai-2", "second wording", { aiModel: "claude-sonnet" }],
+    ["sign-off", "second wording", { reviewed: true }],
+  );
+  const previous = buildEditorHistoryViewModel(entries, new Set());
+  assert.deepEqual(previous.groups.map(({ entries }) => entries.map(({ commitSha }) => commitSha)), [
+    ["sign-off"], ["ai-2", "check", "unreview", "review", "ai-1"], ["base"],
+  ]);
+  assert.equal(previous.groups[1].authorName, "AI edits · gnosistms");
+  assert.equal(previous.olderVisibleEntryByCommitSha.get("ai-2").commitSha, "base");
+
+  const next = [historyEntry({ commitSha: "ai-3", plainText: "third wording", aiModel: "claude-sonnet" }), ...entries];
+  const keys = reconcileExpandedEditorHistoryGroupKeys(entries, next, new Set(["ai-1"]));
+  const expanded = buildEditorHistoryViewModel(next, keys);
+  assert.equal(expanded.groups[0].key, "ai-1");
+  assert.equal(expanded.groups[0].entries.length, 7);
+  assert.deepEqual(expanded.visibleEntries, next);
+  assert.equal(expanded.olderVisibleEntryByCommitSha.get("ai-3").commitSha, "sign-off");
+});
+
+test("human content changes break an AI run even when a later edit reverses them", () => {
+  for (const change of [
+    { plainText: "human wording" }, { plainText: "<b>first</b>" },
+    { footnote: "note" }, { imageCaption: "caption" }, { attribution: "credit" },
+    { textStyle: "heading1" }, { image: { kind: "url", url: "https://example.com/image.png" } },
+  ]) {
+    const entries = aiAndMarkerHistory(
+      ["base", "original"], ["ai-1", "first", { aiModel: "model" }],
+      ["human-edit", "first", { reviewed: true, ...change }], ["human-revert", "first"],
+      ["ai-2", "second", { aiModel: "model" }],
+    );
+    const { groups } = buildEditorHistoryViewModel(entries, new Set());
+    assert.deepEqual(groups.map(({ key }) => key), ["ai-2", "human-edit", "ai-1", "base"]);
+  }
+});
+
+test("the same AI model can resume across a marker only under the same user's supervision", () => {
+  const groups = (marker, newerAi = {}) => buildEditorHistoryViewModel(aiAndMarkerHistory(
+    ["base", "original"], ["ai-1", "first", { aiModel: "model" }],
+    ["marker", "first", marker], ["ai-2", "second", { aiModel: "model", ...newerAi }],
+  ), new Set()).groups;
+  assert.equal(groups({ reviewed: true })[0].entries.length, 3);
+  for (const marker of [
+    { reviewed: true, authorLogin: "other" }, { reviewed: true, operationType: "import" },
+    { reviewed: true, commitSha: "optimistic:pending" }, {},
+  ]) {
+    assert.equal(groups(marker)[0].entries.length, 1);
+  }
+  assert.equal(groups({ reviewed: true, authorLogin: "" }, { authorLogin: "other" })[0].entries.length, 1);
+});
+
 test("another user's intervening edit keeps same-name human runs separate", () => {
   const model = buildEditorHistoryViewModel([
     historyEntry({ commitSha: "c3", authorLogin: "hans" }),
