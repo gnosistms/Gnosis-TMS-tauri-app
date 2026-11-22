@@ -116,6 +116,7 @@ import {
   runEditorAiAssistant,
   runEditorAiReview,
   saveEditorConflictResolution,
+  resolveEditorMultipleH1Warning,
   resolveEditorRowConflict,
   restoreEditorFieldHistory,
   restoreEditorRow,
@@ -219,6 +220,7 @@ const CURRENT_WRITE_TARGETS = new Map([
   ["duplicate-editor-language-image-with-caption", "control"],
   ["confirm-editor-image-duplicate-overwrite", "imageDuplicateOverwriteModal"],
   ["confirm-editor-image-reuse", "imageReuseModal"],
+  ["confirm-editor-multiple-h1", "pendingH1Row"],
 ]);
 
 function editorWriteTargetRowId(target, argument, event) {
@@ -226,6 +228,7 @@ function editorWriteTargetRowId(target, argument, event) {
     case "chapter": return null;
     case "argument": return argument;
     case "selection": return state.editorChapter?.activeRowId;
+    case "pendingH1Row": return state.editorChapter?.pendingH1RowId;
     case "control": return event?.target?.closest?.("[data-row-id]")?.dataset.rowId;
     case "glossaryFootnote": return activeGlossaryFootnoteInsertionRequest()?.rowId;
     default: return state.editorChapter?.[target]?.rowId;
@@ -627,6 +630,11 @@ export function createTranslateActions(render) {
       const rowId = button?.dataset.rowId ?? null;
       const textStyle = button?.dataset.textStyle ?? null;
       await updateEditorRowTextStyle(render, rowId, textStyle);
+      return true;
+    }
+
+    if (action === "confirm-editor-multiple-h1" || action === "cancel-editor-multiple-h1") {
+      await resolveEditorMultipleH1Warning(render, action === "confirm-editor-multiple-h1");
       return true;
     }
 

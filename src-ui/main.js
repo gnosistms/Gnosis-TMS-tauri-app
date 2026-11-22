@@ -140,6 +140,7 @@ import { renderEditorAiTranslateAllModal } from "./screens/editor-ai-translate-a
 import { renderEditorDeriveGlossariesModal } from "./screens/editor-derive-glossaries-modal.js";
 import { renderEditorImagePreviewOverlay } from "./screens/editor-image-preview-overlay.js";
 import { renderEditorInsertLinkModal } from "./screens/editor-insert-link-modal.js";
+import { renderEditorMultipleH1Modal } from "./screens/editor-multiple-h1-modal.js";
 import { renderGlossariesScreen } from "./screens/glossaries.js";
 import { renderGlossaryEditorScreen } from "./screens/glossary-editor.js";
 import { renderGlossaryResearchReportScreen } from "./screens/glossary-research-report.js";
@@ -736,10 +737,9 @@ function renderTranslateDeriveGlossariesModalOnly() {
   reconcileModalRenderState(app, modalSnapshot);
 }
 
-function renderTranslateInsertLinkModalOnly() {
-  const html = renderEditorInsertLinkModal(state);
+function renderTranslateModalOnly(selector, html) {
   const modalSnapshot = captureModalRenderState(app);
-  const modalCard = app.querySelector(".modal-card--insert-link");
+  const modalCard = app.querySelector(selector);
   const backdrop = modalCard?.closest?.(".modal-backdrop");
   if (backdrop instanceof HTMLElement) {
     if (html) {
@@ -880,7 +880,12 @@ function renderWithOptionsImpl(options = {}) {
   }
 
   if (options?.scope === "translate-insert-link-modal" && state.screen === "translate") {
-    renderTranslateInsertLinkModalOnly();
+    renderTranslateModalOnly(".modal-card--insert-link", renderEditorInsertLinkModal(state));
+    return;
+  }
+
+  if (options?.scope === "translate-multiple-h1-modal" && state.screen === "translate") {
+    renderTranslateModalOnly('[data-modal-dialog="editor-multiple-h1"]', renderEditorMultipleH1Modal(state));
     return;
   }
 
