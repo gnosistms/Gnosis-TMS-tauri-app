@@ -13,9 +13,10 @@
 // so `npm run tauri:build` always ships a fresh file. Requires cargo-about:
 //   cargo install --locked cargo-about
 
-import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 
@@ -27,24 +28,17 @@ const srcTauriDir = join(rootDir, "src-tauri");
 const outputPath = join(srcTauriDir, "resources", "THIRD-PARTY-NOTICES.md");
 
 function generateCratesSection() {
-  const result = spawnSync("cargo", ["about", "generate", "about.hbs"], {
-    cwd: srcTauriDir,
-    encoding: "utf8",
-    shell: process.platform === "win32",
-    stdio: ["ignore", "pipe", "inherit"],
-    maxBuffer: 64 * 1024 * 1024,
-  });
-
-  if (result.error || result.status !== 0 || !result.stdout) {
-    console.error(
-      "Failed to run `cargo about generate`. Install cargo-about first:\n" +
-        "  cargo install --locked cargo-about\n" +
-        (result.error ? `(${result.error.message})` : ""),
-    );
-    process.exit(1);
+  const temp = mkdtempSync(join(tmpdir(), "gnosis-notices-"));
+  try {
+    const section = join(temp, "rust.md");
+    execFileSync("cargo", ["about", "generate", "--output-file", section, "about.hbs"], {
+      cwd: srcTauriDir,
+      stdio: "inherit",
+    });
+    return readFileSync(section, "utf8");
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
   }
-
-  return result.stdout;
 }
 
 function collectNpmPackages() {

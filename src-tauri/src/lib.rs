@@ -39,6 +39,8 @@ mod updater;
 mod util;
 mod vellum_clipboard;
 mod window;
+#[cfg(windows)]
+mod windows_crash;
 mod wordpress;
 
 #[cfg(target_os = "macos")]
@@ -575,7 +577,16 @@ fn build_app_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let context = tauri::generate_context!();
+    let builder = tauri::Builder::default();
+    #[cfg(windows)]
+    let builder = {
+        let Some(reporter) = windows_crash::Reporter::start(&context.config().identifier) else {
+            return; // The installed executable was invoked as the SDK's external reporter.
+        };
+        builder.manage(reporter)
+    };
+    builder
         .manage(AuthState {
             pending_github_app_install: Mutex::new(None),
             pending_broker_auth: Mutex::new(None),
@@ -610,6 +621,7 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            store::save_error_reporting_settings,
             glossary_research_studio::glossary_studio_storage,
             glossary_research_studio::start_glossary_studio_tool,
             glossary_research_studio::glossary_studio_job,
@@ -862,6 +874,6 @@ pub fn run() {
             std::thread::spawn(move || spawn_callback_server(app_handle));
             Ok(())
         })
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running tauri application");
 }
