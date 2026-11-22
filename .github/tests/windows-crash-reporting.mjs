@@ -108,6 +108,13 @@ function verify(lines) {
   }
   const appImage = e.debug_meta.images.find(i => i.code_file.toLowerCase() === basename(exe).toLowerCase());
   assert.ok(appImage?.debug_id && appImage.debug_file, "App PDB identifier missing from report");
+  const pdb = resolve("src-tauri/target/release/gnosis_tms.pdb");
+  assert.equal(appImage.debug_file.toLowerCase(), basename(pdb));
+  const summary = execFileSync("llvm-pdbutil", ["dump", "-summary", pdb], { encoding: "utf8" });
+  const guid = summary.match(/GUID:\s*\{?([\da-f-]{36})/i)?.[1];
+  const age = summary.match(/Age:\s*(\d+)/i)?.[1];
+  assert.ok(guid && age, "Could not read the release PDB identifier");
+  assert.equal(appImage.debug_id.toLowerCase(), guid.toLowerCase() + "-" + Number(age).toString(16));
   const imageBase = BigInt(appImage.image_addr);
   const rvas = frames.map(f => BigInt(f.instruction_addr) - imageBase).filter(n => n >= 0n && n < BigInt(appImage.image_size));
   assert.ok(rvas.length, "No application frames");
@@ -150,6 +157,33 @@ try {
   await delay(1500);
   assert.equal(nativeEvents().length, 2);
   console.log("Reporting on: exactly one event per crash. Both stacks resolved to the packaged probe with the release PDB. No memory dump or private paths.");
+
+  app = launch();
+  page = await hero(app);
+  await save(page, false);
+  const afterOptOut = requests.length;
+  writeFileSync(marker, "");
+  await crashed(app);
+  await delay(1500);
+  assert.equal(requests.length, afterOptOut);
+  assert.equal(pending().length, 0);
+  console.log("Switching an already-enabled installation off stopped delivery in the same session.");
+
+  // Exercise the other first-run choice in the disposable runner's profile.
+  const profile = JSON.parse(readFileSync(settingsPath));
+  delete profile["telemetry-enabled"];
+  delete profile["telemetry-disclosure-shown"];
+  writeFileSync(settingsPath, JSON.stringify(profile));
+  await crashed(launch(true));
+  await until("second undisclosed crash", () => pending().length === 1);
+  assert.equal(requests.length, afterOptOut);
+  app = launch();
+  page = await hero(app);
+  await save(page, true, true);
+  await until("buffered crash sent after disclosure", () => nativeEvents().length === 3);
+  verify(nativeEvents()[2]);
+  await until("empty delivery queue", () => pending().length === 0);
+  console.log("Accepting the first-run disclosure delivered the buffered crash exactly once.");
 } finally {
   for (const app of running) app.kill();
   server.closeAllConnections();

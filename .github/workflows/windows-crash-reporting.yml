@@ -2,20 +2,29 @@ name: Packaged Windows crash reporting
 
 on:
   workflow_dispatch:
+  push:
+    tags: ['v*']
   pull_request:
     paths:
       - '.github/tests/windows-crash*'
       - '.github/workflows/windows-crash-reporting.yml'
+      - '.github/workflows/release-tauri.yml'
       - '.github/scripts/*windows*'
       - '.github/windows*.json'
       - 'scripts/*windows-crash*'
       - 'scripts/build-frontend-for-tauri.mjs'
       - 'src-tauri/native-crash/**'
+      - 'src-tauri/Cargo.toml'
+      - 'src-tauri/Cargo.lock'
+      - 'src-tauri/sentry-dsn.txt'
       - 'src-tauri/src/windows_crash/**'
+      - 'src-tauri/src/lib.rs'
       - 'src-tauri/src/store.rs'
       - 'src-tauri/tauri*.conf.json'
       - 'src-ui/app/telemetry*'
+      - 'src-ui/app/persistent-store.js'
       - 'src-ui/screens/telemetry*'
+      - 'vite.config.js'
 
 permissions:
   contents: read
