@@ -204,10 +204,10 @@ export function tokenizeGlossaryTerm(term, languageCode) {
 }
 
 // A standalone "…" (or "...") between two words of a target variant marks where
-// the target language may place up to four words that modify the term, as in
+// the target language may place words that modify the term, as in
 // "sự giằng co … giữa các mặt đối lập". Source terms always match exactly.
 const GLOSSARY_GAP_MARKER_REGEX = /\s+(?:…|\.{3})\s+/u;
-const GLOSSARY_GAP_MAX_WORDS = 4;
+const GLOSSARY_SENTENCE_END_REGEX = /[\p{Sentence_Terminal}…\r\n\u2028\u2029]/u;
 
 // Token segments around each gap, or null for a variant without one. Gaps
 // and ruby annotations are not combined.
@@ -227,51 +227,71 @@ export function glossaryTermWithoutGaps(term) {
   return String(term ?? "").split(GLOSSARY_GAP_MARKER_REGEX).join(" ");
 }
 
-// Gap words must be words separated only by whitespace, so a gap never reaches
-// across a comma, quote or sentence boundary into the next clause.
-function glossaryGapIsValid(tokens, wordEntries, startWord, endWord) {
-  const from = wordEntries[startWord - 1].tokenIndex + 1;
-  const to = wordEntries[endWord].tokenIndex;
-  for (let index = from; index < to; index += 1) {
-    const token = tokens[index];
-    if (token.type === "word" ? glossaryPunctuationToken(token.normalized) !== null : /\S/u.test(token.value)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-// Every occurrence of a gapped variant as word pieces [startWord, endWord).
-// Adjacent pieces (an empty gap) merge, so one piece means the unsplit wording.
-function findGappedGlossaryOccurrences(segments, tokens, wordEntries) {
-  const words = wordEntries.map((word) => word.normalized);
-  const occurrences = [];
-  const extend = (segmentIndex, start, pieces) => {
-    const segment = segments[segmentIndex];
-    if (start + segment.length > words.length
-      || !segment.every((token, offset) => words[start + offset] === token)) {
-      return;
-    }
-    const end = start + segment.length;
-    const previous = pieces.at(-1);
-    const nextPieces = previous?.[1] === start
-      ? [...pieces.slice(0, -1), [previous[0], end]]
-      : [...pieces, [start, end]];
-    if (segmentIndex === segments.length - 1) {
-      occurrences.push(nextPieces);
-      return;
-    }
-    for (let gap = 0; gap <= GLOSSARY_GAP_MAX_WORDS && end + gap < words.length; gap += 1) {
-      if (gap > 0 && !glossaryGapIsValid(tokens, wordEntries, end, end + gap)) {
+// For each word index, the exclusive end of its sentence. Inspect the display
+// tokens because marks such as question marks are outside the matching tokens.
+function glossarySentenceEnds(tokens, wordEntries) {
+  const sentenceEnds = new Uint32Array(wordEntries.length);
+  let sentenceEnd = wordEntries.length;
+  let nextTokenIndex = tokens.length;
+  for (let word = wordEntries.length - 1; word >= 0; word -= 1) {
+    const tokenIndex = wordEntries[word].tokenIndex;
+    for (let index = tokenIndex; index < nextTokenIndex; index += 1) {
+      if (GLOSSARY_SENTENCE_END_REGEX.test(tokens[index].value)) {
+        sentenceEnd = word + 1;
         break;
       }
-      extend(segmentIndex + 1, end + gap, nextPieces);
     }
-  };
-  for (let start = 0; start < words.length; start += 1) {
-    extend(0, start, []);
+    sentenceEnds[word] = sentenceEnd;
+    nextTokenIndex = tokenIndex;
   }
-  return occurrences;
+  return sentenceEnds;
+}
+
+// The shortest complete occurrence at each start wins over any longer span
+// with that start. Index the next match for each piece to avoid enumerating
+// combinations of intervening words when a variant has more than one gap.
+function* findGappedGlossaryOccurrences(segments, tokens, wordEntries, sentenceEnds) {
+  const wordCount = wordEntries.length;
+  const nextStarts = segments.map((segment) => {
+    const starts = new Uint32Array(wordCount + 1);
+    let next = wordCount;
+    starts[wordCount] = next;
+    for (let index = wordCount - 1; index >= 0; index -= 1) {
+      if (index + segment.length <= sentenceEnds[index]
+        && segment.every((token, offset) => wordEntries[index + offset].normalized === token)) {
+        next = index;
+      }
+      starts[index] = next;
+    }
+    return starts;
+  });
+
+  const firstStarts = nextStarts[0];
+  for (let start = firstStarts[0]; start < wordCount; start = firstStarts[start + 1]) {
+    const pieces = [];
+    let end = start;
+    for (const [segmentIndex, starts] of nextStarts.entries()) {
+      const pieceStart = starts[end];
+      if (pieceStart >= sentenceEnds[start]) {
+        break;
+      }
+      const pieceEnd = pieceStart + segments[segmentIndex].length;
+      const previous = pieces.at(-1);
+      // Merge empty gaps while keeping intervening punctuation outside marks.
+      if (previous?.[1] === pieceStart && tokens.slice(
+        wordEntries[end - 1].tokenIndex + 1,
+        wordEntries[pieceStart].tokenIndex,
+      ).every(({ value }) => !/\S/u.test(value))) {
+        previous[1] = pieceEnd;
+      } else {
+        pieces.push([pieceStart, pieceEnd]);
+      }
+      end = pieceEnd;
+      if (segmentIndex === segments.length - 1) {
+        yield pieces;
+      }
+    }
+  }
 }
 
 function sanitizeTermList(values) {
@@ -511,8 +531,8 @@ function buildLanguageGlossaryMatcher(entries, matchLanguage, { allowGaps = fals
   for (const entry of entries) {
     for (const matchTerm of entry.matchTerms || []) {
       const gapSegments = allowGaps ? glossaryTermGapSegments(matchTerm, matchLanguage) : null;
-      // The trie matches a gapped variant's unsplit wording; split wordings are
-      // found separately from its segments.
+      // Use the unsplit tokens for priority and grouping. Gap occurrences are
+      // matched separately so even an empty gap respects sentence boundaries.
       const tokens = gapSegments ? gapSegments.flat() : tokenizeGlossaryTerm(matchTerm, matchLanguage);
       if (!glossaryTokensAreMatchable(tokens)) {
         continue;
@@ -521,8 +541,9 @@ function buildLanguageGlossaryMatcher(entries, matchLanguage, { allowGaps = fals
       const key = tokens.join(" ");
       const existingCandidate = termMap.get(key);
       if (existingCandidate) {
+        existingCandidate.hasPlainVariant ||= !gapSegments;
         if (gapSegments) {
-          existingCandidate.gapSegmentLists.push(gapSegments);
+          existingCandidate.gappedForms.push({ term: matchTerm, segments: gapSegments });
         }
         appendOrderedUniqueTerms(
           existingCandidate.termIdsOrdered,
@@ -629,7 +650,8 @@ function buildLanguageGlossaryMatcher(entries, matchLanguage, { allowGaps = fals
         noTranslation,
         noTranslationPosition: noTranslation?.position ?? null,
         noTranslationNote: noTranslation?.note ?? "",
-        gapSegmentLists: gapSegments ? [gapSegments] : [],
+        hasPlainVariant: !gapSegments,
+        gappedForms: gapSegments ? [{ term: matchTerm, segments: gapSegments }] : [],
       };
       termMap.set(key, candidate);
     }
@@ -648,7 +670,7 @@ function buildLanguageGlossaryMatcher(entries, matchLanguage, { allowGaps = fals
       })),
     ),
     gapped: candidates.flatMap((candidate, candidateIndex) =>
-      candidate.gapSegmentLists.map((segments) => ({ candidateIndex, segments })),
+      candidate.gappedForms.map((form) => ({ candidateIndex, ...form })),
     ),
   };
 }
@@ -898,14 +920,16 @@ export function findLongestGlossaryMatches(text, matcher) {
   const tokenizedText = tokenizeTextForHighlighting(text, matcher.languageCode);
   const { tokens, wordEntries } = tokenizedText;
   const normalizedWords = wordEntries.map((word) => word.normalized);
-  const occurrences = discoverGlossaryTokenOccurrences(matcher.compiled, normalizedWords);
+  const sentenceEnds = matcher.gapped?.length ? glossarySentenceEnds(tokens, wordEntries) : null;
+  const exactOccurrences = discoverGlossaryTokenOccurrences(matcher.compiled, normalizedWords);
+  const occurrences = sentenceEnds
+    ? exactOccurrences.filter(({ candidateIndex }) => matcher.compiled.candidates[candidateIndex].payload.hasPlainVariant)
+    : exactOccurrences;
   // A split occurrence claims its whole span, inserted words included, but only
   // its pieces are matches.
-  for (const { candidateIndex, segments } of matcher.gapped ?? []) {
-    for (const pieces of findGappedGlossaryOccurrences(segments, tokens, wordEntries)) {
-      if (pieces.length > 1) {
-        occurrences.push({ candidateIndex, startWord: pieces[0][0], endWord: pieces.at(-1)[1], pieces });
-      }
+  for (const { candidateIndex, term, segments } of matcher.gapped ?? []) {
+    for (const pieces of findGappedGlossaryOccurrences(segments, tokens, wordEntries, sentenceEnds)) {
+      occurrences.push({ candidateIndex, startWord: pieces[0][0], endWord: pieces.at(-1)[1], pieces, matchedTerm: term });
     }
   }
   const accepted = selectGloballyLongestOccurrences(
@@ -920,6 +944,7 @@ export function findLongestGlossaryMatches(text, matcher) {
         startTokenIndex: wordEntries[startWord].tokenIndex,
         endTokenIndex: wordEntries[endWord - 1].tokenIndex,
         candidate: matcher.compiled.candidates[occurrence.candidateIndex].payload,
+        matchedTerm: occurrence.matchedTerm,
         occurrenceIndex,
       })),
     ),
@@ -1143,7 +1168,7 @@ function buildHighlightMarkup(text, matcher, glossaryModel, resolveMatchState = 
       const tooltipText = buildGlossaryTooltipText(currentMatch.candidate, glossaryModel);
       const tooltipPayload = buildStructuredGlossaryTooltipPayload(
         currentMatch.candidate,
-        segment,
+        currentMatch.matchedTerm ?? segment,
         glossaryModel,
       );
       // The first contributing term id is the term whose information leads on the
@@ -1297,7 +1322,8 @@ function textContainsGlossaryTerm(text, term, languageCode) {
   const gapSegments = glossaryTermGapSegments(term, languageCode);
   if (gapSegments) {
     const { tokens, wordEntries } = tokenizeTextForHighlighting(text, languageCode);
-    return findGappedGlossaryOccurrences(gapSegments, tokens, wordEntries).length > 0;
+    const sentenceEnds = glossarySentenceEnds(tokens, wordEntries);
+    return !findGappedGlossaryOccurrences(gapSegments, tokens, wordEntries, sentenceEnds).next().done;
   }
   const tokens = tokenizeGlossaryTerm(term, languageCode);
   if (!glossaryTokensAreMatchable(tokens)) {

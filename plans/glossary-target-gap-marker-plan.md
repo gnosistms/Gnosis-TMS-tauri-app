@@ -25,11 +25,11 @@ language may place words that modify the term:
 "sự giằng co … giữa các mặt đối lập". The tokenizer already treats `...` and `…`
 as the same token, so either can be typed.
 
-- The gap matches zero to four words. Matching zero words means the gapped form
-  also matches the unsplit wording, so it replaces the plain variant instead of
-  sitting beside it.
-- The inserted words may be separated only by spaces. No comma, period, dash,
-  quote or line break inside a gap, so a gap cannot reach into the next clause.
+- The gap matches any number of words within a sentence, including zero. The
+  gapped form also matches the unsplit wording, so it replaces the plain variant
+  instead of sitting beside it.
+- A gap can include punctuation within a sentence. Sentence-ending punctuation
+  and line breaks limit where the next piece can match.
 - Target variants only. Source terms keep exact matching. The shared trie
   (`glossary-token-matcher.js`), the Rust matcher and the golden fixture do not
   change: only the editor and the studio match target text.
@@ -75,8 +75,8 @@ Why not regular expressions:
    must stay unchanged and in order. Quote the whole span including the inserted
    words.
 4. **Split acceptance** (`assessTrial`). When the candidate is not found as
-   written, look for its words in order with one run of one to four inserted
-   words between two of them, under the gap rules above. A passing verdict on
+   written, look for its words in order with one run of inserted words between
+   two of them, under the gap rules above. A passing verdict on
    that span passes the occurrence, and the choice records where the split falls
    and the inserted words.
 5. **Adding the marker to the entry.** When an occurrence passes with a split,
@@ -87,8 +87,20 @@ Why not regular expressions:
    words between 'sự giằng co' and 'giữa các mặt đối lập', because Vietnamese
    places modifiers there ('dữ dội')". The human can edit or remove it with
    Edit glossary entry.
-6. **Parity.** QA list terms are not matched in text; they reach the AI reviewer
-   as hints. There is nothing to mirror.
+6. **Parity.** QA terms have their own plain-text and regular expression
+   matching modes. The ellipsis applies to glossary target variants.
+
+## Removing the word limit
+
+1. Determine sentence limits from the editor's existing text tokens. Use the
+   shared gap matcher for both split and contiguous forms of gapped variants,
+   including the editor's missing-translation check and studio assessment.
+2. Find the earliest complete match for each start within its sentence. A longer
+   match with the same start occupies a superset of that span, so it cannot win
+   the existing overlap selection. Index each piece's next match to avoid
+   enumerating combinations when a variant has several gaps.
+3. Verify longer gaps in editor highlighting and studio assessment. Cover
+   sentence boundaries, zero-word gaps, and punctuation within a sentence.
 
 ### Why the marker comes from steps 8 and 9 rather than an earlier step
 
@@ -101,8 +113,12 @@ confirms that the split is grammatical.
 
 ## Tests
 
-- Matcher: gap with zero to four words, too many words, punctuation in the gap,
-  several gaps, `...` equal to `…`, plain variants unchanged.
+For target hover cards, carry the saved variant that produced a match through
+to each highlighted piece. Verify both ends show the complete glossary wording,
+its original ellipsis, and the note belonging to that variant.
+
+- Matcher: zero-word and long gaps, punctuation within a sentence, sentence
+  boundaries, several gaps, `...` equal to `…`, and plain variants.
 - Editor: the gapped variant clears the missing-translation flag and underlines
   both pieces, not the inserted words.
 - Prompt: the Rust glossary rules contain the marker sentence.

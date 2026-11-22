@@ -365,7 +365,7 @@ function splitFixture() {
   s.candidates = [{ id: "c", text: "sự giằng co giữa các mặt đối lập", meaningIds: ["m"], selected: true, retained: true, confirmed: true }];
   return s;
 }
-const splitRendering = "sự giằng co dữ dội giữa các mặt đối lập";
+const splitRendering = "sự giằng co kéo dài suốt nhiều thế kỷ, qua bao biến cố giữa các mặt đối lập";
 
 test("a confirmed form split by words that target grammar places inside it passes only when the reviewer passes it", async () => {
   const s = splitFixture();
@@ -378,7 +378,7 @@ test("a confirmed form split by words that target grammar places inside it passe
   assert.equal(passed.choices[0].splitForm, "sự giằng co … giữa các mặt đối lập");
   assert.deepEqual([passed.choices[0].targetStart, passed.choices[0].targetEnd], [0, splitRendering.length]);
   assert.equal((await assess(splitRendering, "The source has no adjective here.")).passed, false);
-  for (const translation of ["sự giằng co một hai ba bốn năm giữa các mặt đối lập", "sự giằng co dữ dội; giữa các mặt đối lập", "sự giằng co dữ dội giữa các mặt khác"]) {
+  for (const translation of ["sự giằng co dữ dội. giữa các mặt đối lập", "sự giằng co! giữa các mặt đối lập", "sự giằng co dữ dội giữa các mặt khác"]) {
     const result = await assess(translation);
     assert.equal(result.passed, false, translation);
     assert.equal(result.choices[0].splitForm, undefined, translation);
