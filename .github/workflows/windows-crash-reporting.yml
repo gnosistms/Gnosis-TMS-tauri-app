@@ -1,0 +1,58 @@
+name: Packaged Windows crash reporting
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/tests/windows-crash*'
+      - '.github/workflows/windows-crash-reporting.yml'
+      - '.github/scripts/*windows*'
+      - '.github/windows*.json'
+      - 'scripts/*windows-crash*'
+      - 'scripts/build-frontend-for-tauri.mjs'
+      - 'src-tauri/native-crash/**'
+      - 'src-tauri/src/windows_crash/**'
+      - 'src-tauri/src/store.rs'
+      - 'src-tauri/tauri*.conf.json'
+      - 'src-ui/app/telemetry*'
+      - 'src-ui/screens/telemetry*'
+
+permissions:
+  contents: read
+
+jobs:
+  installed-msi:
+    runs-on: windows-latest
+    timeout-minutes: 55
+    env:
+      VITE_SENTRY_DSN: http://0123456789abcdef0123456789abcdef@127.0.0.1:18844/1
+      CARGO_PROFILE_RELEASE_DEBUG: line-tables-only
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.99.1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          shared-key: windows-crash-package
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about@0.9.1
+      - name: Stage release Git runtime
+        run: ./.github/scripts/prepare-windows-git.ps1
+      - name: Build unsigned test MSI with the native exception fixture
+        run: npx tauri build --bundles msi --features windows-crash-smoke --config .github/windows-release.conf.json --config .github/windows-crash-smoke.conf.json
+      - name: Install MSI and exercise Send error reports
+        shell: pwsh
+        run: |
+          $msi = (Get-ChildItem src-tauri/target/release/bundle/msi/*.msi -ErrorAction Stop)[0]
+          $dir = Join-Path $env:RUNNER_TEMP 'Gnosis Packaged Smoke'
+          $installer = Start-Process msiexec.exe -ArgumentList "/i `"$($msi.FullName)`" /qn /norestart INSTALLDIR=`"$dir`"" -Wait -PassThru
+          if ($installer.ExitCode -ne 0) { throw "MSI installation failed with $($installer.ExitCode)" }
+          $exe = Get-ChildItem $dir, "$env:ProgramFiles/Gnosis TMS" -Filter '*.exe' -ErrorAction SilentlyContinue | Where-Object { $_.Name -match 'gnosis' } | Select-Object -First 1
+          if (!$exe) { throw 'Could not locate the installed app' }
+          node .github/tests/windows-crash-reporting.mjs $exe.FullName

@@ -1,0 +1,7 @@
+{
+  "bundle": {
+    "resources": {
+      "resources/windows/crash-reporter/": "crash-reporter/"
+    }
+  }
+}
