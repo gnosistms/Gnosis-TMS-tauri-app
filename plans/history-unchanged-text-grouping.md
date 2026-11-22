@@ -96,3 +96,19 @@ unchanged AI text is an additional way to group different actors.
 - When a new AI text change splits an expanded human/AI group, every resulting
   group containing previously expanded revisions retains its expansion state.
 - All 127 focused history/sidebar tests pass, including both review regressions.
+
+## AI edits with intervening human review markers
+
+1. Group a run bounded by AI revisions when the same user supervised the AI
+   and changed only Reviewed or Please check between the edits. Compare each
+   human revision with its immediate predecessor, including text, footnotes,
+   captions, attribution, media, and formatting. Model switches are allowed.
+   A final human review stays visible until another AI edit follows it.
+2. Label the group “AI edits · username”. Use the existing entries, diffs,
+   timestamps, author labels, and restore actions when expanded.
+3. Verify the boundaries, model switches, and expansion after a new edit in
+   unit and sidebar tests, then run the frontend suite and History browser tests.
+
+Verified with 3,554 frontend tests, 26 workflow tests, and the four History
+browser tests. A separate browser check exercised the new mixed-model group,
+the final review, expanded credits, and the intervening marker’s Restore action.

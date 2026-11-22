@@ -111,6 +111,32 @@ for (const aiLatest of [true, false]) {
   });
 }
 
+test("expanding supervised AI edits shows both model credits and the human marker revision", () => {
+  const entry = (commitSha, plainText, extra = {}) => ({
+    commitSha, plainText, authorName: "translator", committedAt: "2026-11-22T00:00:00Z", ...extra,
+  });
+  const chapter = activeEditorChapter({
+    sidebarTab: "history",
+    history: { status: "ready", entries: [
+      entry("approved", "Final", { reviewed: true }),
+      entry("second", "Final", { aiModel: "claude" }),
+      entry("reviewed", "Draft", { reviewed: true }),
+      entry("first", "Draft", { aiModel: "gpt-6.2-sol" }),
+      entry("baseline", "Original"),
+    ] },
+  });
+  const render = (chapter) => renderTranslateSidebar(chapter, rows, languages, "es", "vi", createAiActionConfigurationState());
+  const collapsed = render(chapter);
+  assert.match(collapsed, /AI edits · translator/);
+  assert.match(collapsed, /3 revisions/);
+  assert.match(collapsed, /restore-editor-history:approved/);
+  assert.doesNotMatch(collapsed, /restore-editor-history:reviewed/);
+  const expanded = render(applyEditorHistoryGroupExpandedToggle(chapter, "first"));
+  const credits = [...expanded.matchAll(/<p class="history-item__author">([^<]*)<\/p>/g)].map((match) => match[1]);
+  assert.deepEqual(credits, ["Claude - translator", "translator", "GPT 6.2 Sol - translator"]);
+  assert.match(expanded, /restore-editor-history:reviewed/);
+});
+
 test("collapsed history retains style changes against hidden previous commits", () => {
   const entry = (commitSha, textStyle) => ({
     commitSha,
