@@ -34,6 +34,7 @@ jobs:
         with:
           workspaces: src-tauri
           shared-key: windows-crash-package
+          cache-on-failure: true
       - uses: actions/setup-node@v6
         with:
           node-version: 24
