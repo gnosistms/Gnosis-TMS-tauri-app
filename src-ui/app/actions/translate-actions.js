@@ -151,134 +151,102 @@ function reviewModeFromEvent(event) {
   return target?.closest("[data-ai-review-mode]")?.dataset.aiReviewMode ?? null;
 }
 
-const SESSION_WRITE_ACTIONS = new Set([
-  "add-target-language-manager-language",
-  "open-target-language-manager-picker",
-  "continue-editor-ai-review-all",
-  "review-editor-clear-translations",
-  "select-all-editor-replace-rows",
-  "review-editor-text-now",
-  "run-editor-ai-translate:translate1",
-  "run-editor-ai-translate:translate2",
-  "run-editor-ai-assistant",
-  "apply-editor-ai-review",
-  "toggle-editor-reviewed",
-  "toggle-editor-please-check",
-  "open-editor-unreview-all",
-  "open-editor-ai-translate-all",
-  "open-editor-ai-review-all",
-  "open-editor-clear-translations",
-  "open-editor-derive-glossaries",
-  "set-editor-row-text-style",
-  "toggle-editor-inline-style",
-  "insert-editor-separator",
-  "open-editor-insert-link",
-  "submit-editor-insert-link",
-  "open-editor-footnote",
-  "open-editor-footnote-entry",
-  "insert-hovered-glossary-footnote",
-  "open-editor-image-caption",
-  "open-editor-image-url",
-  "open-editor-image-upload",
-  "open-editor-image-upload-picker",
+// Each guarded command names its actual target. A chapter-wide command has no row,
+// even when its toolbar or confirmation is used with a deleted row selected.
+const SESSION_WRITE_TARGETS = new Map([
+  ["add-target-language-manager-language", "chapter"],
+  ["open-target-language-manager-picker", "chapter"],
+  ["move-target-language-manager-language", "chapter"],
+  ["remove-target-language-manager-language", "chapter"],
+  ["select-target-language-manager-picker-language", "chapter"],
+  ["continue-editor-ai-review-all", "chapter"],
+  ["review-editor-clear-translations", "chapter"],
+  ["select-all-editor-replace-rows", "chapter"],
+  ["open-editor-replace-undo", "chapter"],
+  ["open-editor-unreview-all", "chapter"],
+  ["open-editor-ai-translate-all", "chapter"],
+  ["open-editor-ai-review-all", "chapter"],
+  ["open-editor-clear-translations", "chapter"],
+  ["open-editor-derive-glossaries", "chapter"],
+  ["review-editor-text-now", "selection"],
+  ["run-editor-ai-translate", "selection"],
+  ["run-editor-ai-assistant", "selection"],
+  ["apply-editor-ai-review", "selection"],
+  ["apply-editor-assistant-draft", "selection"],
+  ["toggle-editor-reviewed", "control"],
+  ["toggle-editor-please-check", "control"],
+  ["set-editor-row-text-style", "control"],
+  ["toggle-editor-inline-style", "control"],
+  ["insert-editor-separator", "control"],
+  ["open-editor-insert-link", "control"],
+  ["submit-editor-insert-link", "insertLinkModal"],
+  ["open-editor-footnote", "control"],
+  ["open-editor-footnote-entry", "control"],
+  ["insert-hovered-glossary-footnote", "glossaryFootnote"],
+  ["open-editor-image-caption", "control"],
+  ["open-editor-image-url", "control"],
+  ["open-editor-image-upload", "control"],
+  ["open-editor-image-upload-picker", "control"],
+  ["open-insert-editor-row", "argument"],
+  ["open-merge-editor-rows", "argument"],
+  ["resolve-editor-row-conflict", "argument"],
+  ["open-editor-conflict-resolution", "argument"],
+  ["copy-editor-conflict-version", "conflictResolutionModal"],
+  ["choose-editor-conflict-passage", "conflictResolutionModal"],
+  ["edit-editor-conflict-passage", "conflictResolutionModal"],
 ]);
 
-const CURRENT_WRITE_ACTIONS = new Set([
-  "submit-target-language-manager",
-  "confirm-insert-editor-row-before",
-  "confirm-insert-editor-row-after",
-  "confirm-merge-editor-rows-previous",
-  "confirm-merge-editor-rows-next",
-  "confirm-editor-replace-undo",
-  "confirm-editor-unreview-all",
-  "confirm-editor-ai-translate-all",
-  "confirm-editor-ai-review-all",
-  "confirm-editor-clear-translations",
-  "confirm-editor-derive-glossaries",
-  "save-editor-conflict-resolution",
-  "replace-selected-editor-rows",
-  "save-editor-comment",
-  "remove-editor-language-image",
-  "duplicate-editor-language-image",
-  "duplicate-editor-language-image-with-caption",
-  "confirm-editor-image-duplicate-overwrite",
-  "confirm-editor-image-reuse",
-  "confirm-editor-multiple-h1",
+const CURRENT_WRITE_TARGETS = new Map([
+  ["submit-target-language-manager", "chapter"],
+  ["confirm-editor-replace-undo", "chapter"],
+  ["confirm-editor-unreview-all", "chapter"],
+  ["confirm-editor-ai-translate-all", "chapter"],
+  ["confirm-editor-ai-review-all", "chapter"],
+  ["confirm-editor-clear-translations", "chapter"],
+  ["confirm-editor-derive-glossaries", "chapter"],
+  ["replace-selected-editor-rows", "chapter"],
+  ["confirm-insert-editor-row-before", "insertRowModal"],
+  ["confirm-insert-editor-row-after", "insertRowModal"],
+  ["confirm-merge-editor-rows-previous", "mergeRowModal"],
+  ["confirm-merge-editor-rows-next", "mergeRowModal"],
+  ["save-editor-conflict-resolution", "conflictResolutionModal"],
+  ["restore-editor-history", "selection"],
+  ["save-editor-comment", "selection"],
+  ["delete-editor-comment", "selection"],
+  ["soft-delete-editor-row", "argument"],
+  ["restore-editor-row", "argument"],
+  ["remove-editor-language-image", "control"],
+  ["duplicate-editor-language-image", "control"],
+  ["duplicate-editor-language-image-with-caption", "control"],
+  ["confirm-editor-image-duplicate-overwrite", "imageDuplicateOverwriteModal"],
+  ["confirm-editor-image-reuse", "imageReuseModal"],
+  ["confirm-editor-multiple-h1", "pendingH1Row"],
 ]);
 
-const SESSION_WRITE_PREFIXES = [
-  "move-target-language-manager-language:",
-  "remove-target-language-manager-language:",
-  "select-target-language-manager-picker-language:",
-  "review-editor-text-now:",
-  "open-editor-replace-undo:",
-  "apply-editor-assistant-draft:",
-  "copy-editor-conflict-version:",
-  "open-insert-editor-row:",
-  "open-merge-editor-rows:",
-  "resolve-editor-row-conflict:",
-  "open-editor-conflict-resolution:",
-  "choose-editor-conflict-passage:",
-  "edit-editor-conflict-passage:",
-];
-
-const CURRENT_WRITE_PREFIXES = [
-  "restore-editor-history:",
-  "delete-editor-comment:",
-  "soft-delete-editor-row:",
-  "restore-editor-row:",
-];
-
-function editorActionPermissionMode(action) {
-  if (
-    CURRENT_WRITE_ACTIONS.has(action)
-    || CURRENT_WRITE_PREFIXES.some((prefix) => action.startsWith(prefix))
-  ) {
-    return "current";
+function editorWriteTargetRowId(target, argument, event) {
+  switch (target) {
+    case "chapter": return null;
+    case "argument": return argument;
+    case "selection": return state.editorChapter?.activeRowId;
+    case "pendingH1Row": return state.editorChapter?.pendingH1RowId;
+    case "control": return event?.target?.closest?.("[data-row-id]")?.dataset.rowId;
+    case "glossaryFootnote": return activeGlossaryFootnoteInsertionRequest()?.rowId;
+    default: return state.editorChapter?.[target]?.rowId;
   }
-  if (
-    SESSION_WRITE_ACTIONS.has(action)
-    || SESSION_WRITE_PREFIXES.some((prefix) => action.startsWith(prefix))
-  ) {
-    return "session";
-  }
-  return "none";
 }
 
-function isReadOnlyBlockedWriteAction(action) {
-  return editorActionPermissionMode(action) !== "none";
-}
-
-function blockReadOnlyWriteAction(action, render, event = null) {
-  if (!isReadOnlyBlockedWriteAction(action)) {
+function blockReadOnlyWriteAction(action, render, event) {
+  const [command, argument] = action.split(":", 2);
+  const currentTarget = CURRENT_WRITE_TARGETS.get(command);
+  const target = currentTarget ?? SESSION_WRITE_TARGETS.get(command);
+  if (!target) {
     return false;
   }
-  const rowIdMatch =
-    /^.*(?:editor-row|row|history|comment|draft|conflict)[^:]*:([^:]+)(?::|$)/.exec(action);
-  const rowId =
-    rowIdMatch?.[1]
-    ?? (
-      typeof Element !== "undefined" && event?.target instanceof Element
-        ? event.target.closest("[data-row-id]")?.dataset.rowId
-        : null
-    )
-    ?? state.editorChapter?.imageDuplicateOverwriteModal?.rowId
-    ?? state.editorChapter?.imageReuseModal?.rowId
-    ?? state.editorChapter?.rowPermanentDeletionModal?.rowId
-    ?? state.editorChapter?.pendingH1RowId
-    ?? state.editorChapter?.activeRowId
-    ?? null;
-  const restoreRow = action.startsWith("restore-editor-row:");
-  const permanentRow =
-    action.startsWith("open-editor-row-permanent-delete:")
-    || action === "confirm-editor-row-permanent-delete";
-  const assertWritePermission = editorActionPermissionMode(action) === "current"
-    ? assertCurrentEditorWritePermission
-    : assertEditorSessionWritePermission;
+  const assertWritePermission = currentTarget ? assertCurrentEditorWritePermission : assertEditorSessionWritePermission;
   try {
     assertWritePermission({
-      rowId,
-      actionKind: permanentRow ? "localHardDelete" : restoreRow ? "restoreRow" : "sharedWrite",
+      rowId: editorWriteTargetRowId(target, argument, event),
+      actionKind: command === "restore-editor-row" ? "restoreRow" : "sharedWrite",
     });
     return false;
   } catch (error) {
@@ -609,6 +577,14 @@ export function createTranslateActions(render) {
       await toggleEditorRowFieldMarker(render, rowId, languageCode, kind, {
         target: event?.target ?? null,
       });
+      return true;
+    }
+
+    if (action === "select-editor-row-language") {
+      const panel = event?.target?.closest?.("[data-editor-language-panel]");
+      if (panel) {
+        await setActiveEditorField(render, panel.dataset.rowId, panel.dataset.languageCode);
+      }
       return true;
     }
 

@@ -67,9 +67,8 @@
 /* As in the PDF, one body line separates a heading from its text. Untrimmed
    line boxes already hold that leading, so no bottom margin is added here. */
 .book-page--chapter :is(.translate-preview__block--heading1, .translate-preview__block--heading2, .translate-preview__block--heading3) { font-family: var(--book-heading-font); font-weight: var(--book-heading-weight); line-height: var(--book-heading-line-height); margin: 1.3em 0 0; text-transform: uppercase; text-align: start; letter-spacing: normal; }
-.book-page--chapter .translate-preview__block--heading1 { font-size: var(--book-h1-size); }
-.book-page--chapter .translate-preview__block--heading2 { font-size: var(--book-h2-size); }
-.book-page--chapter .translate-preview__block--heading3 { font-size: 1em; }
+.book-page--chapter :is(.translate-preview__block--heading1, .translate-preview__block--heading2) { font-size: var(--book-section-size); }
+.book-page--chapter .translate-preview__block--heading3 { font-size: var(--book-subsection-size); }
 /* As in the PDF, quotes take 1.5em of space and a cited quote stays one line
    above its citation. Untrimmed line boxes already hold the .78em leading, so
    here the margins add only the remaining .72em. */

@@ -97,7 +97,7 @@ function titlePageEditor(modal, item) {
 
 function contentsPageEditor(modal, item) {
   return proofLayout(modal, "contents", "Table of contents", `${titleInfoField("title", item.title, "Title")}
-      <label class="book-proof-editor__check"><input type="checkbox" data-book-field="includeH1Headings" ${item.includeH1Headings ? "checked" : ""}> Include H1 headings</label>
+      <label class="book-proof-editor__check"><input type="checkbox" data-book-field="includeH1Headings" ${item.includeH1Headings ? "checked" : ""}> Include section headings (H2)</label>
       <p class="modal__supporting">Page numbers are estimated from the text without images. The exported PDF has the exact numbers.</p>`);
 }
 function imageEditor(item, logo = false) {

@@ -289,6 +289,7 @@ mod tests {
     fn structured_formats_request_native_json_mode() {
         assert_eq!(response_format_for(&AiPromptOutputFormat::Text), None);
         for output_format in [
+            AiPromptOutputFormat::JsonObject,
             AiPromptOutputFormat::AssistantTurnJson,
             AiPromptOutputFormat::TranslationSectionsJson,
             AiPromptOutputFormat::ReviewJson,

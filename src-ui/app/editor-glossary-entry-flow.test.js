@@ -17,10 +17,10 @@ const LANGUAGES = [
   { code: "en", name: "English", role: "target" },
 ];
 
-function withChapter(callback, { linkedGlossary = { glossaryId: "g1", repoName: "team/g1" }, research = false } = {}) {
+function withChapter(callback, { linkedGlossary = { glossaryId: "g1", repoName: "team/g1" } } = {}) {
   const saved = {
     projects: state.projects, selectedChapterId: state.selectedChapterId, glossaries: state.glossaries,
-    editorChapter: state.editorChapter, entry: state.editorGlossaryEntry, actionConfig: state.aiSettings.actionConfig,
+    editorChapter: state.editorChapter, entry: state.editorGlossaryEntry, actionConfig: state.aiSettings.actionConfig, offline: state.offline,
   };
   state.projects = [{ id: "p1", chapters: [{ id: "c1", linkedGlossary }] }];
   state.selectedChapterId = "c1";
@@ -30,12 +30,12 @@ function withChapter(callback, { linkedGlossary = { glossaryId: "g1", repoName: 
     chapterId: "c1", projectId: "p1", languages: LANGUAGES, glossary: { status: "loading" },
     rows: [{ rowId: "r1", fields: { es: "El <em>Ser interior</em> es la parte más elevada.", vi: "Đấng Nội Tại là phần cao nhất.", en: "The Inner Being is the highest part." } }],
   };
-  state.aiSettings.actionConfig = research
-    ? { detailedConfiguration: false, unified: { providerId: "claude", modelId: "claude-opus-5-5" } }
-    : { detailedConfiguration: false, unified: { providerId: "gemini", modelId: "gemini-model" } }; // not a research provider
+  state.aiSettings.actionConfig = { detailedConfiguration: false, unified: { providerId: "gemini", modelId: "gemini-model" } };
+  state.offline = { ...state.offline, isEnabled: false, hasConnection: true };
   return Promise.resolve(callback()).finally(() => {
     state.projects = saved.projects; state.selectedChapterId = saved.selectedChapterId; state.glossaries = saved.glossaries;
     state.editorChapter = saved.editorChapter; state.editorGlossaryEntry = saved.entry; state.aiSettings.actionConfig = saved.actionConfig;
+    state.offline = saved.offline;
   });
 }
 
@@ -72,37 +72,62 @@ test("text highlighted in the source language goes straight to the source box", 
   assert.match(html, /data-action="save-editor-glossary-entry"[^>]*data-tooltip="Open the glossary editor and enter this term\. You&#39;ll have a chance to review before saving\."/);
 }));
 
-test("target-language text fills the translation; without a Research model the source is left to type", () => withChapter(async () => {
+test("an empty unified selection asks for a model and leaves the translation ready for manual entry", () => withChapter(async () => {
+  state.aiSettings.actionConfig.unified.modelId = "";
   await openEditorGlossaryEntry(() => {}, { rowId: "r1", languageCode: "vi", text: "Đấng Nội Tại" });
   const entry = state.editorGlossaryEntry;
   assert.equal(entry.step, "entry");
   assert.equal(entry.selectionRole, "target");
   assert.equal(entry.targetTerm, "Đấng Nội Tại");
   assert.equal(entry.sourceTerm, "");
-  assert.match(entry.notice, /choose a Research model in AI Settings/);
+  assert.match(entry.notice, /Choose a model in AI Settings/);
   const html = renderEditorGlossaryEntryModal(state);
   assert.match(html, /data-action="save-editor-glossary-entry"[^>]*disabled/, "Save waits for a source term");
   assert.match(html, /data-action="research-editor-glossary-entry"[^>]*disabled/);
 }));
 
-test("a failed AI search on target-language text still lets the translator type the source", () => withChapter(async () => {
+test("a unified Gemini model starts a lookup and a failed request still allows manual entry", () => withChapter(async () => {
   const steps = [];
   await openEditorGlossaryEntry(() => steps.push(state.editorGlossaryEntry.step), { rowId: "r1", languageCode: "vi", text: "Đấng Nội Tại" });
   assert.deepEqual(steps, ["finding", "entry"], "the spinner shows while the AI is asked");
   const entry = state.editorGlossaryEntry;
   assert.match(entry.notice, /Something went wrong while finding the Spanish text/);
   assert.ok(entry.error, "the reason is shown");
-}, { research: true }));
+}));
+
+test("a connection failure loading model settings is reported before asking for a model", () => withChapter(async () => {
+  state.aiSettings.actionConfig.unified.modelId = "";
+  state.aiSettings.actionConfig.modelOptionsByProvider = { gemini: { status: "error", error: "Could not reach Gemini." } };
+  await openEditorGlossaryEntry(() => {}, { rowId: "r1", languageCode: "vi", text: "Đấng Nội Tại" });
+  assert.match(state.editorGlossaryEntry.notice, /Check your internet connection/);
+  assert.doesNotMatch(state.editorGlossaryEntry.notice, /model|AI Settings/);
+  assert.equal(state.editorGlossaryEntry.targetTerm, "Đấng Nội Tại");
+}));
 
 test("text in another language that cannot be matched ends with only Cancel", () => withChapter(async () => {
+  state.aiSettings.actionConfig.detailedConfiguration = true;
+  state.aiSettings.actionConfig.actions = { research: { providerId: "claude", modelId: "" } };
   await openEditorGlossaryEntry(() => {}, { rowId: "r1", languageCode: "en", text: "Inner Being" });
   const entry = state.editorGlossaryEntry;
   assert.equal(entry.selectionRole, "other");
   assert.equal(entry.step, "not-found");
-  assert.match(entry.notice, /Finding the Spanish term needs a Research model/);
+  assert.match(entry.notice, /Choose a Research model in AI Settings/);
   const html = renderEditorGlossaryEntryModal(state);
   assert.match(html, />Cancel</);
   assert.doesNotMatch(html, /Save to glossary|Research meanings/);
+}));
+
+test("offline mode explains connectivity before model selection and keeps the highlighted translation", () => withChapter(async () => {
+  state.offline.isEnabled = true;
+  state.aiSettings.actionConfig.unified.modelId = "";
+  const steps = [];
+  await openEditorGlossaryEntry(() => steps.push(state.editorGlossaryEntry.step), { rowId: "r1", languageCode: "vi", text: "Đấng Nội Tại" });
+  assert.deepEqual(steps, ["entry"]);
+  assert.equal(state.editorGlossaryEntry.targetTerm, "Đấng Nội Tại");
+  assert.match(state.editorGlossaryEntry.notice, /[Cc]onnect to the internet/);
+  assert.doesNotMatch(state.editorGlossaryEntry.notice, /model|AI Settings/);
+  updateEditorGlossaryEntryField("sourceTerm", "Ser interior");
+  assert.equal(state.editorGlossaryEntry.sourceTerm, "Ser interior");
 }));
 
 test("the window shows the spinner and the highlighted words while it searches", () => {

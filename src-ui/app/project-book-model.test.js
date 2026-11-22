@@ -66,7 +66,7 @@ test("the latest contents spelling becomes the per-language default across proje
   assert.equal(loadContentsTitle("en"), "Table of Contents");
 });
 
-test("contents default to numbered chapters and optionally include H1 headings", () => {
+test("contents default to chapters and remember the option to include section headings", () => {
   const items = addBookSection(reconcileBookLayout(chapters(), "en").items, "contents", "Book", "Contents");
   const contents = items.find((item) => item.kind === "contents");
   assert.equal(contents.includeH1Headings, false);

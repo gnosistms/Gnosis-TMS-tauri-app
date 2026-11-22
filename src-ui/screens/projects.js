@@ -222,6 +222,13 @@ function renderProjectSearchResults(state) {
 }
 
 function renderProjectRepoConflictRecovery(state, selectedTeam) {
+  const saved = (state.projects ?? []).filter((project) => state.projectRepoSyncByProjectId?.[project.id]?.savedCheckout);
+  const savedCopies = saved.length ? `
+    <details class="message-box">
+      <summary>Saved local project copies (${saved.length})</summary>
+      <p>Gnosis TMS kept the original files and Git history when it recovered these projects. Open a flagged row in the editor to review both versions.</p>
+      <ul>${saved.map((project) => `<li>${escapeHtml(project.title || project.name)}<br><code>${escapeHtml(state.projectRepoSyncByProjectId[project.id].savedCheckout)}</code></li>`).join("")}</ul>
+    </details>` : "";
   const recoveryState = state.projectRepoConflictRecovery ?? {};
   const entries = listProjectRepoFallbackConflictEntries(
     state.projects,
@@ -229,7 +236,7 @@ function renderProjectRepoConflictRecovery(state, selectedTeam) {
     state.projectRepoSyncByProjectId,
   );
   if (entries.length === 0) {
-    return "";
+    return savedCopies;
   }
 
   const isLoading =
@@ -246,8 +253,8 @@ function renderProjectRepoConflictRecovery(state, selectedTeam) {
 
   const overwriteButton = isLoading
     ? loadingButton({
-      label: "Overwrite and resolve",
-      loadingLabel: "Overwriting...",
+      label: "Recover from GitHub",
+      loadingLabel: "Recovering...",
       action: "overwrite-conflicted-project-repos",
       isLoading: true,
       variant: "error",
@@ -258,7 +265,7 @@ function renderProjectRepoConflictRecovery(state, selectedTeam) {
         class="button button--error project-conflict-recovery__button${recoveryDisabled ? " is-disabled" : ""}"
         data-action="overwrite-conflicted-project-repos"
         ${recoveryDisabled ? 'disabled aria-disabled="true" data-offline-blocked="true"' : ""}
-      >Overwrite and resolve</button>
+      >Recover from GitHub</button>
     `;
 
   return `
@@ -278,12 +285,13 @@ function renderProjectRepoConflictRecovery(state, selectedTeam) {
           )
           .join("")}
       </div>
-      <p class="message-box__text project-conflict-recovery__warning"><strong>We can resolve this problem by overwriting all changes on saved on this computer with the latest data from the server. Unless you have been working for many hours without an internet connection, this is usually quite safe.</strong></p>
+      <p class="message-box__text">Recover the project from GitHub and keep a copy of all files and unpublished changes on this computer.</p>
       ${errorText ? `<p class="message-box__text project-conflict-recovery__runtime-error">${escapeHtml(formatErrorForDisplay(errorText))}</p>` : ""}
       <div class="project-conflict-recovery__actions">
         ${overwriteButton}
       </div>
     </div>
+    ${savedCopies}
   `;
 }
 

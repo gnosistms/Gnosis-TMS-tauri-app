@@ -270,6 +270,19 @@ test("applyEditorRowPersistSucceeded keeps submitted footnotes when payload omit
   assert.equal(updatedRow.saveStatus, "idle");
 });
 
+test("a text save adopts an audio caption merged on disk while the save was in flight", () => {
+  const submitted = row({ fields: { es: "dos" }, saveStatus: "saving" });
+  const updated = applyEditorRowPersistSucceeded(
+    submitted,
+    persistedPayload({ imageCaptions: { es: "Library caption" } }),
+    { fields: submitted.fields, imageCaptions: submitted.imageCaptions },
+  );
+  assert.deepEqual(updated.imageCaptions, { es: "Library caption" });
+  assert.deepEqual(updated.baseImageCaptions, updated.imageCaptions);
+  assert.deepEqual(updated.persistedImageCaptions, updated.imageCaptions);
+  assert.equal(updated.saveStatus, "idle");
+});
+
 test("applyEditorRowPersistSucceeded preserves a pending optimistic text style", () => {
   const updatedRow = applyEditorRowPersistSucceeded(
     {

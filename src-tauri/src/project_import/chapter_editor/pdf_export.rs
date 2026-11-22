@@ -1636,7 +1636,7 @@ fn render_typst_chapter(
                 } else {
                     let mut text_block =
                         render_typst_text_block(text_style, &inline, dropcap, cover_open);
-                    if book_chapter && style == "heading1" {
+                    if book_chapter && style == "heading2" {
                         // Keep the metadata outside heading content (where a label
                         // binds to the heading itself), directly before it rather
                         // than in a wrapping block: a block would replace the
@@ -1769,14 +1769,14 @@ const BOOK_LAYOUT_RULES: &str = r#"
 #let gnosis-contents-link(entry, body) = if "location" in entry { link(entry.location, body) } else { body }
 // `entries` is called in context. A page preview passes page numbers from an
 // earlier pagination pass instead of the live book's entries.
-#let gnosis-contents-entries(t, entries, include-h1: false) = {
+#let gnosis-contents-entries(t, entries, include-sections: false) = {
   set par(justify: false, first-line-indent: 0pt)
   show link: set text(fill: black)
   align(center, text(font: gnosis-book-heading-font, size: 20pt, tracking: 0.08em)[#upper(t)])
   v(2em)
   context {
     for entry in entries() {
-      if entry.level == 0 or include-h1 {
+      if entry.level == 0 or include-sections {
         block(width: 100%, above: if entry.level == 0 { 1em } else { 0.78em }, below: 0.78em)[
           #pad(left: if entry.level == 0 { 0em } else { 1.5em })[
             #gnosis-contents-link(entry, grid(columns: (1fr, auto), column-gutter: 1em,
@@ -1789,7 +1789,7 @@ const BOOK_LAYOUT_RULES: &str = r#"
     }
   }
 }
-#let gnosis-contents(t, include-h1: false) = gnosis-contents-entries(t, gnosis-book-entries, include-h1: include-h1)
+#let gnosis-contents(t, include-sections: false) = gnosis-contents-entries(t, gnosis-book-entries, include-sections: include-sections)
 "#;
 
 // Appended to a `TextOnly` book: every contents entry's page and where each
@@ -1926,13 +1926,13 @@ fn render_typst_book(
             source.push_str("#metadata(none) <gnosis-chapter-end>\n");
         } else if item.kind == "contents" {
             let title = typst_string(&item.title);
-            let include_h1 = item.include_h1_headings;
+            let include_sections = item.include_section_headings;
             source.push_str(&match options.layout {
                 TypstLayout::ContentsProof(proof) => format!(
-                    "#gnosis-contents-entries({title}, {}, include-h1: {include_h1})\n",
+                    "#gnosis-contents-entries({title}, {}, include-sections: {include_sections})\n",
                     proof.typst_entries()
                 ),
-                _ => format!("#gnosis-contents({title}, include-h1: {include_h1})\n"),
+                _ => format!("#gnosis-contents({title}, include-sections: {include_sections})\n"),
             });
         } else if item.kind == "title" {
             let title_words = inline_visible_text(&item.title)
@@ -2957,7 +2957,7 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
     };
     // Kindred style: Alegreya leads titles and body headings on Latin-script
     // exports, with the body's own fallbacks behind it. Body headings are set
-    // in capitals so an H2, only half a point above the body size, still reads
+    // in capitals so an H3, only half a point above the body size, still reads
     // as a heading. The space below a heading is the body's own leading, so it
     // sits one ordinary line above its text instead of crowding it; `em` here
     // would follow the larger heading size. Other scripts keep their body
@@ -2969,9 +2969,17 @@ fn typst_preamble(document: &ExportDocument, paper_size: &str) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     let heading_rule = if latin {
-        format!("#show heading: set text(font: ({heading_family_list}), weight: \"regular\")\n#show heading: upper\n#show heading.where(level: 1): set text(size: 14.5pt)\n#show heading.where(level: 2): set text(size: 12pt)\n#show heading.where(level: 3): set text(size: {size_pt}pt)\n#show heading: set block(above: 1.3em, below: {size_pt}pt * {leading_em})\n")
+        format!("#show heading: set text(font: ({heading_family_list}), weight: \"regular\")\n#show heading: upper\n#show heading.where(level: 1): set text(size: 14.5pt)\n#show heading.where(level: 2): set text(size: 14.5pt)\n#show heading.where(level: 3): set text(size: 12pt)\n#show heading: set block(above: 1.3em, below: {size_pt}pt * {leading_em})\n")
     } else {
-        String::new()
+        // Typst's original level 1/2 sizes and spacing are relative to the
+        // body. Using em for the size here would multiply the new level's
+        // built-in scaling a second time.
+        format!(
+            "#show heading.where(level: 2): set text(size: {size_pt}pt * 1.4)\n\
+             #show heading.where(level: 2): set block(above: {size_pt}pt * 1.8, below: {size_pt}pt * 0.75)\n\
+             #show heading.where(level: 3): set text(size: {size_pt}pt * 1.2)\n\
+             #show heading.where(level: 3): set block(above: {size_pt}pt * 1.44, below: {size_pt}pt * 0.75)\n"
+        )
     };
     // Kindred style: the opening letter of a chapter drops across up to three
     // lines in Great Vibes — as many as the paragraph has (see
@@ -4541,8 +4549,8 @@ mod tests {
                 vec![
                     text("An opening paragraph in the chapter style, long enough to continue beside the decorative initial for several complete lines. The next paragraph should begin with the traditional first-line indent. This representative text also checks that normal word spacing and line spacing remain comfortable on a small A5 page."),
                     text("The second paragraph starts with an indent and no blank line above it. This is the ordinary rhythm used throughout the body of the book."),
-                    text_block("heading1", "A first-level heading"),
-                    text_block("heading2", "A second-level heading"),
+                    text_block("heading2", "A first-level heading"),
+                    text_block("heading3", "A second-level heading"),
                     text_block("quote", "A quotation keeps its upright default and can retain <i>an explicitly italic phrase</i>."),
                     ExportBlock::Attribution { text: "— An Example Author".into() },
                     text_block("centered", "A centered paragraph"),
@@ -4568,7 +4576,7 @@ mod tests {
             .find(|part| part.item.kind == "contents")
             .unwrap()
             .item
-            .include_h1_headings = true;
+            .include_section_headings = true;
         parts[4].document.blocks[0] = ExportBlock::Text {
             text_style: "heading1".into(),
             text: "Original source title".into(),
@@ -4583,7 +4591,7 @@ mod tests {
             "Interlude",
             vec![
                 text("An unnumbered chapter stays in the book and contents."),
-                text_block("heading1", "Inside Interlude"),
+                text_block("heading2", "Inside Interlude"),
                 text("Its internal headings can still appear in the contents."),
             ],
         );
@@ -4750,18 +4758,18 @@ mod tests {
     }
 
     #[test]
-    fn book_h1_contents_entries_stay_unwrapped_on_their_heading_page() {
+    fn book_section_contents_entries_stay_unwrapped_on_their_heading_page() {
         use super::super::book_export::{BookItemInput, BookPart};
         let workspace = pdf_workspace().unwrap();
         let _cleanup = WorkspaceCleanup(workspace.clone());
-        // Each chapter pushes its H1 one line further down, so the sweep crosses
-        // a page break and some H1s must start (or be carried to) a new page.
+        // Each chapter pushes its section heading one line further down, so the sweep crosses
+        // a page break and some sections must start (or be carried to) a new page.
         let parts: Vec<BookPart> = (1..=36)
             .map(|fillers| {
                 let mut blocks = vec![text_block("heading1", &format!("Chapter {fillers}"))];
                 blocks
                     .extend((0..fillers).map(|_| text_block("paragraph", "A one-line paragraph.")));
-                blocks.push(text_block("heading1", &format!("Section {fillers}")));
+                blocks.push(text_block("heading2", &format!("Section {fillers}")));
                 blocks.push(text_block(
                     "paragraph",
                     &"Text that follows the heading. ".repeat(20),
@@ -4791,7 +4799,7 @@ mod tests {
                 .collect(),
             book_parts: parts,
         };
-        let cache_session = begin_pdf_image_cache(&test_image_cache_scope("book-h1"));
+        let cache_session = begin_pdf_image_cache(&test_image_cache_scope("book-section"));
         let options = PdfWorkspacePreparationOptions {
             footnote_links_as_plain_text: true,
             paper_size: "us-letter",
@@ -4811,7 +4819,7 @@ mod tests {
         let mut source = fs::read_to_string(&source_path).unwrap();
         // A wrapping block would replace the heading's own spacing.
         assert!(source.contains(
-            "#metadata((title: \"Section 1\", numbering: \"1\", level: 1)) <gnosis-book-entry>\n= "
+            "#metadata((title: \"Section 1\", numbering: \"1\", level: 1)) <gnosis-book-entry>\n== "
         ));
         assert!(!source.contains("#block(sticky: true, breakable: false)"));
         let (Some(binary), Some(font_dir)) = (
@@ -4820,7 +4828,7 @@ mod tests {
         ) else {
             return;
         };
-        source.push_str("\n#context [#metadata(query(<gnosis-book-entry>).filter(entry => entry.value.level == 1).map(entry => { let it = query(selector(heading).after(entry.location())).first(); (entry: entry.location().page(), heading: it.location().page(), starts-page: query(selector(par).before(entry.location())).last().location().page() < it.location().page()) })) <gnosis-h1-audit>]\n");
+        source.push_str("\n#context [#metadata(query(<gnosis-book-entry>).filter(entry => entry.value.level == 1).map(entry => { let it = query(selector(heading).after(entry.location())).first(); (entry: entry.location().page(), heading: it.location().page(), starts-page: query(selector(par).before(entry.location())).last().location().page() < it.location().page()) })) <gnosis-section-audit>]\n");
         fs::write(&source_path, source).unwrap();
         let query = std::process::Command::new(&binary)
             .arg("query")
@@ -4834,7 +4842,7 @@ mod tests {
             .arg("--field")
             .arg("value")
             .arg(&source_path)
-            .arg("<gnosis-h1-audit>")
+            .arg("<gnosis-section-audit>")
             .output()
             .unwrap();
         assert!(
@@ -4845,7 +4853,7 @@ mod tests {
         let audit: serde_json::Value = serde_json::from_slice(&query.stdout).unwrap();
         let sections = audit[0]
             .as_array()
-            .unwrap_or_else(|| panic!("Unexpected H1 audit: {audit}"));
+            .unwrap_or_else(|| panic!("Unexpected section audit: {audit}"));
         assert_eq!(sections.len(), 36);
         for section in sections {
             assert_eq!(section["entry"], section["heading"], "{section}");
@@ -4950,13 +4958,15 @@ mod tests {
         assert!(vietnamese_preamble.contains(
             "#show heading: set text(font: (\"Alegreya\", \"EB Garamond\", \"Cormorant Garamond Gnosis\"), weight: \"regular\")"
         ));
-        // Capitals and a size above the 11.5pt body set H2 apart from body text,
-        // still below H1.
+        // Sections and subsections use the two print heading sizes above body text.
         assert!(vietnamese_preamble.contains("#show heading: upper\n"));
         assert!(
             vietnamese_preamble.contains("#show heading.where(level: 1): set text(size: 14.5pt)")
         );
-        assert!(vietnamese_preamble.contains("#show heading.where(level: 2): set text(size: 12pt)"));
+        assert!(
+            vietnamese_preamble.contains("#show heading.where(level: 2): set text(size: 14.5pt)")
+        );
+        assert!(vietnamese_preamble.contains("#show heading.where(level: 3): set text(size: 12pt)"));
         // One body line of space below each heading, whatever its size.
         assert!(vietnamese_preamble
             .contains("#show heading: set block(above: 1.3em, below: 11.5pt * 0.78)"));
@@ -5010,7 +5020,9 @@ mod tests {
         assert!(!japanese_preamble.contains("Cormorant Garamond"));
         // Non-Latin exports keep their own heading faces and get no drop cap —
         // Alegreya and Great Vibes have no coverage there.
-        assert!(!japanese_preamble.contains("#show heading"));
+        assert!(japanese_preamble.contains("level: 2): set text(size: 11pt * 1.4)"));
+        assert!(japanese_preamble.contains("level: 3): set text(size: 11pt * 1.2)"));
+        assert!(!japanese_preamble.contains("#show heading: upper"));
         assert!(!japanese_preamble.contains("Alegreya"));
         assert!(!japanese_preamble.contains("dropcap"));
         // Non-Latin body faces carry their own Greek coverage, so no Greek run rule.

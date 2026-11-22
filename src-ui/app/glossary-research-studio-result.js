@@ -1,8 +1,9 @@
 import { escapeHtml } from "../lib/ui.js";
+import { studioCitationText } from "./glossary-research-studio-citations.js";
 
 // Internal corpus addresses are audit evidence, not reader-facing prose. Apply
 // this only at display boundaries; never rewrite the saved model response.
-export function studioNarrativeText(value) {
+function cleanCorpusPaths(value) {
   const path = String.raw`/doc/[\w-]+(?:\?[\w%=&:+,~/-]+)?(?:#[\w-]+)?`;
   return String(value ?? "")
     .replace(new RegExp(String.raw`\[([^\]\n]+)\]\(\s*${path}\s*\)`, "gu"), "$1")
@@ -10,32 +11,42 @@ export function studioNarrativeText(value) {
     .replace(new RegExp(String.raw`[ \t]*\[\s*${path}\s*\]`, "gu"), "")
     .replace(new RegExp(String.raw`\x60${path}\x60`, "gu"), "")
     .replace(new RegExp(String.raw`(^|[\s([{,:;'"«])${path}`, "gmu"), "$1")
+    .replace(/\(\s*`([a-f0-9]{16})`\s*\)/giu, "($1)")
     .replace(/(\S)[ \t]{2,}(?=\S)/gu, "$1 ");
+}
+
+export function studioNarrativeText(value, passages) {
+  return studioCitationText(cleanCorpusPaths(value), passages, true);
+}
+
+export function studioNarrativeHtml(value, passages) {
+  return studioCitationText(cleanCorpusPaths(value), passages);
 }
 
 // A small, text-only Markdown subset for saved research. Raw HTML is always
 // escaped, and source links accept only absolute web URLs.
-function inline(text, plain = false) {
+function inlineMarkdown(text, plain, passages) {
+  const literal = (part) => studioCitationText(part, passages, plain);
   const token = /`([^`\n]+)`|\[([^\]\n]+)\]\(([^\s)]+)\)|\*\*([^\n]+?)\*\*|__([^\n]+?)__|\*([^*\n]+)\*|\b_([^_\n]+)_\b/gu;
   let result = ""; let end = 0;
   for (const match of text.matchAll(token)) {
-    result += plain ? text.slice(end, match.index) : escapeHtml(text.slice(end, match.index));
+    result += literal(text.slice(end, match.index));
     const [, code, label, url, strong, alternateStrong, emphasis, alternateEmphasis] = match;
-    if (code != null) result += plain ? code : `<code>${escapeHtml(code)}</code>`;
+    if (code != null) result += plain ? literal(code) : `<code>${literal(code)}</code>`;
     else if (label != null) {
       let safe = false;
       try { safe = /^https?:\/\//iu.test(url) && ["http:", "https:"].includes(new URL(url).protocol); } catch { /* Render an invalid link as text. */ }
-      result += plain ? inline(label, true) : safe
-        ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${inline(label)}</a>`
-        : inline(label);
+      result += plain ? inlineMarkdown(label, true, passages) : safe
+        ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${inlineMarkdown(studioCitationText(label, passages, true), false)}</a>`
+        : inlineMarkdown(label, plain, passages);
     } else {
       const content = strong ?? alternateStrong ?? emphasis ?? alternateEmphasis;
       const tag = strong != null || alternateStrong != null ? "strong" : "em";
-      result += plain ? inline(content, true) : `<${tag}>${inline(content)}</${tag}>`;
+      result += plain ? inlineMarkdown(content, true, passages) : `<${tag}>${inlineMarkdown(content, false, passages)}</${tag}>`;
     }
     end = match.index + match[0].length;
   }
-  return result + (plain ? text.slice(end) : escapeHtml(text.slice(end)));
+  return result + literal(text.slice(end));
 }
 
 const listItem = (line) => /^(\s*)([-+*]|\d+[.)])\s+(.+)$/u.exec(line);
@@ -44,7 +55,8 @@ const tableRule = (line) => line.includes("|") && tableCells(line).every((cell) 
 const startsBlock = (lines, i) => /^(?:#{1,6}\s|\s*>|\s*```|\s*~~~|\s*(?:-{3,}|\*{3,}|_{3,})\s*$)/u.test(lines[i])
   || listItem(lines[i]) || (i + 1 < lines.length && tableRule(lines[i + 1]));
 
-function blocks(lines) {
+function blocks(lines, passages) {
+  const inline = (text, plain = false) => inlineMarkdown(text, plain, passages);
   const result = [];
   let i = 0;
   const add = (type, html, text) => result.push({ type, html, text });
@@ -56,7 +68,8 @@ function blocks(lines) {
       const code = []; i++;
       while (i < lines.length && !lines[i].trim().startsWith(fence[1])) code.push(lines[i++]);
       if (i < lines.length) i++;
-      add("code", `<pre><code>${escapeHtml(code.join("\n"))}</code></pre>`, code.join(" ")); continue;
+      const visible = studioCitationText(code.join("\n"), passages, true);
+      add("code", `<pre><code>${escapeHtml(visible)}</code></pre>`, visible); continue;
     }
     const heading = /^#{1,6}\s+(.+?)(?:\s+#+)?\s*$/u.exec(line);
     if (heading) { add("heading", `<h4>${inline(heading[1])}</h4>`, inline(heading[1], true)); i++; continue; }
@@ -64,7 +77,7 @@ function blocks(lines) {
     if (/^\s*>/u.test(line)) {
       const quoted = [];
       while (i < lines.length && /^\s*>/u.test(lines[i])) quoted.push(lines[i++].replace(/^\s*> ?/u, ""));
-      const children = blocks(quoted);
+      const children = blocks(quoted, passages);
       add("quote", `<blockquote>${children.map((b) => b.html).join("")}</blockquote>`, children.map((b) => b.text).join(" ")); continue;
     }
     if (i + 1 < lines.length && line.includes("|") && tableRule(lines[i + 1])) {
@@ -85,7 +98,7 @@ function blocks(lines) {
         while (i < lines.length && lines[i].trim() && /^\s+/u.test(lines[i]) && (lines[i].match(/^\s*/u)[0].length > indent)) {
           content.push(lines[i++].slice(indent + 2));
         }
-        const children = blocks(content);
+        const children = blocks(content, passages);
         items.push(`<li>${children.map((b) => b.html).join("")}</li>`);
         texts.push(children.map((b) => b.text).join(" "));
         if (!lines[i]?.trim() && listItem(lines[i + 1] ?? "")) i++;
@@ -102,15 +115,16 @@ function blocks(lines) {
   return result;
 }
 
-export function studioResultPresentation(text) {
-  const content = blocks(studioNarrativeText(text).replace(/\r\n?/gu, "\n").split("\n"));
+export function studioResultPresentation(text, passages) {
+  const content = blocks(cleanCorpusPaths(text).replace(/\r\n?/gu, "\n").split("\n"), passages);
   // Skip a leading title such as “Findings” in the collapsed preview.
   const previewText = (content.find((block) => block.type === "paragraph")?.text
     ?? content.find((block) => block.type !== "heading" && block.text)?.text ?? content[0]?.text ?? "").replace(/\s+/gu, " ").trim();
   const long = content.map((block) => block.text).join(" ").length > 300;
   const excerpt = previewText.length > 300 ? previewText.slice(0, 300).replace(/\s+\S*$/u, "") + "…" : previewText;
   // The preview stays visible above the expanded report, so the report skips a first paragraph shown whole.
-  const shownWhole = long && content[0]?.type === "paragraph" && excerpt === previewText;
+  const shownWhole = long && content[0]?.type === "paragraph" && excerpt === previewText
+    && !content[0].html.includes('data-action="studio:toggle-citation"');
   return { html: content.map((block) => block.html).join(""), preview: excerpt, long,
     ...(shownWhole ? { details: content.slice(1).map((block) => block.html).join("") } : {}) };
 }

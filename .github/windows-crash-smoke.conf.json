@@ -1,0 +1,6 @@
+{
+  "build": {
+    "beforeBuildCommand": "node scripts/build-frontend-for-tauri.mjs && node .github/tests/windows-crash-ui.mjs"
+  },
+  "bundle": { "createUpdaterArtifacts": false }
+}

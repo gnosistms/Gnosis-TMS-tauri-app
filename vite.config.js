@@ -11,7 +11,7 @@ const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), 
 // because Vite's `define` does not compose with optional-chaining reads.
 const sentryDsn =
   process.env.VITE_SENTRY_DSN
-  ?? "https://e7559a7d00ff4e7d95d4b683bda0e6c9@o4511502426243072.ingest.us.sentry.io/4511502532149248";
+  ?? readFileSync(new URL("./src-tauri/sentry-dsn.txt", import.meta.url), "utf8").trim();
 const emitSourceMaps = process.env.GNOSIS_EMIT_SOURCEMAPS === "1";
 
 export default defineConfig({

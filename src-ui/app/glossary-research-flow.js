@@ -1,3 +1,4 @@
+import { applyResearchTextEdit, cleanResearchDisplay } from "./glossary-research-studio-citations.js";
 // Glossary Research: user intent for the Research modal and the run view.
 // The research itself is glossary-research-engine.js; this module wires it
 // to the app (AI settings, texts, dictionary, local storage, live log).
@@ -232,13 +233,13 @@ export function updateResearchField(field, value) {
   else if (field === "spendingLimitUsd") draft.spendingLimitUsd = parseMoneyValue(value) ?? draft.spendingLimitUsd;
   else if (field === "familyWordLimitUsd") draft.familyWordLimitUsd = parseMoneyValue(value) ?? draft.familyWordLimitUsd;
   else if (field === "familyTotalLimitUsd") draft.familyTotalLimitUsd = parseMoneyValue(value) ?? draft.familyTotalLimitUsd;
-  else draft[field] = value;
+  else draft[field] = typeof value === "string" ? applyResearchTextEdit(draft[field], value) : value;
   draft.formError = "";
 }
 
 export function updateResearchVariant(index, value) {
   const draft = research();
-  if (draft?.isOpen && index >= 0 && index < draft.variants.length) draft.variants[index] = value;
+  if (draft?.isOpen && index >= 0 && index < draft.variants.length) draft.variants[index] = applyResearchTextEdit(draft.variants[index], value);
 }
 
 export function addResearchVariant(render) {
@@ -872,6 +873,11 @@ const streamStates = new Map();
 const VIEW_INTERVAL_MS = 250;
 const viewDrawnAt = new Map();
 
+function setLiveResearchHtml(element, html) {
+  element.innerHTML = html;
+  cleanResearchDisplay(element, activeRun?.store?.data?.sample?.items, true);
+}
+
 /**
  * Streamed text without a full render, inside the step running now: its status
  * line, the thinking of a request still thinking, and the readable view (or the
@@ -895,10 +901,10 @@ function updateStreamInDom(entry) {
   // bar: written here they took turns on the one status line, which flickered
   // (Hans, 2026-10-12). The line then shows the batch's total, which the clock
   // redraws every second.
-  if (status && isRequestRunning(request) && !(request.batch?.total > 1)) status.innerHTML = liveStatusFor(request, state);
+  if (status && isRequestRunning(request) && !(request.batch?.total > 1)) setLiveResearchHtml(status, liveStatusFor(request, state));
   if (entry.type === "thinking") {
     const box = step.querySelector(`[data-live-thinking="${cssEscape(entry.requestId)}"]`);
-    if (box) box.innerHTML = formatThinkingLive(request.thinking);
+    if (box) setLiveResearchHtml(box, formatThinkingLive(request.thinking));
   } else {
     const batch = findLogBatch(request);
     const key = batch && request.batch?.total > 1 ? `batch:${request.batch.key}` : `request:${request.requestId}`;
@@ -911,11 +917,11 @@ function updateStreamInDom(entry) {
     if (Boolean(view) === plain) return false;
     viewDrawnAt.set(key, now);
     if (view) {
-      container.innerHTML = view;
+      setLiveResearchHtml(container, view);
     } else {
       const answer = container.querySelector("[data-live-answer]");
       if (!answer) return false;
-      answer.innerHTML = formatJsonStream(request.answer);
+      setLiveResearchHtml(answer, formatJsonStream(request.answer));
     }
   }
   if (pinned) log.scrollTop = log.scrollHeight;
@@ -936,7 +942,7 @@ function startLiveClock() {
     const status = document.querySelector("[data-step-current] [data-step-status]");
     const draft = research();
     if (!status || !draft?.log) return;
-    status.innerHTML = currentStepStatus(buildLogSections(draft.log), (stage) => usualRange(stepTimings(draft.modelId, stage)), { paused: draft.paused === true });
+    setLiveResearchHtml(status, currentStepStatus(buildLogSections(draft.log), (stage) => usualRange(stepTimings(draft.modelId, stage)), { paused: draft.paused === true }));
   }, 1000);
   return () => clearInterval(timer);
 }
@@ -1050,11 +1056,11 @@ export function updateResearchProposalField(path, value) {
   if (field === "sourceTerms") {
     entry.sourceTerms = value.split(/[,;\n]/).map((item) => item.trim()).filter(Boolean);
   } else if (field === "generalNote") {
-    entry.generalNote = value;
+    entry.generalNote = applyResearchTextEdit(entry.generalNote, value, activeRun?.store?.data?.sample?.items);
   } else if (field === "addDraft") {
     entry.addDraft = value;
   } else if (field === "variants" && entry.variants[variantIndex]) {
-    entry.variants[variantIndex][variantField] = value;
+    entry.variants[variantIndex][variantField] = applyResearchTextEdit(entry.variants[variantIndex][variantField], value, activeRun?.store?.data?.sample?.items);
   }
   research().reviewError = "";
 }

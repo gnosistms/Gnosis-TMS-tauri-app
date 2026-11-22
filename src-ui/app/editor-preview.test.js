@@ -1043,7 +1043,10 @@ test("serializeEditorPreviewWordPress maps every text style to its block markup"
   assert.ok(content.includes('<!-- wp:heading {"level":3} -->\n<h3 class="wp-block-heading">Subsection</h3>\n<!-- /wp:heading -->'));
   assert.doesNotMatch(content, /<h1\b/);
   assert.match(renderEditorPreviewDocumentHtml(blocks).html, /<h3\b[^>]*>Subsection<\/h3>/);
-  assert.match(serializeEditorPreviewHtml(blocks), /<h1 class="wp-block-heading">Another chapter<\/h1>/);
+  const clipboardHtml = serializeEditorPreviewHtml(blocks);
+  assert.match(clipboardHtml, /<h1 class="wp-block-heading">Another chapter<\/h1>/);
+  assert.match(clipboardHtml, /<h2 [^>]*font-size:2em">Section<\/h2>/);
+  assert.match(clipboardHtml, /<h3 [^>]*font-size:1.5em">Subsection<\/h3>/);
   assert.ok(content.includes(
     '<!-- wp:quote -->\n<blockquote class="wp-block-quote"><!-- wp:paragraph -->\n<p>Quoted passage</p>\n<!-- /wp:paragraph --></blockquote>\n<!-- /wp:quote -->',
   ));

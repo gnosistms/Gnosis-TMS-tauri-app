@@ -199,7 +199,12 @@ fn refresh_project_search_index_sync(
         updated_repo_count: stats.updated_repo_count,
         full_reindex_count: stats.full_reindex_count,
         dirty_chapter_count: stats.dirty_chapter_count,
-        index_status: "ready".to_string(),
+        index_status: if schema::project_search_index_requires_refresh(&connection)? {
+            "stale"
+        } else {
+            "ready"
+        }
+        .into(),
     })
 }
 

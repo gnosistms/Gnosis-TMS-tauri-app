@@ -284,6 +284,7 @@ function renderTranslateEditorBodyFromFrame(frame) {
           actionConfig,
           authSession,
           offlineMode,
+          editorSessionCanWrite(editorChapter),
         )}
       </div>
     </section>

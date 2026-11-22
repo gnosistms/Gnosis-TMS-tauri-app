@@ -1,3 +1,6 @@
+import { state } from "./state.js";
+import { cleanResearchInput } from "./glossary-research-studio-citations.js";
+import { activeResearchRun } from "./glossary-research-flow.js";
 import { registerProjectBookEvents } from "./events/project-book.js";
 import { handleInputEvent, handlePasteEvent } from "./input-handlers.js";
 import { updateStudioInput } from "./glossary-research-studio-flow.js";
@@ -64,6 +67,13 @@ export function registerAppEvents(render) {
   document.addEventListener("input", (event) => {
     if (event.target instanceof Element && event.target.closest("[data-studio-field], [data-studio-decision]")) {
       updateStudioInput(event.target); return;
+    }
+    if (event.target instanceof Element && (state.screen === "glossaryResearchReport"
+      || (state.glossaryResearch?.isOpen && event.target.closest(".research-modal"))
+      || ((state.glossaryTermEditor?.studioEntry || state.glossaryTermEditor?.researchOrigin) && event.target.closest(".modal-card--glossary-term")))) {
+      const passages = event.target.closest(".research-modal") ? activeResearchRun()?.store?.data?.sample?.items
+        : state.screen === "glossaryResearchReport" ? state.glossaryResearchReport.run?.sample?.items : state.glossaryResearchStudio?.study?.passages;
+      cleanResearchInput(event.target, passages);
     }
     handleInputEvent(event, render);
   });

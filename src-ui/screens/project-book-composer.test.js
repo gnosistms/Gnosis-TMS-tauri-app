@@ -49,7 +49,7 @@ test("contents put the title and H1 choice beside the typeset proof", () => {
   current.book.selectedItemId = contents.id;
   let html = renderProjectBookComposer(current);
   assert.match(html, /<input class="field__input" type="text" data-book-field="title"[^>]*value="Contents"/);
-  assert.match(html, /type="checkbox" data-book-field="includeH1Headings" > Include H1 headings/);
+  assert.match(html, /type="checkbox" data-book-field="includeH1Headings" > Include section headings \(H2\)/);
   assert.match(html, /aria-label="Table of contents PDF preview"/);
   assert.doesNotMatch(html, /book-contents|contenteditable/);
   contents.includeH1Headings = true;

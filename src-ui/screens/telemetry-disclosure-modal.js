@@ -16,6 +16,7 @@ export function renderTelemetryDisclosureModal(state) {
           <h2 class="modal__title" id="telemetry-disclosure-title">Send error reports to Gnosis TMS developers</h2>
           <p class="modal__supporting">
             If your app has errors, the development team would like to know so they can fix them.
+            Windows crash reports include the app version and the calls leading up to the crash.
           </p>
           <label class="telemetry-disclosure-modal__setting">
             <span class="telemetry-disclosure-modal__setting-label">Send error reports</span>
@@ -24,6 +25,7 @@ export function renderTelemetryDisclosureModal(state) {
                 type="checkbox"
                 data-telemetry-disclosure-enabled-toggle
                 data-modal-initial-focus
+                ${modal.saving ? "disabled" : ""}
                 ${checked}
               />
               <span class="telemetry-disclosure-modal__switch-track">
@@ -31,9 +33,11 @@ export function renderTelemetryDisclosureModal(state) {
               </span>
             </span>
           </label>
+          ${modal.saveFailed ? '<p role="alert">Your choice could not be saved. Please try again.</p>' : ""}
           <div class="modal__actions">
             ${primaryButton("Save", "save-error-reporting-settings", {
               modalDefault: true,
+              disabled: modal.saving,
             })}
           </div>
         </div>

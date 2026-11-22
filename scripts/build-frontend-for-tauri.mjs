@@ -59,6 +59,7 @@ const buildEnv = {
 
 run("node", ["scripts/guard-macos-git-runtime.mjs"]);
 run("node", ["scripts/prepare-typst-sidecar.mjs"]);
+if (process.platform === "win32") run("node", ["scripts/prepare-windows-crash-reporter.mjs"]);
 
 if (uploadRequested && !sentryReady) {
   console.log(

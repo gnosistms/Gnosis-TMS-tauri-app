@@ -126,6 +126,7 @@ const {
 const {
   restoreEditorFieldHistory,
 } = await import("./editor-history-flow.js");
+const { handleEditorImageCaptionEnrichedEvent } = await import("./editor-image-flow.js");
 const {
   replaceSelectedEditorRows,
 } = await import("./editor-search-flow.js");
@@ -147,7 +148,13 @@ const {
 } = await import("./editor-operation-queue.js");
 const {
   assertQueuedEditorRowsReady,
+  invokeQueuedEditorWriteCommand,
 } = await import("./editor-queued-write.js");
+const {
+  assertEditorSessionWritePermission,
+  invokeEditorWriteCommand,
+} = await import("./editor-write-permission.js");
+const { createTranslateActions } = await import("./actions/translate-actions.js");
 const {
   deleteActiveEditorRowComment,
   saveActiveEditorRowComment,
@@ -198,6 +205,43 @@ test.afterEach(() => {
   resetEditorOperationQueue();
   resetRepoWriteQueue();
   resetSessionState();
+});
+
+test("deleted row writes preserve the lifecycle rejection and unrelated pending saves", async () => {
+  installEditorFixture();
+  const pending = state.editorChapter.rows[0];
+  pending.saveStatus = "saving";
+  const row = { rowId: "deleted-row", lifecycleState: "deleted" };
+  state.editorChapter.rows.push(row);
+  const expected = { reason: "softDeleted", message: "This item is deleted and read-only. Restore it before making changes." };
+  const command = "update_gtms_editor_row_fields";
+  const payload = { input: { rowId: row.rowId } };
+  // A control from the previous render can still dispatch after the row is deleted.
+  const target = { closest: () => ({ dataset: { rowId: row.rowId } }) };
+  await createTranslateActions(() => {})("open-editor-footnote-entry", { target });
+  assert.equal(state.editorChapter.writeLock.status, "idle");
+  assert.throws(() => assertEditorSessionWritePermission({ rowId: row.rowId }), expected);
+  await assert.rejects(invokeEditorWriteCommand(command, payload, { rowId: row.rowId }), expected);
+  const project = state.projects[0];
+  await assert.rejects(invokeQueuedEditorWriteCommand(command, payload, {
+    team: state.teams[0], project, chapter: project.chapters[0], row,
+  }), expected);
+  assert.deepEqual(invokeLog, []);
+  assert.equal(state.editorChapter.writeLock.status, "idle");
+  assert.equal(state.editorChapter.rows[0].saveStatus, "saving");
+});
+
+test("only a native chapter-content access denial locks the session", async () => {
+  installEditorFixture();
+  const write = () => invokeEditorWriteCommand("update_gtms_editor_row_fields", { input: {} }, { rowId: "row-1" });
+  for (const message of ["Permission denied opening a local file", "The repository is read-only"]) {
+    invokeHandler = async () => { throw new Error(message); };
+    await assert.rejects(write(), { message });
+    assert.equal(state.editorChapter.writeLock.status, "idle");
+  }
+  invokeHandler = async () => { throw "Your account type cannot edit shared content."; };
+  await assert.rejects(write(), { code: "EDITOR_PERMISSION_DENIED" });
+  assert.equal(state.editorChapter.writeLock.status, "locked");
 });
 
 test("flushDirtyEditorRows blocks while a style save is in flight even without dirty row tracking", async () => {
@@ -386,6 +430,59 @@ test("non-durable dirty row flush enqueues row text save without waiting for the
 
   assert.deepEqual(invokeLog.map((entry) => entry.command), ["update_gtms_editor_row_fields"]);
   assert.equal(state.editorChapter.rows[0].persistedFields.es, "hola editada");
+  assert.equal(state.editorChapter.rows[0].saveStatus, "idle");
+});
+
+test("a queued text edit keeps a WordPress audio caption that arrives before the save runs", async () => {
+  installEditorFixture();
+  const url = "https://gnosisvn.org/wp-content/uploads/2021/10/fa_ra_on.mp3";
+  const caption = "Thầy Samael phát âm thần chú PHA-RA-ÔN";
+  const savedRow = {
+    rowId: "row-1",
+    fields: { vi: "Bài học" },
+    images: { vi: { kind: "url", url } },
+    imageCaptions: { vi: "" },
+  };
+  state.editorChapter.languages = [{ code: "vi", name: "Vietnamese" }];
+  state.editorChapter.rows = normalizeEditorRows([savedRow]);
+  updateEditorChapterRow("row-1", (row) => ({
+    ...row,
+    fields: { vi: "Bài học đã sửa" },
+    saveStatus: "dirty",
+  }));
+  state.editorChapter.dirtyRowIds = new Set(["row-1"]);
+  const scope = "7:project-1:fixture-project";
+  const blocker = deferred();
+  const pending = enqueueRepoWrite({ scope, kind: "testBlocker", run: () => blocker.promise });
+  invokeHandler = async (command, { input }) => {
+    assert.equal(command, "update_gtms_editor_row_fields");
+    return { status: "saved", row: { ...savedRow, fields: input.fields, imageCaptions: input.imageCaptions } };
+  };
+
+  await flushDirtyEditorRows(
+    () => {},
+    { updateEditorChapterRow, applyEditorSelectionsToProjectState },
+    { waitForDurable: false },
+  );
+  const enriched = handleEditorImageCaptionEnrichedEvent({
+    chapterId: "chapter-1",
+    rowId: "row-1",
+    languageCode: "vi",
+    imageUrl: url,
+    baseCaption: "",
+    row: { ...savedRow, imageCaptions: { vi: caption } },
+  }, () => {});
+  const rowDuringSave = state.editorChapter.rows[0];
+  blocker.resolve();
+  await pending;
+  await waitForRepoWriteQueueIdle(scope);
+
+  assert.equal(enriched, true);
+  assert.equal(rowDuringSave.fields.vi, "Bài học đã sửa");
+  assert.equal(rowDuringSave.imageCaptions.vi, caption);
+  assert.equal(invokeLog[0].payload.input.imageCaptions.vi, caption);
+  assert.equal(state.editorChapter.rows[0].persistedImageCaptions.vi, caption);
+  assert.equal(state.editorChapter.rows[0].persistedFields.vi, "Bài học đã sửa");
   assert.equal(state.editorChapter.rows[0].saveStatus, "idle");
 });
 
@@ -1792,17 +1889,17 @@ test("unreview all accepts a chapter containing a settled soft-deleted row", asy
     fields: { es: "deleted text" },
     fieldStates: { es: { reviewed: true, pleaseCheck: true } },
   }]));
-  state.editorChapter.unreviewAllModal = {
-    ...state.editorChapter.unreviewAllModal,
-    isOpen: true,
-    languageCode: "es",
-  };
+  state.editorChapter.activeRowId = "deleted-row";
+  state.editorChapter.selectedTargetLanguageCode = "es";
+  const dispatch = createTranslateActions(() => {});
+  await dispatch("open-editor-unreview-all");
+  assert.equal(state.editorChapter.unreviewAllModal.isOpen, true);
   invokeHandler = async (command) => {
     assert.equal(command, "clear_gtms_editor_reviewed_markers");
     return { rowIds: ["row-1", "deleted-row"], chapterBaseCommitSha: "head-unreview" };
   };
 
-  await confirmEditorUnreviewAll(() => {});
+  await dispatch("confirm-editor-unreview-all");
   await waitForRepoWriteQueueIdle("7:project-1:fixture-project");
 
   assert.deepEqual(invokeLog.map((entry) => entry.command), ["clear_gtms_editor_reviewed_markers"]);

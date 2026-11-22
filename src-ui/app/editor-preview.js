@@ -922,10 +922,21 @@ function serializePreviewTextBlockHtml(block, footnoteState, options = {}) {
   const sourceLevel = editorRowHeadingLevel(normalizedStyle);
   if (sourceLevel) {
     const level = options.wordPressHeadingLevel?.(sourceLevel) ?? sourceLevel;
+    let attributes = level === 2 ? undefined : { level };
+    let style = "";
+    if (options.localFormatting && sourceLevel >= 2 && !block.bookSubtitle) {
+      const fontSize = sourceLevel === 2 ? "2em" : "1.5em";
+      const margin = sourceLevel === 2 ? "0.67em" : "0.83em";
+      attributes = {
+        ...attributes,
+        style: { spacing: { margin: { top: margin, bottom: margin } }, typography: { fontSize } },
+      };
+      style = ` style="margin-top:${margin};margin-bottom:${margin};font-size:${fontSize}"`;
+    }
     return {
       blockName: "heading",
-      attributes: level === 2 ? undefined : { level },
-      html: `<h${level} class="wp-block-heading">${textHtml}</h${level}>`,
+      attributes,
+      html: `<h${level} class="wp-block-heading"${style}>${textHtml}</h${level}>`,
     };
   }
   if (normalizedStyle === EDITOR_ROW_TEXT_STYLE_INDENTED) {

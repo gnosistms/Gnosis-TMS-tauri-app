@@ -1,7 +1,6 @@
 import { canEditProjectFileContent } from "./resource-capabilities.js";
 import {
   findSoftDeletedAncestor,
-  getProjectWritePolicy,
   isSoftDeletedResource,
   readOnlyMessageFor,
 } from "./resource-write-policy.js";
@@ -100,6 +99,10 @@ export function currentTeamAllowsEditorWrite(team) {
   return canEditProjectFileContent(team);
 }
 
+function lifecycleWriteError({ reason, message }) {
+  return Object.assign(new Error(message || readOnlyMessageFor(reason, "project")), { reason });
+}
+
 export function assertEditorWritePermissionForContext({
   team = null,
   project = null,
@@ -115,25 +118,14 @@ export function assertEditorWritePermissionForContext({
     actionKind,
   });
   if (!lifecyclePolicy.allowed) {
-    throw new Error(lifecyclePolicy.message || readOnlyMessageFor(lifecyclePolicy.reason, "project"));
+    throw lifecycleWriteError(lifecyclePolicy);
   }
 
-  if (actionKind === "localHardDelete" || currentTeamAllowsEditorWrite(team)) {
-    return { allowed: true, reason: "allowed", message: "" };
-  }
-
-  const policy = getProjectWritePolicy({
-    team,
-    project,
-    chapter,
-    row,
-    actionKind,
-  });
-  if (policy.reason === "viewer" || !currentTeamAllowsEditorWrite(team)) {
+  if (actionKind !== "localHardDelete" && !currentTeamAllowsEditorWrite(team)) {
     throw permissionDeniedError();
   }
 
-  throw new Error(policy.message || readOnlyMessageFor(policy.reason, "project"));
+  return lifecyclePolicy;
 }
 
 export function getProjectLifecycleWritePolicy({
@@ -198,16 +190,11 @@ export function isEditorPermissionDeniedError(error) {
     return true;
   }
 
-  const message = String(error?.message ?? error ?? "").toLowerCase();
-  return (
-    message.includes("read-only")
-    || message.includes("read only")
-    || message.includes("viewer")
-    || message.includes("cannot mutate project files")
-    || message.includes("cannot modify project files")
-    || message.includes("permission denied")
-    || message.includes("forbidden")
-  );
+  const message = String(error?.message ?? error ?? "").trim();
+  // Tauri content-write commands can reject with the plain installation-access message.
+  return message === "Your account type cannot edit shared content."
+    || message === EDITOR_PERMISSION_DENIED_MESSAGE
+    || message === readOnlyMessageFor("viewer", "project");
 }
 
 export function setEditorPermissionWriteLock({
@@ -286,7 +273,7 @@ function assertEditorWritePermission({
 } = {}) {
   const editorChapter = state.editorChapter;
   if (!editorChapter?.chapterId) {
-    throw new Error(readOnlyMessageFor("missing", "project"));
+    throw lifecycleWriteError({ reason: "missing" });
   }
 
   if (editorWriteLockIsActive(editorChapter)) {
@@ -308,7 +295,7 @@ function assertEditorWritePermission({
       actionKind,
     });
     if (!lifecyclePolicy.allowed) {
-      throw new Error(lifecyclePolicy.message || readOnlyMessageFor(lifecyclePolicy.reason, "project"));
+      throw lifecycleWriteError(lifecyclePolicy);
     }
     if (editorSessionCanWrite(editorChapter)) {
       return { allowed: true, reason: "allowed", message: "" };

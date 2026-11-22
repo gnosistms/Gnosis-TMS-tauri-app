@@ -513,6 +513,8 @@ pub struct AiPromptResponse {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AiPromptOutputFormat {
     Text,
+    /// A JSON object whose fields are specified in the prompt.
+    JsonObject,
     AssistantTurnJson,
     TranslationSectionsJson,
     ReviewJson,

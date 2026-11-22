@@ -26,7 +26,7 @@ export function studioStepDescription(study, stepId) {
     "5": `Find recurring compounds and phrases with ${term} that should inform its translations.`,
     "6": `Suggest ${study.scope.targetLanguage?.name ?? "target-language"} translations for each meaning of ${term}, and choose which to use.`,
     "7": "Check the spelling of translations that may be uncertain, such as borrowed names.",
-    "8": "Translate each meaning's sample paragraphs with its translations, and revise translations that fail.",
+    "8": `Translate the sample paragraphs and check that each translation of ${term} conveys its intended meaning in context.`,
     "9": "Translate the sample paragraphs with the complete entry, as translators will see it, to check that it leads to the right translation.",
     "10a": "Count how often each translation was used, and choose which to keep.",
     "10b": `Decide what to do where a form of ${term} is already a source form of another glossary entry.`,

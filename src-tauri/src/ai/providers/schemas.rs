@@ -76,7 +76,7 @@ pub(crate) struct OutputSchema {
 /// The schema for a JSON output format, or `None` for plain text.
 pub(crate) fn output_schema(output_format: &AiPromptOutputFormat) -> Option<OutputSchema> {
     let (name, schema) = match output_format {
-        AiPromptOutputFormat::Text => return None,
+        AiPromptOutputFormat::Text | AiPromptOutputFormat::JsonObject => return None,
         AiPromptOutputFormat::AssistantTurnJson => (
             "assistant_turn_response",
             json!({

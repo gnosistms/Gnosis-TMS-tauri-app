@@ -52,6 +52,10 @@ are preserved; this policy change does not rewrite their terms.
 Prerequisites: Node (see `engines.node` in [package.json](package.json)) and a
 Rust toolchain for the Tauri backend.
 
+On Windows, run `rustup override set 1.99.1` from the repository root to match
+the installer build. Rust 1.100 can link a desktop thread wait to the enclave
+runtime through the current Stronghold dependency. [Rust issue 165915](https://github.com/rust-lang/rust/issues/165915)
+
 ```bash
 npm install
 

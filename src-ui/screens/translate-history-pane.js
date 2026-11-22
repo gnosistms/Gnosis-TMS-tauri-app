@@ -140,7 +140,7 @@ export function renderHistoryPane(editorChapter, rows, languages) {
           commitSha: null,
         };
   const expandedGroupKeys = history.expandedGroupKeys instanceof Set ? history.expandedGroupKeys : new Set();
-  const canRestore = Boolean(activeRow && activeSection);
+  const canRestore = displayRow?.canEdit === true && Boolean(activeSection);
   const historyEntries = Array.isArray(history.entries) ? history.entries : [];
   const historyView = buildEditorHistoryViewModel(historyEntries, expandedGroupKeys);
   const historyGroups = historyView.groups;

@@ -1541,8 +1541,10 @@ function appendInlineNodeRuns(nodes, target, fallbackKey, active = {}, footnoteC
 function appendBlockRuns(block, target, options = {}) {
   const fallbackKey = blockAttributeKey(block);
   const level = editorRowHeadingLevel(block?.textStyle);
-  if (level > 0) {
-    appendSubheadRuns(block, target, level);
+  if (level > 1 || (level === 1 && !options.chapterBody && !normalizeEditorFootnotes(block.footnotes).length)) {
+    // Vellum numbers subheads within a chapter. Its text-only paste also
+    // needs a visible heading for a title that has no enclosing chapter element.
+    appendSubheadRuns(block, target, block.bookSubtitle ? 2 : Math.max(1, level - 1));
     return;
   }
 
@@ -1719,7 +1721,7 @@ function addVellumContentsElement(builder, element) {
     ["listPartSubtitles", "<false/>"],
     ["listVolumeSubtitles", "<false/>"],
     ["listChapterSubtitles", "<false/>"],
-    ["subheadLevelsToList", "<integer>0</integer>"],
+    ["subheadLevelsToList", element.includeH1Headings ? "<integer>1</integer>" : "<integer>0</integer>"],
   ]);
 }
 
@@ -1739,6 +1741,7 @@ export function buildVellumOgElementPrivateDecodedXml(blocks, options = {}) {
     const bodyBlocks = titleEntry ? allBlocks.slice(1) : allBlocks;
     const title = titleEntry?.title || singleLineTitle(element.title) || "Untitled Chapter";
     const body = buildVellumTextRuns(bodyBlocks, {
+      chapterBody: element.kind === "chapter",
       showFootnoteLinkUrls: options.showFootnoteLinkUrls === true,
     });
     appendTrailingPlainTextSection(body);

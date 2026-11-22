@@ -200,7 +200,9 @@ pub(super) fn mark_project_search_index_refresh_completed(
     Ok(())
 }
 
-fn project_search_index_refresh_completed(connection: &Connection) -> Result<bool, String> {
+pub(super) fn project_search_index_refresh_completed(
+    connection: &Connection,
+) -> Result<bool, String> {
     connection
         .query_row(
             "SELECT EXISTS(

@@ -1,7 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { pickPreferredAiModelId, resolveVisibleAiTranslateActions } from "./ai-action-config.js";
+import { createAiActionSelection, pickPreferredAiModelId, resolveEffectiveAiActionSelection, resolveVisibleAiTranslateActions } from "./ai-action-config.js";
+
+test("an empty model stays unselected and legacy preferences inherit their provider's default", () => {
+  for (const providerId of ["openai", "claude", "gemini", "deepseek"]) {
+    assert.deepEqual(resolveEffectiveAiActionSelection({ unified: { providerId, modelId: " " } }, "research"),
+      { providerId, modelId: "" });
+    assert.deepEqual(resolveEffectiveAiActionSelection({ unified: { providerId } }, "research"),
+      createAiActionSelection(providerId));
+  }
+});
 
 test("OpenAI picker prefers Astra and preserves explicit model selections", () => {
   const options = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra"]

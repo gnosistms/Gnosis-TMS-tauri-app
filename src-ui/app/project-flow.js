@@ -880,7 +880,7 @@ export async function overwriteConflictedProjectRepos(render) {
     state.projectRepoConflictRecovery = {
       teamId: selectedTeam.id,
       status: "idle",
-      error: "Wait for the current refresh to finish before overwriting conflicted repos.",
+      error: "Wait for the current refresh to finish before recovering projects.",
     };
     render();
     return;
@@ -907,7 +907,7 @@ export async function overwriteConflictedProjectRepos(render) {
   render();
 
   try {
-    showProjectsStatus(render, "Overwriting conflicted project repos...");
+    showProjectsStatus(render, "Recovering projects from GitHub...");
     const response = await enqueueRepoWrite({
       scope: projectRepoScope({ team: selectedTeam }),
       kind: "projectConflictRecovery",
@@ -929,7 +929,7 @@ export async function overwriteConflictedProjectRepos(render) {
     clearProjectsStatus(render);
     showProjectsNotice(
       render,
-      `Overwrote ${resolvedCount} conflicted project repo${resolvedCount === 1 ? "" : "s"} with the latest data from the server.`,
+      `Recovered ${resolvedCount} project${resolvedCount === 1 ? "" : "s"} from GitHub.`,
       3600,
     );
   } catch (error) {

@@ -525,13 +525,16 @@ test("failed occurrences share full paragraph context above the expandable trial
     s.step = "8"; s.meanings = [{ id: "m", definition: "A realm" }];
     s.passages = [{ id: "p", text: "mundo y mundo", occurrences: [{ id: "o0", start: 0, end: 5 }, { id: "o1", start: 8, end: 13 }] }];
     s.assignments = s.passages[0].occurrences.map((o) => ({ paragraphId: "p", occurrenceId: o.id, meaningId: "m" }));
+    s.passages.push({ id: "4e2800126bc0e8c6", text: "A supporting paragraph", occurrences: [] });
     s.tests["8:m"] = { translations: [{ paragraphId: "p", source: "mundo y mundo", translation: "planet and planet" }],
-      choices: s.assignments.map((a) => ({ ...a, problem: "Choose a realm here." })) };
+      choices: s.assignments.map((a) => ({ ...a, problem: "Choose a realm here (4e2800126bc0e8c6; 00000000deadbeef)." })) };
     state.glossaryResearchStudio = { study: s, busy: false };
     const html = renderGlossaryResearchStudio(state);
     const findings = html.slice(html.indexOf('class="studio-findings"'), html.indexOf("All trial translations"));
     assert.equal((findings.match(/class="studio-passage"/gu) ?? []).length, 1);
     assert.equal((findings.match(/>Review meaning</gu) ?? []).length, 2);
+    assert.equal((findings.match(/>Show source<\/button>/gu) ?? []).length, 2);
+    assert.doesNotMatch(findings.replace(/<[^>]+>/gu, ""), /4e2800126bc0e8c6|00000000deadbeef/u);
     assert(findings.includes("<mark>mundo</mark> y <mark>mundo</mark>"));
     assert(findings.includes("planet and planet"));
   } finally { state.glossaryResearchStudio = previous; }

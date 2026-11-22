@@ -89,6 +89,21 @@ function classNameForArchiveObject(xml, objectXml) {
   return match[1];
 }
 
+function subheadLevels(xml) {
+  const levels = [];
+  const formats = /<key>kind<\/key><dict><key>CF\$UID<\/key><integer>(\d+)<\/integer><\/dict><key>state<\/key><dict><key>CF\$UID<\/key><integer>(\d+)<\/integer><\/dict>/g;
+  for (const [, kindUid, stateUid] of xml.matchAll(formats)) {
+    if (archiveObjectAtUid(xml, Number(kindUid)) !== "<string>subhead</string>") continue;
+    const state = archiveObjectAtUid(xml, Number(stateUid));
+    const levelIndex = uidsForArrayKey(state, "NS.keys")
+      .findIndex((key) => archiveObjectAtUid(xml, key) === "<string>level</string>");
+    assert.notEqual(levelIndex, -1, "subhead has no level");
+    const level = archiveObjectAtUid(xml, uidsForArrayKey(state, "NS.objects")[levelIndex]);
+    levels.push(Number(level.match(/^<integer>(\d+)<\/integer>$/)[1]));
+  }
+  return levels;
+}
+
 test("buildVellumOgElementPrivateDecodedXml writes a chapter element and promotes a leading H1", () => {
   const xml = buildVellumOgElementPrivateDecodedXml([
     {
@@ -184,7 +199,7 @@ test("buildVellumOgElementPrivateDecodedXml appends an editable plain text secti
   assert.ok(byteValues.some((value) => value.equals(Buffer.from([1, 0, 1, 1]))));
 });
 
-test("buildVellumOgElementPrivateDecodedXml keeps non-leading headings as subheads", () => {
+test("Vellum chapters use only sections and subsections as native subheads", () => {
   const xml = buildVellumOgElementPrivateDecodedXml([
     {
       kind: "text",
@@ -196,19 +211,30 @@ test("buildVellumOgElementPrivateDecodedXml keeps non-leading headings as subhea
     },
     {
       kind: "text",
+      textStyle: "heading1",
+      text: "Misplaced H1",
+    },
+    {
+      kind: "text",
       rowId: "row-h2",
       languageCode: "en",
       textStyle: "heading2",
       text: "Internal H2",
       footnotes: [],
     },
+    {
+      kind: "text",
+      textStyle: "heading3",
+      text: "Internal H3",
+    },
   ], { title: "Chapter fallback" });
 
   assert.match(xml, /<string>Chapter fallback<\/string>/);
   assert.match(xml, /OGSubheadAttachmentCell/);
   assert.match(xml, /<string>Internal H2<\/string>/);
-  assert.match(xml, /<string>level<\/string>/);
-  assert.match(xml, /<integer>2<\/integer>/);
+  assert.match(xml, /Misplaced H1/);
+  assert.match(xml, /<string>Internal H3<\/string>/);
+  assert.deepEqual(subheadLevels(xml), [1, 2]);
 });
 
 test("buildVellumTextEditorContentDecodedXml writes footnote markers as Vellum attachments", () => {
@@ -371,29 +397,7 @@ test("buildVellumTextEditorContentDecodedXml writes ruby as parenthetical fallba
   assert.ok(byteValues.some((value) => value.equals(Buffer.from([17, 0]))));
 });
 
-test("buildVellumTextEditorContentDecodedXml writes heading1 as a Vellum subhead attachment", () => {
-  const xml = buildVellumTextEditorContentDecodedXml([{
-    kind: "text",
-    rowId: "row-h1",
-    languageCode: "en",
-    textStyle: "heading1",
-    text: "H1 test",
-    footnotes: [],
-  }]);
-
-  assert.match(xml, /OGSubheadAttachmentCell/);
-  assert.match(xml, /OGMutableAttachmentFormat/);
-  assert.match(xml, /<string>subhead<\/string>/);
-  assert.match(xml, /<string>level<\/string>/);
-  assert.match(xml, /<string>keepWithNext<\/string>/);
-  assert.match(xml, /<string>H1 test<\/string>/);
-
-  const byteValues = decodedNsByteValues(xml);
-  assert.ok(byteValues.some((value) => value.toString("utf8") === `${VELLUM_ATTACHMENT_CHARACTER}${VELLUM_PARAGRAPH_SEPARATOR}`));
-  assert.ok(byteValues.some((value) => value.equals(Buffer.from([1, 0, 1, 1]))));
-});
-
-test("buildVellumTextEditorContentDecodedXml writes heading2 as a level-2 subhead attachment", () => {
+test("buildVellumTextEditorContentDecodedXml writes heading2 as a Vellum subhead attachment", () => {
   const xml = buildVellumTextEditorContentDecodedXml([{
     kind: "text",
     rowId: "row-h2",
@@ -404,14 +408,32 @@ test("buildVellumTextEditorContentDecodedXml writes heading2 as a level-2 subhea
   }]);
 
   assert.match(xml, /OGSubheadAttachmentCell/);
+  assert.match(xml, /OGMutableAttachmentFormat/);
   assert.match(xml, /<string>subhead<\/string>/);
+  assert.match(xml, /<string>level<\/string>/);
+  assert.match(xml, /<string>keepWithNext<\/string>/);
   assert.match(xml, /<string>H2 test<\/string>/);
-  assert.ok(xml.includes([
-    "<integer>2</integer>",
-    "<dict><key>$classes</key><array><string>NSAttributedString</string><string>NSObject</string></array>",
-    "<key>$classname</key><string>NSAttributedString</string></dict>",
-    "<string>H2 test</string>",
-  ].join("")));
+  assert.deepEqual(subheadLevels(xml), [1]);
+
+  const byteValues = decodedNsByteValues(xml);
+  assert.ok(byteValues.some((value) => value.toString("utf8") === `${VELLUM_ATTACHMENT_CHARACTER}${VELLUM_PARAGRAPH_SEPARATOR}`));
+  assert.ok(byteValues.some((value) => value.equals(Buffer.from([1, 0, 1, 1]))));
+});
+
+test("buildVellumTextEditorContentDecodedXml writes heading3 as a level-2 subhead attachment", () => {
+  const xml = buildVellumTextEditorContentDecodedXml([{
+    kind: "text",
+    rowId: "row-h3",
+    languageCode: "en",
+    textStyle: "heading3",
+    text: "H3 test",
+    footnotes: [],
+  }]);
+
+  assert.match(xml, /OGSubheadAttachmentCell/);
+  assert.match(xml, /<string>subhead<\/string>/);
+  assert.match(xml, /<string>H3 test<\/string>/);
+  assert.deepEqual(subheadLevels(xml), [2]);
 
   const byteValues = decodedNsByteValues(xml);
   assert.ok(byteValues.some((value) => value.toString("utf8") === `${VELLUM_ATTACHMENT_CHARACTER}${VELLUM_PARAGRAPH_SEPARATOR}`));
@@ -590,11 +612,12 @@ test("book contents use Vellum's native generator and title pages retain their h
       { kind: "text", textStyle: "heading1", text: "Exported Book" },
       { kind: "text", textStyle: "centered", text: "Exported Author" },
     ] },
-    { id: "contents", title: "Mục lục", kind: "contents", blocks: [
+    { id: "contents", title: "Mục lục", kind: "contents", includeH1Headings: true, blocks: [
       { kind: "text", text: "Stale contents must not be pasted as text" },
     ] },
   ] });
   assert.match(xml, /<string>OGTableOfContents<\/string>/);
+  assert.match(xml, /<key>subheadLevelsToList<\/key><integer>1<\/integer>/);
   assert.match(xml, /<key>includeInPrint<\/key><true\/>/);
   assert.match(xml, /<string>Mục lục<\/string>/);
   assert.doesNotMatch(xml, /Stale contents/);

@@ -1,3 +1,4 @@
+import { cleanResearchDisplay } from "./glossary-research-studio-citations.js";
 // The research windows live beside #app, not inside it. A full render
 // rebuilds everything in #app (background sync, status updates…), which
 // would rebuild an open research window too; here they are redrawn only when
@@ -10,7 +11,7 @@ import { renderEditorGlossaryEntryModal } from "../screens/editor-glossary-entry
 import { captureFocusedInputState, restoreFocusedInputState } from "./focused-input-state.js";
 import { captureModalRenderState, reconcileModalRenderState } from "./events/modal-dialog.js";
 import { syncLanguagePickerAlphabetIndexes } from "./language-picker-alphabet-index.js";
-import { syncResearchTextareaHeights } from "./glossary-research-flow.js";
+import { activeResearchRun, syncResearchTextareaHeights } from "./glossary-research-flow.js";
 
 // Parts of the research windows that scroll; their positions survive a redraw.
 const SCROLLED_PARTS = [".modal-card", "[data-research-log]", ".language-picker-modal__list"];
@@ -61,6 +62,7 @@ export function renderResearchModals(state) {
   const modal = captureModalRenderState(root);
   const scrolls = SCROLLED_PARTS.map((selector) => root.querySelector(selector)?.scrollTop ?? 0);
   root.innerHTML = html;
+  if (state.glossaryResearch?.isOpen) cleanResearchDisplay(root, activeResearchRun()?.store?.data?.sample?.items, true);
   lastHtml = html;
   // Scroll positions go back last, once boxes have their heights and focus
   // is restored, so nothing afterwards shortens the window under them.

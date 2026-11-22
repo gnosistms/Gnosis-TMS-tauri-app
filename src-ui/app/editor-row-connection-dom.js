@@ -92,7 +92,7 @@ export function createEditorRowConnectionController(root, appState, scrollContai
       align();
       if (restoreFocus && (document.activeElement === notice || document.activeElement === document.body)) {
         const row = rowElement(rowId);
-        const field = row?.querySelector(`[data-language-code="${CSS.escape(languageCode ?? "")}"] [data-editor-display-field]`)
+        const field = row?.querySelector(`[data-language-code="${CSS.escape(languageCode ?? "")}"] :is([data-editor-display-field], [data-action="select-editor-row-language"])`)
           ?? row?.querySelector("[data-editor-display-field], [data-editor-row-field], button");
         field?.focus({ preventScroll: true });
       }

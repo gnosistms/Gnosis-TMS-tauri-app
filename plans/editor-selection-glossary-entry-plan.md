@@ -71,3 +71,26 @@ Implemented, not yet committed or tried in the native app with a live AI model.
 - Also: a failed AI request says the search went wrong (not "not found"); closing
   the window while searching cancels the AI request; a prefilled source term that
   already exists is marked at once in New Term.
+
+## Source lookup model and connectivity (2026-11-22)
+
+1. Read the team's effective AI selection for Research. Use the shared model in
+   simplified settings and the Research selection in detailed settings.
+2. Run this single source lookup with the selected provider, independently of
+   the full research pipeline's price table. Keep source-text verification and
+   dismissal of in-flight lookups.
+3. Give offline and interrupted requests actionable connection guidance.
+   Preserve the highlighted translation for manual entry and show specific
+   provider errors when a request reaches the provider.
+4. Verify model selection, connection loss and manual entry in the editor flow,
+   along with native provider routing and the existing glossary entry tests.
+
+The editor now sends one source lookup using the effective AI selection. The
+native command accepts OpenAI, Claude, Gemini and DeepSeek and validates the
+answer before the editor checks it against the row. Offline mode, loss of the
+provider connection and a genuine empty model selection have separate messages.
+
+Verification covered the saved unified model, the detailed Research override,
+an interrupted lookup, provider rejection, manual entry and dismissal. The
+browser tests used simulated provider replies. Native tests covered all four
+provider routes and invalid answers.

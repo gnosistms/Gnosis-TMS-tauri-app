@@ -238,10 +238,14 @@ export function readPersistentValue(key, fallbackValue = null) {
   return cloneValue(memoryState[key]);
 }
 
-export function writePersistentValue(key, value) {
+// Also used after a native command commits a group of settings to this same store.
+export function cachePersistentValue(key, value) {
   memoryState[key] = cloneValue(value);
   memoryRevision += 1;
+}
 
+export function writePersistentValue(key, value) {
+  cachePersistentValue(key, value);
   if (store) {
     const targetStore = store;
     void targetStore.set(key, memoryState[key]).catch((error) => {
