@@ -154,7 +154,7 @@ test("a gap in a target variant lets target grammar insert words that modify the
     { code: "vi", text: target },
   ], model);
 
-  const split = highlights("sự giằng co dữ dội giữa các mặt đối lập");
+  const split = highlights("sự giằng co kéo dài suốt nhiều thế kỷ, qua bao biến cố giữa các mặt đối lập");
   assert.doesNotMatch(split.get("es")?.html ?? "", /glossary-match-error/);
   const marks = [...(split.get("vi")?.html ?? "").matchAll(/<mark[^>]*>([^<]*)<\/mark>/gu)].map((m) => m[1]);
   assert.deepEqual(marks, ["sự giằng co", "giữa các mặt đối lập"]);
@@ -163,8 +163,11 @@ test("a gap in a target variant lets target grammar insert words that modify the
   assert.doesNotMatch(unsplit.get("es")?.html ?? "", /glossary-match-error/);
   assert.equal([...(unsplit.get("vi")?.html ?? "").matchAll(/<mark/gu)].length, 1);
 
-  for (const target of ["sự giằng co một hai ba bốn năm giữa các mặt đối lập", "sự giằng co dữ dội; giữa các mặt đối lập"]) {
-    assert.match(highlights(target).get("es")?.html ?? "", /glossary-match-error/, target);
+  for (const boundary of [" dữ dội. ", "! ", "? ", "… ", "\n"]) {
+    const target = `sự giằng co${boundary}giữa các mặt đối lập`;
+    const row = highlights(target);
+    assert.match(row.get("es")?.html ?? "", /glossary-match-error/, target);
+    assert.equal(row.has("vi"), false, target);
   }
 });
 
@@ -199,15 +202,24 @@ test("only a standalone ellipsis between words is a gap, and source terms never 
     .map((o) => o.pieces.map((p) => text.slice(p.start, p.end)));
   assert.deepEqual(spans("sự giằng co rất dữ dội giữa các mặt đối lập", 0), [["sự giằng co", "giữa các mặt đối lập"]]);
   assert.deepEqual(spans("a c b", 1), [["a", "b"]]);
+  assert.deepEqual(spans("a, b", 1), [["a", "b"]]);
   assert.deepEqual(spans("chờ… nữa", 2), [["chờ…"]]);
   assert.deepEqual(spans("chờ thêm…", 2), []);
-  assert.deepEqual(spans("x 1 y 2 z", 3), [["x", "y", "z"]]);
+  assert.deepEqual(spans("x 1 2 3 4 5 y 6 7 8 9 10 z", 3), [["x", "y", "z"]]);
   assert.deepEqual(spans("x y z", 3), [["x y z"]]);
 
   const model = buildEditorGlossaryModel(glossaryPayload({
     terms: [{ termId: "t1", sourceTerms: ["batallar … antítesis"], targetTerms: ["x"] }],
   }));
   assert.equal(buildEditorRowSourceGlossaryHighlights([{ code: "es", text: "batallar de las antítesis" }], model).size, 0);
+});
+
+test("gaps stop at the end of a sentence in text without spaces", () => {
+  const forms = ["甲 … 乙"];
+  assert.deepEqual(findGlossaryTargetFormOccurrences("甲一二三四五六乙", forms, "zh"), [
+    { formIndexes: [0], start: 0, end: 8, pieces: [{ start: 0, end: 1 }, { start: 7, end: 8 }] },
+  ]);
+  assert.deepEqual(findGlossaryTargetFormOccurrences("甲一二。乙", forms, "zh"), []);
 });
 
 test("source highlights are not marked as errors when the glossary allows omitting the target term", () => {
@@ -635,6 +647,29 @@ test("target highlights include a structured tooltip payload with source variant
   assert.equal(payload.targetVariantNote, "Preferred in doctrinal contexts.");
   assert.deepEqual(payload.translatorNotes, ["Lien quan den Gnosis"]);
   assert.deepEqual(payload.footnotes, ["Chu thich bo sung"]);
+});
+
+test("each target highlight shows the complete saved variant and its own note", () => {
+  const forms = ["đóng … đinh vào thập giá", "đóng đinh ... vào thập giá"];
+  const model = buildEditorGlossaryModel(glossaryPayload({ terms: [{
+    termId: "crucificar", sourceTerms: ["crucificar"], targetTerms: forms,
+    targetVariantNotes: ["First variant", "Second variant"],
+  }] }));
+  const target = "đóng lại đinh vào thập giá. Đóng đinh tất cả những cảm xúc thuộc về cái tôi vào thập giá.";
+  const highlights = buildEditorRowGlossaryHighlights([
+    { code: "es", text: "crucificar" }, { code: "vi", text: target },
+  ], model);
+  const cards = [...highlights.get("vi").html.matchAll(/data-editor-glossary-tooltip-payload="([^"]+)"[^>]*>([^<]+)<\/mark>/gu)]
+    .map(([, encoded, piece]) => {
+      const { title, targetVariantNote, variants } = JSON.parse(encoded.replaceAll("&quot;", '"'));
+      return [piece, title, targetVariantNote, variants];
+    });
+  assert.deepEqual(cards, [
+    ["đóng", forms[0], "First variant", ["crucificar"]],
+    ["đinh vào thập giá", forms[0], "First variant", ["crucificar"]],
+    ["Đóng đinh", forms[1], "Second variant", ["crucificar"]],
+    ["vào thập giá", forms[1], "Second variant", ["crucificar"]],
+  ]);
 });
 
 test("derived source highlights include glossary provenance in the structured tooltip payload", () => {
