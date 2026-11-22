@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { spawn, execFileSync } from "node:child_process";
+import { spawn, spawnSync, execFileSync } from "node:child_process";
 import { once } from "node:events";
-import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { basename, dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -9,6 +9,11 @@ import { setTimeout as delay } from "node:timers/promises";
 assert.equal(process.platform, "win32");
 assert.equal(process.env.GITHUB_ACTIONS, "true", "This smoke test uses a fresh runner profile");
 const exe = resolve(process.argv[2]);
+// The installed PE embeds its PDB basename. Put an exact copy next to the
+// private release symbols for offline resolution, after installing the MSI.
+const pdb = resolve("src-tauri/target/release/gnosis_tms.pdb");
+const symbolExe = join(dirname(pdb), "installed-for-symbols.exe");
+copyFileSync(exe, symbolExe);
 const version = JSON.parse(readFileSync("package.json")).version;
 const settingsPath = join(process.env.APPDATA, "com.gnosis.tms/app-state.json");
 const uiState = join(dirname(settingsPath), "windows-crash-smoke.json");
@@ -99,7 +104,6 @@ function verify(lines) {
   }
   const appImage = e.debug_meta.images.find(i => i.code_file.toLowerCase() === basename(exe).toLowerCase());
   assert.ok(appImage?.debug_id && appImage.debug_file, "App PDB identifier missing from report");
-  const pdb = resolve("src-tauri/target/release/gnosis_tms.pdb");
   assert.equal(appImage.debug_file.toLowerCase(), basename(pdb));
   const summary = execFileSync("llvm-pdbutil", ["dump", "-summary", pdb], { encoding: "utf8" });
   const guid = summary.match(/GUID:\s*\{?([\da-f-]{36})/i)?.[1];
@@ -110,7 +114,7 @@ function verify(lines) {
   const rvas = frames.map(f => BigInt(f.instruction_addr) - imageBase).filter(n => n >= 0n && n < BigInt(appImage.image_size));
   assert.ok(rvas.length, "No application frames");
   // The GUID and age above identify the release PDB for this installed binary.
-  const symbols = execFileSync("llvm-symbolizer", ["--obj=" + exe, "--relative-address", ...rvas.map(n => "0x" + n.toString(16))], { encoding: "utf8" });
+  const symbols = execFileSync("llvm-symbolizer", ["--obj=" + symbolExe, "--relative-address", ...rvas.map(n => "0x" + n.toString(16))], { cwd: dirname(pdb), encoding: "utf8" });
   assert.match(symbols, /gnosis_packaged_crash_probe/);
   return e.event_id;
 }
@@ -135,14 +139,11 @@ try {
   writeFileSync(marker, "");
   await crashed(app);
   await until("one hero-page crash report", () => nativeEvents().length === 1);
-  const first = verify(nativeEvents()[0]);
   await crashed(launch(true));
   await until("one pre-window crash report", () => nativeEvents().length === 2);
-  const second = verify(nativeEvents()[1]);
-  assert.notEqual(first, second);
   await delay(1500);
   assert.equal(nativeEvents().length, 2);
-  console.log("Reporting on: exactly one event per crash. Both stacks resolved to the packaged probe with the release PDB. No memory dump or private paths.");
+  console.log("Reporting on: received one native event per hero-page and pre-window crash.");
 
   app = await chooseOnHero(false);
   const afterOptOut = requests.length;
@@ -163,14 +164,16 @@ try {
   assert.equal(requests.length, afterOptOut);
   app = await chooseOnHero(true, true);
   await until("buffered crash sent after disclosure", () => nativeEvents().length === 3);
-  verify(nativeEvents()[2]);
   await until("empty delivery queue", () => pending().length === 0);
   console.log("Accepting the first-run disclosure delivered the buffered crash exactly once.");
+  const ids = nativeEvents().map(verify);
+  assert.equal(new Set(ids).size, 3);
+  console.log("All three native events matched the release PDB and resolved to the packaged fault. No memory dumps or private paths.");
 } catch (error) {
-  const processes = execFileSync("pwsh", ["-NoProfile", "-Command",
+  const processes = spawnSync("pwsh", ["-NoProfile", "-Command",
     "Get-Process gnosis*,sentry-crash,msedgewebview2,WerFault -ErrorAction SilentlyContinue | Select-Object Name,Id,Responding,MainWindowTitle | Format-Table | Out-String",
   ], { encoding: "utf8" });
-  console.error(processes);
+  if (processes.stdout?.trim()) console.error(processes.stdout);
   throw error;
 } finally {
   for (const app of running) app.kill();
