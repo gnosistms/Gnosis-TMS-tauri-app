@@ -9,7 +9,7 @@ const FIELDS = {
 
 // The editor fixture with Spanish → Vietnamese, an English column, and a
 // stand-in for the native side that answers the AI with window.entryAnswer.
-async function mountEditor(page, terms = []) {
+async function mountEditor(page, terms = [], aiActionConfig) {
   await page.addInitScript((terms) => {
     window.entryCalls = [];
     window.entryAnswer = { found: false, confidence: "low", sourceText: null };
@@ -18,9 +18,10 @@ async function mountEditor(page, terms = []) {
     window.__TAURI__ = { event: { listen: async () => () => {} }, core: { invoke: async (command, args = {}) => {
       window.entryCalls.push({ command, args });
       if (command === "plugin:app|version") return "0.8.133";
-      if (command === "run_glossary_research_request") {
+      if (command === "find_glossary_source_text") {
         if (window.entryHoldAi) await new Promise((resolve) => { window.releaseEntryAi = resolve; });
-        return { status: "ok", text: JSON.stringify(window.entryAnswer), usage: {} };
+        if (window.entryError) throw new Error(window.entryError);
+        return window.entryAnswer;
       }
       if (command === "load_gtms_glossary_editor_data") return structuredClone(glossary);
       if (command === "sync_gtms_glossary_editor_repo") return {};
@@ -41,11 +42,12 @@ async function mountEditor(page, terms = []) {
   }, terms);
   await page.goto("/");
   await page.waitForFunction(() => typeof window.__gnosisDebug?.mountEditorFixture === "function");
-  await page.evaluate(async (fields) => {
+  await page.evaluate(async ({ fields, aiActionConfig }) => {
     await window.__gnosisDebug.waitForBootstrap();
     await window.__gnosisDebug.mountEditorFixture({
       rowCount: 3,
       glossary: true,
+      aiActionConfig,
       languages: [
         { code: "es", name: "Spanish", role: "source" },
         { code: "vi", name: "Vietnamese", role: "target" },
@@ -53,8 +55,7 @@ async function mountEditor(page, terms = []) {
       ],
       fieldsByRowId: { "fixture-row-0001": fields },
     });
-    // The default AI settings name a Research model, so the AI is asked.
-  }, FIELDS);
+  }, { fields: FIELDS, aiActionConfig });
   const disclosureSave = page.locator(".modal-backdrop").getByRole("button", { name: "Save" });
   if (await disclosureSave.count()) await disclosureSave.click();
 }
@@ -161,7 +162,7 @@ test("source-language text fills the source box; Cancel returns to the editor", 
   await expect(save).toBeDisabled();
   await expect(hint).toHaveAttribute("data-tooltip", missingTranslation);
   await expect(research).toBeEnabled();
-  expect(await page.evaluate(() => window.entryCalls.some((call) => call.command === "run_glossary_research_request"))).toBe(false);
+  expect(await page.evaluate(() => window.entryCalls.some((call) => call.command === "find_glossary_source_text"))).toBe(false);
   await dialog(page).getByRole("button", { name: "Cancel" }).click();
   await expect(dialog(page)).toHaveCount(0);
   await expect(page.locator('[data-screen="translate"]')).toBeVisible();
@@ -169,7 +170,13 @@ test("source-language text fills the source box; Cancel returns to the editor", 
 
 test("target-language text: the AI finds the source text, then Save to glossary opens New Term filled in", async ({ page }) => {
   await mountEditor(page);
-  await page.evaluate(() => {
+  await page.evaluate(async () => {
+    const { saveStoredAiActionPreferences } = await import("/app/ai-action-preferences.js");
+    saveStoredAiActionPreferences({
+      detailedConfiguration: false,
+      unified: { providerId: "openai", modelId: "chosen-model-without-a-research-price" },
+      actions: { research: { providerId: "claude", modelId: "per-action-model" } },
+    });
     window.entryHoldAi = true;
     window.entryAnswer = { found: true, confidence: "high", sourceText: "ser Interior" };
   });
@@ -183,10 +190,14 @@ test("target-language text: the AI finds the source text, then Save to glossary 
   // The row's own spelling is used, not the AI's capitalization.
   await expect(dialog(page).locator('[data-editor-glossary-entry-field="sourceTerm"]')).toHaveValue("Ser interior");
   await expect(dialog(page).locator('[data-editor-glossary-entry-field="targetTerm"]')).toHaveValue("Đấng Nội Tại");
-  const request = await page.evaluate(() => window.entryCalls.find((call) => call.command === "run_glossary_research_request").args.request);
+  const requests = await page.evaluate(() => window.entryCalls.filter((call) => call.command === "find_glossary_source_text"));
+  expect(requests).toHaveLength(1);
+  const { request } = requests[0].args;
+  expect(request.providerId).toBe("openai");
+  expect(request.modelId).toBe("chosen-model-without-a-research-price");
   expect(request.content).toContain("Highlighted in Vietnamese: Đấng Nội Tại");
   expect(request.content).toContain(`[Spanish (source)]\n${"El Ser interior es la parte más elevada del hombre."}`);
-  expect(request.schemaName).toBe("selection_source");
+  expect(request.schema.required).toEqual(["found", "confidence", "sourceText"]);
 
   await expect(dialog(page).getByRole("button")).toHaveText(["Cancel", "Save to glossary", "Research meanings"]);
   await expect(dialog(page).getByRole("button", { name: "Save to glossary" })).toHaveClass(/button--primary/);
@@ -204,18 +215,70 @@ test("target-language text: the AI finds the source text, then Save to glossary 
 });
 
 test("text in another language is matched to its source term and can go to research", async ({ page }) => {
-  await mountEditor(page);
+  await mountEditor(page, [], {
+    detailedConfiguration: true,
+    unified: { providerId: "openai", modelId: "general-model" },
+    actions: { research: { providerId: "gemini", modelId: "chosen-gemini-model" } },
+  });
   await page.evaluate(() => { window.entryAnswer = { found: true, confidence: "high", sourceText: "Ser interior" }; });
   await highlight(page, "en", "Inner Being");
   await entryButton(page, "en").click();
   await expect(dialog(page).locator('[data-editor-glossary-entry-field="sourceTerm"]')).toHaveValue("Ser interior");
   await expect(dialog(page).locator('[data-editor-glossary-entry-field="targetTerm"]')).toHaveValue("");
   await expect(dialog(page)).toContainText("Highlighted in English");
+  const request = await page.evaluate(() => window.entryCalls.find((call) => call.command === "find_glossary_source_text").args.request);
+  expect(request).toMatchObject({ providerId: "gemini", modelId: "chosen-gemini-model" });
   await expect(dialog(page).getByRole("button", { name: "Research meanings" })).toHaveAttribute("data-tooltip",
     "Use AI to investigate the meaning of the source term and suggest target language translations");
 
   await dialog(page).getByRole("button", { name: "Research meanings" }).click();
   await expect(page.locator('[data-studio-field="scope.term"]')).toHaveValue("Ser interior");
+});
+
+test("an offline lookup preserves the highlighted translation for manual entry", async ({ page, context }) => {
+  await mountEditor(page);
+  await highlight(page, "vi", "Đấng Nội Tại");
+  await context.setOffline(true);
+  await entryButton(page, "vi").click();
+  const modal = dialog(page);
+  await expect(modal).toContainText("Connect to the internet");
+  await expect(modal).not.toContainText("AI Settings");
+  await expect(modal.locator('[data-editor-glossary-entry-field="targetTerm"]')).toHaveValue("Đấng Nội Tại");
+  await modal.locator('[data-editor-glossary-entry-field="sourceTerm"]').fill("Ser interior");
+  await expect(modal.getByRole("button", { name: "Save to glossary" })).toBeEnabled();
+  expect(await page.evaluate(() => window.entryCalls.some((call) => call.command === "find_glossary_source_text"))).toBe(false);
+});
+
+test("a connection lost during lookup and a provider rejection give different guidance", async ({ page }) => {
+  await mountEditor(page);
+  for (const [error, guidance] of [
+    ["The connection closed before Claude finished answering.", "Check your internet connection"],
+    ["Claude rejected the saved API key. Check it on the AI Settings page.", "Claude rejected the saved API key"],
+  ]) {
+    await page.evaluate((message) => { window.entryHoldAi = true; window.entryError = message; }, error);
+    await highlight(page, "vi", "Đấng Nội Tại");
+    await entryButton(page, "vi").click();
+    await expect(dialog(page)).toContainText("Finding the Spanish text");
+    await page.evaluate(() => window.releaseEntryAi());
+    await expect(dialog(page)).toContainText(guidance);
+    await expect(dialog(page)).not.toContainText("choose a Research model", { ignoreCase: true });
+    await expect(dialog(page).locator('[data-editor-glossary-entry-field="targetTerm"]')).toHaveValue("Đấng Nội Tại");
+    await dialog(page).getByRole("button", { name: "Cancel" }).click();
+  }
+});
+
+test("closing a pending lookup cancels its request and ignores a late answer", async ({ page }) => {
+  await mountEditor(page);
+  await page.evaluate(() => { window.entryHoldAi = true; });
+  await highlight(page, "vi", "Đấng Nội Tại");
+  await entryButton(page, "vi").click();
+  await page.waitForFunction(() => typeof window.releaseEntryAi === "function");
+  await dialog(page).getByRole("button", { name: "Cancel" }).click();
+  const calls = await page.evaluate(() => window.entryCalls);
+  const lookup = calls.find((call) => call.command === "find_glossary_source_text");
+  expect(calls).toContainEqual({ command: "cancel_glossary_research_request", args: { requestId: lookup.args.request.requestId } });
+  await page.evaluate(() => window.releaseEntryAi());
+  await expect(dialog(page)).toHaveCount(0);
 });
 
 test("text in another language with no source match ends with only Cancel", async ({ page }) => {

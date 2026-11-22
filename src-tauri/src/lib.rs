@@ -304,6 +304,18 @@ async fn run_ai_translation(
 }
 
 #[tauri::command]
+async fn find_glossary_source_text(
+    app: tauri::AppHandle,
+    request: ai::research::GlossarySourceRequest,
+) -> Result<Option<serde_json::Value>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        ai::research::find_glossary_source_text(&app, request)
+    })
+    .await
+    .map_err(|error| format!("The glossary source lookup worker failed: {error}"))?
+}
+
+#[tauri::command]
 async fn run_glossary_research_request(
     app: tauri::AppHandle,
     request: ai::research::ResearchModelRequest,
@@ -669,6 +681,7 @@ pub fn run() {
             prepare_editor_ai_translated_glossary_batch,
             run_ai_translation,
             run_ai_translation_batch,
+            find_glossary_source_text,
             run_glossary_research_request,
             project_search::research_sample::glossary_research_project_passages,
             project_search::research_sample::glossary_research_list_projects,

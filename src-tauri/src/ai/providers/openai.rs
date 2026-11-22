@@ -303,6 +303,9 @@ fn build_prompt_request(request: &AiPromptRequest) -> OpenAiResponsesRequest<'_>
 }
 
 fn openai_text_format(output_format: AiPromptOutputFormat) -> Value {
+    if output_format == AiPromptOutputFormat::JsonObject {
+        return json!({ "type": "json_object" });
+    }
     match super::schemas::output_schema(&output_format) {
         None => json!({ "type": "text" }),
         Some(output) => json!({

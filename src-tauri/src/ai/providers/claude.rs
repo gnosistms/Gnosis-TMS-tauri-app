@@ -49,6 +49,7 @@ const UNSUPPORTED_SCHEMA_KEYWORDS: [&str; 8] = [
 /// assistant and glossary alignment were not calibrated.
 fn effort_for(output_format: &AiPromptOutputFormat) -> &'static str {
     match output_format {
+        AiPromptOutputFormat::JsonObject => "low",
         AiPromptOutputFormat::Text
         | AiPromptOutputFormat::TranslationSectionsJson
         | AiPromptOutputFormat::TranslationBatchJson => "high",

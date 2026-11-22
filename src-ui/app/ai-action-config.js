@@ -264,15 +264,13 @@ export function normalizeAiActionSelection(value, fallback = createAiActionSelec
   }
 
   const providerId = normalizeAiProviderId(value.providerId ?? fallback.providerId);
-  const rawModelId =
-    typeof value.modelId === "string" && value.modelId.trim()
-      ? value.modelId.trim()
-      : fallback.modelId;
+  // An explicitly empty selection is waiting for a model. Only older records
+  // with no model field inherit a default, and only for their own provider.
+  if (typeof value.modelId === "string") {
+    return { providerId, modelId: value.modelId.trim() };
+  }
 
-  return {
-    providerId,
-    modelId: typeof rawModelId === "string" ? rawModelId.trim() : "",
-  };
+  return createAiActionSelection(providerId, providerId === fallback.providerId ? fallback.modelId : "");
 }
 
 export function normalizeStoredAiActionPreferences(value) {
