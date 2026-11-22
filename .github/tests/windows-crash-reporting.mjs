@@ -1,17 +1,17 @@
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
 import { once } from "node:events";
-import { existsSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { basename, dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { chromium } from "playwright";
 
 assert.equal(process.platform, "win32");
 assert.equal(process.env.GITHUB_ACTIONS, "true", "This smoke test uses a fresh runner profile");
 const exe = resolve(process.argv[2]);
 const version = JSON.parse(readFileSync("package.json")).version;
 const settingsPath = join(process.env.APPDATA, "com.gnosis.tms/app-state.json");
+const uiState = join(dirname(settingsPath), "windows-crash-smoke.json");
 const database = join(process.env.LOCALAPPDATA, "com.gnosis.tms/native-crashes");
 const marker = join(process.env.RUNNER_TEMP, "gnosis-crash-smoke-marker");
 const dsn = new URL(process.env.VITE_SENTRY_DSN);
@@ -44,47 +44,38 @@ function pending() {
   const dir = join(database, "pending");
   return existsSync(dir) ? readdirSync(dir).filter(name => name.endsWith(".json")) : [];
 }
-let port = 18900;
 const running = new Set();
 function launch(early = false) {
   if (existsSync(marker)) unlinkSync(marker);
-  port += 1;
   const proc = spawn(exe, early ? ["--crash-before-window"] : ["--crash-on-marker", marker], {
-    env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: "--remote-debugging-port=" + port },
     stdio: "inherit",
   });
   running.add(proc);
   proc.once("exit", () => running.delete(proc));
-  return { proc, closed: once(proc, "exit"), port };
+  return { proc, closed: once(proc, "exit") };
 }
 async function crashed(app) {
   const [code] = await Promise.race([app.closed, delay(45_000, null, { ref: false }).then(() => { throw new Error("App did not exit"); })]);
   assert.notEqual(code, 0);
 }
-async function hero(app) {
-  const url = "http://127.0.0.1:" + app.port;
-  await until("WebView2", async () => {
-    assert.equal(app.proc.exitCode, null, "App exited before reaching the hero page");
-    try { return (await (await fetch(url + "/json/list")).json()).some(t => t.type === "page"); } catch { return false; }
-  });
-  const browser = await chromium.connectOverCDP(url);
-  const page = browser.contexts()[0].pages()[0];
-  await page.locator(".screen--start").waitFor();
-  await page.evaluate(() => window.__gnosisDebug.waitForBootstrap());
-  return page;
-}
-async function save(page, enabled, firstRun = false) {
-  if (!firstRun) await page.evaluate(() => window.__TAURI__.event.emit("open-error-reporting"));
-  const modal = page.locator('[data-modal-dialog="telemetry-disclosure"]');
-  await modal.waitFor();
-  const check = modal.locator("input");
-  if (await check.isChecked() !== enabled) await modal.locator("label").click();
-  assert.equal(await check.isChecked(), enabled);
-  await modal.getByRole("button", { name: "Save", exact: true }).click();
-  await modal.waitFor({ state: "detached" });
+async function chooseOnHero(enabled, firstRun = false) {
+  mkdirSync(dirname(uiState), { recursive: true });
+  writeFileSync(uiState, JSON.stringify({ firstRun, enabled, phase: "launching" }));
+  const app = launch();
+  let lastPhase;
+  await until("the hero and saved settings", () => {
+    assert.equal(app.proc.exitCode, null, "App exited before saving the setting");
+    let phase;
+    try { phase = JSON.parse(readFileSync(uiState)).phase; } catch { return false; }
+    if (phase !== lastPhase) console.log("Settings UI:", phase);
+    lastPhase = phase;
+    assert.ok(!phase?.startsWith("failed"), phase);
+    return phase === "saved";
+  }, 75_000);
   const settings = JSON.parse(readFileSync(settingsPath));
   assert.equal(settings["telemetry-enabled"], enabled);
   assert.equal(settings["telemetry-disclosure-shown"], true);
+  return app;
 }
 function nativeEvents() {
   return requests.map(body => body.trim().split("\n")).filter(lines => {
@@ -131,9 +122,7 @@ try {
   assert.equal(requests.length, 0);
   console.log("Pre-window crash buffered locally before disclosure.");
 
-  let app = launch();
-  let page = await hero(app);
-  await save(page, false, true);
+  let app = await chooseOnHero(false, true);
   await until("discarded pending crash", () => pending().length === 0);
   writeFileSync(marker, "");
   await crashed(app);
@@ -143,9 +132,7 @@ try {
   assert.equal(pending().length, 0);
   console.log("Reporting off: zero requests after a hero-page crash and a pre-window crash on relaunch.");
 
-  app = launch();
-  page = await hero(app);
-  await save(page, true);
+  app = await chooseOnHero(true);
   writeFileSync(marker, "");
   await crashed(app);
   await until("one hero-page crash report", () => nativeEvents().length === 1);
@@ -158,9 +145,7 @@ try {
   assert.equal(nativeEvents().length, 2);
   console.log("Reporting on: exactly one event per crash. Both stacks resolved to the packaged probe with the release PDB. No memory dump or private paths.");
 
-  app = launch();
-  page = await hero(app);
-  await save(page, false);
+  app = await chooseOnHero(false);
   const afterOptOut = requests.length;
   writeFileSync(marker, "");
   await crashed(app);
@@ -177,13 +162,17 @@ try {
   await crashed(launch(true));
   await until("second undisclosed crash", () => pending().length === 1);
   assert.equal(requests.length, afterOptOut);
-  app = launch();
-  page = await hero(app);
-  await save(page, true, true);
+  app = await chooseOnHero(true, true);
   await until("buffered crash sent after disclosure", () => nativeEvents().length === 3);
   verify(nativeEvents()[2]);
   await until("empty delivery queue", () => pending().length === 0);
   console.log("Accepting the first-run disclosure delivered the buffered crash exactly once.");
+} catch (error) {
+  const processes = execFileSync("pwsh", ["-NoProfile", "-Command",
+    "Get-Process gnosis*,sentry-crash,msedgewebview2,WerFault -ErrorAction SilentlyContinue | Select-Object Name,Id,Responding,MainWindowTitle | Format-Table | Out-String",
+  ], { encoding: "utf8" });
+  console.error(processes);
+  throw error;
 } finally {
   for (const app of running) app.kill();
   server.closeAllConnections();
