@@ -69,37 +69,53 @@ fn send(event: &Value) -> bool {
 // Called in the external reporter after a crash and off the UI thread on startup/save.
 // The app and helper can race on relaunch. Lock across claim/send so they share one
 // queue. A retry after an interrupted HTTP response preserves Sentry's event ID.
-pub(super) fn process(paths: &Paths) {
-    if !paths.database.is_dir() {
-        return;
-    }
-    let Ok(lock) = fs::File::options()
+fn delivery_lock(paths: &Paths) -> Option<fs::File> {
+    let lock = fs::File::options()
         .create(true)
         .truncate(false)
         .write(true)
         .read(true)
         .open(paths.database.join("delivery.lock"))
-    else {
+        .ok()?;
+    lock.lock().ok()?;
+    Some(lock)
+}
+
+fn remove_pending(external: &Path, pending: &Path) {
+    for path in events(external, "envelope")
+        .into_iter()
+        .chain(events(pending, "json"))
+    {
+        let _ = fs::remove_file(path);
+    }
+    let _ = fs::remove_file(pending.join("incoming.tmp"));
+}
+
+pub(super) fn discard(paths: &Paths) {
+    if let Some(_lock) = delivery_lock(paths) {
+        remove_pending(
+            &paths.database.join("external"),
+            &paths.database.join("pending"),
+        );
+    }
+}
+
+pub(super) fn process(paths: &Paths) {
+    let Some(_lock) = delivery_lock(paths) else {
         return;
     };
-    if lock.lock().is_err() {
-        return;
-    }
     let external = paths.database.join("external");
     let pending = paths.database.join("pending");
     if paths.stopped() {
-        for path in events(&external, "envelope")
-            .into_iter()
-            .chain(events(&pending, "json"))
-        {
-            let _ = fs::remove_file(path);
-        }
+        remove_pending(&external, &pending);
         return;
     }
     if fs::create_dir_all(&pending).is_err() {
         return;
     }
     for file in events(&external, "envelope") {
+        // A relaunch can overlap the daemon writing this file. Leave incomplete
+        // envelopes for the external reporter, which starts after the write finishes.
         if let Some(event) = read(&file).and_then(|b| event::read_sdk_envelope(&b)) {
             let dest = pending.join(format!(
                 "{}.json",
@@ -112,8 +128,8 @@ pub(super) fn process(paths: &Paths) {
             {
                 continue;
             }
+            let _ = fs::remove_file(file);
         }
-        let _ = fs::remove_file(file);
     }
     let mut files = events(&pending, "json");
     let modified = |p: &Path| {

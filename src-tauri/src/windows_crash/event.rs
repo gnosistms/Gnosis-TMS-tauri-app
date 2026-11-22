@@ -10,6 +10,34 @@ fn filename(value: &Value) -> Option<&str> {
     (!name.is_empty() && name.len() <= 255 && !name.chars().any(char::is_control)).then_some(name)
 }
 
+fn image_for_stack(image: &Value, addresses: &[u64]) -> Option<Value> {
+    let base = address(&image["image_addr"])?;
+    let size = image["image_size"].as_u64()?;
+    let range = base..base.saturating_add(size);
+    if !addresses.iter().any(|address| range.contains(address)) {
+        return None;
+    }
+    let mut clean = json!({
+        "type": "pe",
+        "code_file": filename(&image["code_file"])?,
+        "image_addr": format!("0x{base:x}"),
+        "image_size": size,
+        "arch": std::env::consts::ARCH,
+    });
+    for key in ["debug_id", "code_id"] {
+        if let Some(id) = image[key]
+            .as_str()
+            .filter(|s| s.len() <= 64 && s.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-'))
+        {
+            clean[key] = json!(id);
+        }
+    }
+    if let Some(name) = filename(&image["debug_file"]) {
+        clean["debug_file"] = json!(name);
+    }
+    Some(clean)
+}
+
 // Rebuild the event at the transport boundary. The SDK can add register values,
 // full PDB paths, thread names and device details after its in-process callbacks.
 pub(super) fn scrub(raw: &Value) -> Option<Value> {
@@ -36,21 +64,13 @@ pub(super) fn scrub(raw: &Value) -> Option<Value> {
         .filter_map(|f| address(&f["instruction_addr"]))
         .take(256)
         .collect();
-    let images: Vec<_> = raw.pointer("/debug_meta/images").and_then(Value::as_array)
-        .into_iter().flatten().filter_map(|image| {
-            let base = address(&image["image_addr"])?;
-            let size = image["image_size"].as_u64()?;
-            if !addresses.iter().any(|a| (base..base.saturating_add(size)).contains(a)) { return None; }
-            let mut clean = json!({"type":"pe", "code_file":filename(&image["code_file"])?,
-                "image_addr":format!("0x{base:x}"), "image_size":size, "arch":std::env::consts::ARCH});
-            for key in ["debug_id", "code_id"] {
-                if let Some(id) = image[key].as_str().filter(|s| s.len() <= 64 && s.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-')) {
-                    clean[key] = json!(id);
-                }
-            }
-            if let Some(name) = filename(&image["debug_file"]) { clean["debug_file"] = json!(name); }
-            Some(clean)
-        }).collect();
+    let images: Vec<_> = raw
+        .pointer("/debug_meta/images")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|image| image_for_stack(image, &addresses))
+        .collect();
     let frames: Vec<_> = addresses
         .iter()
         .map(|a| json!({"instruction_addr":format!("0x{a:x}")}))
@@ -61,18 +81,34 @@ pub(super) fn scrub(raw: &Value) -> Option<Value> {
         .and_then(|s| semver::Version::parse(s).ok())
         .map(|v| format!("gnosis-tms@{v}"))
         .unwrap_or_else(|| concat!("gnosis-tms@", env!("CARGO_PKG_VERSION")).to_owned());
+    let mut os = json!({"name": "Windows"});
+    for key in ["version", "build"] {
+        if let Some(number) = raw["contexts"]["os"][key].as_str().filter(|s| {
+            !s.is_empty() && s.len() <= 40 && s.bytes().all(|b| b.is_ascii_digit() || b == b'.')
+        }) {
+            os[key] = json!(number);
+        }
+    }
     let mut event = json!({
-        "event_id":id.simple().to_string(), "level":"fatal", "platform":"native",
-        "environment":"production", "release":release, "contexts":{"os":{"name":"Windows"}},
-        "exception":{"values":[{"type":kind, "value":format!("Windows exception 0x{code:08X}"),
-            "mechanism":{"type":"seh","handled":false,"meta":{"signal":{"number":code}}},
-            "stacktrace":{"frames":frames}}]}, "debug_meta":{"images":images}
+        "event_id": id.simple().to_string(),
+        "level": "fatal",
+        "platform": "native",
+        "environment": if cfg!(debug_assertions) { "development" } else { "production" },
+        "release": release,
+        "contexts": {"os": os, "device": {"arch": std::env::consts::ARCH}},
+        "exception": {"values": [{
+            "type": kind,
+            "value": format!("Windows exception 0x{code:08X}"),
+            "mechanism": {"type": "seh", "handled": false, "meta": {"signal": {"number": code}}},
+            "stacktrace": {"frames": frames},
+        }]},
+        "debug_meta": {"images": images},
     });
     if let Some(t) = raw["timestamp"]
         .as_str()
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
     {
-        event["timestamp"] = json!(t);
+        event["timestamp"] = json!(t.to_rfc3339());
     }
     Some(event)
 }

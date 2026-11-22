@@ -2,6 +2,7 @@ import {
   isDisclosureShown,
   isTelemetryEnabled,
   markDisclosureShown,
+  resolveInstallId,
   setTelemetryEnabled,
 } from "./telemetry-consent.js";
 import { initTelemetry, refreshTelemetryState } from "./telemetry.js";
@@ -41,10 +42,12 @@ export async function saveTelemetryDisclosureSettings(render, options = {}) {
   const invoke = globalThis.window?.__TAURI__?.core?.invoke;
   if (!store && invoke) {
     if (state.telemetryDisclosureModal.saving) return;
+    if (!enabled) setTelemetryEnabled(false, { write: cachePersistentValue });
     state.telemetryDisclosureModal = { isOpen: true, enabled, saving: true };
     render?.();
     try {
-      await invoke("save_error_reporting_settings", { enabled });
+      const installId = enabled ? resolveInstallId() : null;
+      await invoke("save_error_reporting_settings", { enabled, installId });
     } catch {
       state.telemetryDisclosureModal = { isOpen: true, enabled, saveFailed: true };
       render?.();

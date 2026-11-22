@@ -63,24 +63,31 @@ impl Capture {
         // Only load the installed library and system dependencies. Keeping the handle
         // alive until after sentry_close also covers the SDK's Win32 exception filter.
         unsafe {
-            let library =
-                Library::load_with_flags(resources.join("gnosis-crash-capture.dll"), 0x800).ok()?; // LOAD_LIBRARY_SEARCH_SYSTEM32
+            const LOAD_LIBRARY_SEARCH_SYSTEM32: u32 = 0x800;
+            let library = Library::load_with_flags(
+                resources.join("gnosis-crash-capture.dll"),
+                LOAD_LIBRARY_SEARCH_SYSTEM32,
+            )
+            .ok()?;
             type Start = unsafe extern "C" fn(*const u16, *const u16, *const u16, *const i8) -> i32;
             let start = library.get::<Start>(b"gnosis_capture_start\0").ok()?;
             let stop = *library
                 .get::<unsafe extern "C" fn()>(b"gnosis_capture_stop\0")
                 .ok()?;
             let release = concat!("gnosis-tms@", env!("CARGO_PKG_VERSION"), "\0");
-            (start(
+            if start(
                 database.as_ptr(),
                 daemon.as_ptr(),
                 reporter.as_ptr(),
                 release.as_ptr().cast(),
-            ) == 0)
-                .then_some(Self {
-                    _library: library,
-                    stop,
-                })
+            ) != 0
+            {
+                return None;
+            }
+            Some(Self {
+                _library: library,
+                stop,
+            })
         }
     }
 }
@@ -122,14 +129,19 @@ impl Reporter {
             capture: Mutex::default(),
         };
         if let Some(p) = &reporter.paths {
-            reporter.settings_saved(!p.stopped());
+            if p.stopped() {
+                let paths = p.clone();
+                std::thread::spawn(move || queue::process(&paths));
+            } else {
+                reporter.apply_choice(true);
+            }
         }
         #[cfg(feature = "windows-crash-smoke")]
         smoke::when_requested();
         Some(reporter)
     }
 
-    pub(crate) fn settings_saved(&self, enabled: bool) {
+    pub(crate) fn apply_choice(&self, enabled: bool) {
         let Some(paths) = self.paths.as_ref().filter(|_| !DSN.trim().is_empty()) else {
             return;
         };
@@ -144,8 +156,8 @@ impl Reporter {
         if enabled {
             let paths = paths.clone();
             std::thread::spawn(move || queue::process(&paths));
-        } else if paths.database.is_dir() {
-            queue::process(paths);
+        } else {
+            queue::discard(paths);
         }
     }
 }

@@ -45,6 +45,7 @@ function pending() {
   return existsSync(dir) ? readdirSync(dir).filter(name => name.endsWith(".json")) : [];
 }
 let port = 18900;
+const running = new Set();
 function launch(early = false) {
   if (existsSync(marker)) unlinkSync(marker);
   port += 1;
@@ -52,6 +53,8 @@ function launch(early = false) {
     env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: "--remote-debugging-port=" + port },
     stdio: "inherit",
   });
+  running.add(proc);
+  proc.once("exit", () => running.delete(proc));
   return { proc, closed: once(proc, "exit"), port };
 }
 async function crashed(app) {
@@ -93,6 +96,7 @@ function verify(lines) {
   assert.equal(JSON.parse(lines[1]).type, "event");
   const e = JSON.parse(lines[2]);
   assert.equal(e.release, "gnosis-tms@" + version);
+  assert.equal(e.tags.install_id, JSON.parse(readFileSync(settingsPath))["telemetry-install-id"]);
   const exception = e.exception.values[0];
   assert.equal(exception.mechanism.meta.signal.number, 0xE0424242);
   const frames = exception.stacktrace.frames;
@@ -147,5 +151,7 @@ try {
   assert.equal(nativeEvents().length, 2);
   console.log("Reporting on: exactly one event per crash. Both stacks resolved to the packaged probe with the release PDB. No memory dump or private paths.");
 } finally {
+  for (const app of running) app.kill();
+  server.closeAllConnections();
   server.close();
 }
