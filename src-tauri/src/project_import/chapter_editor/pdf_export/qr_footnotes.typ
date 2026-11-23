@@ -1,4 +1,4 @@
-#let module = 0.34mm
+#let module = 0.254mm
 #let caption-size = 7.5pt
 #let compact-caption(words, width) = {
   if measure(words).width <= width { return words }
