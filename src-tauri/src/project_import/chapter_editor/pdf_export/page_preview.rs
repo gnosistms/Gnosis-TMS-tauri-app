@@ -418,6 +418,14 @@ async fn paginate_book(
     .await
     .map_err(|_| "Could not prepare the contents preview. Please try again.".to_string())??;
     let _cleanup = WorkspaceCleanup(prepared.workspace.clone());
+    qr_packing::prepare(
+        app,
+        &prepared.workspace,
+        &font_dir,
+        &prepared.fallback_fonts,
+        &uncancelled,
+    )
+    .await?;
     let output = eval_typst(
         app,
         &prepared.workspace,
@@ -460,31 +468,6 @@ mod tests {
         apply_book_chapter_title, build_export_document, AudioExport,
     };
     use super::*;
-
-    fn run_typst_for_test(arguments: &[&std::ffi::OsStr], workspace: &Path) -> Option<Vec<u8>> {
-        let (Some(binary), Some(fonts)) = (
-            std::env::var_os("GNOSIS_TYPST_BIN"),
-            std::env::var_os("GNOSIS_TYPST_SMOKE_FONT_DIR"),
-        ) else {
-            return None;
-        };
-        let output = std::process::Command::new(binary)
-            .args(arguments)
-            .args(["--ignore-system-fonts", "--font-path"])
-            .arg(fonts)
-            .arg("--root")
-            .arg(workspace)
-            .arg("--package-path")
-            .arg(workspace.join("packages"))
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        Some(output.stdout)
-    }
 
     fn book_item(id: &str, kind: &str, title: &str) -> BookItemInput {
         BookItemInput {

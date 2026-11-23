@@ -14,13 +14,15 @@
   prefix.trim() + "…"
 }
 
-#let tile(ref, max-width, whole-link: false, at-text-indent: false) = {
+#let tile(ref, max-width, whole-link: false, at-text-indent: false, caption-width: auto) = {
   let modules = ref.modules
   let pitch = calc.min(module, max-width / (modules + 8))
   let border = 4 * pitch
   let width = modules * pitch
   let side = width + 2 * border
-  let caption-width = calc.min(max-width, calc.max(side, 22mm))
+  let caption-width = if caption-width == auto {
+    calc.min(max-width, calc.max(side, 22mm))
+  } else { caption-width }
   let alignment = if at-text-indent { left } else { center }
   let body = block(width: caption-width, breakable: false, above: 0pt, below: 0pt)[
     #set align(alignment)
@@ -109,4 +111,112 @@
   let refs = refs.map(ref => ref + (direction: direction))
   set text(dir: ltr)
   layout(size => wrap-note(text(dir: direction, prose), refs, size.width, whole-link, has-prose))
+}
+
+// Single-link notes retain their normal body for standalone rows. The entry
+// rule can also read their original content before it is laid out in a cell.
+#let packable-note(prose, refs, whole-link, has-prose) = {
+  if refs.len() == 1 {
+    metadata((kind: "qr-note", prose: prose, ref: refs.first(), whole: whole-link, has-prose: has-prose))
+  }
+  gnosis-qr-note(prose, refs, whole-link, has-prose)
+}
+#let note-data(note) = {
+  let first = note.body.fields().at("children", default: ()).at(0, default: none)
+  if first != none and first.func() == metadata and type(first.value) == dictionary and first.value.at("kind", default: none) == "qr-note" {
+    first.value
+  }
+}
+
+#let unit-gap = 3mm
+#let cell-label(id) = label("gnosis-qr-entry-" + str(id))
+#let unit-span(unit, count) = count * (unit + unit-gap) - unit-gap
+#let note-number(note) = numbering(note.numbering, ..counter(footnote).at(note.location()))
+
+#let compact-cell(note, data, width, direction, checking: false) = {
+  let marker = link(note.location(), note-number(note) + [.])
+  let gutter = calc.max(12pt, measure(marker).width)
+  let available = width - gutter - 3pt
+  let side = (data.ref.modules + 8) * module
+  if checking and available < side { return none }
+  let ref = data.ref + (direction: direction)
+  let words-width = measure(text(size: caption-size, dir: direction, spacing: 100%, ref.words)).width
+  let caption = if data.has-prose { calc.max(side, calc.min(22mm, words-width)) } else { available }
+  let code = tile(ref, available, caption-width: caption, whole-link: data.whole, at-text-indent: not data.has-prose).body
+  let body = if data.has-prose {
+    let prose-width = available - caption - 1.5mm
+    if checking and prose-width < 12mm { return none }
+    let prose = block(width: prose-width, above: 0pt, below: 0pt)[
+      #set text(dir: direction)
+      #set align(start)
+      #set par(first-line-indent: 0pt, justify: false)
+      #data.prose
+    ]
+    if checking and measure(prose, width: prose-width).height > measure(code, width: caption).height { return none }
+    grid(columns: (prose-width, caption), column-gutter: 1.5mm, align: top, prose, code)
+  } else { code }
+  grid(columns: (gutter, available), column-gutter: 3pt, align: (right + top, left + top), marker, body)
+}
+
+#let entry-rule(entry, rows, entry-gap) = context {
+  if rows == (:) { return entry }
+  let note = entry.note
+  let data = note-data(note)
+  if data == none { return entry }
+  let id = counter(footnote).at(note.location()).first()
+  let cell = if rows != none { rows.at(str(id), default: none) }
+  if cell == none and rows != none { return entry }
+  let direction = text.dir
+  // Each marker owns its native footnote content, including when its cell
+  // shares an earlier entry's row. Only the leader reserves the row height.
+  if cell != none and cell.row != id { v(-entry-gap) }
+  layout(size => {
+    let count = calc.max(1, calc.floor((size.width + unit-gap) / (23mm + unit-gap)))
+    let unit = (size.width + unit-gap) / count - unit-gap
+    if cell == none {
+      let span = if data.has-prose { calc.min(2, count) } else {
+        let gutter = calc.max(12pt, measure(note-number(note) + [.]).width) + 3pt
+        calc.max(1, calc.ceil((gutter + (data.ref.modules + 8) * module + unit-gap) / (unit + unit-gap)))
+      }
+      if span < count {
+        let w = unit-span(unit, span)
+        let preview = compact-cell(note, data, w, direction, checking: true)
+        if preview != none {
+          let height = measure(text(dir: ltr, preview), width: w).height / 1pt
+          [#metadata((id: id, span: span, capacity: count, height: height))<gnosis-qr-measure>]
+        }
+      }
+      entry
+    } else {
+      set text(dir: ltr)
+      let height = cell.height * 1pt
+      let leader = cell.row == id
+      let width = unit-span(unit, cell.span)
+      let content = compact-cell(note, data, width, direction)
+      // A follower has no flow height. Give its placed content the full row
+      // height so its QR image has the same drawing region as the leader.
+      block(width: size.width, height: if leader { height } else { 0pt },
+        breakable: false, above: 0pt, below: 0pt,
+        place(top + left,
+          dx: cell.column * (unit + unit-gap),
+          dy: if leader { 0pt } else { -height },
+          block(width: width, height: height, above: 0pt, below: 0pt)[
+            #metadata(id)<gnosis-qr-cell>
+            #metadata(id)#cell-label(id)
+            #content
+          ],
+        ),
+      )
+    }
+  })
+}
+
+#let callout-rule(note, rows) = context {
+  if rows == none or rows == (:) { return note }
+  let id = counter(footnote).at(note.location()).first()
+  if str(id) in rows {
+    let target = query(cell-label(id)).at(0, default: none)
+    if target != none { return super(link(target.location(), text(fill: text.fill, note-number(note)))) }
+  }
+  note
 }

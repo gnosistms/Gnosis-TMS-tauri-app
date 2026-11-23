@@ -23,6 +23,7 @@ mod font_review;
 mod page_preview;
 mod preview_fonts;
 mod qr_footnotes;
+mod qr_packing;
 
 pub(crate) use preview_fonts::{start_project_book_preview_fonts, BookPreviewFontsInput};
 
@@ -885,6 +886,7 @@ async fn run_pdf_export(
     );
 
     let rendered_path = workspace.join("chapter.pdf");
+    qr_packing::prepare(app, &workspace, &font_dir, &fallback_fonts, &cancelled).await?;
     compile_typst(
         app,
         &workspace,
@@ -1485,31 +1487,31 @@ fn prepare_typst_workspace(
         .map_err(|error| format!("Could not prepare the title ornament for the PDF: {error}"))?;
     write_droplet_package(workspace)?;
     let mut source = typst_preamble(document, options.paper_size);
+    let body = if document.book_parts.is_empty() {
+        render_typst_chapter(document, &image_paths, options, cancelled, None, false)?
+    } else {
+        render_typst_book(document, &image_paths, options, cancelled)?
+    };
     if options.footnote_links == PdfFootnoteLinks::Qr {
         fs::write(
             workspace.join("qr-footnotes.typ"),
             include_str!("pdf_export/qr_footnotes.typ"),
         )
         .map_err(|error| format!("Could not prepare the QR footnote layout: {error}"))?;
-        source.push_str(qr_footnotes::IMPORT);
+        if body.matches("#footnote[#gnosis-qr-note(").nth(1).is_some() {
+            qr_packing::initialize(workspace)?;
+            // The native entry gap is relative to body type. Followers cancel
+            // the same absolute length from inside smaller footnote type.
+            let (_, _, body_size, _) = body_font_style(document);
+            source.push_str(&format!(
+                "#let gnosis-footnote-gap = 0.73 * {body_size}pt\n"
+            ));
+            source.push_str(qr_packing::IMPORT);
+        } else {
+            source.push_str(qr_footnotes::IMPORT);
+        }
     }
-    if document.book_parts.is_empty() {
-        source.push_str(&render_typst_chapter(
-            document,
-            &image_paths,
-            options,
-            cancelled,
-            None,
-            false,
-        )?);
-    } else {
-        source.push_str(&render_typst_book(
-            document,
-            &image_paths,
-            options,
-            cancelled,
-        )?);
-    }
+    source.push_str(&body);
     if matches!(options.layout, TypstLayout::TextOnly) {
         source.push_str(BOOK_PAGINATION_RULE);
     }
@@ -3686,8 +3688,36 @@ fn emit_progress(
 }
 
 #[cfg(test)]
+fn run_typst_for_test(arguments: &[&std::ffi::OsStr], workspace: &Path) -> Option<Vec<u8>> {
+    let (Some(binary), Some(fonts)) = (
+        std::env::var_os("GNOSIS_TYPST_BIN"),
+        std::env::var_os("GNOSIS_TYPST_SMOKE_FONT_DIR"),
+    ) else {
+        return None;
+    };
+    let output = std::process::Command::new(binary)
+        .args(arguments)
+        .args(["--ignore-system-fonts", "--font-path"])
+        .arg(fonts)
+        .arg("--root")
+        .arg(workspace)
+        .arg("--package-path")
+        .arg(workspace.join("packages"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Some(output.stdout)
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    mod qr_rows;
 
     #[test]
     fn saved_font_control_only_appears_for_exported_coverage_gaps() {
