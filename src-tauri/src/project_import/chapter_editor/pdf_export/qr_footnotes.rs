@@ -8,7 +8,8 @@ use qrcode::{
     types::{Mode, QrError},
     EcLevel, QrCode, QrResult, Version,
 };
-use std::ops::Range;
+use regex::Regex;
+use std::{ops::Range, sync::LazyLock};
 use unicode_segmentation::UnicodeSegmentation;
 
 pub(super) const IMPORT: &str = "#import \"qr-footnotes.typ\": gnosis-qr-note\n";
@@ -68,47 +69,47 @@ fn note_links(source: &str) -> (String, Vec<NoteLink>) {
     (visible, links)
 }
 
-fn sentence_end(c: char) -> bool {
-    ".!?…。！？؟۔।॥".contains(c)
+// Unicode sentence terminals include, for example, Khmer ។ and Ethiopic ።.
+// Keep the ellipsis accepted by the original footnote renderer as well.
+static TERMINAL_RUN: LazyLock<Result<Regex, regex::Error>> =
+    LazyLock::new(|| Regex::new(r"[\p{Sentence_Terminal}…]+\z"));
+
+fn has_paragraph_break(whitespace: &str) -> bool {
+    whitespace.contains('\u{2029}')
+        || whitespace
+            .split_once('\n')
+            .is_some_and(|(_, rest)| rest.contains('\n'))
 }
 
-// The link must occupy a sentence of the surrounding note. A question inside
-// “She asked, …” does not qualify. Allow the sentence's period outside the
-// anchor and consume it with the sentence so it cannot be left in the prose.
+// Move the anchor only if neither edge cuts through the surrounding prose.
+// A paragraph can end with an unpunctuated prompt; a soft return can occur
+// anywhere in a sentence. Offsets into visible text and markup stay separate.
 fn removable_end(
     visible: &str,
     link: &NoteLink,
     source: &str,
     sentences: &[Range<usize>],
+    terminal: &Regex,
 ) -> Option<usize> {
     let words = &visible[link.visible.clone()];
     let trimmed = words.trim();
-    // A bare address on its own paragraph (for example, after a media
-    // caption with a second link) is an independent reference.
-    if trimmed == link.href
-        && visible[..link.visible.start]
-            .rsplit("\n\n")
-            .next()
-            .unwrap_or("")
-            .trim()
-            .is_empty()
-        && visible[link.visible.end..]
-            .split("\n\n")
-            .next()
-            .unwrap_or("")
-            .trim()
-            .is_empty()
-    {
-        return Some(link.markup.end);
+    if trimmed.is_empty() || trimmed.starts_with(['“', '‘', '"', '«', '「', '『']) {
+        return None;
     }
     let start = link.visible.start + words.len() - words.trim_start().len();
-    // Unicode sentence boundaries also occur at a single line break. Keep
-    // a linked continuation of an unfinished sentence in the prose.
+    let end = start + trimmed.len();
     let before = &visible[..start];
     let previous = before.trim_end();
-    if !previous.is_empty() && !before[previous.len()..].contains("\n\n") {
+    let gap = &before[previous.len()..];
+    if !previous.is_empty() && !has_paragraph_break(gap) {
         let previous = previous.trim_end_matches(['”', '’', '"', '»', '」', '』', ')', ']']);
-        if !previous.ends_with(sentence_end) {
+        if !terminal.is_match(previous) {
+            return None;
+        }
+        // Unicode keeps lowercase text after a period in the same segment.
+        // An isolated lowercase link after a space can still be a prompt.
+        let lowercase_prompt = !gap.is_empty() && trimmed.starts_with(char::is_lowercase);
+        if !lowercase_prompt && sentences.binary_search_by_key(&start, |s| s.start).is_err() {
             return None;
         }
         // Common citation prefixes and initials introduce what follows.
@@ -128,15 +129,21 @@ fn removable_end(
             }
         }
     }
-    let sentence = &sentences[sentences.binary_search_by_key(&start, |s| s.start).ok()?];
-    let tail = visible.get(start + trimmed.len()..sentence.end)?;
-    if !(tail.is_empty() || tail.chars().all(sentence_end))
-        || !visible[sentence.clone()].ends_with(sentence_end)
-        || trimmed.starts_with(['“', '‘', '"', '«', '「', '『'])
-    {
+    let after = &visible[end..];
+    let following = after.trim_start();
+    if following.is_empty() || has_paragraph_break(&after[..after.len() - following.len()]) {
+        return Some(link.markup.end);
+    }
+
+    // When prose follows, the link must end at a real sentence ending.
+    // If the author put the punctuation just outside the anchor, take it too.
+    let sentence = sentences.get(sentences.partition_point(|s| s.end < end))?;
+    let punctuation = terminal.find(&visible[sentence.clone()])?;
+    if end < sentence.start + punctuation.start() {
         return None;
     }
     // Only remove trailing punctuation when it is literal text at this anchor.
+    let tail = &visible[end..sentence.end];
     source[link.markup.end..]
         .starts_with(tail)
         .then_some(link.markup.end + tail.len())
@@ -183,6 +190,9 @@ pub(super) fn render(source: &str, number: usize) -> Result<Option<String>, Stri
         gap.trim().is_empty()
     }) && visible[previous_end..].trim().is_empty();
     let whole_link = links_only && links.len() == 1;
+    let terminal = TERMINAL_RUN
+        .as_ref()
+        .map_err(|error| format!("Could not classify PDF footnote punctuation: {error}"))?;
     let sentences: Vec<_> = visible
         .split_sentence_bound_indices()
         .filter_map(|(pos, text)| {
@@ -216,7 +226,7 @@ pub(super) fn render(source: &str, number: usize) -> Result<Option<String>, Stri
         let remove_to = if links_only {
             Some(link.markup.end)
         } else {
-            removable_end(&visible, &link, source, &sentences)
+            removable_end(&visible, &link, source, &sentences, terminal)
         };
         if let Some(end) = remove_to {
             prose.push_str(&source[cursor..link.markup.start]);
@@ -265,6 +275,57 @@ mod tests {
         ] {
             let output = body(source);
             assert!(output.split_once("], (").unwrap().0.contains("#link("));
+        }
+    }
+
+    #[test]
+    fn independent_prompts_need_no_final_punctuation_in_any_script() {
+        for (before, label, after) in [
+            ("Ê-lo-him là thiên thần. ", "Đọc thêm", ""),
+            ("The archive is open. ", "click here", ""),
+            ("前文。", "詳しくはこちら", ""),
+            ("مَن المترجم؟ ", "اقرأ المزيد", ""),
+            ("अध्याय समाप्त। ", "और पढ़ें", ""),
+            ("ឯកសារយោង។ ", "អានបន្ថែម", ""),
+            ("ማብራሪያ። ", "ተጨማሪ ያንብቡ", ""),
+            ("คำอธิบาย\n \n", "อ่านเพิ่มเติม", "\n\nข้อความถัดไป"),
+            ("", "Read more", "\n\nA separate paragraph."),
+            ("First note. ", "Play the audio. View the transcript", ""),
+        ] {
+            let source = format!("{before}<a href=\"https://example.org\">{label}</a>{after}");
+            let output = body(&source);
+            let (prose, codes) = output.split_once("], (").unwrap();
+            assert_eq!(
+                prose.strip_prefix("#gnosis-qr-note([").unwrap(),
+                render_footnote_typst(&format!("{before}{after}"), false),
+                "{source}"
+            );
+            assert!(codes.contains(&format!("words: {}", typst_string(label))));
+        }
+    }
+
+    #[test]
+    fn prompts_that_belong_to_a_larger_phrase_stay_in_both_places() {
+        for (before, label, after) in [
+            ("Đọc thêm về thiên thần ", "tại đây", "."),
+            ("Xin ", "đọc thêm", ""),
+            ("", "Click here", " for the recording."),
+            ("The editor wrote “", "Đọc thêm", "” in the margin."),
+            ("Read more. ", "Click here", "\nfor details."),
+            ("See Dr. ", "smith", ""),
+            ("The measured value is 3.", "14", ""),
+            ("資料を", "こちら", "から読む。"),
+            ("ดูข้อมูล", "เพิ่มเติม", ""),
+        ] {
+            let source = format!("{before}<a href=\"https://example.org\">{label}</a>{after}");
+            let output = body(&source);
+            let (prose, codes) = output.split_once("], (").unwrap();
+            assert_eq!(
+                prose.strip_prefix("#gnosis-qr-note([").unwrap(),
+                render_footnote_typst(&source, false),
+                "{source}"
+            );
+            assert!(codes.contains(&format!("words: {}", typst_string(label))));
         }
     }
 

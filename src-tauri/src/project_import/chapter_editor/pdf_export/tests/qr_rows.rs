@@ -84,7 +84,7 @@ fn adaptive_qr_rows_fit_every_paper_size_and_split_at_chapter_boundaries() {
     );
     let first = make_chapter("Reading the archive", &[
         ("Compare the two accounts[1] and the editor’s introduction.[2]", vec![
-            format!("Read the {}.", source("interview", "interview")),
+            format!("Ê-lo-him là thiên thần. {}", source("interview", "Đọc thêm")),
             format!("The editor discusses the {}.", source("notes", "notes")),
         ]),
         ("The catalogue provides additional context.[1]", vec![
