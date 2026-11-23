@@ -1,14 +1,18 @@
 export const DEFAULT_PDF_PAPER_SIZE = "a4";
+export const DEFAULT_PDF_FOOTNOTE_LINK_MODE = "qr";
 
 export const PDF_FOOTNOTE_LINK_MODES = [
-  { value: "links", label: "Clickable links only" },
-  { value: "urls", label: "Print URLs in parentheses" },
   { value: "qr", label: "Print QR codes" },
+  { value: "urls", label: "Print URLs in parentheses" },
+  { value: "links", label: "Clickable links only" },
 ];
 
-export function pdfFootnoteLinkMode(modal) {
-  return PDF_FOOTNOTE_LINK_MODES.some(({ value }) => value === modal?.pdfFootnoteLinkMode)
-    ? modal.pdfFootnoteLinkMode : (modal?.footnoteLinksAsPlainText ? "urls" : "links");
+export function pdfFootnoteLinkMode(options) {
+  const mode = options?.pdfFootnoteLinkMode;
+  if (PDF_FOOTNOTE_LINK_MODES.some(({ value }) => value === mode)) return mode;
+  // Older books could opt out of printing URLs before the PDF dropdown existed.
+  if (mode == null && options?.footnoteLinksAsPlainText === false) return "links";
+  return DEFAULT_PDF_FOOTNOTE_LINK_MODE;
 }
 
 export const PDF_PAPER_SIZES = [

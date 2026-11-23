@@ -402,6 +402,7 @@ export function openProjectExportOptions(render, projectId) {
     projectId, projectTitle: project.title || project.name, ...composition,
     chapterIds: composition.book.items.filter((item) => item.kind === "chapter" && bookItemIncluded(item)).map((item) => item.chapterId),
     ...savedOptions,
+    pdfFootnoteLinkMode: pdfFootnoteLinkMode(savedOptions),
     wordpress: { ...createEditorExportModalState().wordpress, ...savedOptions.wordpress },
   };
   if (scope.selectedOptionId === "link:team") scope.selectedOptionId = "file:pdf";

@@ -166,7 +166,6 @@ test("project PDF export inspects the entire book and exposes cancellation", asy
   await page.evaluate(() => { window.__holdPdfInspection = false; window.__resolvePdfInspection(); });
   await expect(save).toBeEnabled();
   await expect(save.locator(".button__spinner")).toHaveCount(0);
-  await chooseBookOption(modal, "editor-export-pdf-footnote-links", "Print QR codes");
   await expect(modal.locator("[data-editor-export-pdf-footnote-links]")).toHaveValue("qr");
   await page.screenshot({ path: test.info().outputPath("project-export.png") });
   await modal.getByRole("button", { name: "Save", exact: true }).click();
