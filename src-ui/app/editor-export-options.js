@@ -1,5 +1,16 @@
 export const DEFAULT_PDF_PAPER_SIZE = "a4";
 
+export const PDF_FOOTNOTE_LINK_MODES = [
+  { value: "links", label: "Clickable links only" },
+  { value: "urls", label: "Print URLs in parentheses" },
+  { value: "qr", label: "Print QR codes" },
+];
+
+export function pdfFootnoteLinkMode(modal) {
+  return PDF_FOOTNOTE_LINK_MODES.some(({ value }) => value === modal?.pdfFootnoteLinkMode)
+    ? modal.pdfFootnoteLinkMode : (modal?.footnoteLinksAsPlainText ? "urls" : "links");
+}
+
 export const PDF_PAPER_SIZES = [
   { value: "us-letter", widthMm: 215.9, heightMm: 279.4, label: "US Letter (8.5 × 11 in)" },
   { value: "us-legal", widthMm: 215.9, heightMm: 355.6, label: "US Legal (8.5 × 14 in)" },

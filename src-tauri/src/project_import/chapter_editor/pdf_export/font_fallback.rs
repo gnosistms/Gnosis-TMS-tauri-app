@@ -1015,7 +1015,7 @@ mod tests {
             target: PdfImageCacheTarget::Chapter("another-document".into()),
         });
         let options = PdfWorkspacePreparationOptions {
-            footnote_links_as_plain_text: false,
+            footnote_links: PdfFootnoteLinks::Links,
             paper_size: "a4",
             image_cache_session: &session,
             layout: TypstLayout::Export,

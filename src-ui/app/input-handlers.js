@@ -30,6 +30,7 @@ import {
   selectEditorExportLanguage,
   selectEditorExportPaperSize,
   toggleEditorExportFootnoteLinks,
+  selectPdfFootnoteLinkMode,
   toggleEditorExportOmitCustomHtml,
 } from "./editor-export-flow.js";
 import {
@@ -677,6 +678,11 @@ function handleEditorExportFootnoteLinksToggleInput(event, render) {
     return false;
   }
 
+  const select = event.target.closest("[data-editor-export-pdf-footnote-links]");
+  if (select instanceof HTMLSelectElement) {
+    selectPdfFootnoteLinkMode(render, select.value);
+    return true;
+  }
   const input = event.target.closest("[data-editor-export-footnote-links-toggle]");
   if (!(input instanceof HTMLInputElement)) {
     return false;

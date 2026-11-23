@@ -14,7 +14,7 @@ export function saveBookSettings(modal) {
   if (!modal?.projectId || !modal.book) return;
   const records = readPersistentValue(key(), {});
   const previous = records?.[modal.projectId] ?? {};
-  const options = Object.fromEntries(["selectedOptionId", "pdfPaperSize", "footnoteLinksAsPlainText", "omitCustomHtml", "expandedCategoryIds"].map((field) => [field, modal[field]]));
+  const options = Object.fromEntries(["selectedOptionId", "pdfPaperSize", "pdfFootnoteLinkMode", "footnoteLinksAsPlainText", "omitCustomHtml", "expandedCategoryIds"].map((field) => [field, modal[field]]));
   // Destination choices are preferences; credentials and transient jobs are never stored.
   options.wordpress = Object.fromEntries(["title", "mode", "selectedPostId", "searchQuery"].map((field) => [field, modal.wordpress?.[field]]));
   const connection = modal.wordpress?.connection;

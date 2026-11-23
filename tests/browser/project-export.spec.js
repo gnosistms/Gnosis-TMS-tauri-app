@@ -166,12 +166,16 @@ test("project PDF export inspects the entire book and exposes cancellation", asy
   await page.evaluate(() => { window.__holdPdfInspection = false; window.__resolvePdfInspection(); });
   await expect(save).toBeEnabled();
   await expect(save.locator(".button__spinner")).toHaveCount(0);
+  await chooseBookOption(modal, "editor-export-pdf-footnote-links", "Print QR codes");
+  await expect(modal.locator("[data-editor-export-pdf-footnote-links]")).toHaveValue("qr");
   await page.screenshot({ path: test.info().outputPath("project-export.png") });
   await modal.getByRole("button", { name: "Save", exact: true }).click();
   await expect(modal.getByRole("button", { name: "Cancel export", exact: true })).toBeEnabled();
   await expect.poll(async () => page.evaluate(() => window.__projectExports.map((call) => call.command))).toContain("start_gtms_chapter_pdf_export");
   const calls = await page.evaluate(() => window.__projectExports);
   expect(calls[0].input.chapterIds).toHaveLength(3);
+  expect(calls.findLast((call) => call.command === "inspect_gtms_chapter_pdf_fonts").input.pdfFootnoteLinkMode).toBe("qr");
+  expect(calls.find((call) => call.command === "start_gtms_chapter_pdf_export").input).toMatchObject({ pdfFootnoteLinkMode: "qr", footnoteLinksAsPlainText: false });
   expect(calls.find((call) => call.command === "start_gtms_chapter_pdf_export").input.chapterIds).toEqual(calls[0].input.chapterIds);
   await modal.getByRole("button", { name: "Cancel export", exact: true }).click();
   await expect.poll(async () => page.evaluate(() => window.__projectExports.at(-1).command)).toBe("cancel_gtms_chapter_pdf_export");

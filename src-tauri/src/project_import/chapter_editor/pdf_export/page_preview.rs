@@ -30,6 +30,8 @@ struct ContentsBookScope {
     #[serde(default)]
     project_title: String,
     book_items: Vec<BookItemInput>,
+    #[serde(default)]
+    pdf_footnote_link_mode: Option<PdfFootnoteLinks>,
 }
 
 #[derive(Clone, Serialize)]
@@ -213,7 +215,7 @@ async fn render_page_preview(
         let session = preview_image_session();
         let options = PdfWorkspacePreparationOptions {
             paper_size,
-            footnote_links_as_plain_text: true,
+            footnote_links: PdfFootnoteLinks::Urls,
             image_cache_session: &session,
             layout: proof
                 .as_ref()
@@ -309,6 +311,7 @@ fn book_export_input(
         output_path: String::new(),
         paper_size: paper_size.to_string(),
         footnote_links_as_plain_text: true,
+        pdf_footnote_link_mode: book.pdf_footnote_link_mode,
         omit_custom_html: false,
     }
 }
@@ -330,6 +333,7 @@ fn pagination_key(app: &AppHandle, input: &PdfChapterExportInput) -> Result<Stri
         &input.book_items,
         &input.language_code,
         &input.paper_size,
+        input.pdf_footnote_link_mode,
     ))
     .map_err(|_| "Could not prepare the contents preview.".to_string())?;
     Ok(format!("{head}:{scope}"))
@@ -394,7 +398,10 @@ async fn paginate_book(
         let session = preview_image_session();
         let options = PdfWorkspacePreparationOptions {
             paper_size: normalize_pdf_paper_size(&input.paper_size)?,
-            footnote_links_as_plain_text: input.footnote_links_as_plain_text,
+            footnote_links: PdfFootnoteLinks::resolve(
+                input.pdf_footnote_link_mode,
+                input.footnote_links_as_plain_text,
+            ),
             image_cache_session: &session,
             layout: TypstLayout::TextOnly,
         };
@@ -527,7 +534,7 @@ mod tests {
     fn text_only_options(session: &PdfImageCacheSession) -> PdfWorkspacePreparationOptions<'_> {
         PdfWorkspacePreparationOptions {
             paper_size: "a5",
-            footnote_links_as_plain_text: true,
+            footnote_links: PdfFootnoteLinks::Urls,
             image_cache_session: session,
             layout: TypstLayout::TextOnly,
         }
@@ -732,6 +739,7 @@ mod tests {
         let mut contents = book_item("toc", "contents", "Contents");
         contents.include_section_headings = true;
         let scope = ContentsBookScope {
+            pdf_footnote_link_mode: None,
             installation_id: 1,
             repo_name: "book".into(),
             project_id: Some("project".into()),
@@ -938,7 +946,7 @@ mod tests {
         };
         let options = PdfWorkspacePreparationOptions {
             paper_size: "a5",
-            footnote_links_as_plain_text: true,
+            footnote_links: PdfFootnoteLinks::Urls,
             image_cache_session: &session,
             layout: TypstLayout::Export,
         };

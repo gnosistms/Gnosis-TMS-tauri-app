@@ -22,6 +22,7 @@ mod font_preferences;
 mod font_review;
 mod page_preview;
 mod preview_fonts;
+mod qr_footnotes;
 
 pub(crate) use preview_fonts::{start_project_book_preview_fonts, BookPreviewFontsInput};
 
@@ -31,7 +32,7 @@ use super::chapter_export::{
     apply_print_custom_html_policy, build_scoped_export_document,
     download_public_image_bytes_detailed, export_text_style, footnote_paragraphs, inline_segments,
     inline_visible_text, load_export_chapters, quote_paragraphs, ExportBlock,
-    ExportChapterFileInput, ExportDocument, ExportImage, InlineStyleState,
+    ExportChapterFileInput, ExportDocument, ExportImage, InlineStyleState, PdfFootnoteLinks,
 };
 use super::list_style::{
     is_list_text_style, list_events, list_items, list_kind, ListEvent, ListItem, ListKind,
@@ -120,7 +121,7 @@ struct PdfImagePreparationCache {
 }
 
 struct PdfWorkspacePreparationOptions<'a> {
-    footnote_links_as_plain_text: bool,
+    footnote_links: PdfFootnoteLinks,
     paper_size: &'a str,
     image_cache_session: &'a PdfImageCacheSession,
     layout: TypstLayout<'a>,
@@ -221,6 +222,8 @@ pub(crate) struct PdfFontInspectionInput {
     omit_custom_html: Option<bool>,
     #[serde(default)]
     footnote_links_as_plain_text: bool,
+    #[serde(default)]
+    pdf_footnote_link_mode: Option<PdfFootnoteLinks>,
 }
 
 #[derive(Clone, Serialize)]
@@ -546,7 +549,11 @@ pub(crate) fn inspect_gtms_chapter_pdf_fonts(
         return Err("Choose the export language first.".to_string());
     }
     let omit_custom_html = input.omit_custom_html.unwrap_or(true);
-    let show_link_urls = input.footnote_links_as_plain_text;
+    let mode = PdfFootnoteLinks::resolve(
+        input.pdf_footnote_link_mode,
+        input.footnote_links_as_plain_text,
+    );
+    let show_link_urls = mode.prints_urls();
     let document = load_export_document(
         app,
         &ExportChapterFileInput {
@@ -564,6 +571,7 @@ pub(crate) fn inspect_gtms_chapter_pdf_fonts(
             output_path: String::new(),
             paper_size: "us-letter".to_string(),
             footnote_links_as_plain_text: show_link_urls,
+            pdf_footnote_link_mode: Some(mode),
             omit_custom_html,
         },
     )?;
@@ -779,13 +787,16 @@ async fn run_pdf_export(
     );
     let load_app = app.clone();
     let load_input = input;
-    let (document, output_path, footnote_links_as_plain_text, omit_custom_html) =
+    let (document, output_path, footnote_links, omit_custom_html) =
         tauri::async_runtime::spawn_blocking(move || {
             let document = load_export_document(&load_app, &load_input)?;
             Ok::<_, String>((
                 document,
                 PathBuf::from(&load_input.output_path),
-                load_input.footnote_links_as_plain_text,
+                PdfFootnoteLinks::resolve(
+                    load_input.pdf_footnote_link_mode,
+                    load_input.footnote_links_as_plain_text,
+                ),
                 load_input.omit_custom_html,
             ))
         })
@@ -816,7 +827,7 @@ async fn run_pdf_export(
     let prep_job_id = job_id.to_string();
     let prepared = tauri::async_runtime::spawn_blocking(move || {
         let options = PdfWorkspacePreparationOptions {
-            footnote_links_as_plain_text,
+            footnote_links,
             paper_size,
             image_cache_session: &image_cache_session,
             layout: TypstLayout::Export,
@@ -1474,6 +1485,14 @@ fn prepare_typst_workspace(
         .map_err(|error| format!("Could not prepare the title ornament for the PDF: {error}"))?;
     write_droplet_package(workspace)?;
     let mut source = typst_preamble(document, options.paper_size);
+    if options.footnote_links == PdfFootnoteLinks::Qr {
+        fs::write(
+            workspace.join("qr-footnotes.typ"),
+            include_str!("pdf_export/qr_footnotes.typ"),
+        )
+        .map_err(|error| format!("Could not prepare the QR footnote layout: {error}"))?;
+        source.push_str(qr_footnotes::IMPORT);
+    }
     if document.book_parts.is_empty() {
         source.push_str(&render_typst_chapter(
             document,
@@ -1511,6 +1530,7 @@ fn render_typst_chapter(
     let mut anchored_footnotes: HashMap<usize, Vec<(usize, String)>> = HashMap::new();
     let mut anchored_numbers = HashSet::new();
     for block in &document.blocks {
+        check_cancelled(cancelled)?;
         if let ExportBlock::Footnote {
             number,
             marker,
@@ -1518,10 +1538,10 @@ fn render_typst_chapter(
             text,
         } = block
         {
-            anchored_footnotes
-                .entry(*anchor_block)
-                .or_default()
-                .push((*marker, text.clone()));
+            anchored_footnotes.entry(*anchor_block).or_default().push((
+                *marker,
+                pdf_note_body(text, *number, options.footnote_links)?,
+            ));
             anchored_numbers.insert(*number);
         }
     }
@@ -1584,18 +1604,13 @@ fn render_typst_chapter(
                             .iter()
                             .map(|item| item.text.as_str())
                             .collect::<Vec<_>>();
-                        let items_inline = render_inline_typst_parts_with_footnotes(
-                            &texts,
-                            footnotes,
-                            options.footnote_links_as_plain_text,
-                        );
+                        let items_inline = render_with_prepared_footnotes(&texts, footnotes);
                         render_typst_list(kind, &items, &items_inline)
                     }
                     // A quote's paragraphs are set as paragraphs of one quote.
-                    None => render_inline_typst_parts_with_footnotes(
+                    None => render_with_prepared_footnotes(
                         &quote_paragraphs(text_style, text),
                         footnotes,
-                        options.footnote_links_as_plain_text,
                     )
                     .join("\n\n"),
                 };
@@ -1678,7 +1693,7 @@ fn render_typst_chapter(
             ExportBlock::Footnote { number, text, .. } if !anchored_numbers.contains(number) => {
                 source.push_str(&format!(
                     "#footnote[{}]\n",
-                    render_footnote_typst(text, options.footnote_links_as_plain_text)
+                    pdf_note_body(text, *number, options.footnote_links)?
                 ));
             }
             ExportBlock::Footnote { .. } => {}
@@ -1699,7 +1714,7 @@ fn render_typst_chapter(
                                 typst_string(path),
                                 render_typst_image_caption(
                                     caption,
-                                    options.footnote_links_as_plain_text
+                                    options.footnote_links.prints_urls()
                                 )
                             )
                         }
@@ -1723,7 +1738,7 @@ fn render_typst_chapter(
                         &body,
                         caption,
                         floating,
-                        options.footnote_links_as_plain_text,
+                        options.footnote_links.prints_urls(),
                     )
                 };
                 if cover {
@@ -1973,13 +1988,13 @@ fn render_typst_book(
                 source.push_str(&format!(
                     "#gnosis-image({}, caption: [{}])\n",
                     typst_string(path),
-                    render_typst_image_caption(&item.caption, options.footnote_links_as_plain_text)
+                    render_typst_image_caption(&item.caption, options.footnote_links.prints_urls())
                 ));
             }
             if !item.caption.trim().is_empty() {
                 source.push_str(&format!(
                     "#v(0.85em)\n{}\n",
-                    render_typst_image_caption(&item.caption, options.footnote_links_as_plain_text)
+                    render_typst_image_caption(&item.caption, options.footnote_links.prints_urls())
                 ));
             }
             source.push_str("]\n#v(1fr)\n");
@@ -2003,7 +2018,7 @@ fn render_typst_book(
                         if inline_visible_text(&text).is_empty() {
                             source.push_str("#v(1.25em)\n");
                         } else {
-                            source.push_str(&render_inline_typst(&text, options.footnote_links_as_plain_text));
+                            source.push_str(&render_inline_typst(&text, options.footnote_links.prints_urls()));
                             source.push_str("#parbreak()\n");
                         }
                     }
@@ -2183,7 +2198,7 @@ fn prepare_pdf_workspace(
         let plan = font_fallback::resolve(
             document,
             font_dir,
-            options.footnote_links_as_plain_text,
+            options.footnote_links.prints_urls(),
             &approved,
             cancelled,
         )?;
@@ -3153,10 +3168,12 @@ const GNOSIS_QUOTE_RULE: &str = r#"#let gnosis-citation(body, scale: 1) = [#line
 "#;
 
 fn render_inline_typst(text: &str, show_link_urls: bool) -> String {
-    let normalized = text.nfc().collect::<String>();
-    inline_segments(&normalized)
+    inline_segments(text)
         .into_iter()
-        .map(|segment| render_styled_typst_text(&segment.text, &segment.style, show_link_urls))
+        .map(|segment| {
+            let words = segment.text.nfc().collect::<String>();
+            render_styled_typst_text(&words, &segment.style, show_link_urls)
+        })
         .collect::<Vec<_>>()
         .join("")
 }
@@ -3245,14 +3262,32 @@ fn render_inline_typst_with_footnotes(
         .unwrap_or_default()
 }
 
-/// Renders the parts of one block (a paragraph, the paragraphs of a quote, or the
-/// items of a list) that share the block's footnotes. Each footnote is set at its marker in the first part that
-/// has it.
+#[cfg(test)]
 fn render_inline_typst_parts_with_footnotes(
     texts: &[&str],
     footnotes: &[(usize, String)],
-    footnote_links_as_plain_text: bool,
+    urls: bool,
 ) -> Vec<String> {
+    let prepared = footnotes
+        .iter()
+        .map(|(marker, text)| (*marker, render_footnote_typst(text, urls)))
+        .collect::<Vec<_>>();
+    render_with_prepared_footnotes(texts, &prepared)
+}
+
+fn pdf_note_body(text: &str, number: usize, mode: PdfFootnoteLinks) -> Result<String, String> {
+    if mode == PdfFootnoteLinks::Qr {
+        if let Some(body) = qr_footnotes::render(text, number)? {
+            return Ok(body);
+        }
+    }
+    Ok(render_footnote_typst(text, mode.prints_urls()))
+}
+
+/// Renders the parts of one block (a paragraph, the paragraphs of a quote, or the
+/// items of a list) that share the block's footnotes. Each footnote is set at its marker in the first part that
+/// has it.
+fn render_with_prepared_footnotes(texts: &[&str], footnotes: &[(usize, String)]) -> Vec<String> {
     if footnotes.is_empty() {
         return texts
             .iter()
@@ -3289,10 +3324,7 @@ fn render_inline_typst_parts_with_footnotes(
                     if last_emitted_footnote {
                         rendered.push_str("#super[,]");
                     }
-                    rendered.push_str(&format!(
-                        "#footnote[{}]",
-                        render_footnote_typst(note, footnote_links_as_plain_text)
-                    ));
+                    rendered.push_str(&format!("#footnote[{note}]"));
                     used.insert(marker);
                     last_emitted_footnote = true;
                 }
@@ -3322,10 +3354,7 @@ fn render_inline_typst_parts_with_footnotes(
             if last_emitted_footnote {
                 rendered.push_str("#super[,]");
             }
-            rendered.push_str(&format!(
-                "#footnote[{}]",
-                render_footnote_typst(note, footnote_links_as_plain_text)
-            ));
+            rendered.push_str(&format!("#footnote[{note}]"));
             used.insert(*marker);
             last_emitted_footnote = true;
         }
@@ -3429,9 +3458,20 @@ fn render_styled_typst_text(text: &str, style: &InlineStyleState, show_link_urls
         } else {
             String::new()
         };
-        rendered = format!("#link({})[{rendered}]{suffix}", typst_string(link));
+        rendered = format!("#link({})[{rendered}]{suffix}", typst_link_target(link));
     }
     rendered
+}
+
+// PDF URI annotations use ASCII. Preserve non-ASCII destinations in the QR
+// payload and use their browser-equivalent URI for clickable text and images.
+fn typst_link_target(url: &str) -> String {
+    if !url.is_ascii() {
+        if let Ok(uri) = url::Url::parse(url) {
+            return typst_string(uri.as_str());
+        }
+    }
+    typst_string(url)
 }
 
 fn typst_string(value: &str) -> String {
@@ -4421,7 +4461,7 @@ mod tests {
         let session = begin_pdf_image_cache(&test_image_cache_scope("title-layout"));
         let options = PdfWorkspacePreparationOptions {
             paper_size: "a5",
-            footnote_links_as_plain_text: true,
+            footnote_links: PdfFootnoteLinks::Urls,
             image_cache_session: &session,
             layout: TypstLayout::Export,
         };
@@ -4631,7 +4671,7 @@ mod tests {
         };
         let cache_session = begin_pdf_image_cache(&test_image_cache_scope("book-smoke"));
         let options = PdfWorkspacePreparationOptions {
-            footnote_links_as_plain_text: true,
+            footnote_links: PdfFootnoteLinks::Urls,
             paper_size: "a5",
             image_cache_session: &cache_session,
             layout: TypstLayout::Export,
@@ -4801,7 +4841,7 @@ mod tests {
         };
         let cache_session = begin_pdf_image_cache(&test_image_cache_scope("book-section"));
         let options = PdfWorkspacePreparationOptions {
-            footnote_links_as_plain_text: true,
+            footnote_links: PdfFootnoteLinks::Urls,
             paper_size: "us-letter",
             image_cache_session: &cache_session,
             layout: TypstLayout::Export,
@@ -5116,7 +5156,7 @@ mod tests {
         let session = begin_pdf_image_cache(&test_image_cache_scope("dropcap-lines"));
         let options = PdfWorkspacePreparationOptions {
             paper_size: "a5",
-            footnote_links_as_plain_text: true,
+            footnote_links: PdfFootnoteLinks::Urls,
             image_cache_session: &session,
             layout: TypstLayout::Export,
         };
@@ -5221,7 +5261,7 @@ mod tests {
         let session = begin_pdf_image_cache(&test_image_cache_scope("multi-paragraph-quote"));
         let options = PdfWorkspacePreparationOptions {
             paper_size: "a5",
-            footnote_links_as_plain_text: true,
+            footnote_links: PdfFootnoteLinks::Urls,
             image_cache_session: &session,
             layout: TypstLayout::Export,
         };
@@ -5274,7 +5314,7 @@ mod tests {
         let session = begin_pdf_image_cache(&test_image_cache_scope("quote-spacing"));
         let options = PdfWorkspacePreparationOptions {
             paper_size: "a5",
-            footnote_links_as_plain_text: true,
+            footnote_links: PdfFootnoteLinks::Urls,
             image_cache_session: &session,
             layout: TypstLayout::Export,
         };
@@ -5327,7 +5367,7 @@ mod tests {
         let session = begin_pdf_image_cache(&test_image_cache_scope("body-citation"));
         let options = PdfWorkspacePreparationOptions {
             paper_size: "a5",
-            footnote_links_as_plain_text: true,
+            footnote_links: PdfFootnoteLinks::Urls,
             image_cache_session: &session,
             layout: TypstLayout::Export,
         };
@@ -5376,7 +5416,7 @@ mod tests {
         let session = begin_pdf_image_cache(&test_image_cache_scope("paragraph-indents"));
         let options = PdfWorkspacePreparationOptions {
             paper_size: "a5",
-            footnote_links_as_plain_text: true,
+            footnote_links: PdfFootnoteLinks::Urls,
             image_cache_session: &session,
             layout: TypstLayout::Export,
         };
@@ -5433,7 +5473,7 @@ mod tests {
             )));
             let options = PdfWorkspacePreparationOptions {
                 paper_size: "a5",
-                footnote_links_as_plain_text: true,
+                footnote_links: PdfFootnoteLinks::Urls,
                 image_cache_session: &session,
                 layout: TypstLayout::Export,
             };
@@ -5473,7 +5513,7 @@ mod tests {
         let session = begin_pdf_image_cache(&test_image_cache_scope("quote-page-breaks"));
         let options = PdfWorkspacePreparationOptions {
             paper_size: "a5",
-            footnote_links_as_plain_text: true,
+            footnote_links: PdfFootnoteLinks::Urls,
             image_cache_session: &session,
             layout: TypstLayout::Export,
         };
@@ -5675,7 +5715,7 @@ mod tests {
         let session = begin_pdf_image_cache(&test_image_cache_scope("chapter-covers"));
         let options = PdfWorkspacePreparationOptions {
             paper_size: "a5",
-            footnote_links_as_plain_text: true,
+            footnote_links: PdfFootnoteLinks::Urls,
             image_cache_session: &session,
             layout: TypstLayout::Export,
         };
@@ -6190,6 +6230,101 @@ mod tests {
     }
 
     #[test]
+    fn qr_footnotes_compile_with_native_anchors_and_wrapped_rows() {
+        let workspace = pdf_workspace().unwrap();
+        let _cleanup = WorkspaceCleanup(workspace.clone());
+        let session = begin_pdf_image_cache(&test_image_cache_scope("qr-print"));
+        let options = PdfWorkspacePreparationOptions {
+            footnote_links: PdfFootnoteLinks::Qr,
+            paper_size: "a5",
+            image_cache_session: &session,
+            layout: TypstLayout::Export,
+        };
+        let media = super::super::chapter_export::AudioExport::QrFootnote.note_text(
+            &ExportImage::Url("https://example.org/interview.mp3#t=12".into()),
+            "The interview",
+        );
+        let mut collection = String::from(
+            r#"The editor asks “<a href="https://example.org/資料/訪談#question">Where does the story begin?</a>” in the transcript. "#,
+        );
+        for i in 1..=6 {
+            collection.push_str(&format!(r#"<a href="https://example.org/archive/recording-{i}?edition=2&amp;lang=en#start">Play recording {i}.</a> "#));
+        }
+        let note = |number, text: &str| ExportBlock::Footnote {
+            number,
+            marker: number,
+            anchor_block: Some(0),
+            text: text.into(),
+        };
+        let document = ExportDocument {
+            title: "Listening to the archive".into(), language_code: "en".into(), book_parts: vec![],
+            blocks: vec![
+                text_block("paragraph", "Listen to the original interview.[1] Compare its opening question across six related recordings.[2]"),
+                note(1, &media),
+                note(2, &collection),
+            ],
+        };
+        let book = ExportDocument {
+            book_parts: vec![super::super::book_export::BookPart {
+                item: BookItemInput {
+                    kind: "chapter".into(),
+                    id: "c1".into(),
+                    title: document.title.clone(),
+                    ..Default::default()
+                },
+                document: document.clone(),
+            }],
+            ..document.clone()
+        };
+        for document in [&document, &book] {
+            prepare_typst_workspace(
+                None,
+                "",
+                &workspace,
+                document,
+                &options,
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+            let source = fs::read_to_string(workspace.join("chapter.typ")).unwrap();
+            assert_eq!(source.matches("#footnote[#gnosis-qr-note(").count(), 2);
+            assert_eq!(source.matches("modules: ").count(), 8);
+            if let (Some(binary), Some(fonts)) = (
+                std::env::var_os("GNOSIS_TYPST_BIN"),
+                std::env::var_os("GNOSIS_TYPST_SMOKE_FONT_DIR"),
+            ) {
+                let pdf = workspace.join("proof.pdf");
+                let result = std::process::Command::new(binary)
+                    .current_dir(&workspace)
+                    .args([
+                        "compile",
+                        "--root",
+                        ".",
+                        "--package-path",
+                        "packages",
+                        "--ignore-system-fonts",
+                        "--font-path",
+                    ])
+                    .arg(fonts)
+                    .arg("chapter.typ")
+                    .arg(&pdf)
+                    .output()
+                    .unwrap();
+                assert!(
+                    result.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&result.stderr)
+                );
+                if document.book_parts.is_empty() {
+                    if let Some(dest) = std::env::var_os("GNOSIS_QR_SMOKE_OUTPUT") {
+                        fs::copy(pdf, dest).unwrap();
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn generated_typst_compiles_when_smoke_runtime_is_configured() {
         let Some(typst_binary) = std::env::var_os("GNOSIS_TYPST_BIN") else {
             return;
@@ -6280,7 +6415,7 @@ mod tests {
         };
         let image_cache_session = begin_pdf_image_cache(&test_image_cache_scope("smoke-chapter"));
         let options = PdfWorkspacePreparationOptions {
-            footnote_links_as_plain_text: true,
+            footnote_links: PdfFootnoteLinks::Urls,
             paper_size: "a4",
             image_cache_session: &image_cache_session,
             layout: TypstLayout::Export,
@@ -6457,7 +6592,7 @@ mod tests {
         let session = begin_pdf_image_cache(&test_image_cache_scope("list-rows"));
         let options = PdfWorkspacePreparationOptions {
             paper_size: "a5",
-            footnote_links_as_plain_text: true,
+            footnote_links: PdfFootnoteLinks::Urls,
             image_cache_session: &session,
             layout: TypstLayout::Export,
         };

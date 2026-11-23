@@ -99,14 +99,14 @@ pub(super) fn prepare(
             }
             ExportBlock::Image { caption, .. } => {
                 image_number += 1;
-                if review_plan.affected(caption, options.footnote_links_as_plain_text) {
+                if review_plan.affected(caption, options.footnote_links.prints_urls()) {
                     excerpts.push((
                         format!("Image {image_number} caption"),
                         format!(
                             "#align(center)[{}]\n",
                             render_typst_image_caption(
                                 caption,
-                                options.footnote_links_as_plain_text
+                                options.footnote_links.prints_urls()
                             )
                         ),
                     ));
@@ -115,12 +115,12 @@ pub(super) fn prepare(
             // The print policy turned media into link paragraphs.
             ExportBlock::Media { .. } => {}
             ExportBlock::Footnote { number, text, .. } => {
-                if review_plan.affected(text, options.footnote_links_as_plain_text) {
+                if review_plan.affected(text, options.footnote_links.prints_urls()) {
                     // Same size, number gutter, and text alignment as native PDF
                     // footnote entries; no invented anchor paragraph is required.
                     excerpts.push((format!("Footnote {number}"), format!(
                         "#text(size: 0.85em)[#grid(columns: (12pt, 1fr), column-gutter: 3pt, align: (end + top, start + top), [#text({})], [{}])]\n",
-                        typst_string(&format!("{number}.")), render_inline_typst(text, options.footnote_links_as_plain_text)
+                        typst_string(&format!("{number}.")), pdf_note_body(text, *number, options.footnote_links)?
                     )));
                 }
             }
@@ -143,6 +143,9 @@ pub(super) fn prepare(
     }
     let mut source = plan.review_rules(review_plan);
     source.push_str(&typst_preamble(document, options.paper_size));
+    if options.footnote_links == PdfFootnoteLinks::Qr {
+        source.push_str(qr_footnotes::IMPORT);
+    }
     source.push_str("#set page(height: auto, margin: (x: 0.85in, y: 12pt), numbering: none)\n");
     // Width and horizontal margins match the final PDF. Compact vertical margins
     // crop each sample without changing the paragraph's available line width.
@@ -388,7 +391,7 @@ mod tests {
         let scope = tests_scope();
         let options = PdfWorkspacePreparationOptions {
             paper_size: "a4",
-            footnote_links_as_plain_text: true,
+            footnote_links: PdfFootnoteLinks::Urls,
             image_cache_session: &scope,
             layout: TypstLayout::Export,
         };
@@ -492,7 +495,7 @@ mod tests {
         let scope = tests_scope();
         let options = PdfWorkspacePreparationOptions {
             paper_size: "a4",
-            footnote_links_as_plain_text: false,
+            footnote_links: PdfFootnoteLinks::Links,
             image_cache_session: &scope,
             layout: TypstLayout::Export,
         };
@@ -664,7 +667,7 @@ mod tests {
         let scope = tests_scope();
         let options = PdfWorkspacePreparationOptions {
             paper_size: "a4",
-            footnote_links_as_plain_text: true,
+            footnote_links: PdfFootnoteLinks::Urls,
             image_cache_session: &scope,
             layout: TypstLayout::Export,
         };

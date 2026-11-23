@@ -148,7 +148,9 @@ test("PDF pane explains the persistent serif fonts and shows job progress", () =
   assert.match(html, /role="progressbar"[^>]*aria-valuenow="46"/);
   assert.match(html, /data-action="close-editor-export-options"[^>]*>\s*Cancel export\s*</);
   assert.doesNotMatch(html, /data-action="close-editor-export-options" disabled/);
-  assert.match(html, /Show links in footnotes as plain text/);
+  assert.match(html, /data-editor-export-pdf-footnote-links disabled/);
+  assert.match(html, /Print QR codes/);
+  assert.match(html, /Print URLs in parentheses/);
   assert.match(html, /Omit custom HTML/);
 });
 

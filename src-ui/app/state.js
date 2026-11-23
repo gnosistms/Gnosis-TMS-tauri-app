@@ -907,6 +907,8 @@ export function createEditorExportModalState() {
     // hyperlink is useless on paper, so print/electronic-incompatible formats should
     // surface the URL unless the user opts out.
     footnoteLinksAsPlainText: true,
+    // Unset in older book settings; inherit the existing print URL preference.
+    pdfFootnoteLinkMode: null,
     // Print-oriented option: omit custom-HTML rows from formats that can't render
     // raw HTML (DOCX/RTF/TXT/MD/XLSX/plain text/Vellum). On by default — custom HTML
     // is usually intended for electronic export only.
