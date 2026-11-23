@@ -34,8 +34,10 @@ fn fit_and_check(workspace: &Path) -> serde_json::Value {
         let leader = positions.iter().find(|c| c.0 == row).unwrap();
         assert_eq!(leader.1, cell.1);
         assert!((leader.3 - cell.3).abs() < 0.05);
+        let offset = rows[cell.0.to_string()]["x"].as_f64().unwrap();
+        assert!((cell.2 - leader.2 - offset).abs() < 0.05);
         if row != cell.0 {
-            assert!(cell.2 > leader.2);
+            assert!(offset > 0.0);
         }
     }
     rows
@@ -155,11 +157,11 @@ fn adaptive_qr_rows_fit_every_paper_size_and_split_at_chapter_boundaries() {
         assert!(measures.iter().all(|m| m["id"] != 3 && m["id"] != 8));
         let rows = fit_and_check(&workspace);
         assert_eq!(rows["1"]["span"], 2);
-        assert_eq!(rows["2"]["column"], 2);
-        assert_eq!(rows["7"]["column"], 3);
+        assert_eq!(rows["2"]["row"], 1);
+        assert_eq!(rows["7"]["row"], 4);
         assert_eq!(rows["9"]["span"], 2);
-        assert_eq!(rows["10"]["column"], 2);
-        assert_eq!(rows["11"]["column"], 3);
+        assert_eq!(rows["10"]["row"], 9);
+        assert_eq!(rows["11"]["row"], 9);
         assert_eq!(rows["12"]["span"], 2);
         assert_eq!(rows["14"]["row"], 14, "{paper}: {rows}");
         assert_eq!(rows["15"]["row"], 14);

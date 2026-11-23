@@ -1,5 +1,9 @@
 #let module = 0.254mm
 #let caption-size = 7.5pt
+#let horizontal-spacing = 0.55
+// Scale the space outside the square, which already includes its quiet zone.
+#let caption-column(side, limit) = side + horizontal-spacing * calc.max(0pt, limit - side)
+
 #let compact-caption(words, width) = {
   if measure(words).width <= width { return words }
   let prefix = ""
@@ -21,7 +25,7 @@
   let width = modules * pitch
   let side = width + 2 * border
   let caption-width = if caption-width == auto {
-    calc.min(max-width, calc.max(side, 22mm))
+    caption-column(side, calc.min(max-width, 22mm))
   } else { caption-width }
   let alignment = if at-text-indent { left } else { center }
   let body = block(width: caption-width, breakable: false, above: 0pt, below: 0pt)[
@@ -40,7 +44,7 @@
   (width: caption-width, body: body)
 }
 
-#let column-gap = 1mm
+#let column-gap = horizontal-spacing * 1mm
 #let row-gap = 1.8mm
 
 #let take-row(tiles, limit) = {
@@ -74,7 +78,7 @@
     return grid(columns: (width,), align: left + top, row-gutter: row-gap,
       ..pack-rows(tiles, width).map(row => row.body))
   }
-  let prose-gap = 2.5mm
+  let prose-gap = horizontal-spacing * 2.5mm
   let limit = if refs.len() == 1 { width } else { width / 2 }
   let tiles = refs.map(ref => tile(ref, limit))
   let narrow-rows = pack-rows(tiles, limit)
@@ -128,9 +132,12 @@
   }
 }
 
-#let unit-gap = 3mm
+// The nominal grid determines how many notes fit on a paper size. Actual
+// positions use each note's rendered width and the reduced gutter.
+#let nominal-gap = 3mm
+#let note-gap = horizontal-spacing * nominal-gap
 #let cell-label(id) = label("gnosis-qr-entry-" + str(id))
-#let unit-span(unit, count) = count * (unit + unit-gap) - unit-gap
+#let slot-width(pitch, span, gap) = span * pitch - gap
 #let note-number(note) = numbering(note.numbering, ..counter(footnote).at(note.location()))
 
 #let compact-cell(note, data, width, direction, checking: false) = {
@@ -141,10 +148,14 @@
   if checking and available < side { return none }
   let ref = data.ref + (direction: direction)
   let words-width = measure(text(size: caption-size, dir: direction, spacing: 100%, ref.words)).width
-  let caption = if data.has-prose { calc.max(side, calc.min(22mm, words-width)) } else { available }
+  let caption = if data.has-prose {
+    calc.max(side, calc.min(words-width, caption-column(side, 22mm)))
+  } else { caption-column(side, available) }
+  let body-width = if data.has-prose { available } else { caption }
   let code = tile(ref, available, caption-width: caption, whole-link: data.whole, at-text-indent: not data.has-prose).body
   let body = if data.has-prose {
-    let prose-width = available - caption - 1.5mm
+    let prose-gap = horizontal-spacing * 1.5mm
+    let prose-width = available - caption - prose-gap
     if checking and prose-width < 12mm { return none }
     let prose = block(width: prose-width, above: 0pt, below: 0pt)[
       #set text(dir: direction)
@@ -153,9 +164,10 @@
       #data.prose
     ]
     if checking and measure(prose, width: prose-width).height > measure(code, width: caption).height { return none }
-    grid(columns: (prose-width, caption), column-gutter: 1.5mm, align: top, prose, code)
+    grid(columns: (prose-width, caption), column-gutter: prose-gap, align: top, prose, code)
   } else { code }
-  grid(columns: (gutter, available), column-gutter: 3pt, align: (right + top, left + top), marker, body)
+  let cell = grid(columns: (gutter, body-width), column-gutter: 3pt, align: (right + top, left + top), marker, body)
+  (body: cell, width: gutter + 3pt + body-width)
 }
 
 #let entry-rule(entry, rows, entry-gap) = context {
@@ -171,19 +183,23 @@
   // shares an earlier entry's row. Only the leader reserves the row height.
   if cell != none and cell.row != id { v(-entry-gap) }
   layout(size => {
-    let count = calc.max(1, calc.floor((size.width + unit-gap) / (23mm + unit-gap)))
-    let unit = (size.width + unit-gap) / count - unit-gap
+    let count = calc.max(1, calc.floor((size.width + nominal-gap) / (23mm + nominal-gap)))
+    // Prose can use the freed gutter space. For a code-only note, compact-cell
+    // scales the unused part of its original slot by the same factor as the gap.
+    let gap = if data.has-prose { note-gap } else { nominal-gap }
+    let pitch = (size.width + gap) / count
     if cell == none {
       let span = if data.has-prose { calc.min(2, count) } else {
         let gutter = calc.max(12pt, measure(note-number(note) + [.]).width) + 3pt
-        calc.max(1, calc.ceil((gutter + (data.ref.modules + 8) * module + unit-gap) / (unit + unit-gap)))
+        calc.max(1, calc.ceil((gutter + (data.ref.modules + 8) * module + gap) / pitch))
       }
       if span < count {
-        let w = unit-span(unit, span)
+        let w = slot-width(pitch, span, gap)
         let preview = compact-cell(note, data, w, direction, checking: true)
         if preview != none {
-          let height = measure(text(dir: ltr, preview), width: w).height / 1pt
-          [#metadata((id: id, span: span, capacity: count, height: height))<gnosis-qr-measure>]
+          let height = measure(text(dir: ltr, preview.body), width: preview.width).height / 1pt
+          let advance = (preview.width + note-gap) / 1pt
+          [#metadata((id: id, span: span, capacity: count, height: height, advance: advance))<gnosis-qr-measure>]
         }
       }
       entry
@@ -191,19 +207,19 @@
       set text(dir: ltr)
       let height = cell.height * 1pt
       let leader = cell.row == id
-      let width = unit-span(unit, cell.span)
+      let width = slot-width(pitch, cell.span, gap)
       let content = compact-cell(note, data, width, direction)
       // A follower has no flow height. Give its placed content the full row
       // height so its QR image has the same drawing region as the leader.
       block(width: size.width, height: if leader { height } else { 0pt },
         breakable: false, above: 0pt, below: 0pt,
         place(top + left,
-          dx: cell.column * (unit + unit-gap),
+          dx: cell.x * 1pt,
           dy: if leader { 0pt } else { -height },
-          block(width: width, height: height, above: 0pt, below: 0pt)[
+          block(width: content.width, height: height, above: 0pt, below: 0pt)[
             #metadata(id)<gnosis-qr-cell>
             #metadata(id)#cell-label(id)
-            #content
+            #content.body
           ],
         ),
       )

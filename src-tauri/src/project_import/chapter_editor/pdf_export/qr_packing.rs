@@ -17,6 +17,8 @@ const PAGE_AUDIT: &str = "(anchors: query(footnote).map(n => n.location().page()
 
 #[derive(Deserialize)]
 struct Measure {
+    // Width of the rendered cell plus its trailing gutter, in Typst points.
+    advance: f64,
     id: usize,
     span: usize,
     capacity: usize,
@@ -26,7 +28,7 @@ struct Measure {
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 struct Cell {
     row: usize,
-    column: usize,
+    x: f64,
     span: usize,
     height: f64,
 }
@@ -56,18 +58,18 @@ fn pack(measures: &[Measure], breaks: &BTreeSet<usize>) -> Rows {
             end += 1;
         }
         if end > index + 1 {
-            let mut column = 0;
+            let mut x = 0.0;
             for note in &measures[index..end] {
                 rows.insert(
                     note.id,
                     Cell {
                         row: first.id,
-                        column,
+                        x,
                         span: note.span,
                         height,
                     },
                 );
-                column += note.span;
+                x += note.advance;
             }
         }
         index = end;
@@ -174,17 +176,15 @@ mod tests {
                 id,
                 span,
                 capacity: 4,
+                advance: 10.0 * span as f64 + 1.5,
                 height: id as f64,
             })
             .collect();
         let mut breaks = BTreeSet::new();
         let rows = pack(&measures, &breaks);
-        assert_eq!(
-            (rows[&3].row, rows[&3].column, rows[&3].height),
-            (1, 3, 3.0)
-        );
-        assert_eq!((rows[&5].row, rows[&5].column), (4, 1));
-        assert_eq!((rows[&9].row, rows[&9].column), (7, 3));
+        assert_eq!((rows[&3].row, rows[&3].x, rows[&3].height), (1, 33.0, 3.0));
+        assert_eq!((rows[&5].row, rows[&5].x), (4, 11.5));
+        assert_eq!((rows[&9].row, rows[&9].x), (7, 33.0));
         let pages = vec![1, 1, 2, 2, 2, 2, 2, 2, 2];
         let audit = PageAudit {
             cells: rows.keys().map(|&id| (id, pages[id - 1])).collect(),
@@ -193,6 +193,6 @@ mod tests {
         audit.split_crossing_rows(&rows, &mut breaks).unwrap();
         assert_eq!(breaks, BTreeSet::from([3]));
         let rows = pack(&measures, &breaks);
-        assert_eq!((rows[&5].row, rows[&5].column), (3, 2));
+        assert_eq!((rows[&5].row, rows[&5].x), (3, 23.0));
     }
 }
