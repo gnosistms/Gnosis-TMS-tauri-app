@@ -1,4 +1,4 @@
-#let module = 0.254mm
+#let module = 25.4mm * 5 / 600 // Five printer dots per side at 600 dpi.
 #let caption-size = 7.5pt
 #let horizontal-spacing = 0.55
 // Scale the space outside the square, which already includes its quiet zone.

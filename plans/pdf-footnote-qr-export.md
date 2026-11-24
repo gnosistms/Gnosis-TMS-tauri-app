@@ -16,3 +16,5 @@ The adaptive layout was checked with the bundled renderer at all eight paper siz
 The A5 book fixture renders “Ê-lo-him là thiên thần.” in the footnote and “Đọc thêm” once beneath the QR. Regression tests cover standalone and embedded links across eight languages, including unspaced Japanese text and a Thai prompt separated by a paragraph break.
 
 At 55% spacing, the A5 gap between adjacent codes in the multi-link note fell from 12.08 mm to 6.64 mm. In the row of four QR-only notes the gap from a code to the next number column fell from 12.81 mm to 7.05 mm. All 22 codes in the chapter and book samples retained their printed dimensions and decoded to their destinations at 300 and 600 dpi.
+
+The approved module pitch is 25.4 mm × 5 ÷ 600, about 0.212 mm. A 21 × 21 code measures 6.14 mm square including the four-module quiet zone. The native exporter uses this pitch for chapter and book PDFs.
