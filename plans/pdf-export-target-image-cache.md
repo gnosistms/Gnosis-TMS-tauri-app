@@ -1,4 +1,6 @@
-# PDF image cache follows the export target
+# PDF export image caching
+
+## Original in-memory cache
 
 The existing cache uses repository/project/anchor-chapter identity. Book images are
 already prepared from one flattened document, but a book has no distinct cache
@@ -33,5 +35,19 @@ Validation complete:
   Typst binary and cached fonts.
 - Strict library Clippy (-D warnings), Rust formatting, and diff whitespace passed.
 
-Status: complete. Cache state lasts for the running app process and is repopulated
-after an app restart or native development rebuild.
+## Reusing print-ready images between exports
+
+1. Trace URL, upload, chapter, book, preview, and restart behavior through the native export pipeline. Measure the preparation stage against the HNHH images.
+2. Reuse conversions on disk by source contents and print settings, within a bounded local cache. Keep source freshness, changed uploads, unsupported images, cancellation, and concurrent exports correct. Make the progress message distinguish reuse from conversion.
+3. Test cold and warm exports, simulated restarts, target switches, invalidation, and workspace materialization. Rebuild the local app and check the HNHH proof.
+
+The native exporter stores converted images in `export-images/pdf-prepared` under
+the app cache directory. Its key includes the source content hash, maximum dimensions,
+JPEG quality, and conversion revision. Downloaded originals refresh after seven days.
+Prepared images can be reused across chapters, books, previews, and app restarts.
+They have a separate 512 MiB budget, with the least recently used copies evicted first.
+Images already suitable for print pass through without a second disk copy.
+
+On macOS the HNHH book used 135 downloaded originals and one uploaded cover. A
+fresh process converted 124 images. A second process reused all 124 conversions
+from disk. The bytes written to the export workspace matched for all 136 images.

@@ -112,12 +112,14 @@ struct PdfImageCacheSession {
 #[derive(Clone)]
 struct CachedPreparedPdfImage {
     fingerprint: String,
+    download_stamp: Option<(std::time::SystemTime, u64)>,
     bytes: Arc<Vec<u8>>,
     aspect: Option<f64>,
 }
 
 #[derive(Default)]
 struct PdfImagePreparationCache {
+    disk_dir: Option<PathBuf>,
     scope: Option<PdfImageCacheScope>,
     generation: u64,
     entries: HashMap<String, CachedPreparedPdfImage>,
@@ -166,11 +168,17 @@ impl PdfImagePreparationCache {
         key: &str,
         fingerprint: &str,
     ) -> Option<CachedPreparedPdfImage> {
-        self.matches(session)
-            .then(|| self.entries.get(key))
-            .flatten()
-            .filter(|entry| entry.fingerprint == fingerprint)
-            .cloned()
+        if !self.matches(session) {
+            return None;
+        }
+        let entry = self.entries.get(key)?;
+        if let Some((dir, url)) = self.disk_dir.as_deref().zip(key.strip_prefix("url:")) {
+            let stamp = super::export_image_cache::fresh_download_stamp(dir, url)?;
+            if Some(stamp) != entry.download_stamp {
+                return None;
+            }
+        }
+        (entry.fingerprint == fingerprint).then(|| entry.clone())
     }
 
     fn insert(
@@ -189,7 +197,12 @@ impl PdfImagePreparationCache {
 
 fn pdf_image_preparation_cache() -> &'static Mutex<PdfImagePreparationCache> {
     static CACHE: OnceLock<Mutex<PdfImagePreparationCache>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(PdfImagePreparationCache::default()))
+    CACHE.get_or_init(|| {
+        Mutex::new(PdfImagePreparationCache {
+            disk_dir: super::export_image_cache::directory().map(Path::to_path_buf),
+            ..Default::default()
+        })
+    })
 }
 
 fn begin_pdf_image_cache(scope: &PdfImageCacheScope) -> PdfImageCacheSession {
@@ -2469,6 +2482,10 @@ fn prepare_typst_images_with_cache(
         }
     }
 
+    let disk_dir = image_cache
+        .lock()
+        .ok()
+        .and_then(|cache| cache.disk_dir.clone());
     let total_images = (cached_images.len() + pending_images.len()) as u64;
     let cached_count = cached_images.len() as u64;
     if let Some(app) = app {
@@ -2480,17 +2497,24 @@ fn prepare_typst_images_with_cache(
             &if pending_images.is_empty() {
                 format!("Reusing prepared images ({total_images} of {total_images})…")
             } else {
-                format!("Preparing images ({cached_count} of {total_images})…")
+                format!("Checking images ({cached_count} of {total_images})…")
             },
             PdfProgressValue::determinate(cached_count, total_images, "items"),
         );
     }
     let pending_order = pending_images
         .iter()
-        .map(|(key, _, _, fingerprint, _)| (key.clone(), fingerprint.clone()))
+        .map(|(key, _, _, fingerprint, _)| {
+            // A concurrent source refresh must never label older output as the new version.
+            let stamp = disk_dir
+                .as_deref()
+                .zip(key.strip_prefix("url:"))
+                .and_then(|(dir, url)| super::export_image_cache::fresh_download_stamp(dir, url));
+            (key.clone(), fingerprint.clone(), stamp)
+        })
         .collect::<Vec<_>>();
     let results = Mutex::new(HashMap::<String, Result<ResolvedPdfImage, String>>::new());
-    let completed = std::sync::atomic::AtomicU64::new(cached_count);
+    let progress = Mutex::new((cached_count, cached_count));
     run_pdf_image_pipeline(
         pending_images,
         cancelled,
@@ -2502,25 +2526,31 @@ fn prepare_typst_images_with_cache(
             (key, resolved)
         },
         |(key, resolved)| {
-            let result = resolved.map(|resolved| match resolved {
-                ResolvedPdfImage::Bytes(bytes) => {
-                    ResolvedPdfImage::Bytes(optimize_pdf_image_bytes(bytes))
+            let (result, reused) = match resolved {
+                Ok(ResolvedPdfImage::Bytes(bytes)) => {
+                    let (bytes, reused) = prepare_pdf_image_bytes(bytes, disk_dir.as_deref());
+                    (Ok(ResolvedPdfImage::Bytes(bytes)), reused)
                 }
-                placeholder => placeholder,
-            });
+                other => (other, false),
+            };
             if let Ok(mut results) = results.lock() {
                 results.insert(key, result);
             } else {
                 return;
             }
-            let current = completed.fetch_add(1, Ordering::AcqRel) + 1;
             if let Some(app) = app {
+                let mut progress = progress.lock().unwrap_or_else(|error| error.into_inner());
+                progress.0 += 1;
+                progress.1 += u64::from(reused);
+                let (current, reused) = *progress;
                 emit_progress(
                     app,
                     job_id,
                     "running",
                     "preparing-images",
-                    &format!("Preparing images ({current} of {total_images})…"),
+                    &format!(
+                        "Images ready ({current} of {total_images}, {reused} from the PDF cache)…"
+                    ),
                     PdfProgressValue::determinate(current, total_images, "items"),
                 );
             }
@@ -2532,7 +2562,7 @@ fn prepare_typst_images_with_cache(
         .lock()
         .map_err(|_| "The PDF image worker results are unavailable.".to_string())?;
     let mut prepared_images = HashMap::new();
-    for (index, (key, fingerprint)) in pending_order.into_iter().enumerate() {
+    for (index, (key, fingerprint, download_stamp)) in pending_order.into_iter().enumerate() {
         let resolved = results
             .remove(&key)
             .ok_or_else(|| "An image could not be prepared for the PDF.".to_string())??;
@@ -2554,6 +2584,7 @@ fn prepare_typst_images_with_cache(
                         key.clone(),
                         CachedPreparedPdfImage {
                             fingerprint,
+                            download_stamp,
                             bytes,
                             aspect,
                         },
@@ -2681,6 +2712,52 @@ const PDF_IMAGE_MAX_WIDTH: u32 = 2040;
 const PDF_IMAGE_MAX_HEIGHT: u32 = 2820;
 const PDF_IMAGE_JPEG_QUALITY: u8 = 95;
 
+fn exceeds_print_dimensions(width: u32, height: u32) -> bool {
+    width > PDF_IMAGE_MAX_WIDTH || height > PDF_IMAGE_MAX_HEIGHT
+}
+
+fn needs_pdf_conversion(bytes: &[u8]) -> bool {
+    match typst_image_extension(bytes) {
+        Some("webp") => true,
+        Some("png") => super::chapter_export::png_dimensions(bytes)
+            .is_some_and(|(w, h)| exceeds_print_dimensions(w, h)),
+        Some("jpg") => {
+            jpeg_dimensions(bytes).is_some_and(|(w, h)| exceeds_print_dimensions(w, h))
+                && !bytes[..bytes.len().min(65536)]
+                    .windows(6)
+                    .any(|s| s == b"Exif\x00\x00")
+        }
+        _ => false,
+    }
+}
+
+fn pdf_conversion_key(source: &[u8]) -> String {
+    let digest = Sha256::digest(source);
+    format!(
+        "{PDF_IMAGE_PREPARATION_REVISION}:{PDF_IMAGE_MAX_WIDTH}x{PDF_IMAGE_MAX_HEIGHT}:q{PDF_IMAGE_JPEG_QUALITY}:{digest:x}"
+    )
+}
+
+fn prepare_pdf_image_bytes(bytes: Vec<u8>, disk_dir: Option<&Path>) -> (Vec<u8>, bool) {
+    if !needs_pdf_conversion(&bytes) {
+        return (bytes, false);
+    }
+    let Some(dir) = disk_dir else {
+        return (optimize_pdf_image_bytes(bytes), false);
+    };
+    // Resolve the source first. An expired download is refreshed by the shared
+    // original-image cache, and an upload replaced in place gets a new key.
+    let key = pdf_conversion_key(&bytes);
+    if let Some(ready) = super::export_image_cache::read_prepared_pdf(dir, &key) {
+        return (ready, true);
+    }
+    let ready = optimize_pdf_image_bytes(bytes);
+    if !needs_pdf_conversion(&ready) {
+        super::export_image_cache::remember_prepared_pdf(dir, &key, &ready);
+    }
+    (ready, false)
+}
+
 /// Recompresses raster images to keep the PDF small. PDF has no WebP support,
 /// so Typst decodes WebP to raw pixels and embeds them losslessly deflated —
 /// a few lossy WebPs balloon a chapter to tens of megabytes. JPEG is the one
@@ -2693,8 +2770,6 @@ const PDF_IMAGE_JPEG_QUALITY: u8 = 95;
 fn optimize_pdf_image_bytes(bytes: Vec<u8>) -> Vec<u8> {
     use image::imageops::FilterType;
 
-    let oversized =
-        |width: u32, height: u32| width > PDF_IMAGE_MAX_WIDTH || height > PDF_IMAGE_MAX_HEIGHT;
     let encode_jpeg = |image: &image::RgbImage| -> Option<Vec<u8>> {
         let mut out = Vec::new();
         image
@@ -2723,7 +2798,7 @@ fn optimize_pdf_image_bytes(bytes: Vec<u8>) -> Vec<u8> {
             let Ok(mut decoded) = image::load_from_memory(&bytes) else {
                 return bytes;
             };
-            if oversized(decoded.width(), decoded.height()) {
+            if exceeds_print_dimensions(decoded.width(), decoded.height()) {
                 decoded = decoded.resize(
                     PDF_IMAGE_MAX_WIDTH,
                     PDF_IMAGE_MAX_HEIGHT,
@@ -2736,7 +2811,7 @@ fn optimize_pdf_image_bytes(bytes: Vec<u8>) -> Vec<u8> {
             let Ok(decoded) = image::load_from_memory(&bytes) else {
                 return bytes;
             };
-            if !oversized(decoded.width(), decoded.height()) {
+            if !exceeds_print_dimensions(decoded.width(), decoded.height()) {
                 return bytes;
             }
             let resized = decoded.resize(
@@ -2754,7 +2829,7 @@ fn optimize_pdf_image_bytes(bytes: Vec<u8>) -> Vec<u8> {
             let Some((width, height)) = jpeg_dimensions(&bytes) else {
                 return bytes;
             };
-            if !oversized(width, height) {
+            if !exceeds_print_dimensions(width, height) {
                 return bytes;
             }
             // Re-encoding drops EXIF metadata, including the orientation tag —
@@ -4120,6 +4195,7 @@ mod tests {
             ..chapter.clone()
         };
         let entry = || CachedPreparedPdfImage {
+            download_stamp: None,
             fingerprint: "v1".into(),
             bytes: Arc::new(vec![1]),
             aspect: None,
@@ -4286,6 +4362,7 @@ mod tests {
             &session_a,
             "file:first".to_string(),
             CachedPreparedPdfImage {
+                download_stamp: None,
                 fingerprint: "first-v1".to_string(),
                 bytes: Arc::new(vec![1, 2, 3]),
                 aspect: Some(0.5),
@@ -4295,6 +4372,7 @@ mod tests {
             &session_a,
             "file:second".to_string(),
             CachedPreparedPdfImage {
+                download_stamp: None,
                 fingerprint: "second-v1".to_string(),
                 bytes: Arc::new(vec![4, 5, 6]),
                 aspect: Some(1.0),
@@ -4308,6 +4386,82 @@ mod tests {
         let session_b = cache.begin_export(&chapter_b);
         assert!(cache.get(&session_b, "file:first", "first-v1").is_none());
         assert!(cache.entries.is_empty());
+    }
+
+    #[test]
+    fn prepared_images_survive_restarts_and_source_changes() {
+        let dir = pdf_workspace().unwrap();
+        let _cleanup = WorkspaceCleanup(dir.clone());
+        let original = webp_fixture(40, 30, [200, 20, 10, 255]);
+        let changed = webp_fixture(40, 30, [20, 10, 200, 255]);
+        let (prepared, hit) = prepare_pdf_image_bytes(original.clone(), Some(&dir));
+        assert!(!hit);
+        assert_eq!(typst_image_extension(&prepared), Some("jpg"));
+        let key = pdf_conversion_key(&original);
+        let entry = dir
+            .join(super::super::export_image_cache::PDF_PREPARED_DIR)
+            .join(format!("{:x}", Sha256::digest(key.as_bytes())));
+        fs::File::options()
+            .write(true)
+            .open(&entry)
+            .unwrap()
+            .set_modified(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap();
+        assert_eq!(
+            prepare_pdf_image_bytes(original.clone(), Some(&dir)),
+            (prepared.clone(), true)
+        );
+        let (new, hit) = prepare_pdf_image_bytes(changed.clone(), Some(&dir));
+        assert!(!hit);
+        assert_ne!(new, prepared);
+        assert_eq!(prepare_pdf_image_bytes(changed, Some(&dir)), (new, true));
+
+        let mut damaged = fs::read(&entry).unwrap();
+        damaged[10] ^= 0xff;
+        fs::write(&entry, damaged).unwrap();
+        assert_eq!(
+            prepare_pdf_image_bytes(original.clone(), Some(&dir)),
+            (prepared.clone(), false)
+        );
+        assert_eq!(
+            prepare_pdf_image_bytes(original, Some(&dir)),
+            (prepared, true)
+        );
+    }
+
+    #[test]
+    fn refreshed_or_expired_downloads_invalidate_the_memory_copy() {
+        let dir = pdf_workspace().unwrap();
+        let _cleanup = WorkspaceCleanup(dir.clone());
+        let url = "https://example.org/plate.webp";
+        let key = format!("url:{url}");
+        let raw = dir.join(format!("{:x}", Sha256::digest(url.as_bytes())));
+        let mut cache = PdfImagePreparationCache {
+            disk_dir: Some(dir.clone()),
+            ..Default::default()
+        };
+        let session = cache.begin_export(&test_image_cache_scope("plates"));
+        fs::write(&raw, [1, 2, 3]).unwrap();
+        cache.insert(
+            &session,
+            key.clone(),
+            CachedPreparedPdfImage {
+                fingerprint: "v1".into(),
+                download_stamp: super::super::export_image_cache::fresh_download_stamp(&dir, url),
+                bytes: Arc::new(vec![10]),
+                aspect: None,
+            },
+        );
+        assert!(cache.get(&session, &key, "v1").is_some());
+        fs::File::options()
+            .write(true)
+            .open(&raw)
+            .unwrap()
+            .set_modified(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap();
+        assert!(cache.get(&session, &key, "v1").is_none());
+        fs::write(&raw, [9, 8, 7, 6]).unwrap();
+        assert!(cache.get(&session, &key, "v1").is_none());
     }
 
     #[test]

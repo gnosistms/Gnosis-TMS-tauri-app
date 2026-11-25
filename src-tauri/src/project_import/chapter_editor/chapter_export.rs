@@ -3556,7 +3556,7 @@ fn docx_image_info(data: &[u8]) -> Option<(String, u32, u32)> {
     None
 }
 
-fn png_dimensions(data: &[u8]) -> Option<(u32, u32)> {
+pub(super) fn png_dimensions(data: &[u8]) -> Option<(u32, u32)> {
     let width = u32::from_be_bytes(data.get(16..20)?.try_into().ok()?);
     let height = u32::from_be_bytes(data.get(20..24)?.try_into().ok()?);
     nonzero_dimensions(width, height)
