@@ -5,6 +5,8 @@ import {
   extractGlossaryRubyBaseText,
   extractGlossaryRubyVisibleText,
   glossaryRubyHasAnnotation,
+  glossaryNoteVisibleText,
+  renderGlossaryNoteHtml,
   renderGlossaryRubyHtml,
   renderGlossaryRubyTermListHtml,
   sanitizeGlossaryRubyMarkup,
@@ -22,6 +24,23 @@ test("glossary ruby sanitizer preserves ruby markup and escapes unsupported tags
 test("glossary ruby sanitizer is idempotent for already-sanitized values", () => {
   const sanitized = "&lt;strong&gt;bold&lt;/strong&gt; <ruby>漢字<rt>かんじ</rt></ruby>";
   assert.equal(sanitizeGlossaryRubyMarkup(sanitized), sanitized);
+});
+
+test("linked variants round-trip without adding the URL to matching or the AI term", () => {
+  const link = '<a href="https://example.org/?q=&quot;one&quot;&amp;x=2"><ruby>漢字<rt>かんじ</rt></ruby></a>';
+  assert.equal(sanitizeGlossaryRubyMarkup(sanitizeGlossaryRubyMarkup(link)), link);
+  assert.equal(extractGlossaryRubyBaseText(link), "漢字");
+  assert.equal(extractGlossaryRubyVisibleText(link), "漢字かんじ");
+  assert.equal(serializeGlossaryRubyForAiPrompt(link), "漢字[ruby: かんじ]");
+  assert.equal(targetTextContainsGlossaryVariantExactRuby("<ruby>漢字<rt>かんじ</rt></ruby>", link, "ja"), true);
+  assert.equal(targetTextContainsGlossaryVariantExactRuby(link, "example", "en"), false);
+});
+
+test("notes display safe links and keep other literal markup as text", () => {
+  const note = 'Read <a href="https://example.org/ref">this entry</a> about <u> and &.';
+  assert.equal(renderGlossaryNoteHtml(note), 'Read <a href="https://example.org/ref">this entry</a> about &lt;u&gt; and &amp;.');
+  assert.equal(glossaryNoteVisibleText(note), "Read this entry about <u> and &.");
+  assert.doesNotMatch(renderGlossaryNoteHtml('<a href="javascript:void(0)">wrong</a>'), /<a\b/);
 });
 
 test("glossary ruby text extraction uses base text for matching and visible text for display", () => {

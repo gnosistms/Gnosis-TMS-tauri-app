@@ -7,7 +7,8 @@ const histories = new WeakMap();
 const registeredRoots = new WeakSet();
 const TYPING_INPUTS = new Set(["insertText", "deleteContentBackward", "deleteContentForward"]);
 const snapshot = (field) => ({ value: field.value, start: field.selectionStart, end: field.selectionEnd, direction: field.selectionDirection || "none" });
-const isField = (field) => typeof HTMLTextAreaElement !== "undefined" && field instanceof HTMLTextAreaElement && field.matches?.("[data-editor-row-field]");
+const isField = (field) => typeof HTMLTextAreaElement !== "undefined" && field instanceof HTMLTextAreaElement
+  && (field.matches?.("[data-editor-row-field]") || Boolean(field.dataset?.termLinkField));
 const historyFor = (field) => {
   if (!histories.has(field)) histories.set(field, { steps: [], position: 0, last: snapshot(field), pending: null, sealed: true, enabled: false, replaying: false });
   return histories.get(field);

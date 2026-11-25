@@ -29,9 +29,11 @@ import {
   toggleDeletedQaLists,
 } from "../qa-list-flow.js";
 import { toggleQaTermInlineStyle } from "../qa-term-inline-markup-flow.js";
+import { termInsertLinkActions } from "../editor-link-flow.js";
 
 export function createQaActions(render) {
   const exactActions = {
+    ...termInsertLinkActions(render, "qa-term"),
     "cancel-qa-list-permanent-deletion": () => cancelQaListPermanentDeletion(render),
     "cancel-qa-list-rename": () => cancelQaListRename(render),
     "cancel-qa-list-creation": () => cancelQaListCreation(render),
@@ -104,6 +106,8 @@ export function createQaActions(render) {
       || action.startsWith("restore-qa-list:")
       || action.startsWith("delete-deleted-qa-list:")
       || action === "toggle-qa-term-inline-style:ruby"
+      || action === "open-qa-term-insert-link"
+      || action === "submit-qa-term-insert-link"
       || action === "open-new-qa-list"
       || action === "import-qa-list"
       || action === "select-qa-list-import-file"

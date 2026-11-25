@@ -909,6 +909,10 @@ a {
   opacity: 1;
 }
 
+.editor-glossary-tooltip--links {
+  pointer-events: auto;
+}
+
 .editor-glossary-tooltip__body {
   padding: 8px 10px;
   border-radius: 8px;
@@ -999,7 +1003,8 @@ a {
   gap: 4px;
 }
 
-.editor-glossary-info-card__footnote a {
+.editor-glossary-info-card a,
+.table-card--glossary-editor .term-grid a {
   color: var(--link);
   text-decoration: underline;
   text-decoration-thickness: 0.06em;

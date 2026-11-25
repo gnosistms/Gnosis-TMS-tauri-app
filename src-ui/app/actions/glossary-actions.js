@@ -1,5 +1,6 @@
 import { addSiblingFromTermEditor, removeSiblingFromTermEditor } from "../glossary-term-siblings.js";
 import { handleNavigation } from "../navigation.js";
+import { termInsertLinkActions } from "../editor-link-flow.js";
 import { state } from "../state.js";
 import { showNoticeBadge } from "../status-feedback.js";
 import { getGlossaryWritePolicy } from "../resource-write-policy.js";
@@ -78,6 +79,7 @@ async function closeGlossaryTermEditorFrom(render, close) {
 
 export function createGlossaryActions(render) {
   const exactActions = {
+    ...termInsertLinkActions(render, "glossary-term"),
     "cancel-glossary-permanent-deletion": () => cancelGlossaryPermanentDeletion(render),
     "cancel-glossary-import": () => cancelGlossaryImportModal(render),
     "cancel-glossary-rename": () => cancelGlossaryRename(render),
@@ -169,6 +171,8 @@ export function createGlossaryActions(render) {
       || action === "select-glossary-import-file"
       || action === "open-new-term"
       || action === "submit-glossary-term-editor"
+      || action === "open-glossary-term-insert-link"
+      || action === "submit-glossary-term-insert-link"
       || action === "submit-glossary-creation"
       || action === "submit-glossary-rename"
       || action === "confirm-glossary-permanent-deletion"

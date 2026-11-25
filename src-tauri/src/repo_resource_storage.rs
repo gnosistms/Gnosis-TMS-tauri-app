@@ -12,6 +12,7 @@
 //! are supplied through [`RepoResourceStorageDomain`].
 
 use std::{
+    borrow::Cow,
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
@@ -36,6 +37,31 @@ use crate::{
 };
 
 const GITATTRIBUTES: &str = "* text=auto eol=lf\n";
+
+/// Keep canonical link markup on disk. Duplicate detection and QA (including
+/// regular expressions) operate on the words the link labels.
+pub(crate) fn term_text_for_matching(value: &str) -> Cow<'_, str> {
+    static LINK: OnceLock<regex::Regex> = OnceLock::new();
+    let text = if value.contains("<a href=\"") {
+        LINK.get_or_init(|| {
+            regex::Regex::new(r#"(?s)<a href="(?i:https?)://[^"]+">(.*?)</a>"#)
+                .expect("valid canonical term link pattern")
+        })
+        .replace_all(value, "$1")
+    } else {
+        Cow::Borrowed(value)
+    };
+    if !text.contains('&') {
+        return text;
+    }
+    Cow::Owned(
+        text.replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&#39;", "'")
+            .replace("&amp;", "&"),
+    )
+}
 
 type EditorSnapshot = Result<Value, String>;
 

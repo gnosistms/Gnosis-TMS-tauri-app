@@ -5,10 +5,13 @@ import {
   renderSanitizedInlineMarkupHtmlWithAllowedTags,
   serializeInlineMarkupRubyNotation,
 } from "./editor-inline-markup.js";
+import { escapeHtml } from "./editor-inline-markup/serialize.js";
 
-const GLOSSARY_RUBY_ALLOWED_TAGS = new Set(["ruby", "rt"]);
+const GLOSSARY_RUBY_ALLOWED_TAGS = new Set(["ruby", "rt", "a"]);
+const NOTE_ALLOWED_TAGS = new Set(["a"]);
+const NOTE_LINK_PATTERN = /<a\s/i;
 const GLOSSARY_WORD_REGEX = /[\p{L}\p{M}\p{N}]+/gu;
-const NON_RUBY_INLINE_TAG_REGEX = /<\/?(?:strong|em|u)\s*>/giu;
+const NON_RUBY_INLINE_TAG_REGEX = /<\/?(?:strong|em|u)>|<a href="[^"]*">|<\/a>/gu;
 
 function decodeGlossaryRubyTextEntities(value) {
   return String(value ?? "")
@@ -20,7 +23,12 @@ function decodeGlossaryRubyTextEntities(value) {
 }
 
 function normalizeGlossaryRubyMarkupInput(value) {
-  return decodeGlossaryRubyTextEntities(String(value ?? ""));
+  const text = String(value ?? "");
+  if (!text.includes("&")) return text;
+  // Stored term text can already be escaped. An href has its own entity
+  // decoding in the inline parser, so preserve its quotes and ampersands here.
+  return text.replace(/<a\s+href\s*=\s*(?:"[^"]*"|'[^']*')\s*>|&(?:lt|gt|quot|#39|amp);/gi,
+    (token) => token.startsWith("<") ? token : decodeGlossaryRubyTextEntities(token));
 }
 
 function normalizeGlossaryRubyToken(value, languageCode = "") {
@@ -132,6 +140,20 @@ export function extractGlossaryRubyVisibleText(value) {
 
 export function renderGlossaryRubyHtml(value) {
   return sanitizeGlossaryRubyScalar(value);
+}
+
+export function renderGlossaryNoteHtml(value) {
+  const text = String(value ?? "");
+  return NOTE_LINK_PATTERN.test(text)
+    ? renderSanitizedInlineMarkupHtmlWithAllowedTags(text, NOTE_ALLOWED_TAGS)
+    : escapeHtml(text);
+}
+
+export function glossaryNoteVisibleText(value) {
+  const text = String(value ?? "");
+  return NOTE_LINK_PATTERN.test(text)
+    ? decodeGlossaryRubyTextEntities(extractInlineMarkupVisibleText(renderGlossaryNoteHtml(text)))
+    : text;
 }
 
 export function renderGlossaryRubyTermListHtml(values, separator = ", ") {

@@ -10,6 +10,7 @@ import { checkForAppUpdate } from "./updater-flow.js";
 import { listen } from "./runtime.js";
 import { syncGlossaryTermInlineStyleButtons } from "./glossary-term-inline-markup-flow.js";
 import { syncQaTermInlineStyleButtons } from "./qa-term-inline-markup-flow.js";
+import { rememberTermLinkField } from "./editor-link-flow.js";
 import { syncEditorGlossaryEntryButtons } from "./editor-glossary-entry-selection.js";
 import { registerKeyboardShortcutEvents } from "./events/keyboard-shortcuts.js";
 import { registerListboxControlEvents } from "./events/listbox-control.js";
@@ -129,7 +130,8 @@ export function registerAppEvents(render) {
     focusEditorFieldFromGlossaryMark(event);
   });
 
-  document.addEventListener("focusin", () => {
+  document.addEventListener("focusin", (event) => {
+    rememberTermLinkField(event.target);
     window.requestAnimationFrame(() => {
       syncGlossaryTermInlineStyleButtons();
       syncQaTermInlineStyleButtons();

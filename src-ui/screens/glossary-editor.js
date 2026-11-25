@@ -19,6 +19,7 @@ import { anyGlossaryTermWriteIsActive } from "../app/glossary-term-write-coordin
 import { findChapterContextById } from "../app/project-context.js";
 import {
   extractGlossaryRubyVisibleText,
+  glossaryNoteVisibleText,
   renderGlossaryRubyTermListHtml,
 } from "../app/glossary-ruby.js";
 
@@ -57,9 +58,9 @@ export function renderGlossaryEditorScreen(state) {
     return [
       ...(Array.isArray(term.sourceTerms) ? term.sourceTerms.map((value) => extractGlossaryRubyVisibleText(value)) : []),
       ...(Array.isArray(term.targetTerms) ? term.targetTerms.map((value) => extractGlossaryRubyVisibleText(value)) : []),
-      ...(Array.isArray(term.targetVariantNotes) ? term.targetVariantNotes : []),
-      term.notesToTranslators,
-      term.footnote,
+      ...(Array.isArray(term.targetVariantNotes) ? term.targetVariantNotes.map(glossaryNoteVisibleText) : []),
+      glossaryNoteVisibleText(term.notesToTranslators),
+      glossaryNoteVisibleText(term.footnote),
     ].some((value) => String(value ?? "").toLowerCase().includes(searchQuery));
   });
   const searchField = createSearchField({
@@ -71,9 +72,9 @@ export function renderGlossaryEditorScreen(state) {
   });
   const renderTermCell = (termId, values) => {
     const html = renderGlossaryRubyTermListHtml(values);
-    return canManageTerms
+    return canManageTerms && !html.includes("<a ")
       ? `<button class="glossary-term-link" data-action="edit-glossary-term:${termId}">${html}</button>`
-      : `<span>${html}</span>`;
+      : `<span${canManageTerms ? ' class="glossary-term-link"' : ""}>${html}</span>`;
   };
   const bodyMarkup = glossary.status === "error"
     ? renderStateCard({

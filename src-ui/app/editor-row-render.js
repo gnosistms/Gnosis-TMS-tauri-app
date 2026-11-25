@@ -1,4 +1,5 @@
 import { footnoteParagraphsHtml, rowTextParagraphsHtml } from "./editor-footnote-paragraphs.js";
+import { renderInsertLinkButton } from "../screens/editor-insert-link-modal.js";
 import {
   escapeHtml,
   primaryButton,
@@ -326,25 +327,7 @@ function renderRowTextStyleButtons(row, language) {
   }
 
   if (!isCustomHtmlRow) {
-  secondaryButtons.push(`
-    <button
-      class="translation-row-text-style-button translation-row-text-style-button--link"
-      type="button"
-      data-action="open-editor-insert-link"
-      data-editor-link-button
-      data-row-id="${escapeHtml(row.id)}"
-      data-language-code="${escapeHtml(language.code)}"
-      ${tooltipAttributes("Insert HTML link", { side: "top" })}
-    >
-      <span class="translation-row-text-style-button__label" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">
-          <path d="M15 7h3a5 5 0 0 1 0 10h-3" />
-          <path d="M9 17H6A5 5 0 0 1 6 7h3" />
-          <line x1="8" y1="12" x2="16" y2="12" />
-        </svg>
-      </span>
-    </button>
-  `);
+    secondaryButtons.push(renderInsertLinkButton({ rowId: row.id, languageCode: language.code }));
   }
 
   if (language.showAddImageButtons === true && !isCustomHtmlRow) {

@@ -9,6 +9,7 @@ import { formatErrorForDisplay } from "../app/error-display.js";
 import { rubyButtonConfig } from "../app/editor-inline-markup.js";
 import { isGlossaryEmptyTargetVariant } from "../app/glossary-shared.js";
 import { siblingSummaries } from "../app/glossary-term-siblings.js";
+import { renderEditorInsertLinkModal, renderInsertLinkButton } from "./editor-insert-link-modal.js";
 
 const EMPTY_TARGET_VARIANT_TOOLTIP =
   "Add an empty variant to indicated that it's ok to omit this word from the translation.";
@@ -89,6 +90,7 @@ function renderVariantRow(
           aria-invalid="${isRedundant}"
           rows="1"
           data-glossary-term-variant-input
+          data-term-link-field="${side}-${index}"
           data-variant-side="${escapeHtml(side)}"
           data-variant-index="${index}"
           data-language-code="${escapeHtml(languageCode)}"
@@ -104,6 +106,7 @@ function renderVariantRow(
           placeholder="Notes..."
           rows="1"
           data-glossary-term-variant-note-input
+          data-term-link-field="note-${index}"
           data-variant-index="${index}"
           data-language-code="${escapeHtml(languageCode)}"
           ${isSubmitting ? "disabled" : ""}
@@ -137,8 +140,7 @@ function renderVariantLane(
   values,
   notes,
   isSubmitting,
-  redundantIndices = new Set(),
-  allowEmptyVariant = true,
+  { readOnly = false, redundantIndices = new Set(), allowEmptyVariant = true } = {},
 ) {
   const tooltipOptions = side === "target" ? { align: "end" } : {};
   const rubyConfig = rubyButtonConfig(languageCode);
@@ -173,7 +175,7 @@ function renderVariantLane(
               Array.isArray(notes) ? notes[index] ?? "" : "",
               index,
               values.length,
-              isSubmitting,
+              isSubmitting || readOnly,
               side === "source" && redundantIndices.has(index),
             ),
           )
@@ -193,6 +195,7 @@ function renderVariantLane(
           tabindex="-1"
           ${tooltipAttributes(rubyConfig.tooltip, tooltipOptions)}
         ><span class="term-lane__inline-style-button-label" aria-hidden="true">${escapeHtml(rubyConfig.label)}</span></button>
+        ${renderInsertLinkButton({ scope: "glossary-term", side, disabled: isSubmitting })}
         ${emptyVariantButtonMarkup}
         <button
           class="term-lane__add-button"
@@ -200,7 +203,7 @@ function renderVariantLane(
           data-action="add-glossary-term-variant:${escapeHtml(side)}"
           aria-label="Add variant"
           ${tooltipAttributes("Add variant", tooltipOptions)}
-          ${isSubmitting ? "disabled" : ""}
+          ${isSubmitting || readOnly ? "disabled" : ""}
         ><span class="term-lane__add-icon" aria-hidden="true"></span></button>
       </div>
     </section>
@@ -308,8 +311,8 @@ export function renderGlossaryTermEditorModal(state) {
               sourceLanguageCode,
               editor.sourceTerms,
               [],
-              isSubmitting || Boolean(studioEntry),
-              redundantSourceVariantIndices,
+              isSubmitting,
+              { readOnly: Boolean(studioEntry), redundantIndices: redundantSourceVariantIndices },
             )}
             ${renderVariantLane(
               "target",
@@ -318,8 +321,7 @@ export function renderGlossaryTermEditorModal(state) {
               editor.targetTerms,
               editor.targetVariantNotes,
               isSubmitting,
-              new Set(),
-              !studioEntry,
+              { allowEmptyVariant: !studioEntry },
             )}
           </div>
 
@@ -327,11 +329,11 @@ export function renderGlossaryTermEditorModal(state) {
             <div class="glossary-term-modal__details-grid">
               <label class="field">
                 <span class="field__label">Global notes</span>
-                <textarea class="field__textarea" placeholder="Enter instructions for how this term should be translated here." data-glossary-term-notes-input ${isSubmitting ? "disabled" : ""}>${escapeHtml(editor.notesToTranslators)}</textarea>
+                <textarea class="field__textarea" placeholder="Enter instructions for how this term should be translated here." data-glossary-term-notes-input data-term-link-field="global-notes" ${isSubmitting ? "disabled" : ""}>${escapeHtml(editor.notesToTranslators)}</textarea>
               </label>
               <label class="field">
                 <span class="field__label">Footnote</span>
-                <textarea class="field__textarea" placeholder="Enter suggested footnote text here." data-glossary-term-footnote-input ${isSubmitting ? "disabled" : ""}>${escapeHtml(editor.footnote)}</textarea>
+                <textarea class="field__textarea" placeholder="Enter suggested footnote text here." data-glossary-term-footnote-input data-term-link-field="footnote" ${isSubmitting ? "disabled" : ""}>${escapeHtml(editor.footnote)}</textarea>
               </label>
             </div>
           </section>
@@ -349,5 +351,6 @@ export function renderGlossaryTermEditorModal(state) {
         </div>
       </section>
     </div>
+    ${renderEditorInsertLinkModal(state, "glossary-term")}
   `;
 }

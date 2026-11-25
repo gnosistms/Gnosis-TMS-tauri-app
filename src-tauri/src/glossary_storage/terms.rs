@@ -36,7 +36,9 @@ pub(super) fn has_duplicate_term_values(values: &[String]) -> bool {
 }
 
 pub(super) fn source_term_key(value: &str) -> String {
-    value.trim().to_lowercase()
+    crate::repo_resource_storage::term_text_for_matching(value)
+        .trim()
+        .to_lowercase()
 }
 
 pub(super) fn conflicting_source_terms(
@@ -116,6 +118,14 @@ fn merge_note_text(existing: &mut String, incoming: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn linked_and_unlinked_source_forms_conflict() {
+        assert!(has_duplicate_term_values(&[
+            "Umbral".into(),
+            r#"<a href="https://example.org/umbral">umbral</a>"#.into(),
+        ]));
+    }
 
     #[test]
     fn conflicts_ignore_capitalization_and_preserve_candidate_spelling() {

@@ -261,6 +261,7 @@ export function registerKeyboardShortcutEvents(dispatchAction) {
     // Dialog-local keyboard behavior is delegated to the modal controller.
     // Page-level shortcuts must not move focus or trigger work behind a modal.
     if (document.querySelector("[data-modal-dialog]")) {
+      if (event.target?.dataset?.termLinkField) handleEditorFieldUndoShortcut(event);
       return;
     }
 

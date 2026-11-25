@@ -3,7 +3,6 @@ import {
   buildPageRefreshAction,
   buildSectionNav,
   createSearchField,
-  escapeHtml,
   navButton,
   pageShell,
   primaryButton,
@@ -17,6 +16,8 @@ import { canManageQaLists, selectedTeam } from "../app/qa-list-shared.js";
 import { anyQaTermWriteIsActive } from "../app/qa-term-write-coordinator.js";
 import {
   extractGlossaryRubyVisibleText,
+  glossaryNoteVisibleText,
+  renderGlossaryNoteHtml,
   renderGlossaryRubyTermListHtml,
 } from "../app/glossary-ruby.js";
 import { findChapterContextById, resolveSelectedChapterGlossary } from "../app/project-context.js";
@@ -58,7 +59,7 @@ export function renderQaListEditorScreen(state) {
 
     return [
       extractGlossaryRubyVisibleText(term.text),
-      term.notes,
+      glossaryNoteVisibleText(term.notes),
     ].some((value) => String(value ?? "").toLowerCase().includes(searchQuery));
   });
   const searchField = createSearchField({
@@ -70,9 +71,9 @@ export function renderQaListEditorScreen(state) {
   });
   const renderTextCell = (term) => {
     const html = renderGlossaryRubyTermListHtml([term.text]);
-    return canManageTerms
+    return canManageTerms && !html.includes("<a ")
       ? `<button class="glossary-term-link" data-action="edit-qa-term:${term.termId}">${html}</button>`
-      : `<span>${html}</span>`;
+      : `<span${canManageTerms ? ' class="glossary-term-link"' : ""}>${html}</span>`;
   };
   const bodyMarkup = qaList.status === "error"
     ? renderStateCard({
@@ -100,7 +101,7 @@ export function renderQaListEditorScreen(state) {
                   (term) => `
                     <div class="term-grid term-grid--qa-list term-grid--row${canManageTerms ? " term-grid--row--interactive" : ""}"${canManageTerms ? ` data-action="edit-qa-term:${term.termId}"` : ""}>
                       <div>${renderTextCell(term)}</div>
-                      <div>${escapeHtml(term.notes ?? "")}</div>
+                      <div>${renderGlossaryNoteHtml(term.notes)}</div>
                       <div class="term-grid__actions">
                         ${canManageTerms ? textAction("Edit", `edit-qa-term:${term.termId}`) : ""}
                         ${canManageTerms ? textAction("Delete", `delete-qa-term:${term.termId}`) : ""}

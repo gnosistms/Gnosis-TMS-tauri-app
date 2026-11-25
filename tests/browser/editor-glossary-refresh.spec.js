@@ -176,6 +176,161 @@ for (const { platform, modifier, hint } of [
   });
 }
 
+async function selectTermText(field, label) {
+  await field.evaluate((element, text) => {
+    const start = element.value.indexOf(text);
+    if (start < 0) throw new Error(`Missing selection: ${text}`);
+    element.focus();
+    element.setSelectionRange(start, start + text.length);
+  }, label);
+}
+
+test("either round glossary link button edits the selected field and links survive reopening", async ({ page }) => {
+  await mountEditor(page);
+  await page.evaluate(() => history.replaceState(null, "", "?platform=mac"));
+  await page.locator('[data-action="open-editor-glossary"]').click();
+  const edit = page.locator('.term-grid__actions [data-action="edit-glossary-term:term-1"]');
+  await edit.click();
+  const parent = page.locator('[data-modal-dialog="glossary-term-editor"]');
+  const buttons = parent.getByRole("button", { name: "Insert HTML link" });
+  await expect(buttons).toHaveCount(2);
+  for (const button of await buttons.all()) {
+    expect(await button.evaluate((node) => node.previousElementSibling.dataset.inlineStyle)).toBe("ruby");
+    await expect(button).toHaveCSS("width", "28px");
+    await expect(button).toHaveCSS("height", "28px");
+    expect(await button.evaluate((node) => parseFloat(getComputedStyle(node).borderRadius))).toBeGreaterThanOrEqual(14);
+  }
+  await buttons.first().click();
+  await expect(page.getByRole("heading", { name: "Please select text before inserting a link" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(parent).toBeVisible();
+
+  const samples = [
+    ["source-0", "alpha"], ["target-0", "old wording"], ["note-0", "old variant note"],
+    ["global-notes", "old translator note"], ["footnote", "old footnote"],
+  ];
+  const url = page.getByRole("textbox", { name: "Link URL" });
+  const ok = page.locator('[data-action="submit-glossary-term-insert-link"]');
+  const linked = (key, label) => `<a href="https://example.com/${key}">${label}</a>`;
+  for (const [index, [key, label]] of samples.entries()) {
+    const field = parent.locator(`[data-term-link-field="${key}"]`);
+    await selectTermText(field, label);
+    const button = buttons.nth((index + 1) % 2);
+    if (key === "global-notes") {
+      // Tabbing to the button blurs the textarea while retaining its selection.
+      await button.focus();
+      await button.press("Enter");
+    } else {
+      await button.click();
+    }
+    await expect(url).toBeFocused();
+    if (key === "global-notes") {
+      await url.fill("invalid");
+      await expect(ok).toBeDisabled();
+    }
+    await url.fill(`example.com/${key}`);
+    if (key === "global-notes") {
+      // Background refresh can rebuild both the editor and its nested dialog.
+      await page.evaluate(() => window.__gnosisDebug.setProjectsVirtualizationDisabled(false));
+      await expect(url).toHaveValue(`example.com/${key}`);
+    }
+    await url.press("Enter");
+    await expect(field).toHaveValue(linked(key, label));
+    await expect(field).toBeFocused();
+  }
+
+  const footnote = parent.locator('[data-term-link-field="footnote"]');
+  await footnote.press("Meta+z");
+  await expect(footnote).toHaveValue("old footnote");
+  await footnote.press("Meta+Shift+z");
+  await expect(footnote).toHaveValue(linked("footnote", "old footnote"));
+  await selectTermText(footnote, "old footnote");
+  await buttons.first().click();
+  await url.fill("example.com/cancel");
+  await url.press("Escape");
+  await expect(footnote).toBeFocused();
+  expect(await footnote.evaluate((el) => el.value.slice(el.selectionStart, el.selectionEnd))).toBe("old footnote");
+  await buttons.last().click();
+  await url.fill("example.com/revised");
+  await ok.click();
+  await expect(footnote).toHaveValue(linked("revised", "old footnote"));
+  await parent.locator('[data-action="submit-glossary-term-editor"]').click();
+  await expect.poll(() => page.evaluate(() => window.glossaryDisk.terms[0])).toMatchObject({
+    sourceTerms: [linked("source-0", "alpha")], targetTerms: [linked("target-0", "old wording")],
+    targetVariantNotes: [linked("note-0", "old variant note")],
+    notesToTranslators: linked("global-notes", "old translator note"), footnote: linked("revised", "old footnote"),
+  });
+  await edit.click();
+  for (const [key, label] of samples) {
+    await expect(parent.locator(`[data-term-link-field="${key}"]`)).toHaveValue(linked(key === "footnote" ? "revised" : key, label));
+  }
+  await parent.getByRole("button", { name: "Cancel" }).click();
+  await page.locator('[data-nav-target="translate"]').click();
+  await page.locator('[data-row-id="fixture-row-0001"] [data-language-code="es"] [data-editor-glossary-mark]').first().hover();
+  const hoverCard = page.locator(".editor-glossary-tooltip");
+  for (const [key, label] of samples.slice(2)) {
+    await expect(hoverCard.getByRole("link", { name: label })).toHaveAttribute("href", `https://example.com/${key === "footnote" ? "revised" : key}`);
+  }
+  await page.evaluate(() => { window.__TAURI__.opener = { openUrl: href => { window.openedTermLink = href; } }; });
+  await hoverCard.getByRole("link", { name: "old translator note" }).click();
+  expect(await page.evaluate(() => window.openedTermLink)).toBe("https://example.com/global-notes");
+});
+
+test("a new glossary term links the selection in a second variant's notes", async ({ page }) => {
+  await mountEditor(page);
+  await page.locator('[data-action="open-editor-glossary"]').click();
+  await page.locator('[data-action="open-new-term"]').click();
+  const parent = page.locator('[data-modal-dialog="glossary-term-editor"]');
+  await parent.locator('[data-action="add-glossary-term-variant:target"]').click();
+  const note = parent.locator('[data-term-link-field="note-1"]');
+  await note.fill("See this reference.");
+  await selectTermText(note, "this reference");
+  await parent.getByRole("button", { name: "Insert HTML link" }).first().click();
+  const url = page.getByRole("textbox", { name: "Link URL" });
+  await url.fill("example.com/source");
+  await url.press("Enter");
+  await expect(note).toHaveValue('See <a href="https://example.com/source">this reference</a>.');
+  await expect(parent.locator('[data-term-link-field="note-0"]')).toHaveValue("");
+  await parent.getByRole("button", { name: "Cancel" }).click();
+  expect(await page.evaluate(() => window.glossaryDisk.terms)).toHaveLength(1);
+});
+
+test("the QA term link button works in a new term without an open chapter", async ({ page }) => {
+  await mountEditor(page);
+  await page.evaluate(async () => {
+    const { state, createEditorChapterState, createQaListEditorState } = await import("/app/state.js");
+    const { queryClient, qaListKeys } = await import("/app/query-client.js");
+    const qaList = { id: "local-qa", title: "Fixture QA", lifecycleState: "active", terms: [] };
+    state.editorChapter = createEditorChapterState();
+    state.selectedChapterId = null;
+    state.selectedQaListId = qaList.id;
+    state.qaLists = [qaList];
+    queryClient.setQueryData(qaListKeys.byTeam(state.selectedTeamId), { qaLists: [qaList] });
+    state.qaListEditor = { ...createQaListEditorState(), qaListId: qaList.id, title: qaList.title, status: "ready" };
+    state.screen = "qaListEditor";
+    window.__gnosisDebug.setProjectsVirtualizationDisabled(false);
+  });
+  await page.locator('[data-action="open-new-qa-term"]').click();
+  const parent = page.locator('[data-modal-dialog="qa-term-editor"]');
+  const button = parent.getByRole("button", { name: "Insert HTML link" });
+  for (const [key, label] of [["text", "word"], ["notes", "review"]]) {
+    const field = parent.locator(`[data-term-link-field="${key}"]`);
+    await field.fill(label);
+    await selectTermText(field, label);
+    await button.click();
+    const url = page.getByRole("textbox", { name: "Link URL" });
+    await url.fill("example.com/qa");
+    await url.press("Enter");
+    await expect(field).toHaveValue(`<a href="https://example.com/qa">${label}</a>`);
+  }
+  await parent.getByRole("button", { name: "Add QA Term" }).click();
+  await expect(parent).toHaveCount(0);
+  const row = page.locator(".term-grid--row");
+  await expect(row.getByRole("link", { name: "review" })).toHaveAttribute("href", "https://example.com/qa");
+  await row.getByText("Edit", { exact: true }).click();
+  await expect(parent.locator('[data-term-link-field="text"]')).toHaveValue('<a href="https://example.com/qa">word</a>');
+});
+
 test("a footnote edit after opening during batch sync preserves newly synced wording", async ({ page }) => {
   await mountEditor(page);
   await page.evaluate(() => { window.holdBatch = true; });

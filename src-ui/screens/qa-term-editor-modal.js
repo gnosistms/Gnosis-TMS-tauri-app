@@ -6,6 +6,7 @@ import {
 } from "../lib/ui.js";
 import { formatErrorForDisplay } from "../app/error-display.js";
 import { rubyButtonConfig } from "../app/editor-inline-markup.js";
+import { renderEditorInsertLinkModal, renderInsertLinkButton } from "./editor-insert-link-modal.js";
 
 const QA_CASE_SENSITIVE_TOOLTIP =
   'When checked, the term found in the translation text must exactly match the case of the text entered above. For example, "text" will not match "Text" when this is checked.';
@@ -44,6 +45,7 @@ export function renderQaTermEditorModal(state) {
                   placeholder="Enter QA term..."
                   rows="3"
                   data-qa-term-text-input
+                  data-term-link-field="text"
                   data-modal-initial-focus
                   data-language-code="${escapeHtml(languageCode)}"
                   ${isSubmitting ? "disabled" : ""}
@@ -73,6 +75,7 @@ export function renderQaTermEditorModal(state) {
                 placeholder="Notes..."
                 rows="3"
                 data-qa-term-notes-input
+                data-term-link-field="notes"
                 ${isSubmitting ? "disabled" : ""}
               >${escapeHtml(editor.notes)}</textarea>
             </div>
@@ -89,6 +92,7 @@ export function renderQaTermEditorModal(state) {
                 tabindex="-1"
                 ${tooltipAttributes(rubyConfig.tooltip)}
               ><span class="term-lane__inline-style-button-label" aria-hidden="true">${escapeHtml(rubyConfig.label)}</span></button>
+              ${renderInsertLinkButton({ scope: "qa-term", disabled: isSubmitting })}
             </div>
           </section>
           ${errorMarkup}
@@ -108,5 +112,6 @@ export function renderQaTermEditorModal(state) {
         </div>
       </section>
     </div>
+    ${renderEditorInsertLinkModal(state, "qa-term")}
   `;
 }

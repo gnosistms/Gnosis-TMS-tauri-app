@@ -33,8 +33,9 @@ mod tmx;
 use crate::repo_resource_storage::{
     ensure_gitattributes, git_output, prepare_repo, purge_repo, read_json_file,
     read_repo_resource_editor_data, resolve_git_repo_path, resolve_initialized_repo_path,
-    rollback_term_upsert, write_json_pretty, write_resource_lifecycle, write_resource_title,
-    write_text_file, EditorDataRead, EditorDataReadMode, RepoResourceStorageDomain,
+    rollback_term_upsert, term_text_for_matching, write_json_pretty, write_resource_lifecycle,
+    write_resource_title, write_text_file, EditorDataRead, EditorDataReadMode,
+    RepoResourceStorageDomain,
 };
 use tmx::{parse_tmx_qa_list, serialize_tmx_qa_list};
 
@@ -791,13 +792,14 @@ fn regex_contains_inline_case_flag(pattern: &str) -> bool {
 }
 
 fn validate_qa_regular_expression(pattern: &str, is_case_sensitive: bool) -> Result<(), String> {
-    if regex_contains_inline_case_flag(pattern) {
+    let pattern = term_text_for_matching(pattern);
+    if regex_contains_inline_case_flag(&pattern) {
         return Err(
             "The regular expression cannot contain an inline case-sensitivity flag. Use the case sensitive checkbox instead."
                 .to_string(),
         );
     }
-    RegexBuilder::new(pattern)
+    RegexBuilder::new(&pattern)
         .case_insensitive(!is_case_sensitive)
         .unicode(true)
         .build()
@@ -809,15 +811,16 @@ fn compile_qa_term(
     term: StoredQaListTermFile,
     language_code: &str,
 ) -> Result<CompiledQaTerm, String> {
+    let text = term_text_for_matching(&term.text);
     let (pattern, literal_capture) = if term.is_regular_expression {
-        (term.text.clone(), false)
+        (text.to_string(), false)
     } else if is_non_space_delimited_language(language_code) {
-        (format!("(?P<qa>{})", regex::escape(&term.text)), true)
+        (format!("(?P<qa>{})", regex::escape(&text)), true)
     } else {
         (
             format!(
                 r"(?:^|[^\p{{L}}\p{{M}}\p{{N}}])(?P<qa>{})(?:$|[^\p{{L}}\p{{M}}\p{{N}}])",
-                regex::escape(&term.text)
+                regex::escape(&text)
             ),
             true,
         )
@@ -833,7 +836,7 @@ fn compile_qa_term(
             )
         })?;
     Ok(CompiledQaTerm {
-        term: term.text,
+        term: text.into_owned(),
         notes: term.notes,
         is_case_sensitive: term.is_case_sensitive,
         is_regular_expression: term.is_regular_expression,
@@ -1288,6 +1291,7 @@ fn qa_term_text_duplicates_existing_term(
     is_regular_expression: bool,
 ) -> bool {
     let key = |value: &str| {
+        let value = term_text_for_matching(value);
         if is_case_sensitive || is_regular_expression {
             value.trim().to_string()
         } else {
@@ -1648,6 +1652,33 @@ mod tests {
                 state: "active".to_string(),
             },
         }
+    }
+
+    #[test]
+    fn links_preserve_literal_and_regex_term_matching() {
+        let literal = r#"<a href="https://example.org/?q=test">salt &amp; light</a>"#;
+        let compiled = compile_qa_term(matcher_term(literal, false, false), "en").unwrap();
+        assert_eq!(
+            first_qa_match(&compiled, "Use salt & light."),
+            Some("salt & light".into())
+        );
+        assert_eq!(first_qa_match(&compiled, "example.org"), None);
+        assert!(qa_term_text_duplicates_existing_term(
+            &[matcher_term(literal, false, false)],
+            "Salt & Light",
+            None,
+            false,
+            false
+        ));
+
+        let pattern = r#"<a href="https://example.org/(ignored">\d{3}</a>"#;
+        assert!(validate_qa_regular_expression(pattern, true).is_ok());
+        let regex = compile_qa_term(matcher_term(pattern, true, true), "en").unwrap();
+        assert_eq!(first_qa_match(&regex, "A123"), Some("123".into()));
+        assert!(
+            validate_qa_regular_expression(r#"<a href="https://example.org/ok">[</a>"#, false)
+                .is_err()
+        );
     }
 
     #[test]
