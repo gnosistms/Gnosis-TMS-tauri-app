@@ -78,3 +78,15 @@ The exporter now measures the individual code, caption, and wrapped text at the 
 The Vietnamese A5 proof from HNHH revision `2c7e6e90` has 543 pages and 436 footnotes. On printed pages 10–11, notes 10–12 each have 26.59 pt of text and a 22.69 pt code and caption. All three retain their own 21×21 code, with the normal 8.40 pt gap between notes 11 and 12. On printed page 46, the two one-line notes 44–45 share a numbered row, and note 46 keeps its own code.
 
 Across the book there are 11 shared groups containing 23 notes. Their PDF callouts and return links passed, and all 229 codes decoded at both 300 and 600 dpi. Every outermost code met the text edge within 0.001 pt. The regression covers individual codes on either side of a short run, a genuine three-code row, and page breaks at eight paper sizes.
+
+## Match QR labels to their printed owners
+
+1. Keep every link in a multi-code footnote beside its lettered marker. Print the same identifier under its code, in source order.
+2. Check the printed owner numbers for codes sharing a row and for one code spanning a linked note and a plain note. Verify shared caption text appears once and an independent single code keeps its unnumbered caption.
+3. Re-render the same full-book HNHH proof and check its labels, destinations, and pagination against the native typesetter and the project snapshot.
+
+The chapter and book exporter keeps each link in a multi-code note and places the same lettered key beside the link and beneath the QR. A shared row prints each code’s owner number. Identical standalone captions appear once above that row. Different captions stay with the links in the notes. A single code beside a linked note and a plain neighbor includes the linked note’s number.
+
+The 543-page proof uses the same HNHH snapshot as the spacing proof. PDF page 22 shows both copies of `15a` and `15b`. Page 50 shows `44` and `45` beneath their shared row, and page 52 shows `49` beside notes 49 and 50. Three previously missing in-text markers now appear in footnotes 234 and 252 on PDF pages 240 and 258.
+
+The full-book check matched all 21 lettered markers to their printed codes and clickable destinations. It also verified all 10 codes sharing rows with other owners, all six owner numbers on single codes spanning notes, and all 192 individually placed codes. All 229 symbols decoded at 300 and 600 dpi. The three page excerpts are in `output/pdf/hnhh-qr-label-examples.png`.

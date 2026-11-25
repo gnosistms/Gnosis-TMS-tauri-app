@@ -372,11 +372,8 @@ fn best_code(original: &str, shortlinks: &[Url]) -> QrResult<(QrCode, String)> {
 // Put reference letters at the precise authored link boundaries, including
 // adjacent links to the same address. Tokenize before NFC and paragraph
 // trimming so both sides retain the editor's normal inline styling.
-fn marked_prose(source: &str, token: &str, marks: &[usize]) -> String {
-    if marks.is_empty() {
-        return render_footnote_typst(source, false);
-    }
-    let mut marks = marks.iter();
+fn marked_prose(source: &str, token: &str) -> String {
+    let mut mark = 0;
     footnote_paragraphs(source)
         .iter()
         .map(|paragraph| {
@@ -384,9 +381,8 @@ fn marked_prose(source: &str, token: &str, marks: &[usize]) -> String {
             for segment in inline_segments(paragraph) {
                 for (index, piece) in segment.text.split(token).enumerate() {
                     if index > 0 {
-                        if let Some(mark) = marks.next() {
-                            out.push_str(&format!("#metadata((qr-source: {mark}))"));
-                        }
+                        out.push_str(&format!("#metadata((qr-source: {mark}))"));
+                        mark += 1;
                     }
                     out.push_str(&render_styled_typst_text(
                         &piece.nfc().collect::<String>(),
@@ -423,7 +419,6 @@ pub(super) fn render(
     while visible.contains(&token) {
         token.insert('\u{e000}'.len_utf8(), '_');
     }
-    let mut marks = Vec::new();
     let terminal = TERMINAL_RUN
         .as_ref()
         .map_err(|error| format!("Could not classify PDF footnote punctuation: {error}"))?;
@@ -437,17 +432,23 @@ pub(super) fn render(
         .collect();
     let mut refs = String::new();
     let mut prose = String::new();
+    let mut full_prose = String::new();
     let mut cursor = 0;
-    for (index, link) in links.into_iter().enumerate() {
+    for link in links {
         let label = visible[link.visible.clone()].trim();
         let label = if label.is_empty() { &link.href } else { label };
-        let remove_to = if links_only || label == link.href || label.graphemes(true).count() > 40 {
-            None
-        } else {
-            removable_end(&visible, &link, source, &sentences, terminal)
-        };
+        // Every lettered code needs a matching marker at the authored link.
+        let remove_to =
+            if multi || links_only || label == link.href || label.graphemes(true).count() > 40 {
+                None
+            } else {
+                removable_end(&visible, &link, source, &sentences, terminal)
+            };
         let mut caption = label.split_whitespace().collect::<Vec<_>>().join(" ");
         if let Some(end) = remove_to {
+            // A shared row with different captions uses the authored words in
+            // their original places and reserves the QR labels for owner numbers.
+            full_prose = format!(", full-prose: [{}]", render_footnote_typst(source, false));
             caption.push_str(&source[link.markup.end..end]);
         }
         let candidates = shortlinks
@@ -489,15 +490,18 @@ pub(super) fn render(
             }
             if multi {
                 prose.push_str(&token);
-                marks.push(index);
             }
             cursor = link.markup.end;
         }
     }
     prose.push_str(&source[cursor..]);
+    let prose = if multi {
+        marked_prose(&prose, &token)
+    } else {
+        render_footnote_typst(&prose, false)
+    };
     Ok(Some(format!(
-        "#gnosis-qr-note([{}], ({refs}), link-only: {links_only})",
-        marked_prose(&prose, &token, &marks)
+        "#gnosis-qr-note([{prose}], ({refs}), link-only: {links_only}{full_prose})"
     )))
 }
 
@@ -656,11 +660,12 @@ mod tests {
         let (prose, codes) = output.split_once("], (").unwrap();
         assert!(prose.contains("#emph[#text(\"paper\")]"));
         assert!(prose.contains("Where now?"));
-        assert!(!prose.contains("Watch the film"));
+        assert!(prose.contains(r#"#text("Watch the film")]#metadata((qr-source: 1))"#));
         assert!(prose.contains("#text(\". She asks “\")"));
         assert_eq!(codes.matches("modules: ").count(), 3);
         assert!(codes.contains("words: \"the paper\""));
-        assert!(codes.contains("words: \"Watch the film.\""));
+        assert!(codes.contains("words: \"Watch the film\""));
+        assert_eq!(codes.matches("detached: false").count(), 3);
     }
 
     #[test]
@@ -726,13 +731,14 @@ mod tests {
     }
 
     #[test]
-    fn consecutive_numbered_sentences_move_to_their_captions() {
+    fn standalone_links_in_a_multi_code_note_keep_their_own_text_markers() {
         let output = body(
             r#"Listen in order. <a href="https://example.org/1">Play recording 1.</a> <a href="https://example.org/2">Play recording 2.</a>"#,
         );
         let (prose, codes) = output.split_once("], (").unwrap();
         assert!(prose.contains("Listen in order."));
-        assert!(!prose.contains("Play recording"));
+        assert!(prose.contains(r#"#text("Play recording 1.")]#metadata((qr-source: 0))"#));
+        assert!(prose.contains(r#"#text("Play recording 2.")]#metadata((qr-source: 1))"#));
         assert_eq!(codes.matches("words: \"Play recording").count(), 2);
     }
 

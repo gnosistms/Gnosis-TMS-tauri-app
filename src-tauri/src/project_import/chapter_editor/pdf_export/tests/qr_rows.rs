@@ -284,6 +284,132 @@ fn codes_stay_with_their_notes_unless_a_shared_row_saves_vertical_space() {
 }
 
 #[test]
+fn printed_qr_labels_identify_the_owning_note_and_link() {
+    if std::env::var_os("GNOSIS_TYPST_BIN").is_none()
+        || std::env::var_os("GNOSIS_TYPST_SMOKE_FONT_DIR").is_none()
+    {
+        return;
+    }
+    let workspace = pdf_workspace().unwrap();
+    let _cleanup = WorkspaceCleanup(workspace.clone());
+    let session = begin_pdf_image_cache(&test_image_cache_scope("qr-labels"));
+    let options = PdfWorkspacePreparationOptions {
+        footnote_links: PdfFootnoteLinks::Qr,
+        paper_size: "a5",
+        image_cache_session: &session,
+        layout: TypstLayout::Export,
+    };
+    let anchor = |id, words| format!(r#"<a href="https://example.org/{id}">{words}</a>"#);
+    let notes = [
+        format!(
+            "Two sources. {} {}",
+            anchor("a", "Hear the interview."),
+            anchor("b", "Read the transcript.")
+        ),
+        format!("North. {}", anchor("c", "Listen.")),
+        format!("South. {}", anchor("d", "Listen.")),
+        "A plain note.".into(),
+        format!("A recording. {}", anchor("e", "Map.")),
+        format!("A sketch. {}", anchor("f", "Open the map.")),
+        format!("Look at {} first.", anchor("g", "the score")),
+        format!("The background. {}", anchor("h", "Read on.")),
+        format!("The {}.", anchor("i", "score")),
+        "Another plain note.".into(),
+    ];
+    let mut blocks = vec![text_block(
+        "paragraph",
+        "Sources[1][2][3][4][5][6][7][8][9][10].",
+    )];
+    blocks.extend(
+        notes
+            .into_iter()
+            .enumerate()
+            .map(|(i, text)| ExportBlock::Footnote {
+                number: i + 1,
+                marker: i + 1,
+                anchor_block: Some(0),
+                text,
+            }),
+    );
+    let document = ExportDocument {
+        title: "Source labels".into(),
+        language_code: "en".into(),
+        blocks,
+        book_parts: Vec::new(),
+    };
+    prepare_typst_workspace(
+        None,
+        "",
+        &workspace,
+        &document,
+        &options,
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    // Exercise both positions of the plain neighbor independently of pagination.
+    let mut rows = serde_json::Map::new();
+    for leader in [2, 4, 6, 9] {
+        for id in leader..=leader + 1 {
+            rows.insert(
+                id.to_string(),
+                serde_json::json!({"row": leader, "count": 2}),
+            );
+        }
+    }
+    fs::write(
+        workspace.join("qr-rows.json"),
+        serde_json::to_vec(&rows).unwrap(),
+    )
+    .unwrap();
+    let probe = r#"#let visible(body) = {
+  if body.func() == text { body.text }
+  else if body.func() == [ ].func() { " " }
+  else if body.has("children") { body.children.map(visible).join("") }
+  else if body.has("body") { visible(body.body) }
+  else if body.has("child") { visible(body.child) }
+  else { "" }
+}
+#show link: it => {
+  if type(it.dest) == str { [#metadata((it.dest, visible(it.body)))<printed-link>] }
+  it
+}
+"#;
+    let path = workspace.join("chapter.typ");
+    let source = fs::read_to_string(&path).unwrap();
+    fs::write(
+        &path,
+        source.replacen("#gnosis-title(", &format!("{probe}#gnosis-title("), 1),
+    )
+    .unwrap();
+    let links: Vec<(String, String)> = serde_json::from_slice(&evaluate(
+        &workspace,
+        "query(<printed-link>).map(m => m.value)",
+    ))
+    .unwrap();
+    let cases: &[(&str, &[&str])] = &[
+        ("a", &["1a", "1a", "Hear the interview."]),
+        ("b", &["1b", "1b", "Read the transcript."]),
+        ("c", &["2"]),
+        ("d", &["3"]),
+        ("e", &["5 · Map."]),
+        ("f", &["6", "Open the map."]),
+        ("g", &["7", "the score"]),
+        ("h", &["Read on."]),
+        ("i", &["9", "score"]),
+    ];
+    for &(slug, expected) in cases {
+        let url = format!("https://example.org/{slug}");
+        let mut actual: Vec<_> = links
+            .iter()
+            .filter(|(dest, words)| dest == &url && !words.is_empty())
+            .map(|(_, words)| words.as_str())
+            .collect();
+        actual.sort_unstable();
+        assert_eq!(actual, expected, "{url}");
+    }
+}
+
+#[test]
 fn wrapped_qr_uses_the_ink_margin_and_the_native_paragraph_spacing() {
     if std::env::var_os("GNOSIS_TYPST_BIN").is_none()
         || std::env::var_os("GNOSIS_TYPST_SMOKE_FONT_DIR").is_none()

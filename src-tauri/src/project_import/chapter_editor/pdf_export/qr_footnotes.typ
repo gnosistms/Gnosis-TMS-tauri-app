@@ -7,8 +7,8 @@
 #let prose-gap = 2.5mm
 #let max-group-height = 49mm
 
-#let gnosis-qr-note(prose, refs, link-only: false) = metadata((
-  kind: "gnosis-qr", prose: prose, refs: refs, link-only: link-only,
+#let gnosis-qr-note(prose, refs, link-only: false, full-prose: none) = metadata((
+  kind: "gnosis-qr", prose: prose, refs: refs, link-only: link-only, full-prose: full-prose,
 ))
 #let cell-label(id) = label("gnosis-qr-entry-" + str(id))
 #let id-of(note) = counter(footnote).at(note.location()).first()
@@ -29,7 +29,8 @@
       } else { it }
     }).join([])
   }
-  (id: id, number: number, location: location, refs: refs, prose: prose, link-only: has-qr and data.value.link-only)
+  (id: id, number: number, location: location, refs: refs, prose: prose,
+    full-prose: if has-qr { data.value.full-prose }, link-only: has-qr and data.value.link-only)
 }
 
 // The row ends at the last black module. The four-module quiet zone and
@@ -53,13 +54,11 @@
   style(wrapped)
 }
 
-#let tile(ref, limit, shared, numbered: true) = {
+#let tile(ref, limit, words) = {
   let pitch = calc.min(module, limit / (ref.modules + 8))
   let ink = ref.modules * pitch
   let quiet = 4 * pitch
   let side = ink + 2 * quiet
-  let words = if not numbered { if ref.detached { ref.words } else { "" } }
-    else if shared or not ref.detached { ref.key } else { ref.key + " · " + ref.words }
   let natural = measure(text(size: caption-size, spacing: 100%, words)).width
   let width = calc.max(side, calc.min(limit, 22mm, natural + .4pt))
   let caption = caption-text(words, width, ref.direction)
@@ -131,7 +130,12 @@
 #let group-layout(notes, width, direction, spacing) = {
   let refs = notes.map(n => n.refs).flatten()
   let common = common-caption(refs)
-  let tiles = refs.map(r => tile(r, width, common != none))
+  if refs.len() > 1 and common == none {
+    notes = notes.map(n => if n.full-prose == none { n } else { n + (prose: n.full-prose) })
+  }
+  // The key belongs to the code's source, including a lone code beside two notes.
+  let tiles = refs.map(r => tile(r, width,
+    if refs.len() == 1 and r.detached { r.key + " · " + r.words } else { r.key }))
   let narrow = bank-for(tiles, width * .42, common)
   let wide = if narrow.rows.len() > 1 { bank-for(tiles, width, common) } else { narrow }
   let normal(n, width, ragged) = note-line(n, width,
@@ -179,15 +183,15 @@
     align: (right + top, left + top), marker(n, false), body)
   let full-copy = reading-copy(n.prose, measure-width, direction, n.link-only)
   if n.refs.len() == 0 { return (body: line(full-copy), excess: 0pt) }
-  let common = common-caption(n.refs)
-  let tiles = n.refs.map(r => tile(r, measure-width, common != none, numbered: n.refs.len() > 1))
-  let bank = bank-for(tiles, measure-width * .46, common)
+  let tiles = n.refs.map(r => tile(r, measure-width,
+    if n.refs.len() > 1 { r.key } else if r.detached { r.words } else { "" }))
+  let bank = bank-for(tiles, measure-width * .46, none)
   let used = bank.width + prose-gap
   let narrow = measure-width - used
   let bank-height = measure(bank.body).height
   let copy-height = if narrow >= 12mm { measure(reading-copy(n.prose, narrow, direction, n.link-only)).height } else { 0pt }
   if narrow < 12mm or (bank.rows.len() > 1 and bank-height > copy-height) {
-    let wide = bank-for(tiles, measure-width, common)
+    let wide = bank-for(tiles, measure-width, none)
     let body = line(grid(columns: (measure-width,), row-gutter: row-gap, align: right + top, full-copy, wide.body))
     return (body: body, excess: measure(body).height - measure(line(full-copy)).height)
   }
