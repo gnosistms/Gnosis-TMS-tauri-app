@@ -2,7 +2,7 @@
 use super::super::chapter_export::{inline_link_tag, InlineLinkTag};
 use super::{
     footnote_paragraphs, inline_segments, inline_visible_text,
-    qr_shortlinks::{same_destination, Shortlinks},
+    qr_shortlinks::{publisher_shortlink, same_destination, Shortlinks},
     render_footnote_typst, render_styled_typst_text, typst_link_target, typst_string, ExportBlock,
     ExportDocument,
 };
@@ -339,13 +339,6 @@ fn url_spellings(url: &str) -> Vec<String> {
     spellings
 }
 
-pub(super) fn fits_version_one(original: &str, shortlinks: &[Url]) -> bool {
-    std::iter::once(original)
-        .chain(shortlinks.iter().map(Url::as_str))
-        .flat_map(url_spellings)
-        .any(|payload| encode_url(&payload, EcLevel::L, Some(Version::Normal(1))).is_ok())
-}
-
 fn optimize_url(payload: &str) -> QrResult<QrCode> {
     let smallest = encode_url(payload, EcLevel::L, None)?;
     let version = Some(smallest.version());
@@ -356,11 +349,22 @@ fn optimize_url(payload: &str) -> QrResult<QrCode> {
 }
 
 fn best_code(original: &str, shortlinks: &[Url]) -> QrResult<(QrCode, String)> {
-    std::iter::once(original)
-        .chain(shortlinks.iter().map(Url::as_str))
-        .flat_map(url_spellings)
-        .filter_map(|payload| Some((optimize_url(&payload).ok()?, payload)))
-        .min_by_key(|(code, payload)| {
+    let source = Url::parse(original).ok();
+    let aliases = shortlinks.iter().filter_map(|link| {
+        let page = source.as_ref()?;
+        publisher_shortlink(page, link).then(|| (link.as_str(), link.host() != page.host()))
+    });
+    std::iter::once((original, false))
+        .chain(aliases)
+        .flat_map(|(url, other_host)| {
+            url_spellings(url)
+                .into_iter()
+                .map(move |payload| (payload, other_host))
+        })
+        .filter_map(|(payload, other_host)| {
+            Some((optimize_url(&payload).ok()?, payload, other_host))
+        })
+        .min_by_key(|(code, payload, other_host)| {
             let scheme = payload.split_once("://").map(|(scheme, _)| scheme);
             let scheme_priority = match scheme {
                 Some(scheme) if scheme.eq_ignore_ascii_case("https") => 0,
@@ -369,10 +373,12 @@ fn best_code(original: &str, shortlinks: &[Url]) -> QrResult<(QrCode, String)> {
             };
             (
                 code.width(),
+                *other_host,
                 Reverse(code.error_correction_level()),
                 scheme_priority,
             )
         })
+        .map(|(code, payload, _)| (code, payload))
         .ok_or(QrError::DataTooLong)
 }
 
@@ -557,6 +563,21 @@ mod tests {
             ),
             (fits_with_scheme.as_str(), 29, EcLevel::L)
         );
+    }
+
+    #[test]
+    fn section_codes_choose_the_publisher_host_on_a_size_tie_and_ignore_independent_aliases() {
+        for id in ["Go-vu-ra", "Khe-sed"] {
+            let original = format!("https://gnosisvn.org/2023/05/03/cay-su-song/#{id}");
+            let publisher = Url::parse(&format!("https://gnosisvn.org/?p=12220#{id}")).unwrap();
+            let platform = Url::parse(&format!("https://wp.me/p6Zr2M-3b6#{id}")).unwrap();
+            let unrelated = Url::parse("https://is.gd/example").unwrap();
+            let (code, payload) =
+                best_code(&original, &[unrelated.clone(), platform, publisher.clone()]).unwrap();
+            assert_eq!(code.width(), 25);
+            assert!(url_spellings(publisher.as_str()).contains(&payload));
+            assert_eq!(best_code(&original, &[unrelated]).unwrap().0.width(), 29);
+        }
     }
 
     #[test]

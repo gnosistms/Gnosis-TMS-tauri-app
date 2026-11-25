@@ -609,9 +609,6 @@ function exportDetail(option, isExporting, modal, appState) {
           value: pdfFootnoteLinkMode(modal),
           disabled: isExporting,
         }) : footnoteLinkFallbackSection(option, modal)}
-        ${option.format === "pdf" && pdfFootnoteLinkMode(modal) === "compact-qr"
-          ? supportingText("When a publisher’s link needs a larger QR code, Gnosis TMS sends the public section URL to is.gd and saves the verified short link for future exports.")
-          : ""}
         ${omitCustomHtmlSection(option, modal)}
         ${option.format === "pdf" ? savedPdfFontSettings(modal, isExporting) : ""}
         ${exportProgress}

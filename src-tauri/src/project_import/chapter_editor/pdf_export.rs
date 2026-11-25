@@ -1510,17 +1510,11 @@ fn prepare_typst_workspace(
             }
             qr_shortlinks::resolve(urls, cancelled, session_token)
         };
-        let app_data = app.path().app_data_dir().ok();
-        let compact_sections = if options.footnote_links == PdfFootnoteLinks::CompactQr {
-            qr_shortlinks::compact::section_urls(&urls)
-        } else {
-            Vec::new()
-        };
-        let mut shortlinks = if urls.is_empty() {
+        let shortlinks = if urls.is_empty() {
             HashMap::new()
-        } else if let Some(app_data) = app_data.as_deref() {
+        } else if let Ok(app_data) = app.path().app_data_dir() {
             let (shortlinks, saved) = shortlink_cache::resolve(
-                app_data,
+                &app_data,
                 urls,
                 |url, links| {
                     session_token.is_some() && qr_shortlinks::is_cached_wiki_fallback(url, links)
@@ -1543,33 +1537,6 @@ fn prepare_typst_workspace(
             );
             discover(urls)
         };
-        if !compact_sections.is_empty() {
-            let exporting = matches!(options.layout, TypstLayout::Export);
-            if exporting {
-                emit_progress(
-                    app,
-                    job_id,
-                    "running",
-                    "preparing-links",
-                    "Checking section links for compact QR codes…",
-                    PdfProgressValue::indeterminate(),
-                );
-            }
-            let saved = qr_shortlinks::compact::extend(
-                app_data.as_deref(),
-                compact_sections,
-                &mut shortlinks,
-                exporting,
-                cancelled,
-            );
-            if saved.is_err() {
-                crate::github::report_backend_nonfatal_error(
-                    app,
-                    "pdf-export.compact-shortlink-cache",
-                    "cache_io_failed",
-                );
-            }
-        }
         check_cancelled(cancelled)?;
         shortlinks
     } else {
@@ -6409,16 +6376,11 @@ mod tests {
             }],
             ..document.clone()
         };
-        for (document, mode) in [
-            (&document, PdfFootnoteLinks::Qr),
-            (&book, PdfFootnoteLinks::Qr),
-            (&document, PdfFootnoteLinks::CompactQr),
-            (&book, PdfFootnoteLinks::CompactQr),
-        ] {
-            let options = PdfWorkspacePreparationOptions {
-                footnote_links: mode,
-                ..options
-            };
+        assert_eq!(
+            serde_json::from_str::<PdfFootnoteLinks>(r#""compact-qr""#).unwrap(),
+            PdfFootnoteLinks::Qr
+        );
+        for document in [&document, &book] {
             prepare_typst_workspace(
                 None,
                 "",

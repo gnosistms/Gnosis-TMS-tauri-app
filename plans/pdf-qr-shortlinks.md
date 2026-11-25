@@ -22,12 +22,7 @@ Both photographed symbols decoded as 29 × 29. WordPress gives both sections the
 
 The WordPress-only proof uses those current fragments for scanning and clicking. The two symbols are 25 × 25 on PDF page 33 (printed page 29). All 229 QR codes in the 543-page book decoded at 300 and 600 dpi. A 21 × 21 version requires a separate persistent short address for each heading.
 
-## Self-service compact PDF codes
+## Publisher links for print
 
-1. Offer a compact QR export mode that identifies the public shortening service. Prefer an original address or a verified publisher link that already fits a 21 × 21 symbol. Request any remaining short addresses from the desktop, with the full section and without an account or a per-book redirect list.
-2. Verify the public destination and the service's redirect, cache accepted results by exact URL, and handle offline exports, service limits, and previously cached publisher links. Preserve the ordinary QR export and the digital PDF links.
-3. Exercise chapter and book exports, mode selection, and unsuccessful lookups. Run the new path on the corrected HNHH headings and decode the printed book.
-
-The PDF export option **Print compact QR codes using is.gd** accepts verified sections on public HTTPS pages. The desktop checks the published heading, requests a persistent address, follows its redirect, and caches it by the complete source URL. It skips URLs with credentials or query strings and pages marked noindex. An offline first export or an unavailable service falls back to the publisher or original link. The service receives only the section URL. [is.gd desktop API](https://is.gd/apishorteningreference.php)
-
-In the corrected HNHH book, notes 32 and 33 each printed at 21 × 21 and opened the headings Gơ-vu-ra and Khe-seđ. Across 543 pages, all 229 symbols decoded at both 300 and 600 dpi, and 216 were 21 × 21. Nine printed codes became smaller.
+1. Retire the independent shortening service and read its previously saved export option as ordinary QR printing. Use the author's URL or a verified publisher link. For codes of the same size prefer the website that owns the destination.
+2. Verify the Gnosis VN post-ID links and headings in the full HNHH proof. Check the printed QR sizes, original digital link targets, callouts, and labels.

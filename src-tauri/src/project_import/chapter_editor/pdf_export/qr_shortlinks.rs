@@ -1,5 +1,3 @@
-pub(super) mod compact;
-
 use super::super::chapter_export::public_http_client_builder_for_url;
 use crate::broker::{broker_path_url, broker_post_json_with_session};
 use regex::Regex;
@@ -656,6 +654,18 @@ fn response_links(page: &Url, response: Response) -> PageLinks {
     page_links(page, &headers, &String::from_utf8_lossy(&html))
 }
 
+// Same-site URLs and the short domains of WordPress and Wikimedia are issued
+// by the publisher or publishing platform. Apply the rule to old cache entries too.
+pub(super) fn publisher_shortlink(page: &Url, candidate: &Url) -> bool {
+    if page.host().is_some() && page.host() == candidate.host() {
+        return true;
+    }
+    candidate.scheme() == "https"
+        && candidate.port().is_none()
+        && (candidate.host_str() == Some("wp.me")
+            || (candidate.host_str() == Some("w.wiki") && wikimedia_api(page).is_some()))
+}
+
 fn verified_shortlinks(
     original: &Url,
     page: &Url,
@@ -670,7 +680,10 @@ fn verified_shortlinks(
                 candidate.set_fragment(page.fragment());
             }
             let candidate = web_url(candidate.as_str())?;
-            if same_destination(&candidate, original) || !seen.insert(candidate.clone()) {
+            if !publisher_shortlink(page, &candidate)
+                || same_destination(&candidate, original)
+                || !seen.insert(candidate.clone())
+            {
                 return None;
             }
             destination(&candidate)

@@ -105,9 +105,8 @@ pub(crate) struct ExportChapterFileResponse {
 pub(super) enum PdfFootnoteLinks {
     Links,
     Urls,
+    #[serde(alias = "compact-qr")]
     Qr,
-    #[serde(rename = "compact-qr")]
-    CompactQr,
 }
 
 impl PdfFootnoteLinks {
@@ -116,7 +115,7 @@ impl PdfFootnoteLinks {
     }
 
     pub(super) fn prints_qr(self) -> bool {
-        matches!(self, Self::Qr | Self::CompactQr)
+        self == Self::Qr
     }
 
     pub(super) fn prints_urls(self) -> bool {

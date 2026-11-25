@@ -18,30 +18,6 @@ const UPGRADE_INTERVAL: Duration = Duration::from_secs(3600);
 
 pub(super) fn resolve(
     app_data: &Path,
-    urls: Vec<String>,
-    upgrade: impl Fn(&str, &[Url]) -> bool,
-    discover: impl FnOnce(Vec<String>) -> Shortlinks,
-) -> (Shortlinks, io::Result<()>) {
-    resolve_cached(app_data, CACHE_FILE, urls, upgrade, discover)
-}
-
-pub(super) fn compact_sections(
-    app_data: &Path,
-    urls: Vec<String>,
-    discover: impl FnOnce(Vec<String>) -> Shortlinks,
-) -> (Shortlinks, io::Result<()>) {
-    resolve_cached(
-        app_data,
-        "pdf-compact-sections-v1.json",
-        urls,
-        |_, _| false,
-        discover,
-    )
-}
-
-fn resolve_cached(
-    app_data: &Path,
-    file: &str,
     mut urls: Vec<String>,
     upgrade: impl Fn(&str, &[Url]) -> bool,
     discover: impl FnOnce(Vec<String>) -> Shortlinks,
@@ -51,7 +27,7 @@ fn resolve_cached(
     if urls.is_empty() {
         return (Shortlinks::new(), Ok(()));
     }
-    let path = app_data.join(file);
+    let path = app_data.join(CACHE_FILE);
     let (mut resolved, mut missing) = (Shortlinks::new(), Vec::new());
     let loaded = {
         let _guard = CACHE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
@@ -108,9 +84,6 @@ fn load_or_migrate(app_data: &Path, path: &Path) -> io::Result<Shortlinks> {
         Ok(entries) => return Ok(entries),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => return Err(error),
-    }
-    if path.file_name().is_none_or(|name| name != CACHE_FILE) {
-        return Ok(Shortlinks::new());
     }
     let mut entries = Shortlinks::new();
     let mut imported = Vec::new();

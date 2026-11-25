@@ -150,17 +150,9 @@ test("PDF pane explains the persistent serif fonts and shows job progress", () =
   assert.doesNotMatch(html, /data-action="close-editor-export-options" disabled/);
   assert.match(html, /data-editor-export-pdf-footnote-links disabled/);
   assert.match(html, /Print QR codes/);
+  assert.doesNotMatch(html, /is\.gd|compact-qr/);
   assert.match(html, /Print URLs in parentheses/);
   assert.match(html, /Omit custom HTML/);
-});
-
-test("compact QR mode explains which links are shared with is.gd", () => {
-  const pane = pdfFootnoteLinkMode => renderEditorExportModal(exportState({
-    selectedOptionId: "file:pdf",
-    pdfFootnoteLinkMode,
-  }));
-  assert.match(pane("compact-qr"), /sends the public section URL to is.gd/);
-  assert.doesNotMatch(pane("qr"), /sends the public section URL/);
 });
 
 test("PDF pane shows indeterminate typesetting progress with cancellation enabled", () => {
