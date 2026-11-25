@@ -90,3 +90,15 @@ The chapter and book exporter keeps each link in a multi-code note and places th
 The 543-page proof uses the same HNHH snapshot as the spacing proof. PDF page 22 shows both copies of `15a` and `15b`. Page 50 shows `44` and `45` beneath their shared row, and page 52 shows `49` beside notes 49 and 50. Three previously missing in-text markers now appear in footnotes 234 and 252 on PDF pages 240 and 258.
 
 The full-book check matched all 21 lettered markers to their printed codes and clickable destinations. It also verified all 10 codes sharing rows with other owners, all six owner numbers on single codes spanning notes, and all 192 individually placed codes. All 229 symbols decoded at 300 and 600 dpi. The three page excerpts are in `output/pdf/hnhh-qr-label-examples.png`.
+
+## Pairing a one-line note with a two-line note
+
+1. Reproduce printed page 6 from the same HNHH snapshot. Measure notes 5 and 6 with individual codes and with a shared row, including the normal gap and all caption and text wrapping.
+2. Correct candidate selection in the chapter and book exporter. Add a native layout regression for mixed note lengths and for longer notes that already have room for their codes.
+3. Refit the full book, verify the printed positions, labels, and destinations, and update the proof and the QR export PR.
+
+The first code triggers the comparison when it would reach the next note at normal spacing. The next note can share the row even when its own code fits. The shared row must save height after wrapping both texts and placing all captions. Candidate groups end at the original page break, and the exporter checks their callouts again after repagination.
+
+On printed page 6 (PDF page 10), note 5 has 5.60 pt of text and a 22.69 pt code and caption. Note 6’s code extends 6.60 pt past its text, within the normal 8.40 pt gap. The two codes now share one “Đọc thêm.” caption with their individual numbers. The distance between the first lines of notes 5 and 6 falls from 31.09 pt to 14.00 pt. Their total height falls from 53.78 pt to 40.58 pt.
+
+Note 4 stays on the preceding page. Notes 9 and 10 also save height as a pair, while 11 and 12 keep their individual codes. The 543-page proof contains 436 notes. All 41 grouped note entries passed the forward and return link checks, and all 229 QR symbols decoded at both 300 and 600 dpi.

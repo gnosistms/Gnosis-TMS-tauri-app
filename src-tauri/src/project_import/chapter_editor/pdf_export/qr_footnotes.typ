@@ -199,13 +199,14 @@
     excess: calc.max(0pt, bank-height - calc.max(copy-height, measure(marker(n, false)).height)))
 }
 
-// Start a shared row only if the leader's own code extends past its wrapped
-// prose and the normal inter-note gap. Compare the actual layouts using that
-// same gap in both. Savings are capped at the space due to the QR codes.
+// If this code reaches the next note's normal starting position, try sharing
+// the row. The following note can have room for its own code. Price the full
+// layouts, including their captions, wrapping, and the same inter-note gap.
 #let fit-options(n, own, width, direction, gap, read) = {
   if own.excess <= gap { return none }
   let capacity = calc.max(2, calc.floor(width / 13mm))
   let all-notes = query(footnote)
+  let page = n.location.page()
   let notes = (n,)
   let codes = n.refs.len()
   let separate = measure(own.body, width: width).height
@@ -213,12 +214,11 @@
   let options = ()
   for i in range(n.id, calc.min(n.id - 1 + capacity, all-notes.len())) {
     let next = read(all-notes.at(i), i + 1)
+    // Notes on different pages have no inter-note space to recover.
+    if next.location.page() != page { break }
     codes += next.refs.len()
     if codes > capacity { break }
     let individual = solo-layout(next, width, direction)
-    // A code that already fits stays beside its own note, even immediately
-    // after a short one. A plain note can provide room for an overhanging code.
-    if next.refs.len() > 0 and individual.excess <= gap { break }
     separate += gap + measure(individual.body, width: width).height
     excess += individual.excess
     notes.push(next)
@@ -228,8 +228,7 @@
     if saved > 0 {
       options.push((first: n.id, count: notes.len(), saved: saved))
     }
-    // As soon as the row clears the next note's normal start, it is complete.
-    // A following short note can start its own group if its code needs one.
+    // End the row as soon as its bank clears the next note's normal start.
     if group.excess <= gap { break }
   }
   if options.len() > 0 { [#metadata(options)<gnosis-qr-measure>] }
@@ -251,14 +250,21 @@
   let read(note, id) = reading(note.body, id, numbering(note.numbering, id), note.location(), direction)
   let n = read(note, id)
   let cell = if rows != none { rows.at(str(id), default: none) }
-  if cell == none and n.refs.len() == 0 { return entry }
   if cell != none and cell.row != id { return v(-entry-gap) }
-  let members = if cell != none {
-    query(footnote).slice(id - 1, id - 1 + cell.count).enumerate().map(((i, note)) => read(note, id + i))
+  let members = ()
+  if cell != none {
+    let all-notes = query(footnote)
+    if id - 1 + cell.count <= all-notes.len() {
+      members = all-notes.slice(id - 1, id - 1 + cell.count).enumerate().map(((i, note)) => read(note, id + i))
+    }
   }
+  // During repagination an intermediate query can still have missing
+  // callouts. Render individually until the planned row has a QR to draw.
+  let grouped = members.any(member => member.refs.len() > 0)
+  if not grouped and n.refs.len() == 0 { return entry }
   set text(dir: ltr, costs: (widow: 0%))
   set par(first-line-indent: (amount: 1.5em, all: false), spacing: par.leading)
-  layout(size => if cell == none {
+  layout(size => if not grouped {
     let own = solo-layout(n, size.width, direction)
     if rows == none { fit-options(n, own, size.width, direction, entry-gap, read) }
     own.body
