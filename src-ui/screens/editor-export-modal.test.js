@@ -154,6 +154,15 @@ test("PDF pane explains the persistent serif fonts and shows job progress", () =
   assert.match(html, /Omit custom HTML/);
 });
 
+test("compact QR mode explains which links are shared with is.gd", () => {
+  const pane = pdfFootnoteLinkMode => renderEditorExportModal(exportState({
+    selectedOptionId: "file:pdf",
+    pdfFootnoteLinkMode,
+  }));
+  assert.match(pane("compact-qr"), /sends the public section URL to is.gd/);
+  assert.doesNotMatch(pane("qr"), /sends the public section URL/);
+});
+
 test("PDF pane shows indeterminate typesetting progress with cancellation enabled", () => {
   const html = renderEditorExportModal(exportState({
     selectedOptionId: "file:pdf",

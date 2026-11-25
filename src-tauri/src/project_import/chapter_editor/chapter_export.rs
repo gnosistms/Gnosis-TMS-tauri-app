@@ -106,11 +106,17 @@ pub(super) enum PdfFootnoteLinks {
     Links,
     Urls,
     Qr,
+    #[serde(rename = "compact-qr")]
+    CompactQr,
 }
 
 impl PdfFootnoteLinks {
     pub(super) fn resolve(mode: Option<Self>, legacy_urls: bool) -> Self {
         mode.unwrap_or(if legacy_urls { Self::Urls } else { Self::Links })
+    }
+
+    pub(super) fn prints_qr(self) -> bool {
+        matches!(self, Self::Qr | Self::CompactQr)
     }
 
     pub(super) fn prints_urls(self) -> bool {
@@ -442,7 +448,9 @@ pub(super) fn build_scoped_export_document(
     head_sha: &str,
 ) -> Result<ExportDocument, String> {
     let audio_export = if input.format.trim().eq_ignore_ascii_case("pdf")
-        && input.pdf_footnote_link_mode == Some(PdfFootnoteLinks::Qr)
+        && input
+            .pdf_footnote_link_mode
+            .is_some_and(PdfFootnoteLinks::prints_qr)
     {
         AudioExport::QrFootnote
     } else {

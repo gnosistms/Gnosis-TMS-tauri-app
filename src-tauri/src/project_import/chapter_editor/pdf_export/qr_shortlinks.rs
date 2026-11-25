@@ -1,3 +1,5 @@
+pub(super) mod compact;
+
 use super::super::chapter_export::public_http_client_builder_for_url;
 use crate::broker::{broker_path_url, broker_post_json_with_session};
 use regex::Regex;

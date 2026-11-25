@@ -405,8 +405,15 @@ mod tests {
             image_cache_session: &scope,
             layout: TypstLayout::Export,
         };
-        let prepared =
-            prepare(&workspace, &document, &options, &HashMap::new(), &plan, &plan).unwrap();
+        let prepared = prepare(
+            &workspace,
+            &document,
+            &options,
+            &HashMap::new(),
+            &plan,
+            &plan,
+        )
+        .unwrap();
         assert_eq!(
             prepared.labels,
             [
@@ -517,8 +524,15 @@ mod tests {
             format!("{}{full}", plan.rules(false)),
         )
         .unwrap();
-        let prepared =
-            prepare(&workspace, &document, &options, &HashMap::new(), &plan, &plan).unwrap();
+        let prepared = prepare(
+            &workspace,
+            &document,
+            &options,
+            &HashMap::new(),
+            &plan,
+            &plan,
+        )
+        .unwrap();
         assert_eq!(
             prepared.labels,
             [
@@ -683,8 +697,15 @@ mod tests {
             image_cache_session: &scope,
             layout: TypstLayout::Export,
         };
-        let prepared =
-            prepare(&workspace, &document, &options, &HashMap::new(), &plan, &plan).unwrap();
+        let prepared = prepare(
+            &workspace,
+            &document,
+            &options,
+            &HashMap::new(),
+            &plan,
+            &plan,
+        )
+        .unwrap();
         // A local figure in the final document avoids any network during the test.
         let mut full_document = document.clone();
         fs::write(workspace.join("image.svg"), "<svg xmlns='http://www.w3.org/2000/svg' width='30' height='30'><rect width='30' height='30' fill='gray'/></svg>").unwrap();

@@ -1895,6 +1895,7 @@ dependencies = [
  "libloading",
  "objc2-app-kit",
  "objc2-foundation",
+ "percent-encoding",
  "plist",
  "qrcode",
  "quick-xml 0.31.0",

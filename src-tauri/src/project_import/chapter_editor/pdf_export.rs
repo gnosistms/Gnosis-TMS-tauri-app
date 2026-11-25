@@ -1489,12 +1489,14 @@ fn prepare_typst_workspace(
         .map_err(|error| format!("Could not prepare the title ornament for the PDF: {error}"))?;
     write_droplet_package(workspace)?;
     let mut source = typst_preamble(document, options.paper_size);
-    let shortlinks = if let Some(app) = app.filter(|_| options.footnote_links == PdfFootnoteLinks::Qr) {
+    let shortlinks = if let Some(app) = app.filter(|_| options.footnote_links.prints_qr()) {
         let urls = qr_footnotes::document_urls(document);
         let session = crate::broker_auth_storage::load_broker_auth_session_internal(app)
             .ok()
             .flatten();
-        let session_token = session.as_ref().map(|session| session.session_token.as_str());
+        let session_token = session
+            .as_ref()
+            .map(|session| session.session_token.as_str());
         let discover = |urls: Vec<String>| {
             if !urls.is_empty() {
                 emit_progress(
@@ -1508,11 +1510,17 @@ fn prepare_typst_workspace(
             }
             qr_shortlinks::resolve(urls, cancelled, session_token)
         };
-        let shortlinks = if urls.is_empty() {
+        let app_data = app.path().app_data_dir().ok();
+        let compact_sections = if options.footnote_links == PdfFootnoteLinks::CompactQr {
+            qr_shortlinks::compact::section_urls(&urls)
+        } else {
+            Vec::new()
+        };
+        let mut shortlinks = if urls.is_empty() {
             HashMap::new()
-        } else if let Ok(app_data) = app.path().app_data_dir() {
+        } else if let Some(app_data) = app_data.as_deref() {
             let (shortlinks, saved) = shortlink_cache::resolve(
-                &app_data,
+                app_data,
                 urls,
                 |url, links| {
                     session_token.is_some() && qr_shortlinks::is_cached_wiki_fallback(url, links)
@@ -1535,17 +1543,52 @@ fn prepare_typst_workspace(
             );
             discover(urls)
         };
+        if !compact_sections.is_empty() {
+            let exporting = matches!(options.layout, TypstLayout::Export);
+            if exporting {
+                emit_progress(
+                    app,
+                    job_id,
+                    "running",
+                    "preparing-links",
+                    "Checking section links for compact QR codes…",
+                    PdfProgressValue::indeterminate(),
+                );
+            }
+            let saved = qr_shortlinks::compact::extend(
+                app_data.as_deref(),
+                compact_sections,
+                &mut shortlinks,
+                exporting,
+                cancelled,
+            );
+            if saved.is_err() {
+                crate::github::report_backend_nonfatal_error(
+                    app,
+                    "pdf-export.compact-shortlink-cache",
+                    "cache_io_failed",
+                );
+            }
+        }
         check_cancelled(cancelled)?;
         shortlinks
     } else {
         HashMap::new()
     };
     let body = if document.book_parts.is_empty() {
-        render_typst_chapter(document, &image_paths, &shortlinks, options, cancelled, None, false)?
+        render_typst_chapter(
+            document,
+            &image_paths,
+            &shortlinks,
+            options,
+            cancelled,
+            None,
+            false,
+        )?
     } else {
         render_typst_book(document, &image_paths, &shortlinks, options, cancelled)?
     };
-    if options.footnote_links == PdfFootnoteLinks::Qr && body.contains("#footnote[#gnosis-qr-note(") {
+    if options.footnote_links.prints_qr() && body.contains("#footnote[#gnosis-qr-note(") {
         qr_footnotes::write_templates(workspace)?;
         if body.matches("#footnote[").nth(1).is_some() {
             qr_packing::initialize(workspace)?;
@@ -2261,14 +2304,8 @@ fn prepare_pdf_workspace(
             report_font_coverage_gap(app, &plan, document);
         }
         plan.validate()?;
-        let shortlinks = prepare_typst_workspace(
-            Some(app),
-            job_id,
-            &workspace,
-            document,
-            options,
-            cancelled,
-        )?;
+        let shortlinks =
+            prepare_typst_workspace(Some(app), job_id, &workspace, document, options, cancelled)?;
         let unapproved = plan.unapproved(&approved);
         if !plan.fonts.is_empty() {
             let chapter_path = workspace.join("chapter.typ");
@@ -3344,7 +3381,7 @@ fn pdf_note_body(
     mode: PdfFootnoteLinks,
     shortlinks: &qr_shortlinks::Shortlinks,
 ) -> Result<String, String> {
-    if mode == PdfFootnoteLinks::Qr {
+    if mode.prints_qr() {
         if let Some(body) = qr_footnotes::render(text, number, shortlinks)? {
             return Ok(body);
         }
@@ -6372,7 +6409,16 @@ mod tests {
             }],
             ..document.clone()
         };
-        for document in [&document, &book] {
+        for (document, mode) in [
+            (&document, PdfFootnoteLinks::Qr),
+            (&book, PdfFootnoteLinks::Qr),
+            (&document, PdfFootnoteLinks::CompactQr),
+            (&book, PdfFootnoteLinks::CompactQr),
+        ] {
+            let options = PdfWorkspacePreparationOptions {
+                footnote_links: mode,
+                ..options
+            };
             prepare_typst_workspace(
                 None,
                 "",

@@ -339,6 +339,13 @@ fn url_spellings(url: &str) -> Vec<String> {
     spellings
 }
 
+pub(super) fn fits_version_one(original: &str, shortlinks: &[Url]) -> bool {
+    std::iter::once(original)
+        .chain(shortlinks.iter().map(Url::as_str))
+        .flat_map(url_spellings)
+        .any(|payload| encode_url(&payload, EcLevel::L, Some(Version::Normal(1))).is_ok())
+}
+
 fn optimize_url(payload: &str) -> QrResult<QrCode> {
     let smallest = encode_url(payload, EcLevel::L, None)?;
     let version = Some(smallest.version());
@@ -616,10 +623,11 @@ mod tests {
             .any(|url| url == "EXAMPLE.ORG/Bài%2F%252F?Token=ABC%26ghi#Đề"));
         let parsed = Url::parse(original).unwrap();
         for spelling in spellings {
-            let candidate = spelling
-                .contains("://")
-                .then(|| spelling.clone())
-                .unwrap_or_else(|| format!("https://{spelling}"));
+            let candidate = if spelling.contains("://") {
+                spelling.clone()
+            } else {
+                format!("https://{spelling}")
+            };
             assert!(
                 same_destination(&parsed, &Url::parse(&candidate).unwrap()),
                 "{spelling}"

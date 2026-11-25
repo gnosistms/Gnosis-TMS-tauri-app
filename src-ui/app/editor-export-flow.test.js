@@ -648,6 +648,7 @@ test("book PDF links default to QR and honor saved choices", async () => {
     [{ footnoteLinksAsPlainText: true }, "qr"],
     [{ footnoteLinksAsPlainText: false }, "links"],
     [{ pdfFootnoteLinkMode: "urls", footnoteLinksAsPlainText: false }, "urls"],
+    [{ pdfFootnoteLinkMode: "compact-qr" }, "compact-qr"],
     [{ pdfFootnoteLinkMode: "links", footnoteLinksAsPlainText: true }, "links"],
   ]) {
     replaceBookSettings("project-1", { options });

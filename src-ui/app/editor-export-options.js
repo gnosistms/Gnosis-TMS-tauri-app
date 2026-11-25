@@ -3,6 +3,7 @@ export const DEFAULT_PDF_FOOTNOTE_LINK_MODE = "qr";
 
 export const PDF_FOOTNOTE_LINK_MODES = [
   { value: "qr", label: "Print QR codes" },
+  { value: "compact-qr", label: "Print compact QR codes using is.gd" },
   { value: "urls", label: "Print URLs in parentheses" },
   { value: "links", label: "Clickable links only" },
 ];
