@@ -51,24 +51,26 @@
 #let flow-around(prose, bank, occupied, width, direction, ragged) = {
   let narrow = width - occupied
   let bank-height = measure(bank, width: width).height
-  let beside(body) = grid(columns: (narrow, occupied), align: (left + top, right + top),
-    reading-copy(body, narrow, direction, ragged), bank)
+  let narrow-copy(body) = reading-copy(body, narrow, direction, ragged)
+  let beside(copy) = grid(columns: (narrow, occupied), align: (left + top, right + top),
+    copy, bank)
   let line = measure([M]).height
   let step = measure([M\ M]).height - line
   let lines = calc.max(1, calc.ceil((bank-height + 0.5mm) / step))
   let target = line + (lines - 1) * step + 0.01pt
-  if measure(reading-copy(prose, narrow, direction, ragged)).height <= target { return beside(prose) }
+  let narrow-prose = narrow-copy(prose)
+  if measure(narrow-prose).height <= target { return beside(narrow-prose) }
 
   let value = plain(prose)
   let choices = value.matches(opportunities).filter(m => m.start > 0 and m.end < value.len())
-  if choices.len() == 0 { return beside(prose) }
+  if choices.len() == 0 { return beside(narrow-prose) }
   let boundary(m) = if m.text.trim() == "" { m.start } else { m.end }
   let lo = 0
   let hi = choices.len()
   while lo < hi {
     let mid = calc.floor((lo + hi) / 2)
     let prefix = cut(prose, boundary(choices.at(mid))).first()
-    if measure(reading-copy(prefix, narrow, direction, ragged)).height <= target { lo = mid + 1 } else { hi = mid }
+    if measure(narrow-copy(prefix)).height <= target { lo = mid + 1 } else { hi = mid }
   }
   let at = choices.at(calc.max(0, lo - 1))
   let split = boundary(at)
@@ -76,8 +78,8 @@
   let tail = cut(prose, at.end).last()
   let hard = at.text in ("\n", "\u{2029}")
   if not hard and not ragged and par.justify { prefix += linebreak(justify: true) }
-  beside(prefix)
-  v(par.leading, weak: true)
+  // The QR caption can occupy the leading below the last narrow line.
+  beside(pad(bottom: par.leading, narrow-copy(prefix)))
   reading-copy({
     if not ragged and at.text == "\u{2029}" {
       let indent = par.first-line-indent

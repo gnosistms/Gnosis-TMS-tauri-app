@@ -25,4 +25,12 @@ The approved module pitch is 25.4 mm × 5 ÷ 600, about 0.212 mm. A 21 × 21 cod
 2. Retain owner labels, the handling of a code beside an unlinked neighbor, and the final check that a group fits with its callouts after pagination.
 3. Check both orders of a short and a long note, equally tall alternatives, and competing groups with the native renderer. Compare printed page 5 in the full Vietnamese HNHH book and verify the QR links.
 
-The A5 HNHH proof measures 68.16 pt for notes 3 and 4 separately and 54.31 pt with their two codes together. Notes 5 and 6 also pair. Notes 10–12 keep individual codes. The 543-page proof contains all 436 notes. All 229 codes decoded to their expected destinations at both 300 and 600 dpi, and every grouped note linked to its own callout on the same page.
+In the initial A5 height comparison, notes 3 and 4 measured 68.16 pt separately and 54.31 pt together. Notes 5 and 6 also paired, and notes 10–12 kept individual codes. The 543-page proof contained all 436 notes. All 229 codes decoded to their expected destinations at both 300 and 600 dpi, and every grouped note linked to its own callout on the same page.
+
+## Line spacing when a footnote returns to full width
+
+1. Measure the printed baselines around the QR codes in HNHH note 3.
+2. Preserve the paragraph’s normal line spacing where its width changes, including when the caption ends between two lines. Keep the full-width text clear of the QR codes and captions.
+3. Verify individual and shared codes in native PDF exports, then refit the full HNHH proof and check its links.
+
+On printed page 5, the baseline advance from “dẫn dắt” to “bất kỳ” fell from 13.73 pt to 10.49 pt, matching the preceding lines. The corrected book still has 543 pages. All 229 codes decoded at 300 and 600 dpi, and all 81 grouped note entries had working same-page callouts and backlinks.

@@ -239,12 +239,10 @@ fn codes_stay_with_their_notes_unless_a_shared_row_saves_vertical_space() {
         "paragraph",
         "The accounts[1][2][3], the recordings[4][5][6] and the conclusion[7][8][9].",
     )];
-    for (i, caption) in [
+    let prompts = [
         "Read.", "Read.", "Read.", "Listen.", "Listen.", "Listen.", "Read.", "Listen.", "Read.",
-    ]
-    .iter()
-    .enumerate()
-    {
+    ];
+    for (i, caption) in prompts.iter().enumerate() {
         let prose = if *caption == "Read." {
             "First line.\nSecond line.\nThird line."
         } else {
@@ -273,18 +271,13 @@ fn codes_stay_with_their_notes_unless_a_shared_row_saves_vertical_space() {
     )
     .unwrap();
     let rows = fit_and_check(&workspace);
-    assert_eq!(rows.as_object().unwrap().len(), 5, "{rows}");
-    for id in ["4", "5", "6"] {
-        assert_eq!(rows[id], serde_json::json!({"row": 4, "count": 3}));
-    }
-    // The short eighth note saves more space sharing with its preceding
-    // three-line neighbor. The first three codes fit alongside their own notes.
-    for id in ["7", "8"] {
-        assert_eq!(rows[id], serde_json::json!({"row": 7, "count": 2}));
-    }
+    let cells = rows.as_object().unwrap();
+    assert!(!cells.contains_key("1") && !cells.contains_key("2") && !cells.contains_key("9"));
+    assert!(cells.values().any(|cell| cell["count"] == 3));
     let path = workspace.join("chapter.typ");
     let source = fs::read_to_string(&path).unwrap();
     let probe = r#"#show regex("([0-9]+ · )?(Read|Listen)[.]"): it => [#metadata(it.text)<printed-caption>#it]
+#show regex("First line[.]"): it => [#metadata(none)<first-line>#it]
 "#;
     fs::write(
         &path,
@@ -296,10 +289,34 @@ fn codes_stay_with_their_notes_unless_a_shared_row_saves_vertical_space() {
         "query(<printed-caption>).map(m => m.value)",
     ))
     .unwrap();
-    assert_eq!(
-        captions,
-        ["Read.", "Read.", "Read.", "Listen.", "Read.", "Listen.", "Read."]
-    );
+    assert_eq!(captions, prompts);
+    // Undo each shared row on its own. In this one-page fixture, making the
+    // printed notes taller moves their first line up from the bottom margin.
+    let top = || {
+        serde_json::from_slice::<f64>(&evaluate(
+            &workspace,
+            "query(<first-line>).first().location().position().y / 1pt",
+        ))
+        .unwrap()
+    };
+    let packed_top = top();
+    let leaders: BTreeSet<_> = cells
+        .values()
+        .map(|cell| cell["row"].as_u64().unwrap())
+        .collect();
+    for id in leaders {
+        let mut apart = cells.clone();
+        apart.retain(|_, member| member["row"] != id);
+        fs::write(
+            workspace.join("qr-rows.json"),
+            serde_json::to_vec(&apart).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            packed_top > top() + 0.01,
+            "row {id} must save printed height"
+        );
+    }
 }
 
 #[test]
@@ -563,7 +580,7 @@ fn wrapped_qr_uses_the_ink_margin_and_the_native_paragraph_spacing() {
         blocks: vec![
             text_block("paragraph", "An annotation in the chapter.[1]"),
             ExportBlock::Footnote { number: 1, marker: 1, anchor_block: Some(0), text: format!(
-                "<i>{words}.</i>\n\nFirstItem\nSoftLine\n\nSecondItem. <a href=\"https://example.org/archive\">Đọc thêm tại đây.</a>"
+                "<i>{words}.</i>\n\nFirstItem\nSoftLine\n\nSecondItem. <a href=\"https://example.org/archive/supplementary-transcript\">Đọc thêm tại đây.</a>"
             ) },
         ],
     };
@@ -579,9 +596,18 @@ fn wrapped_qr_uses_the_ink_margin_and_the_native_paragraph_spacing() {
         }],
         ..document.clone()
     };
-    for (document, layout) in [
-        (&document, TypstLayout::Export),
-        (&book, TypstLayout::TextOnly),
+    let mut paired = document.clone();
+    paired.blocks[0] = text_block("paragraph", "Two annotations in the chapter.[1][2]");
+    paired.blocks.push(ExportBlock::Footnote {
+        number: 2,
+        marker: 2,
+        anchor_block: Some(0),
+        text: r#"Bản đồ. <a href="https://example.org/map">Đọc thêm tại đây.</a>"#.into(),
+    });
+    for (document, layout, shared) in [
+        (&document, TypstLayout::Export, false),
+        (&book, TypstLayout::TextOnly, false),
+        (&paired, TypstLayout::Export, true),
     ] {
         let options = PdfWorkspacePreparationOptions {
             footnote_links: PdfFootnoteLinks::Qr,
@@ -598,6 +624,9 @@ fn wrapped_qr_uses_the_ink_margin_and_the_native_paragraph_spacing() {
             &AtomicBool::new(false),
         )
         .unwrap();
+        if shared {
+            assert_eq!(fit_and_check(&workspace)["2"]["row"], 1);
+        }
         let path = workspace.join("chapter.typ");
         let source = fs::read_to_string(&path).unwrap();
         let probes = r#"#show image: it => {
@@ -619,11 +648,16 @@ fn wrapped_qr_uses_the_ink_margin_and_the_native_paragraph_spacing() {
             "query(<geometry>).map(m => { let pos = m.location().position(); (..m.value, pos.page, pos.x / 1pt, pos.y / 1pt) })"
         )).unwrap();
         let point = |name: &str| points.iter().find(|p| p.0 == name).unwrap();
-        let ink = point("ink");
+        let inks: Vec<_> = points.iter().filter(|p| p.0 == "ink").collect();
+        assert_eq!(inks.len(), if shared { 2 } else { 1 });
+        let ink = inks[0];
+        let rightmost = inks.last().unwrap();
         let margin = (148.0 - if ink.2 % 2 == 1 { 19.0 } else { 22.0 }) * 72.0 / 25.4;
-        assert!((ink.3 + ink.1 - margin).abs() < 0.02);
-        let caption = point("Đọc thêm tại đây.");
-        assert!(caption.3 + caption.1 > margin + 4.0);
+        assert!((rightmost.3 + rightmost.1 - margin).abs() < 0.02);
+        if !shared {
+            let caption = point("Đọc thêm tại đây.");
+            assert!(caption.3 + caption.1 > margin + 4.0);
+        }
         let words: Vec<_> = points
             .iter()
             .filter(|p| p.0.starts_with('w') && p.0.len() == 4)
@@ -646,6 +680,18 @@ fn wrapped_qr_uses_the_ink_margin_and_the_native_paragraph_spacing() {
         let dy1 = soft.4 - first.4;
         let dy2 = second.4 - soft.4;
         assert!(dy1 > 8.0 && (dy1 - dy2).abs() < 0.05);
+        // The first full-width line has the same baseline advance as the
+        // surrounding lines, even if the QR or its caption ends in the gap.
+        let mut baselines: Vec<_> = words.iter().map(|p| p.4).collect();
+        baselines.dedup_by(|a, b| (*a - *b).abs() < 0.01);
+        assert!(baselines.len() > 4);
+        for pair in baselines.windows(2) {
+            let advance = pair[1] - pair[0];
+            assert!(
+                (advance - dy1).abs() < 0.05,
+                "shared={shared}: {advance} vs {dy1}"
+            );
+        }
     }
 }
 
