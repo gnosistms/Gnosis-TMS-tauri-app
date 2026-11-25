@@ -1,238 +1,276 @@
-#let module = 25.4mm * 5 / 600 // Five printer dots per side at 600 dpi.
-#let caption-size = 7.5pt
-#let horizontal-spacing = 0.55
-// Scale the space outside the square, which already includes its quiet zone.
-#let caption-column(side, limit) = side + horizontal-spacing * calc.max(0pt, limit - side)
+#import "qr-wrap.typ": flow-around, reading-copy
 
-#let compact-caption(words, width) = {
-  if measure(words).width <= width { return words }
-  let prefix = ""
-  for cluster in words.clusters() {
-    if measure(prefix + cluster + "…").width > width { break }
-    prefix += cluster
+#let module = 25.4mm * 5 / 600
+#let caption-size = 7.5pt
+#let column-gap = 1.25mm
+#let row-gap = 1mm
+#let prose-gap = 2.5mm
+#let max-group-height = 49mm
+
+#let gnosis-qr-note(prose, refs, link-only: false) = metadata((
+  kind: "gnosis-qr", prose: prose, refs: refs, link-only: link-only,
+))
+#let cell-label(id) = label("gnosis-qr-entry-" + str(id))
+#let id-of(note) = counter(footnote).at(note.location()).first()
+
+#let reading(data, id, number, location, direction) = {
+  let has-qr = data.func() == metadata and type(data.value) == dictionary and data.value.at("kind", default: none) == "gnosis-qr"
+  let refs = if has-qr { data.value.refs } else { () }
+  let refs = refs.enumerate().map(((i, ref)) => ref + (
+    id: id, direction: direction,
+    key: if refs.len() == 1 { number } else { number + numbering("a", i + 1) },
+  ))
+  let prose = if has-qr { data.value.prose } else { data }
+  if refs.len() > 1 and prose.has("children") {
+    prose = prose.children.map(it => {
+      if it.func() == metadata and type(it.value) == dictionary and "qr-source" in it.value {
+        let ref = refs.at(it.value.qr-source)
+        text("\u{2060}") + super(link(ref.url, ref.key))
+      } else { it }
+    }).join([])
   }
-  // Prefer a whole word for descriptive captions; URLs have no word spaces.
-  if prefix.contains(" ") and not words.slice(prefix.len()).starts-with(" ") {
-    prefix = prefix.split(" ").slice(0, -1).join(" ")
-  }
-  prefix.trim() + "…"
+  (id: id, number: number, location: location, refs: refs, prose: prose, link-only: has-qr and data.value.link-only)
 }
 
-#let tile(ref, max-width, whole-link: false, at-text-indent: false, caption-width: auto) = {
-  let modules = ref.modules
-  let pitch = calc.min(module, max-width / (modules + 8))
-  let border = 4 * pitch
-  let width = modules * pitch
-  let side = width + 2 * border
-  let caption-width = if caption-width == auto {
-    caption-column(side, calc.min(max-width, 22mm))
-  } else { caption-width }
-  let alignment = if at-text-indent { left } else { center }
-  let body = block(width: caption-width, breakable: false, above: 0pt, below: 0pt)[
-    #set align(alignment)
-    #set par(justify: false, first-line-indent: 0pt, leading: 2.5pt, spacing: 0pt)
-    #set text(dir: ref.direction, size: caption-size, spacing: 100%, hyphenate: false)
-    #grid(columns: (1fr,), row-gutter: 0.55mm, align: alignment + top,
-      link(ref.url, box(inset: border, fill: white,
-        image(bytes(ref.svg), format: "svg", width: width, alt: "QR code: " + ref.words))),
-      block(width: 100%, link(ref.url,
-        if whole-link { context compact-caption(ref.words, caption-width) }
-        else { ref.words },
-      )),
+// The row ends at the last black module. The four-module quiet zone and
+// half the caption's excess width can occupy the physical page margin.
+// Preserve a full caption even when one word is wider than its column.
+#let caption-text(words, face, direction) = {
+  let style(s) = text(size: caption-size, dir: direction, spacing: 100%, hyphenate: false, s)
+  let wrapped = words.split(" ").map(word => {
+    if measure(style(word)).width <= face { return word }
+    let pieces = ()
+    let part = ""
+    for cluster in word.clusters() {
+      if part != "" and measure(style(part + cluster)).width > face {
+        pieces.push(part)
+        part = ""
+      }
+      part += cluster
+    }
+    (pieces + (part,)).join("\u{200b}")
+  }).join(" ")
+  style(wrapped)
+}
+
+#let tile(ref, limit, shared, numbered: true) = {
+  let pitch = calc.min(module, limit / (ref.modules + 8))
+  let ink = ref.modules * pitch
+  let quiet = 4 * pitch
+  let side = ink + 2 * quiet
+  let words = if not numbered { if ref.detached { ref.words } else { "" } }
+    else if shared or not ref.detached { ref.key } else { ref.key + " · " + ref.words }
+  let natural = measure(text(size: caption-size, spacing: 100%, words)).width
+  let width = calc.max(side, calc.min(limit, 22mm, natural + .4pt))
+  let caption = caption-text(words, width, ref.direction)
+  let body = block(width: width, above: 0pt, below: 0pt, breakable: false)[
+    #set align(center)
+    #set par(first-line-indent: 0pt, justify: false, leading: 2.5pt, spacing: 0pt)
+    #grid(columns: (width,), row-gutter: .35mm, align: center + top,
+      link(ref.url, box(inset: quiet, fill: white,
+        image(bytes(ref.svg), format: "svg", width: ink, alt: "QR: " + ref.words))),
+      ..(if words == "" { () } else { (link(ref.url, caption),) }),
     )
   ]
-  (width: caption-width, body: body)
+  (body: body, width: width, hang: (width - ink) / 2, id: ref.id)
 }
 
-#let column-gap = horizontal-spacing * 1mm
-#let row-gap = 1.8mm
-
-#let take-row(tiles, limit) = {
+#let bank-for(tiles, limit, common) = {
+  let rows = ()
   let cells = ()
   let used = 0pt
-  for tile in tiles {
-    let next = used + (if cells.len() > 0 { column-gap } else { 0pt }) + tile.width
-    if cells.len() > 0 and next > limit { break }
-    used = next
-    cells.push(tile)
+  let finish(cells, used) = {
+    let width = used - cells.last().hang
+    let body = block(width: width, above: 0pt, below: 0pt,
+      align(left, grid(columns: cells.map(c => c.width), column-gutter: column-gap,
+        align: left + top, ..cells.map(c => c.body))))
+    (body: body, width: width, ids: cells.map(c => c.id))
   }
-  let body = grid(columns: cells.map(t => t.width), column-gutter: column-gap,
-    align: center + top, ..cells.map(t => t.body))
-  (count: cells.len(), width: used, body: body)
+  for t in tiles {
+    let next = used + (if cells.len() > 0 { column-gap } else { 0pt }) + t.width
+    if cells.len() > 0 and next - t.hang > limit {
+      rows.push(finish(cells, used))
+      cells = ()
+      used = 0pt
+    }
+    if cells.len() > 0 { used += column-gap }
+    used += t.width
+    cells.push(t)
+  }
+  rows.push(finish(cells, used))
+  let width = calc.max(..rows.map(r => r.width))
+  let heading = if common != none {
+    let face = calc.max(width, calc.min(22mm, measure(text(size: caption-size, common.words)).width + .4pt))
+    let caption = caption-text(common.words, face, common.direction)
+    (block(width: width, above: 0pt, below: 0pt, align(center,
+      block(width: face, above: 0pt, below: 0pt, align(center, caption)))),)
+  } else { () }
+  let body = {
+    set par(first-line-indent: 0pt, justify: false)
+    grid(columns: (width,), row-gutter: row-gap, align: right + top,
+      ..heading, ..rows.map(r => r.body))
+  }
+  (width: width, body: body, rows: rows)
 }
 
-#let pack-rows(tiles, limit) = {
-  let rows = ()
-  let index = 0
-  while index < tiles.len() {
-    let row = take-row(tiles.slice(index), limit)
-    rows.push(row)
-    index += row.count
+#let marker(n, marked) = {
+  if marked {
+    [#metadata(n.id)<gnosis-qr-cell>#metadata(n.id)#cell-label(n.id)]
   }
-  rows
+  let number = n.number + [.]
+  if n.location == none { number } else { link(n.location, number) }
+}
+#let gutter(n) = calc.max(12pt, measure(n.number + [.]).width)
+#let note-line(n, width, body) = grid(columns: (gutter(n), width - gutter(n) - 3pt), column-gutter: 3pt,
+  align: (right + top, left + top), marker(n, true), body)
+
+#let common-caption(refs) = if refs.len() > 1 and refs.all(r => r.detached and r.words == refs.first().words) {
+  refs.first()
 }
 
-#let wrap-note(prose, refs, width, whole-link, has-prose) = {
-  if not has-prose {
-    let tiles = refs.map(ref => tile(ref, width, whole-link: whole-link, at-text-indent: true))
-    return grid(columns: (width,), align: left + top, row-gutter: row-gap,
-      ..pack-rows(tiles, width).map(row => row.body))
+#let group-layout(notes, width, direction, spacing) = {
+  let refs = notes.map(n => n.refs).flatten()
+  let common = common-caption(refs)
+  let tiles = refs.map(r => tile(r, width, common != none))
+  let narrow = bank-for(tiles, width * .42, common)
+  let wide = if narrow.rows.len() > 1 { bank-for(tiles, width, common) } else { narrow }
+  let normal(n, width, ragged) = note-line(n, width,
+    reading-copy(n.prose, width - gutter(n) - 3pt, direction, ragged or n.link-only))
+  let natural = grid(columns: (width,), row-gutter: spacing, align: left + top,
+    ..notes.map(n => normal(n, width, false)))
+  let below = grid(columns: (width,), align: right + top, row-gutter: row-gap, natural, wide.body)
+  let below-height = measure(below, width: width).height
+  let below-layout() = (body: below, height: below-height, excess: below-height - measure(natural, width: width).height)
+  let occupied = narrow.width + prose-gap
+  if width - occupied < 18mm { return below-layout() }
+  let single = notes.filter(n => n.refs.len() == 1).map(n => n.id)
+  let ragged = narrow.rows.map(r => r.ids.filter(id => id in single)).filter(ids => ids.len() > 1).flatten()
+  let bank-height = measure(narrow.body).height
+  let y = 0pt
+  let lines = ()
+  for n in notes {
+    let remaining = bank-height - y
+    let left-aligned = n.id in ragged or n.link-only
+    let line = if remaining <= 0pt { normal(n, width, left-aligned) } else {
+      let short = normal(n, width - occupied, left-aligned)
+      if measure(short).height <= remaining { short } else {
+        // The bank can end halfway through the last note beside it.
+        let prose-width = width - gutter(n) - 3pt
+        note-line(n, width, flow-around(n.prose, block(height: remaining), occupied, prose-width, direction, left-aligned))
+      }
+    }
+    lines.push(line)
+    y += measure(line).height + spacing
   }
-  let prose-gap = horizontal-spacing * 2.5mm
-  let limit = if refs.len() == 1 { width } else { width / 2 }
-  let tiles = refs.map(ref => tile(ref, limit))
-  let narrow-rows = pack-rows(tiles, limit)
-  // Reserve the widest packed narrow row, so the prose uses any spare width.
-  let reserved = calc.max(..narrow-rows.map(row => row.width))
-  let prose-width = width - reserved - prose-gap
-  let text-body = block(width: prose-width, above: 0pt, below: 0pt, prose)
-  let text-height = measure(text-body, width: prose-width).height
-  let narrow = ()
-  let row-top = 0pt
-  let index = 0
-  for row in narrow-rows {
-    if row-top >= text-height { break }
-    narrow.push(row.body)
-    row-top += measure(row.body, width: row.width).height + row-gap
-    index += row.count
-  }
-  // Rows below the prose can use the whole measure, including for large codes.
-  let wide-tiles = refs.slice(index).map(ref => tile(ref, width))
-  let wide = pack-rows(wide-tiles, width).map(row => grid.cell(
-    colspan: 2, align: right + top, row.body))
-  let beside = if narrow.len() == 0 { () } else {
-    (text-body, grid(columns: (reserved,), row-gutter: row-gap,
-      align: right + top, ..narrow))
-  }
-  grid(columns: (1fr, reserved), column-gutter: prose-gap, row-gutter: row-gap,
-    align: top, ..beside, ..wide,
-  )
+  let stack = grid(columns: (width,), row-gutter: spacing, align: left + top, ..lines)
+  let height = calc.max(y - spacing, bank-height)
+  if height > below-height { return below-layout() }
+  (body: block(width: width, height: height, above: 0pt, below: 0pt)[
+    #place(top + right, narrow.body)
+    #stack
+  ], height: height, excess: height - (y - spacing))
 }
 
-// Set physical column order independently of the language used for the prose.
-#let gnosis-qr-note(prose, refs, whole-link, has-prose) = context {
+#let solo-layout(n, width, direction) = {
+  // Plain entries use the native 12 pt marker column when printed individually.
+  let gutter = if n.refs.len() == 0 { 12pt } else { gutter(n) }
+  let measure-width = width - gutter - 3pt
+  let line(body) = grid(columns: (gutter, measure-width), column-gutter: 3pt,
+    align: (right + top, left + top), marker(n, false), body)
+  let full-copy = reading-copy(n.prose, measure-width, direction, n.link-only)
+  if n.refs.len() == 0 { return (body: line(full-copy), excess: 0pt) }
+  let common = common-caption(n.refs)
+  let tiles = n.refs.map(r => tile(r, measure-width, common != none, numbered: n.refs.len() > 1))
+  let bank = bank-for(tiles, measure-width * .46, common)
+  let used = bank.width + prose-gap
+  let narrow = measure-width - used
+  let bank-height = measure(bank.body).height
+  let copy-height = if narrow >= 12mm { measure(reading-copy(n.prose, narrow, direction, n.link-only)).height } else { 0pt }
+  if narrow < 12mm or (bank.rows.len() > 1 and bank-height > copy-height) {
+    let wide = bank-for(tiles, measure-width, common)
+    let body = line(grid(columns: (measure-width,), row-gutter: row-gap, align: right + top, full-copy, wide.body))
+    return (body: body, excess: measure(body).height - measure(line(full-copy)).height)
+  }
+  (body: line(flow-around(n.prose, bank.body, used, measure-width, direction, n.link-only)),
+    excess: calc.max(0pt, bank-height - calc.max(copy-height, measure(marker(n, false)).height)))
+}
+
+// Start a shared row only if the leader's own code extends past its wrapped
+// prose and the normal inter-note gap. Compare the actual layouts using that
+// same gap in both. Savings are capped at the space due to the QR codes.
+#let fit-options(n, own, width, direction, gap, read) = {
+  if own.excess <= gap { return none }
+  let capacity = calc.max(2, calc.floor(width / 13mm))
+  let all-notes = query(footnote)
+  let notes = (n,)
+  let codes = n.refs.len()
+  let separate = measure(own.body, width: width).height
+  let excess = own.excess
+  let options = ()
+  for i in range(n.id, calc.min(n.id - 1 + capacity, all-notes.len())) {
+    let next = read(all-notes.at(i), i + 1)
+    codes += next.refs.len()
+    if codes > capacity { break }
+    let individual = solo-layout(next, width, direction)
+    // A code that already fits stays beside its own note, even immediately
+    // after a short one. A plain note can provide room for an overhanging code.
+    if next.refs.len() > 0 and individual.excess <= gap { break }
+    separate += gap + measure(individual.body, width: width).height
+    excess += individual.excess
+    notes.push(next)
+    let group = group-layout(notes, width, direction, gap)
+    if group.height > max-group-height { break }
+    let saved = int(calc.round(calc.min(separate - group.height, excess) / 1pt * 100))
+    if saved > 0 {
+      options.push((first: n.id, count: notes.len(), saved: saved))
+    }
+    // As soon as the row clears the next note's normal start, it is complete.
+    // A following short note can start its own group if its code needs one.
+    if group.excess <= gap { break }
+  }
+  if options.len() > 0 { [#metadata(options)<gnosis-qr-measure>] }
+}
+
+// Font review excerpts have an original number but no body callout.
+#let qr-excerpt(number, data) = context {
   let direction = text.dir
-  let refs = refs.map(ref => ref + (direction: direction))
+  let n = reading(data, number, str(number), none, direction)
   set text(dir: ltr)
-  layout(size => wrap-note(text(dir: direction, prose), refs, size.width, whole-link, has-prose))
-}
-
-// Single-link notes retain their normal body for standalone rows. The entry
-// rule can also read their original content before it is laid out in a cell.
-#let packable-note(prose, refs, whole-link, has-prose) = {
-  if refs.len() == 1 {
-    metadata((kind: "qr-note", prose: prose, ref: refs.first(), whole: whole-link, has-prose: has-prose))
-  }
-  gnosis-qr-note(prose, refs, whole-link, has-prose)
-}
-#let note-data(note) = {
-  let first = note.body.fields().at("children", default: ()).at(0, default: none)
-  if first != none and first.func() == metadata and type(first.value) == dictionary and first.value.at("kind", default: none) == "qr-note" {
-    first.value
-  }
-}
-
-// The nominal grid determines how many notes fit on a paper size. Actual
-// positions use each note's rendered width and the reduced gutter.
-#let nominal-gap = 3mm
-#let note-gap = horizontal-spacing * nominal-gap
-#let cell-label(id) = label("gnosis-qr-entry-" + str(id))
-#let slot-width(pitch, span, gap) = span * pitch - gap
-#let note-number(note) = numbering(note.numbering, ..counter(footnote).at(note.location()))
-
-#let compact-cell(note, data, width, direction, checking: false) = {
-  let marker = link(note.location(), note-number(note) + [.])
-  let gutter = calc.max(12pt, measure(marker).width)
-  let available = width - gutter - 3pt
-  let side = (data.ref.modules + 8) * module
-  if checking and available < side { return none }
-  let ref = data.ref + (direction: direction)
-  let words-width = measure(text(size: caption-size, dir: direction, spacing: 100%, ref.words)).width
-  let caption = if data.has-prose {
-    calc.max(side, calc.min(words-width, caption-column(side, 22mm)))
-  } else { caption-column(side, available) }
-  let body-width = if data.has-prose { available } else { caption }
-  let code = tile(ref, available, caption-width: caption, whole-link: data.whole, at-text-indent: not data.has-prose).body
-  let body = if data.has-prose {
-    let prose-gap = horizontal-spacing * 1.5mm
-    let prose-width = available - caption - prose-gap
-    if checking and prose-width < 12mm { return none }
-    let prose = block(width: prose-width, above: 0pt, below: 0pt)[
-      #set text(dir: direction)
-      #set align(start)
-      #set par(first-line-indent: 0pt, justify: false)
-      #data.prose
-    ]
-    if checking and measure(prose, width: prose-width).height > measure(code, width: caption).height { return none }
-    grid(columns: (prose-width, caption), column-gutter: prose-gap, align: top, prose, code)
-  } else { code }
-  let cell = grid(columns: (gutter, body-width), column-gutter: 3pt, align: (right + top, left + top), marker, body)
-  (body: cell, width: gutter + 3pt + body-width)
+  set par(first-line-indent: (amount: 1.5em, all: false), spacing: par.leading)
+  layout(size => solo-layout(n, size.width, direction).body)
 }
 
 #let entry-rule(entry, rows, entry-gap) = context {
-  if rows == (:) { return entry }
   let note = entry.note
-  let data = note-data(note)
-  if data == none { return entry }
-  let id = counter(footnote).at(note.location()).first()
-  let cell = if rows != none { rows.at(str(id), default: none) }
-  if cell == none and rows != none { return entry }
+  let id = id-of(note)
   let direction = text.dir
-  // Each marker owns its native footnote content, including when its cell
-  // shares an earlier entry's row. Only the leader reserves the row height.
-  if cell != none and cell.row != id { v(-entry-gap) }
-  layout(size => {
-    let count = calc.max(1, calc.floor((size.width + nominal-gap) / (23mm + nominal-gap)))
-    // Prose can use the freed gutter space. For a code-only note, compact-cell
-    // scales the unused part of its original slot by the same factor as the gap.
-    let gap = if data.has-prose { note-gap } else { nominal-gap }
-    let pitch = (size.width + gap) / count
-    if cell == none {
-      let span = if data.has-prose { calc.min(2, count) } else {
-        let gutter = calc.max(12pt, measure(note-number(note) + [.]).width) + 3pt
-        calc.max(1, calc.ceil((gutter + (data.ref.modules + 8) * module + gap) / pitch))
-      }
-      if span < count {
-        let w = slot-width(pitch, span, gap)
-        let preview = compact-cell(note, data, w, direction, checking: true)
-        if preview != none {
-          let height = measure(text(dir: ltr, preview.body), width: preview.width).height / 1pt
-          let advance = (preview.width + note-gap) / 1pt
-          [#metadata((id: id, span: span, capacity: count, height: height, advance: advance))<gnosis-qr-measure>]
-        }
-      }
-      entry
-    } else {
-      set text(dir: ltr)
-      let height = cell.height * 1pt
-      let leader = cell.row == id
-      let width = slot-width(pitch, cell.span, gap)
-      let content = compact-cell(note, data, width, direction)
-      // A follower has no flow height. Give its placed content the full row
-      // height so its QR image has the same drawing region as the leader.
-      block(width: size.width, height: if leader { height } else { 0pt },
-        breakable: false, above: 0pt, below: 0pt,
-        place(top + left,
-          dx: cell.x * 1pt,
-          dy: if leader { 0pt } else { -height },
-          block(width: content.width, height: height, above: 0pt, below: 0pt)[
-            #metadata(id)<gnosis-qr-cell>
-            #metadata(id)#cell-label(id)
-            #content.body
-          ],
-        ),
-      )
-    }
+  let read(note, id) = reading(note.body, id, numbering(note.numbering, id), note.location(), direction)
+  let n = read(note, id)
+  let cell = if rows != none { rows.at(str(id), default: none) }
+  if cell == none and n.refs.len() == 0 { return entry }
+  if cell != none and cell.row != id { return v(-entry-gap) }
+  let members = if cell != none {
+    query(footnote).slice(id - 1, id - 1 + cell.count).enumerate().map(((i, note)) => read(note, id + i))
+  }
+  set text(dir: ltr, costs: (widow: 0%))
+  set par(first-line-indent: (amount: 1.5em, all: false), spacing: par.leading)
+  layout(size => if cell == none {
+    let own = solo-layout(n, size.width, direction)
+    if rows == none { fit-options(n, own, size.width, direction, entry-gap, read) }
+    own.body
+  } else {
+    let group = group-layout(members, size.width, direction, entry-gap)
+    if group.height > max-group-height { [#metadata(id)<gnosis-qr-tall>] }
+    block(width: size.width, breakable: false, above: 0pt, below: 0pt, group.body)
   })
 }
 
 #let callout-rule(note, rows) = context {
   if rows == none or rows == (:) { return note }
-  let id = counter(footnote).at(note.location()).first()
+  let id = id-of(note)
   if str(id) in rows {
     let target = query(cell-label(id)).at(0, default: none)
-    if target != none { return super(link(target.location(), text(fill: text.fill, note-number(note)))) }
+    if target != none { return super(link(target.location(), text(fill: text.fill, numbering(note.numbering, id)))) }
   }
   note
 }

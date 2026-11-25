@@ -2,77 +2,76 @@
 //! verify their anchors after the more compact layout repaginates the book.
 use super::{eval_typst, AppHandle, AtomicBool, Path, PathBuf};
 use serde::{Deserialize, Serialize};
+use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 use std::{fs, future::Future};
 
 const PLAN_FILE: &str = "qr-rows.json";
-pub(super) const IMPORT: &str = r#"#import "qr-footnotes.typ": packable-note as gnosis-qr-note, entry-rule, callout-rule
-#let gnosis-qr-rows = json("qr-rows.json")
+pub(super) const IMPORT: &str = r#"#import "qr-footnotes.typ": gnosis-qr-note, entry-rule, callout-rule
 #set footnote.entry(gap: gnosis-footnote-gap)
 #show footnote.entry: it => entry-rule(it, gnosis-qr-rows, gnosis-footnote-gap)
 #show footnote: it => callout-rule(it, gnosis-qr-rows)
 "#;
-const MEASURE: &str = "query(<gnosis-qr-measure>).map(m => m.value)";
-const PAGE_AUDIT: &str = "(anchors: query(footnote).map(n => n.location().page()), cells: query(<gnosis-qr-cell>).map(c => (c.value, c.location().page())))";
+const MEASURE: &str = "query(<gnosis-qr-measure>).map(m => m.value).flatten()";
+const PAGE_AUDIT: &str = "(anchors: query(footnote).map(n => n.location().page()), cells: query(<gnosis-qr-cell>).map(c => (c.value, c.location().page())), tall: query(<gnosis-qr-tall>).map(m => m.value))";
 
 #[derive(Deserialize)]
-struct Measure {
-    // Width of the rendered cell plus its trailing gutter, in Typst points.
-    advance: f64,
-    id: usize,
-    span: usize,
-    capacity: usize,
-    height: f64,
+struct Candidate {
+    first: usize,
+    count: usize,
+    // Measured gain in hundredths of a point at the actual export width.
+    saved: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 struct Cell {
     row: usize,
-    x: f64,
-    span: usize,
-    height: f64,
+    count: usize,
 }
 
 type Rows = BTreeMap<usize, Cell>;
 
-// A gap in the measured note numbers represents a plain, multi-link, or long
-// note. Only consecutive entries that fit in the same row get placements.
-fn pack(measures: &[Measure], breaks: &BTreeSet<usize>) -> Rows {
+// Choose nonoverlapping groups with the greatest measured vertical savings.
+// At equal savings, keep as many notes as possible beside their own codes.
+fn pack(candidates: &[Candidate], breaks: &BTreeSet<usize>) -> Rows {
+    let end = candidates
+        .iter()
+        .map(|c| c.first + c.count)
+        .max()
+        .unwrap_or(1);
+    let mut starts = vec![Vec::new(); end];
+    for c in candidates {
+        if breaks
+            .range(c.first + 1..c.first + c.count)
+            .next()
+            .is_none()
+        {
+            starts[c.first].push(c);
+        }
+    }
+    let mut best = vec![(0, Reverse(0)); end + 1];
+    let mut counts = vec![1; end];
+    for first in (1..end).rev() {
+        best[first] = best[first + 1];
+        for c in &starts[first] {
+            let (saved, Reverse(grouped)) = best[first + c.count];
+            let score = (saved + c.saved, Reverse(grouped + c.count));
+            if score > best[first] {
+                best[first] = score;
+                counts[first] = c.count;
+            }
+        }
+    }
     let mut rows = Rows::new();
-    let mut index = 0;
-    while index < measures.len() {
-        let first = &measures[index];
-        let mut end = index + 1;
-        let mut used = first.span;
-        let mut height = first.height;
-        while let Some(next) = measures.get(end) {
-            if next.id != measures[end - 1].id + 1
-                || breaks.contains(&next.id)
-                || next.capacity != first.capacity
-                || used + next.span > first.capacity
-            {
-                break;
-            }
-            used += next.span;
-            height = height.max(next.height);
-            end += 1;
-        }
-        if end > index + 1 {
-            let mut x = 0.0;
-            for note in &measures[index..end] {
-                rows.insert(
-                    note.id,
-                    Cell {
-                        row: first.id,
-                        x,
-                        span: note.span,
-                        height,
-                    },
-                );
-                x += note.advance;
+    let mut first = 1;
+    while first < end {
+        let count = counts[first];
+        if count > 1 {
+            for id in first..first + count {
+                rows.insert(id, Cell { row: first, count });
             }
         }
-        index = end;
+        first += count;
     }
     rows
 }
@@ -81,22 +80,31 @@ fn pack(measures: &[Measure], breaks: &BTreeSet<usize>) -> Rows {
 struct PageAudit {
     anchors: Vec<usize>,
     cells: Vec<(usize, usize)>,
+    tall: BTreeSet<usize>,
 }
 
 impl PageAudit {
     fn split_crossing_rows(&self, rows: &Rows, breaks: &mut BTreeSet<usize>) -> Result<(), String> {
-        // Each compact cell is rendered inside its own native entry. Check the
-        // page of the drawn cell as well as the page of the callout.
+        // Grouped entries draw together at the leader. All of their callouts
+        // must still be on that same page after the book has repaginated.
         let drawn: BTreeMap<_, _> = self.cells.iter().copied().collect();
-        for (&id, cell) in rows.iter().filter(|(id, cell)| **id != cell.row) {
-            let Some(pages) = self.anchors.get(cell.row - 1..id) else {
+        for (&id, cell) in rows.iter().filter(|(id, cell)| **id == cell.row) {
+            let Some(pages) = self.anchors.get(id - 1..id - 1 + cell.count) else {
                 return Err("Could not locate the PDF footnote callouts.".into());
             };
-            if pages[pages.len() - 2] != pages[pages.len() - 1]
-                || drawn.get(&cell.row) != pages.first()
-                || drawn.get(&id) != pages.last()
-            {
-                breaks.insert(id);
+            let mut split = false;
+            for (offset, pair) in pages.windows(2).enumerate() {
+                if pair[0] != pair[1] {
+                    breaks.insert(id + offset + 1);
+                    split = true;
+                }
+            }
+            let misplaced = pages
+                .iter()
+                .enumerate()
+                .any(|(i, page)| drawn.get(&(id + i)) != Some(page));
+            if !split && (misplaced || self.tall.contains(&id)) {
+                breaks.insert(id + cell.count / 2);
             }
         }
         Ok(())
@@ -139,14 +147,13 @@ where
         return Ok(());
     }
     initialize(workspace)?;
-    let mut measures: Vec<Measure> = serde_json::from_slice(&evaluate(MEASURE).await?)
+    let candidates: Vec<Candidate> = serde_json::from_slice(&evaluate(MEASURE).await?)
         .map_err(|_| "Could not read the measured PDF footnotes.")?;
-    measures.sort_unstable_by_key(|m| m.id);
     let mut breaks = BTreeSet::new();
     // Every retry permanently separates at least one adjacent pair. The
     // final render uses this fixed plan, independent of layout introspection.
     loop {
-        let rows = pack(&measures, &breaks);
+        let rows = pack(&candidates, &breaks);
         let bytes = serde_json::to_vec(&rows).map_err(|error| error.to_string())?;
         fs::write(&path, bytes)
             .map_err(|error| format!("Could not prepare PDF footnote rows: {error}"))?;
@@ -168,31 +175,45 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rows_keep_order_respect_barriers_and_repack_after_page_breaks() {
-        let measures: Vec<_> = [2, 1, 1, 1, 2, 2, 1, 1]
-            .into_iter()
-            .zip([1, 2, 3, 4, 5, 7, 8, 9])
-            .map(|(span, id)| Measure {
-                id,
-                span,
-                capacity: 4,
-                advance: 10.0 * span as f64 + 1.5,
-                height: id as f64,
-            })
-            .collect();
+    fn fitting_prefers_the_smallest_group_that_recovers_the_space() {
+        let candidates = [
+            Candidate {
+                first: 1,
+                count: 2,
+                saved: 600,
+            },
+            Candidate {
+                first: 1,
+                count: 3,
+                saved: 600,
+            },
+            Candidate {
+                first: 2,
+                count: 3,
+                saved: 700,
+            },
+            Candidate {
+                first: 4,
+                count: 2,
+                saved: 450,
+            },
+        ];
         let mut breaks = BTreeSet::new();
-        let rows = pack(&measures, &breaks);
-        assert_eq!((rows[&3].row, rows[&3].x, rows[&3].height), (1, 33.0, 3.0));
-        assert_eq!((rows[&5].row, rows[&5].x), (4, 11.5));
-        assert_eq!((rows[&9].row, rows[&9].x), (7, 33.0));
-        let pages = vec![1, 1, 2, 2, 2, 2, 2, 2, 2];
+        let rows = pack(&candidates, &breaks);
+        assert_eq!(rows[&1], Cell { row: 1, count: 2 });
+        assert!(!rows.contains_key(&3));
+        assert_eq!(rows[&5], Cell { row: 4, count: 2 });
+        let pages = vec![1, 2, 2, 2, 3];
         let audit = PageAudit {
             cells: rows.keys().map(|&id| (id, pages[id - 1])).collect(),
             anchors: pages,
+            tall: BTreeSet::new(),
         };
         audit.split_crossing_rows(&rows, &mut breaks).unwrap();
-        assert_eq!(breaks, BTreeSet::from([3]));
-        let rows = pack(&measures, &breaks);
-        assert_eq!((rows[&5].row, rows[&5].x), (3, 23.0));
+        assert_eq!(breaks, BTreeSet::from([2, 5]));
+        let rows = pack(&candidates, &breaks);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[&3], Cell { row: 2, count: 3 });
+        assert!(pack(&[], &breaks).is_empty());
     }
 }

@@ -1545,24 +1545,20 @@ fn prepare_typst_workspace(
     } else {
         render_typst_book(document, &image_paths, &shortlinks, options, cancelled)?
     };
-    if options.footnote_links == PdfFootnoteLinks::Qr {
-        fs::write(
-            workspace.join("qr-footnotes.typ"),
-            include_str!("pdf_export/qr_footnotes.typ"),
-        )
-        .map_err(|error| format!("Could not prepare the QR footnote layout: {error}"))?;
-        if body.matches("#footnote[#gnosis-qr-note(").nth(1).is_some() {
+    if options.footnote_links == PdfFootnoteLinks::Qr && body.contains("#footnote[#gnosis-qr-note(") {
+        qr_footnotes::write_templates(workspace)?;
+        if body.matches("#footnote[").nth(1).is_some() {
             qr_packing::initialize(workspace)?;
-            // The native entry gap is relative to body type. Followers cancel
-            // the same absolute length from inside smaller footnote type.
-            let (_, _, body_size, _) = body_font_style(document);
-            source.push_str(&format!(
-                "#let gnosis-footnote-gap = 0.73 * {body_size}pt\n"
-            ));
-            source.push_str(qr_packing::IMPORT);
+            source.push_str("#let gnosis-qr-rows = json(\"qr-rows.json\")\n");
         } else {
-            source.push_str(qr_footnotes::IMPORT);
+            source.push_str("#let gnosis-qr-rows = (:)\n");
         }
+        // Followers cancel the absolute gap used by native footnote entries.
+        let (_, _, body_size, _) = body_font_style(document);
+        source.push_str(&format!(
+            "#let gnosis-footnote-gap = 0.73 * {body_size}pt\n"
+        ));
+        source.push_str(qr_packing::IMPORT);
     }
     source.push_str(&body);
     if matches!(options.layout, TypstLayout::TextOnly) {

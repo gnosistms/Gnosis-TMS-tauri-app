@@ -40,6 +40,7 @@ pub(super) fn prepare(
         .then(|| dropcap_block_index(&document.blocks, &order, promoted))
         .flatten();
     let mut excerpts = Vec::new();
+    let mut uses_qr = false;
     if review_plan.affected(&title.to_uppercase(), false) {
         excerpts.push((
             "Chapter title".to_string(),
@@ -119,10 +120,17 @@ pub(super) fn prepare(
                 if review_plan.affected(text, options.footnote_links.prints_urls()) {
                     // Same size, number gutter, and text alignment as native PDF
                     // footnote entries; no invented anchor paragraph is required.
-                    excerpts.push((format!("Footnote {number}"), format!(
-                        "#text(size: 0.85em)[#grid(columns: (12pt, 1fr), column-gutter: 3pt, align: (end + top, start + top), [#text({})], [{}])]\n",
-                        typst_string(&format!("{number}.")), pdf_note_body(text, *number, options.footnote_links, shortlinks)?
-                    )));
+                    let body = pdf_note_body(text, *number, options.footnote_links, shortlinks)?;
+                    let entry = if body.starts_with("#gnosis-qr-note(") {
+                        uses_qr = true;
+                        format!("#qr-excerpt({number}, [{body}])")
+                    } else {
+                        format!("#grid(columns: (12pt, 1fr), column-gutter: 3pt, align: (end + top, start + top), [#text({})], [{body}])", typst_string(&format!("{number}.")))
+                    };
+                    excerpts.push((
+                        format!("Footnote {number}"),
+                        format!("#text(size: 0.85em)[{entry}]\n"),
+                    ));
                 }
             }
             ExportBlock::Attribution { text } => {
@@ -144,8 +152,9 @@ pub(super) fn prepare(
     }
     let mut source = plan.review_rules(review_plan);
     source.push_str(&typst_preamble(document, options.paper_size));
-    if options.footnote_links == PdfFootnoteLinks::Qr {
-        source.push_str(qr_footnotes::IMPORT);
+    if uses_qr {
+        qr_footnotes::write_templates(workspace)?;
+        source.push_str("#import \"qr-footnotes.typ\": gnosis-qr-note, qr-excerpt\n");
     }
     source.push_str("#set page(height: auto, margin: (x: 0.85in, y: 12pt), numbering: none)\n");
     // Width and horizontal margins match the final PDF. Compact vertical margins
@@ -396,7 +405,8 @@ mod tests {
             image_cache_session: &scope,
             layout: TypstLayout::Export,
         };
-        let prepared = prepare(&workspace, &document, &options, &HashMap::new(), &plan, &plan).unwrap();
+        let prepared =
+            prepare(&workspace, &document, &options, &HashMap::new(), &plan, &plan).unwrap();
         assert_eq!(
             prepared.labels,
             [
@@ -507,7 +517,8 @@ mod tests {
             format!("{}{full}", plan.rules(false)),
         )
         .unwrap();
-        let prepared = prepare(&workspace, &document, &options, &HashMap::new(), &plan, &plan).unwrap();
+        let prepared =
+            prepare(&workspace, &document, &options, &HashMap::new(), &plan, &plan).unwrap();
         assert_eq!(
             prepared.labels,
             [
@@ -672,7 +683,8 @@ mod tests {
             image_cache_session: &scope,
             layout: TypstLayout::Export,
         };
-        let prepared = prepare(&workspace, &document, &options, &HashMap::new(), &plan, &plan).unwrap();
+        let prepared =
+            prepare(&workspace, &document, &options, &HashMap::new(), &plan, &plan).unwrap();
         // A local figure in the final document avoids any network during the test.
         let mut full_document = document.clone();
         fs::write(workspace.join("image.svg"), "<svg xmlns='http://www.w3.org/2000/svg' width='30' height='30'><rect width='30' height='30' fill='gray'/></svg>").unwrap();

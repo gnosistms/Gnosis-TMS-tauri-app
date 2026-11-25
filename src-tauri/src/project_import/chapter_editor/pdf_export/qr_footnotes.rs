@@ -1,9 +1,10 @@
 //! Prepare print links before native Typst footnotes are attached to body markers.
 use super::super::chapter_export::{inline_link_tag, InlineLinkTag};
 use super::{
-    inline_visible_text,
+    footnote_paragraphs, inline_segments, inline_visible_text,
     qr_shortlinks::{same_destination, Shortlinks},
-    render_footnote_typst, typst_link_target, typst_string, ExportBlock, ExportDocument,
+    render_footnote_typst, render_styled_typst_text, typst_link_target, typst_string, ExportBlock,
+    ExportDocument,
 };
 use qrcode::{
     bits::Bits,
@@ -14,10 +15,20 @@ use qrcode::{
 };
 use regex::Regex;
 use std::{borrow::Cow, cmp::Reverse, collections::HashSet, ops::Range, sync::LazyLock};
+use unicode_normalization::UnicodeNormalization;
 use unicode_segmentation::UnicodeSegmentation;
 use url::Url;
 
-pub(super) const IMPORT: &str = "#import \"qr-footnotes.typ\": gnosis-qr-note\n";
+pub(super) fn write_templates(workspace: &std::path::Path) -> Result<(), String> {
+    for (name, template) in [
+        ("qr-footnotes.typ", include_str!("qr_footnotes.typ")),
+        ("qr-wrap.typ", include_str!("qr_wrap.typ")),
+    ] {
+        std::fs::write(workspace.join(name), template)
+            .map_err(|error| format!("Could not prepare the QR footnote layout: {error}"))?;
+    }
+    Ok(())
+}
 
 pub(super) fn document_urls(document: &ExportDocument) -> Vec<String> {
     let mut urls = Vec::new();
@@ -36,9 +47,65 @@ pub(super) fn document_urls(document: &ExportDocument) -> Vec<String> {
 fn collect_urls(document: &ExportDocument, urls: &mut Vec<String>) {
     for block in &document.blocks {
         if let ExportBlock::Footnote { text, .. } = block {
-            urls.extend(note_links(text).1.into_iter().map(|link| link.href));
+            urls.extend(
+                note_links(&link_pasted_urls(text))
+                    .1
+                    .into_iter()
+                    .map(|link| link.href),
+            );
         }
     }
+}
+
+// Share the same transient link markup between destination discovery and PDF
+// rendering. Skip complete authored anchors, including their labels.
+fn link_pasted_urls(source: &str) -> Cow<'_, str> {
+    static TOKENS: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r#"(?i)<a href="[^"]*">|</a>|https?://[^\s<>"“”]+"#).unwrap());
+    let mut linked = false;
+    let mut cursor = 0;
+    let mut out = String::new();
+    for hit in TOKENS.find_iter(source) {
+        let token = hit.as_str();
+        if let Some(tag) = inline_link_tag(token) {
+            linked = matches!(tag, InlineLinkTag::Open { .. });
+            continue;
+        }
+        if linked || token.starts_with('<') {
+            continue;
+        }
+        let mut href = token.trim_end_matches(['.', ',', ';', '!', '?', '…']);
+        while let Some((_, close)) =
+            [('(', ')'), ('[', ']'), ('{', '}')]
+                .into_iter()
+                .find(|(open, close)| {
+                    href.ends_with(*close)
+                        && href.matches(*close).count() > href.matches(*open).count()
+                })
+        {
+            href = &href[..href.len() - close.len_utf8()];
+        }
+        // A standalone URL is the entire authored address, including a final
+        // punctuation character that can legally belong to its path or query.
+        if href.len() != token.len() && inline_visible_text(source).trim() == token {
+            href = token;
+        }
+        if !Url::parse(href).is_ok_and(|url| url.host().is_some()) {
+            continue;
+        }
+        out.push_str(&source[cursor..hit.start()]);
+        out.push_str("<a href=\"");
+        out.push_str(&href.replace('&', "&amp;"));
+        out.push_str("\">");
+        out.push_str(href);
+        out.push_str("</a>");
+        cursor = hit.start() + href.len();
+    }
+    if cursor == 0 {
+        return Cow::Borrowed(source);
+    }
+    out.push_str(&source[cursor..]);
+    Cow::Owned(out)
 }
 
 struct NoteLink {
@@ -80,19 +147,6 @@ fn note_links(source: &str) -> (String, Vec<NoteLink>) {
         }
     }
     visible.push_str(&inline_visible_text(&source[cursor..]));
-    if links.is_empty() {
-        let url = visible.trim();
-        if !url.chars().any(char::is_whitespace)
-            && url::Url::parse(url)
-                .is_ok_and(|u| matches!(u.scheme(), "https" | "http") && u.host().is_some())
-        {
-            links.push(NoteLink {
-                href: url.into(),
-                markup: 0..source.len(),
-                visible: 0..visible.len(),
-            });
-        }
-    }
     (visible, links)
 }
 
@@ -315,11 +369,45 @@ fn best_code(original: &str, shortlinks: &[Url]) -> QrResult<(QrCode, String)> {
         .ok_or(QrError::DataTooLong)
 }
 
+// Put reference letters at the precise authored link boundaries, including
+// adjacent links to the same address. Tokenize before NFC and paragraph
+// trimming so both sides retain the editor's normal inline styling.
+fn marked_prose(source: &str, token: &str, marks: &[usize]) -> String {
+    if marks.is_empty() {
+        return render_footnote_typst(source, false);
+    }
+    let mut marks = marks.iter();
+    footnote_paragraphs(source)
+        .iter()
+        .map(|paragraph| {
+            let mut out = String::new();
+            for segment in inline_segments(paragraph) {
+                for (index, piece) in segment.text.split(token).enumerate() {
+                    if index > 0 {
+                        if let Some(mark) = marks.next() {
+                            out.push_str(&format!("#metadata((qr-source: {mark}))"));
+                        }
+                    }
+                    out.push_str(&render_styled_typst_text(
+                        &piece.nfc().collect::<String>(),
+                        &segment.style,
+                        false,
+                    ));
+                }
+            }
+            out
+        })
+        .collect::<Vec<_>>()
+        .join("#parbreak()")
+}
+
 pub(super) fn render(
     source: &str,
     number: usize,
     shortlinks: &Shortlinks,
 ) -> Result<Option<String>, String> {
+    let linked_source = link_pasted_urls(source);
+    let source = linked_source.as_ref();
     let (visible, links) = note_links(source);
     if links.is_empty() {
         return Ok(None);
@@ -330,7 +418,12 @@ pub(super) fn render(
         previous_end = link.visible.end;
         gap.trim().is_empty()
     }) && visible[previous_end..].trim().is_empty();
-    let whole_link = links_only && links.len() == 1;
+    let multi = links.len() > 1;
+    let mut token = "\u{e000}\u{e001}".to_owned();
+    while visible.contains(&token) {
+        token.insert('\u{e000}'.len_utf8(), '_');
+    }
+    let mut marks = Vec::new();
     let terminal = TERMINAL_RUN
         .as_ref()
         .map_err(|error| format!("Could not classify PDF footnote punctuation: {error}"))?;
@@ -345,10 +438,18 @@ pub(super) fn render(
     let mut refs = String::new();
     let mut prose = String::new();
     let mut cursor = 0;
-    for link in links {
+    for (index, link) in links.into_iter().enumerate() {
         let label = visible[link.visible.clone()].trim();
         let label = if label.is_empty() { &link.href } else { label };
-        let caption = label.split_whitespace().collect::<Vec<_>>().join(" ");
+        let remove_to = if links_only || label == link.href || label.graphemes(true).count() > 40 {
+            None
+        } else {
+            removable_end(&visible, &link, source, &sentences, terminal)
+        };
+        let mut caption = label.split_whitespace().collect::<Vec<_>>().join(" ");
+        if let Some(end) = remove_to {
+            caption.push_str(&source[link.markup.end..end]);
+        }
         let candidates = shortlinks
             .get(&link.href)
             .map(Vec::as_slice)
@@ -362,30 +463,41 @@ pub(super) fn render(
             .quiet_zone(false)
             .build();
         refs.push_str(&format!(
-            "(url: {}, words: {}, modules: {}, svg: {}),",
+            "(url: {}, words: {}, modules: {}, detached: {}, svg: {}),",
             typst_link_target(&link.href),
             typst_string(&caption),
             code.width(),
+            remove_to.is_some(),
             typst_string(&svg)
         ));
-        let remove_to = if links_only {
-            Some(link.markup.end)
-        } else {
-            removable_end(&visible, &link, source, &sentences, terminal)
-        };
         if let Some(end) = remove_to {
             prose.push_str(&source[cursor..link.markup.start]);
             cursor = end;
             if prose.ends_with([' ', '\t']) {
                 cursor += source[end..].len() - source[end..].trim_start_matches([' ', '\t']).len();
             }
+        } else {
+            if visible[link.visible.clone()].trim().is_empty() {
+                prose.push_str(&source[cursor..link.markup.start]);
+                prose.push_str(&format!(
+                    "<a href=\"{}\">{}</a>",
+                    link.href.replace('&', "&amp;"),
+                    link.href
+                ));
+            } else {
+                prose.push_str(&source[cursor..link.markup.end]);
+            }
+            if multi {
+                prose.push_str(&token);
+                marks.push(index);
+            }
+            cursor = link.markup.end;
         }
     }
     prose.push_str(&source[cursor..]);
-    let has_prose = !inline_visible_text(&prose).trim().is_empty();
     Ok(Some(format!(
-        "#gnosis-qr-note([{}], ({refs}), {whole_link}, {has_prose})",
-        render_footnote_typst(&prose, false)
+        "#gnosis-qr-note([{}], ({refs}), link-only: {links_only})",
+        marked_prose(&prose, &token, &marks)
     )))
 }
 
@@ -548,7 +660,7 @@ mod tests {
         assert!(prose.contains("#text(\". She asks “\")"));
         assert_eq!(codes.matches("modules: ").count(), 3);
         assert!(codes.contains("words: \"the paper\""));
-        assert!(codes.contains("words: \"Watch the film\""));
+        assert!(codes.contains("words: \"Watch the film.\""));
     }
 
     #[test]
@@ -625,6 +737,27 @@ mod tests {
     }
 
     #[test]
+    fn pasted_destinations_keep_punctuation_styles_and_distinct_native_keys() {
+        let url = "https://example.org/a_(b)?one=1&two=2";
+        let note = format!(
+            r#"See (<i>{url}</i>), then <a href="https://example.org/watch">https://example.org/title</a>. Revisit https://example.org/two)."#
+        );
+        let (visible, links) = note_links(&link_pasted_urls(&note));
+        assert!(visible.contains(&format!("({url}), then")));
+        assert_eq!(
+            links.iter().map(|l| l.href.as_str()).collect::<Vec<_>>(),
+            [url, "https://example.org/watch", "https://example.org/two"]
+        );
+        let output = body(&note);
+        let prose = output.split_once("], (").unwrap().0;
+        assert!(prose.contains("#emph["));
+        for i in 0..3 {
+            assert_eq!(prose.matches(&format!("qr-source: {i}")).count(), 1);
+        }
+        assert!(prose.ends_with(r#"#text(").")"#));
+    }
+
+    #[test]
     fn whole_urls_adjacent_anchors_and_non_latin_sentences() {
         for value in [
             "https://example.org/page?q=a&b=2#section",
@@ -632,12 +765,15 @@ mod tests {
         ] {
             let output = body(value);
             assert!(output.contains("url: \"https://example.org/page?q=a&b=2#section\""));
-            assert!(output.ends_with("true, false)"));
+            assert!(output.contains("detached: false"));
+            assert!(output.split_once("], (").unwrap().0.contains("#link("));
         }
+        assert!(body("<i>https://example.org/hello!</i>")
+            .contains("url: \"https://example.org/hello!\""));
         let repeat =
             body(r#"<a href="https://example.org">One.</a><a href="https://example.org">Two.</a>"#);
         assert_eq!(repeat.matches("modules: ").count(), 2);
-        assert!(repeat.ends_with("false, false)"));
+        assert_eq!(repeat.matches("qr-source:").count(), 2);
         let output = body(r#"前文。<a href="https://example.org">動画を見る。</a>次の文。"#);
         assert!(!output.split_once("], (").unwrap().0.contains("動画"));
         let shortlinks = Shortlinks::new();
