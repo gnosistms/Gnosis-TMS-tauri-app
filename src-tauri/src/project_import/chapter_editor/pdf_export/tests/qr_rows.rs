@@ -156,7 +156,6 @@ fn adaptive_qr_rows_fit_every_paper_size_and_split_at_chapter_boundaries() {
         assert!(candidates
             .iter()
             .all(|row| row["saved"].as_u64().unwrap() > 0));
-        assert!(candidates.iter().all(|row| row["first"] != 3));
         let pages: Vec<usize> = serde_json::from_slice(&evaluate(
             &workspace,
             "query(footnote).map(n => n.location().page())",
@@ -278,10 +277,10 @@ fn codes_stay_with_their_notes_unless_a_shared_row_saves_vertical_space() {
     for id in ["4", "5", "6"] {
         assert_eq!(rows[id], serde_json::json!({"row": 4, "count": 3}));
     }
-    // Note 8 overflows. Its fully fitting three-line neighbor can share the
-    // row when this lets note 9 start earlier. The three-line notes 1–3 stay solo.
-    for id in ["8", "9"] {
-        assert_eq!(rows[id], serde_json::json!({"row": 8, "count": 2}));
+    // The short eighth note saves more space sharing with its preceding
+    // three-line neighbor. The first three codes fit alongside their own notes.
+    for id in ["7", "8"] {
+        assert_eq!(rows[id], serde_json::json!({"row": 7, "count": 2}));
     }
     let path = workspace.join("chapter.typ");
     let source = fs::read_to_string(&path).unwrap();
@@ -304,7 +303,9 @@ fn codes_stay_with_their_notes_unless_a_shared_row_saves_vertical_space() {
 }
 
 #[test]
-fn an_overhanging_leader_can_pair_with_a_two_line_note_to_shorten_the_printed_notes() {
+fn adjacent_codes_use_the_shorter_printed_layout_in_either_order() {
+    use std::cmp::Ordering::{Equal, Greater, Less};
+
     if std::env::var_os("GNOSIS_TYPST_BIN").is_none()
         || std::env::var_os("GNOSIS_TYPST_SMOKE_FONT_DIR").is_none()
     {
@@ -319,18 +320,37 @@ fn an_overhanging_leader_can_pair_with_a_two_line_note_to_shorten_the_printed_no
         image_cache_session: &session,
         layout: TypstLayout::Export,
     };
-    // HNHH, printed page 6. Both are 21-module codes with the same caption.
-    let hermes = r#"“Đổ chiếc chén của Hermes” nghĩa là “xuất tinh”. <a href="https://wp.me/p6Zr2M-3p6">Đọc thêm.</a>"#;
-    let logos = r#"“Ngôi Lời”, “Logos” hoặc là “Thần ngôn” là năng lực tạo ra vũ trụ bằng sức mạnh của ngôn từ. “Ngôi Lời thứ ba” chỉ Đức Thánh Linh. <a href="https://wp.me/p6Zr2M-193">Đọc thêm.</a>"#;
-    let control = "Hết.\nDòng thứ hai.\nDòng thứ ba. <a href=\"https://wp.me/p6Zr2M-v\">Nguồn.</a>";
-    for (notes, should_pair) in [([hermes, logos], true), ([logos, logos], false)] {
-        let mut blocks = vec![text_block("paragraph", "Các chú thích.[1][2][3]")];
-        for (i, text) in notes.into_iter().chain([control]).enumerate() {
+    // Use the HNHH prose and verified publisher links at their actual QR sizes.
+    let brotherhood = ("Đại Bạch Hội Quán là cộng đồng các bậc Chân sư, thiên thần và những vị đã hoàn thành Đại Tác Phẩm, âm thầm phụng sự và dẫn dắt sự phát triển tâm linh của nhân loại, nhưng không thuộc bất kỳ tổ chức vật chất nào trên thế gian.", "https://gnosisvn.org/?p=31");
+    let khem = (
+        "Khem là tên gọi cổ xưa của nước Ai Cập.",
+        "https://gnosisvn.org/?p=12852",
+    );
+    let hermes = (
+        "“Đổ chiếc chén của Hermes” nghĩa là “xuất tinh”.",
+        "https://gnosisvn.org/?p=13088",
+    );
+    let logos = ("“Ngôi Lời”, “Logos” hoặc là “Thần ngôn” là năng lực tạo ra vũ trụ bằng sức mạnh của ngôn từ. “Ngôi Lời thứ ba” chỉ Đức Thánh Linh.", "https://gnosisvn.org/?p=4405");
+    let kundalini = ("Kundalini là ngọn lửa thiêng liêng nằm ngủ trong luân xa gốc; khi được thức tỉnh, năng lượng ấy thăng lên dọc cột sống, khai mở các luân xa và đưa con người đến sự phát triển tâm linh sâu sắc.", "https://gnosisvn.org/?p=11017");
+    let minh = ("Minh thần là phẩm thiên thần gắn liền với trí tuệ và sự hiểu biết thiêng liêng, có nhiệm vụ bảo vệ những điều thánh thiện và truyền đạt ánh sáng của tri thức thần linh.", "https://w.wiki/32VtH");
+    let three_lines = ("Dòng một.\nDòng hai.\nDòng ba.", brotherhood.1);
+    let tall_text = "Dòng chú thích.\n".repeat(16) + khem.0;
+    let tall = (tall_text.as_str(), khem.1);
+    for (notes, expected_height) in [
+        ([brotherhood, khem], Less),
+        ([khem, brotherhood], Less),
+        ([hermes, logos], Less),
+        ([tall, khem], Less),
+        ([three_lines, three_lines], Equal),
+        ([kundalini, minh], Greater),
+    ] {
+        let mut blocks = vec![text_block("paragraph", "Các chú thích.[1][2]")];
+        for (i, (prose, url)) in notes.into_iter().enumerate() {
             blocks.push(ExportBlock::Footnote {
                 number: i + 1,
                 marker: i + 1,
                 anchor_block: Some(0),
-                text: text.into(),
+                text: format!(r#"{prose} <a href="{url}">Đọc thêm.</a>"#),
             });
         }
         let document = ExportDocument {
@@ -350,7 +370,7 @@ fn an_overhanging_leader_can_pair_with_a_two_line_note_to_shorten_the_printed_no
         .unwrap();
         let path = workspace.join("chapter.typ");
         let source = fs::read_to_string(&path).unwrap();
-        let probes = r#"#show regex("Hermes|Logos|Hết"): it => [#metadata(none)<note-word>#it]
+        let probes = r#"#show regex("Đại|Khem|Hermes|Dòng|Kundalini"): it => [#metadata(none)<note-word>#it]
 #show image: it => {
   if it.alt == "QR: Đọc thêm." { [#metadata(none)<printed-qr>] }
   it
@@ -361,40 +381,40 @@ fn an_overhanging_leader_can_pair_with_a_two_line_note_to_shorten_the_printed_no
             source.replacen("#gnosis-title(", &format!("{probes}#gnosis-title("), 1),
         )
         .unwrap();
-        // The three-line note fits its own code and marks the bottom of the
-        // pair, including the native gap, under both layouts.
+        // Native footnotes end at the bottom margin. The shorter layout starts
+        // lower on the page. Read positions from both forced layouts first.
         let geometry = || -> (f64, [f64; 2]) {
             serde_json::from_slice(&evaluate(
                 &workspace,
                 r#"{
                 let y(item) = item.location().position().y / 1pt
-                let words = query(<note-word>)
-                (y(words.last()) - y(words.first()), query(<printed-qr>).map(y))
+                (y(query(<note-word>).first()), query(<printed-qr>).map(y))
             }"#,
             ))
             .unwrap()
         };
         fs::write(workspace.join("qr-rows.json"), "{}").unwrap();
-        let (separate_height, separate_qrs) = geometry();
+        let (separate_top, separate_qrs) = geometry();
         assert!(separate_qrs[1] > separate_qrs[0]);
-        let rows = fit_and_check(&workspace);
-        if !should_pair {
-            // Either two-line code fits before the next note's normal start.
-            assert!(rows.as_object().unwrap().is_empty(), "{rows}");
-            continue;
-        }
-        assert!(rows.get("3").is_none(), "{rows}");
+        fs::write(
+            workspace.join("qr-rows.json"),
+            r#"{"1":{"row":1,"count":2},"2":{"row":1,"count":2}}"#,
+        )
+        .unwrap();
+        let (shared_top, shared_qrs) = geometry();
+        assert!((shared_qrs[1] - shared_qrs[0]).abs() < 0.01);
+        let height_difference = ((separate_top - shared_top) * 100.0).round() as i64;
         assert_eq!(
-            rows["2"],
-            serde_json::json!({"row": 1, "count": 2}),
-            "{rows}"
+            height_difference.cmp(&0),
+            expected_height,
+            "{shared_top} vs {separate_top}"
         );
-        let (paired_height, paired_qrs) = geometry();
-        assert!((paired_qrs[1] - paired_qrs[0]).abs() < 0.01);
-        assert!(
-            paired_height + 1.0 < separate_height,
-            "{paired_height} vs {separate_height}"
-        );
+        let rows = fit_and_check(&workspace);
+        let should_pair = expected_height == Less;
+        assert_eq!(rows.get("2").is_some(), should_pair, "{rows}");
+        let (top, qrs) = geometry();
+        assert!((top - separate_top.max(shared_top)).abs() < 0.01);
+        assert_eq!((qrs[1] - qrs[0]).abs() < 0.01, should_pair);
     }
 }
 

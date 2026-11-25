@@ -18,3 +18,11 @@ The A5 book fixture renders “Ê-lo-him là thiên thần.” in the footnote a
 At 55% spacing, the A5 gap between adjacent codes in the multi-link note fell from 12.08 mm to 6.64 mm. In the row of four QR-only notes the gap from a code to the next number column fell from 12.81 mm to 7.05 mm. All 22 codes in the chapter and book samples retained their printed dimensions and decoded to their destinations at 300 and 600 dpi.
 
 The approved module pitch is 25.4 mm × 5 ÷ 600, about 0.212 mm. A 21 × 21 code measures 6.14 mm square including the four-module quiet zone. The native exporter uses this pitch for chapter and book PDFs.
+
+## Compare adjacent QR footnotes by printed height
+
+1. Measure the separate and shared layouts for neighboring linked notes on the same page, including the printed captions, text wrapping, and normal footnote gap. Use the actual height saved to choose among overlapping groups. Keep separate codes on a tie.
+2. Retain owner labels, the handling of a code beside an unlinked neighbor, and the final check that a group fits with its callouts after pagination.
+3. Check both orders of a short and a long note, equally tall alternatives, and competing groups with the native renderer. Compare printed page 5 in the full Vietnamese HNHH book and verify the QR links.
+
+The A5 HNHH proof measures 68.16 pt for notes 3 and 4 separately and 54.31 pt with their two codes together. Notes 5 and 6 also pair. Notes 10–12 keep individual codes. The 543-page proof contains all 436 notes. All 229 codes decoded to their expected destinations at both 300 and 600 dpi, and every grouped note linked to its own callout on the same page.

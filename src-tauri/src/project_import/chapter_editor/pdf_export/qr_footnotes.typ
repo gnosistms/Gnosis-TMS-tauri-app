@@ -5,7 +5,6 @@
 #let column-gap = 1.25mm
 #let row-gap = 1mm
 #let prose-gap = 2.5mm
-#let max-group-height = 49mm
 
 #let gnosis-qr-note(prose, refs, link-only: false, full-prose: none) = metadata((
   kind: "gnosis-qr", prose: prose, refs: refs, link-only: link-only, full-prose: full-prose,
@@ -17,7 +16,7 @@
   let has-qr = data.func() == metadata and type(data.value) == dictionary and data.value.at("kind", default: none) == "gnosis-qr"
   let refs = if has-qr { data.value.refs } else { () }
   let refs = refs.enumerate().map(((i, ref)) => ref + (
-    id: id, direction: direction,
+    direction: direction,
     key: if refs.len() == 1 { number } else { number + numbering("a", i + 1) },
   ))
   let prose = if has-qr { data.value.prose } else { data }
@@ -71,7 +70,7 @@
       ..(if words == "" { () } else { (link(ref.url, caption),) }),
     )
   ]
-  (body: body, width: width, hang: (width - ink) / 2, id: ref.id)
+  (body: body, width: width, hang: (width - ink) / 2)
 }
 
 #let bank-for(tiles, limit, common) = {
@@ -83,7 +82,7 @@
     let body = block(width: width, above: 0pt, below: 0pt,
       align(left, grid(columns: cells.map(c => c.width), column-gutter: column-gap,
         align: left + top, ..cells.map(c => c.body))))
-    (body: body, width: width, ids: cells.map(c => c.id))
+    (body: body, width: width)
   }
   for t in tiles {
     let next = used + (if cells.len() > 0 { column-gap } else { 0pt }) + t.width
@@ -138,29 +137,26 @@
     if refs.len() == 1 and r.detached { r.key + " · " + r.words } else { r.key }))
   let narrow = bank-for(tiles, width * .42, common)
   let wide = if narrow.rows.len() > 1 { bank-for(tiles, width, common) } else { narrow }
-  let normal(n, width, ragged) = note-line(n, width,
-    reading-copy(n.prose, width - gutter(n) - 3pt, direction, ragged or n.link-only))
+  let normal(n, width) = note-line(n, width,
+    reading-copy(n.prose, width - gutter(n) - 3pt, direction, n.link-only))
   let natural = grid(columns: (width,), row-gutter: spacing, align: left + top,
-    ..notes.map(n => normal(n, width, false)))
+    ..notes.map(n => normal(n, width)))
   let below = grid(columns: (width,), align: right + top, row-gutter: row-gap, natural, wide.body)
   let below-height = measure(below, width: width).height
   let below-layout() = (body: below, height: below-height, excess: below-height - measure(natural, width: width).height)
   let occupied = narrow.width + prose-gap
   if width - occupied < 18mm { return below-layout() }
-  let single = notes.filter(n => n.refs.len() == 1).map(n => n.id)
-  let ragged = narrow.rows.map(r => r.ids.filter(id => id in single)).filter(ids => ids.len() > 1).flatten()
   let bank-height = measure(narrow.body).height
   let y = 0pt
   let lines = ()
   for n in notes {
     let remaining = bank-height - y
-    let left-aligned = n.id in ragged or n.link-only
-    let line = if remaining <= 0pt { normal(n, width, left-aligned) } else {
-      let short = normal(n, width - occupied, left-aligned)
+    let line = if remaining <= 0pt { normal(n, width) } else {
+      let short = normal(n, width - occupied)
       if measure(short).height <= remaining { short } else {
         // The bank can end halfway through the last note beside it.
         let prose-width = width - gutter(n) - 3pt
-        note-line(n, width, flow-around(n.prose, block(height: remaining), occupied, prose-width, direction, left-aligned))
+        note-line(n, width, flow-around(n.prose, block(height: remaining), occupied, prose-width, direction, n.link-only))
       }
     }
     lines.push(line)
@@ -199,37 +195,34 @@
     excess: calc.max(0pt, bank-height - calc.max(copy-height, measure(marker(n, false)).height)))
 }
 
-// If this code reaches the next note's normal starting position, try sharing
-// the row. The following note can have room for its own code. Price the full
-// layouts, including their captions, wrapping, and the same inter-note gap.
-#let fit-options(n, own, width, direction, gap, read) = {
-  if own.excess <= gap { return none }
-  let capacity = calc.max(2, calc.floor(width / 13mm))
+// Compare complete layouts for each run of neighboring codes on this page.
+// Include an unlinked neighbor only while the QR bank still reaches its text.
+#let fit-options(n, own, size, direction, gap, read) = {
+  let width = size.width
   let all-notes = query(footnote)
   let page = n.location.page()
   let notes = (n,)
-  let codes = n.refs.len()
   let separate = measure(own.body, width: width).height
-  let excess = own.excess
+  let overhang = own.excess
+  let minimum-height = measure(marker(n, false)).height
   let options = ()
-  for i in range(n.id, calc.min(n.id - 1 + capacity, all-notes.len())) {
-    let next = read(all-notes.at(i), i + 1)
-    // Notes on different pages have no inter-note space to recover.
-    if next.location.page() != page { break }
-    codes += next.refs.len()
-    if codes > capacity { break }
+  for i in range(n.id, all-notes.len()) {
+    let note = all-notes.at(i)
+    if note.location().page() != page { break }
+    let next = read(note, i + 1)
+    if next.refs.len() == 0 and overhang <= gap { break }
+    // Even a group with no prose must fit its number column and native gaps.
+    minimum-height += gap + measure(marker(next, false)).height
+    if minimum-height > size.height { break }
     let individual = solo-layout(next, width, direction)
     separate += gap + measure(individual.body, width: width).height
-    excess += individual.excess
     notes.push(next)
     let group = group-layout(notes, width, direction, gap)
-    if group.height > max-group-height { break }
-    let saved = int(calc.round(calc.min(separate - group.height, excess) / 1pt * 100))
-    if saved > 0 {
+    overhang = group.excess
+    let saved = int(calc.round((separate - group.height) / 1pt * 100))
+    if saved > 0 and group.height <= size.height {
       options.push((first: n.id, count: notes.len(), saved: saved))
     }
-    // End the row as soon as its bank clears the next note's normal start.
-    if group.excess <= gap { break }
   }
   if options.len() > 0 { [#metadata(options)<gnosis-qr-measure>] }
 }
@@ -266,11 +259,11 @@
   set par(first-line-indent: (amount: 1.5em, all: false), spacing: par.leading)
   layout(size => if not grouped {
     let own = solo-layout(n, size.width, direction)
-    if rows == none { fit-options(n, own, size.width, direction, entry-gap, read) }
+    if rows == none { fit-options(n, own, size, direction, entry-gap, read) }
     own.body
   } else {
     let group = group-layout(members, size.width, direction, entry-gap)
-    if group.height > max-group-height { [#metadata(id)<gnosis-qr-tall>] }
+    if group.height > size.height { [#metadata(id)<gnosis-qr-tall>] }
     block(width: size.width, breakable: false, above: 0pt, below: 0pt, group.body)
   })
 }
