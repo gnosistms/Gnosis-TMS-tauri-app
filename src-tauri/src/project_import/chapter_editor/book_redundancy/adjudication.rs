@@ -73,7 +73,16 @@ pub(super) fn run_batches<T: Send>(
     cancel: &AtomicBool,
     compare: impl Fn(&[usize]) -> Result<T, String> + Sync,
     mut accept: impl FnMut(Result<T, String>) -> Result<(), String>,
+    mut progress: impl FnMut(usize, usize),
 ) -> Result<(), String> {
+    if cancel.load(AtomicOrdering::Acquire) {
+        return Err("Book review cancelled.".into());
+    }
+    let total = batches.len();
+    if total == 0 {
+        return Ok(());
+    }
+    progress(0, total);
     let next = AtomicUsize::new(0);
     let failed = AtomicBool::new(false);
     let (sender, receiver) = std::sync::mpsc::channel();
@@ -98,11 +107,17 @@ pub(super) fn run_batches<T: Send>(
             });
         }
         drop(sender);
+        let mut completed = 0;
         for result in receiver {
             if cancel.load(AtomicOrdering::Acquire) {
                 return Err("Book review cancelled.".into());
             }
+            let succeeded = result.is_ok();
             accept(result)?;
+            if succeeded {
+                completed += 1;
+                progress(completed, total);
+            }
         }
         if cancel.load(AtomicOrdering::Acquire) {
             Err("Book review cancelled.".into())
@@ -134,6 +149,7 @@ mod tests {
         let peak = AtomicUsize::new(0);
         let barrier = std::sync::Barrier::new(4);
         let mut accepted = Vec::new();
+        let mut progress = Vec::new();
         run_batches(
             &batches,
             &AtomicBool::new(false),
@@ -148,11 +164,13 @@ mod tests {
                 accepted.push(result?);
                 Ok(())
             },
+            |completed, total| progress.push((completed, total)),
         )
         .expect("batches");
         accepted.sort();
         assert_eq!(accepted, (0..8).collect::<Vec<_>>());
         assert_eq!(peak.load(AtomicOrdering::Acquire), 4);
+        assert_eq!(progress, (0..=8).map(|n| (n, 8)).collect::<Vec<_>>());
     }
     #[test]
     fn cancelled_batches_never_dispatch_provider_calls() {
@@ -161,7 +179,26 @@ mod tests {
             &AtomicBool::new(true),
             |_| -> Result<(), String> { panic!("cancelled provider call") },
             |_| panic!("cancelled result"),
+            |_, _| panic!("cancelled progress"),
         )
         .expect_err("cancelled run");
+    }
+
+    #[test]
+    fn failed_or_unsaved_batches_do_not_advance_progress() {
+        let run = |comparison: Result<(), String>, save: Result<(), String>| {
+            let mut progress = Vec::new();
+            let result = run_batches(
+                &[vec![0, 1]],
+                &AtomicBool::new(false),
+                |_| comparison.clone(),
+                |_| save.clone(),
+                |completed, total| progress.push((completed, total)),
+            );
+            assert_eq!(progress, [(0, 1)]);
+            result
+        };
+        run(Err("provider failed".into()), Ok(())).expect("recorded warning");
+        run(Ok(()), Err("could not save evidence".into())).expect_err("failed save");
     }
 }

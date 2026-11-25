@@ -1,9 +1,58 @@
 import { extractInlineMarkupVisibleText } from "../app/editor-inline-markup.js";
-import { escapeHtml, loadingSpinner, secondaryButton } from "../lib/ui.js";
+import { escapeHtml, secondaryButton } from "../lib/ui.js";
 import { convertLocalFileSrc } from "../app/runtime.js";
 import { bookNavButton, renderBookSettingsNotice } from "./project-book-composer.js";
 import { bookChapterNumbers, bookItemTitle, bookSectionLabel } from "../app/project-book-model.js";
 import { imageReviewChoices, reviewChoiceIncluded } from "../app/project-book-redundancy-model.js";
+
+function progressLabel(review) {
+  if (review.status === "error") return review.imagesStatus === "ready" ? "Footnote check interrupted" : "Redundancy check interrupted";
+  if (review.footnotesPhase === "meanings") return "Comparing footnote meanings";
+  if (review.footnotesPhase === "frequencies") return "Computing word frequencies";
+  return review.imagesStatus === "ready" ? "Preparing footnotes" : "Scanning the book";
+}
+
+function progressView(review) {
+  const batches = review.batchProgress;
+  return {
+    hidden: review.status === "ready",
+    label: progressLabel(review),
+    mode: review.status === "error" ? "interrupted" : batches ? "measured" : "indeterminate",
+    batches,
+    count: batches ? `${batches.completed} of ${batches.total} ${batches.total === 1 ? "batch" : "batches"}` : "",
+  };
+}
+
+function renderProgress({ hidden, label, mode, batches, count }) {
+  return `<div class="book-redundancy__progress" data-mode="${mode}" ${hidden ? "hidden" : ""}>
+    <div class="book-redundancy__progress-caption" role="status" aria-atomic="true">
+      <span id="book-redundancy-phase">${label}</span><span class="book-redundancy__batch-count">${count}</span>
+    </div>
+    <div class="book-redundancy__track"><progress aria-labelledby="book-redundancy-phase"
+      ${batches ? `max="${batches.total}" value="${batches.completed}" aria-valuetext="${count} complete"` : ""}></progress></div>
+  </div>`;
+}
+
+function updateProgress(row, { hidden, label, mode, batches, count }) {
+  row.hidden = hidden;
+  if (hidden) return;
+  row.dataset.mode = mode;
+  const phase = row.querySelector("#book-redundancy-phase");
+  const counter = row.querySelector(".book-redundancy__batch-count");
+  if (phase.textContent !== label) phase.textContent = label;
+  if (counter.textContent !== count) counter.textContent = count;
+  const meter = row.querySelector("progress");
+  if (batches) {
+    meter.max = batches.total;
+    meter.value = batches.completed;
+    meter.setAttribute("aria-valuetext", `${count} complete`);
+  } else {
+    meter.removeAttribute("max");
+    meter.removeAttribute("value");
+    meter.removeAttribute("aria-valuetext");
+  }
+}
+
 function checkbox(id, included, description) {
   return `<label class="field__checkbox"><input type="checkbox" data-book-redundancy-choice="${escapeHtml(id)}" aria-label="Include in export: ${escapeHtml(description)}" ${included ? "checked" : ""}><span>Include in export</span></label>`;
 }
@@ -17,12 +66,10 @@ function section(modal, kind) {
   const groups = result[kind] || [];
   const imageWarnings = result.imageWarnings || [];
   const warnings = kind === "images" ? imageWarnings : (result.warnings || []).filter((warning) => !imageWarnings.includes(warning));
-  const phase = kind === "footnotes" ? review.footnotesPhase : "";
-  const key = JSON.stringify([status, phase, groups, warnings]);
+  const key = JSON.stringify([status, groups, warnings]);
   let content;
   if (status === "loading") {
-    const message = phase === "frequencies" ? "Computing word frequency counts..." : phase === "meanings" ? "Comparing footnote meanings..." : `Checking for redundant ${kind}...`;
-    content = `<p class="book-redundancy__checking">${message}${loadingSpinner({ key: `book-redundancy-${kind}-${phase}`, label: message })}</p>`;
+    content = `<p class="modal__supporting">Checking for redundant ${kind}...</p>`;
   } else if (status === "error") {
     content = `<p class="modal__supporting">Could not finish checking for redundant ${kind}.</p>`;
   } else {
@@ -59,12 +106,16 @@ function contents(modal) {
 export function renderBookRedundancy(modal) {
   return `<div class="modal-backdrop"><section class="card modal-card modal-card--book-redundancy" role="dialog" aria-modal="true" aria-label="Export project" data-modal-dialog="editor-export" tabindex="-1"><div class="card__body modal-card__body">
     <header class="book-redundancy__header">${bookNavButton("previous")}<h2 class="modal__title" id="book-redundancy-title">Redundancy checks</h2><div>${secondaryButton("Cancel", "close-editor-export-options", { modalCancel: true })}${bookNavButton("next", !["ready", "error"].includes(modal.book.redundancy?.status))}</div></header>
+    ${renderProgress(progressView(modal.book.redundancy || {}))}
     <div class="book-redundancy__scroll">${contents(modal)}</div></div></section></div>${renderBookSettingsNotice(modal)}`;
 }
-export function updateBookRedundancyView(root, appState) {
+export function updateBookRedundancyView(root, appState, { progressOnly = false } = {}) {
   const modal = appState.editorChapter?.exportModal;
   const current = root.querySelector("[data-book-redundancy-results]");
-  if (modal?.page !== 2 || !current) return false;
+  const progress = root.querySelector(".book-redundancy__progress");
+  if (modal?.page !== 2 || !current || !progress) return false;
+  updateProgress(progress, progressView(modal.book.redundancy || {}));
+  if (progressOnly) return true;
   const template = root.ownerDocument.createElement("template");template.innerHTML = contents(modal);
   for (const next of template.content.querySelectorAll("[data-book-redundancy-section]")) {
     const previous = current.querySelector(`[data-book-redundancy-section="${next.dataset.bookRedundancySection}"]`);

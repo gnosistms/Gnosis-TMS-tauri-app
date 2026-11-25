@@ -820,7 +820,7 @@ function renderProjectsBackgroundSurfaces() {
 }
 
 function renderWithOptionsImpl(options = {}) {
-  const bookUpdated = options.scope === "book-redundancy" ? updateBookRedundancyView(app, state)
+  const bookUpdated = options.scope === "book-redundancy" ? updateBookRedundancyView(app, state, options)
     : options.scope === "project-book-preview" ? renderProjectBookPreview(app, state) : false;
   if (bookUpdated) {
     rememberProjectsExportRender(app, state);
