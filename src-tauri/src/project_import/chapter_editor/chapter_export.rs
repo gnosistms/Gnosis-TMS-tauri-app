@@ -3376,6 +3376,16 @@ pub(super) fn public_http_client_for_url(
     timeout: Duration,
     user_agent: &str,
 ) -> Result<BlockingClient, PublicImageDownloadError> {
+    public_http_client_builder_for_url(url, timeout, user_agent)?
+        .build()
+        .map_err(|_| PublicImageDownloadError::ClientSetupFailed)
+}
+
+pub(super) fn public_http_client_builder_for_url(
+    url: &str,
+    timeout: Duration,
+    user_agent: &str,
+) -> Result<reqwest::blocking::ClientBuilder, PublicImageDownloadError> {
     let request = validated_export_image_request(url)?;
     let mut builder = BlockingClient::builder()
         .timeout(timeout)
@@ -3384,9 +3394,7 @@ pub(super) fn public_http_client_for_url(
     if let Some((host, addresses)) = request.pinned_addresses.as_ref() {
         builder = builder.resolve_to_addrs(host, addresses);
     }
-    builder
-        .build()
-        .map_err(|_| PublicImageDownloadError::ClientSetupFailed)
+    Ok(builder)
 }
 
 /// Fetches a remote image (with the same public-host validation, redirect

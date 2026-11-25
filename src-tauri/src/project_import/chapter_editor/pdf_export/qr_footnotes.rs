@@ -1,6 +1,10 @@
 //! Prepare print links before native Typst footnotes are attached to body markers.
 use super::super::chapter_export::{inline_link_tag, InlineLinkTag};
-use super::{inline_visible_text, render_footnote_typst, typst_link_target, typst_string};
+use super::{
+    inline_visible_text,
+    qr_shortlinks::{same_destination, Shortlinks},
+    render_footnote_typst, typst_link_target, typst_string, ExportBlock, ExportDocument,
+};
 use qrcode::{
     bits::Bits,
     optimize::{total_encoded_len, Optimizer, Parser},
@@ -9,10 +13,33 @@ use qrcode::{
     EcLevel, QrCode, QrResult, Version,
 };
 use regex::Regex;
-use std::{ops::Range, sync::LazyLock};
+use std::{borrow::Cow, cmp::Reverse, collections::HashSet, ops::Range, sync::LazyLock};
 use unicode_segmentation::UnicodeSegmentation;
+use url::Url;
 
 pub(super) const IMPORT: &str = "#import \"qr-footnotes.typ\": gnosis-qr-note\n";
+
+pub(super) fn document_urls(document: &ExportDocument) -> Vec<String> {
+    let mut urls = Vec::new();
+    if document.book_parts.is_empty() {
+        collect_urls(document, &mut urls);
+    } else {
+        for part in &document.book_parts {
+            if part.item.kind == "chapter" {
+                collect_urls(&part.document, &mut urls);
+            }
+        }
+    }
+    urls
+}
+
+fn collect_urls(document: &ExportDocument, urls: &mut Vec<String>) {
+    for block in &document.blocks {
+        if let ExportBlock::Footnote { text, .. } = block {
+            urls.extend(note_links(text).1.into_iter().map(|link| link.href));
+        }
+    }
+}
 
 struct NoteLink {
     href: String,
@@ -152,9 +179,12 @@ fn removable_end(
 // URLs are UTF-8. The binary encoder can otherwise interpret some UTF-8
 // bytes as Shift JIS. Keep numeric/alphanumeric compression and signal UTF-8
 // explicitly when the destination contains non-ASCII characters.
-fn encode_url(url: &str) -> QrResult<QrCode> {
+fn encode_url(url: &str, level: EcLevel, version: Option<Version>) -> QrResult<QrCode> {
     if url.is_ascii() {
-        return QrCode::new(url);
+        return match version {
+            Some(version) => QrCode::with_version(url, version, level),
+            None => QrCode::with_error_correction_level(url, level),
+        };
     }
     let runs: Vec<_> = Parser::new(url.as_bytes())
         .map(|mut run| {
@@ -164,21 +194,132 @@ fn encode_url(url: &str) -> QrResult<QrCode> {
             run
         })
         .collect();
-    for n in 1..=40 {
-        let version = Version::Normal(n);
+    let versions = (1..=40).map(Version::Normal);
+    for version in versions.filter(|candidate| version.is_none_or(|version| *candidate == version))
+    {
         let segments: Vec<_> = Optimizer::new(runs.iter().copied(), version).collect();
         let mut bits = Bits::new(version);
         bits.push_eci_designator(26)?;
-        if bits.len() + total_encoded_len(&segments, version) <= bits.max_len(EcLevel::M)? {
+        if bits.len() + total_encoded_len(&segments, version) <= bits.max_len(level)? {
             bits.push_segments(url.as_bytes(), segments.into_iter())?;
-            bits.push_terminator(EcLevel::M)?;
-            return QrCode::with_bits(bits, EcLevel::M);
+            bits.push_terminator(level)?;
+            return QrCode::with_bits(bits, level);
         }
     }
     Err(QrError::DataTooLong)
 }
 
-pub(super) fn render(source: &str, number: usize) -> Result<Option<String>, String> {
+static ESCAPED_UTF8: LazyLock<Option<Regex>> =
+    LazyLock::new(|| Regex::new(r"(?:%[89a-fA-F][0-9a-fA-F])+").ok());
+
+fn readable_url(url: &str) -> Cow<'_, str> {
+    let Some(escapes) = ESCAPED_UTF8.as_ref() else {
+        return Cow::Borrowed(url);
+    };
+    escapes.replace_all(url, |matched: &regex::Captures<'_>| {
+        let escapes = &matched[0];
+        let bytes: Option<Vec<u8>> = (0..escapes.len())
+            .step_by(3)
+            .map(|index| u8::from_str_radix(&escapes[index + 1..index + 3], 16).ok())
+            .collect();
+        bytes
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .filter(|text| !text.chars().any(|ch| {
+                ch.is_control() || ch.is_whitespace() || matches!(ch, '\u{200e}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+            }))
+            .unwrap_or_else(|| escapes.to_owned())
+    })
+}
+
+fn url_spellings(url: &str) -> Vec<String> {
+    let mut spellings = vec![url.to_owned()];
+    let Ok(parsed) = Url::parse(url) else {
+        return spellings;
+    };
+    if !matches!(parsed.scheme(), "http" | "https") || parsed.host().is_none() {
+        return spellings;
+    }
+    let readable = readable_url(url);
+    let mut seen = HashSet::from([url.to_owned()]);
+    for spelling in std::iter::once(url).chain((readable != url).then_some(readable.as_ref())) {
+        let Some((scheme, address)) = spelling.split_once("://") else {
+            continue;
+        };
+        let authority = address
+            .split(['/', '?', '#', '\\'])
+            .next()
+            .unwrap_or_default();
+        let domain = parsed
+            .domain()
+            .filter(|domain| domain.eq_ignore_ascii_case(authority));
+        let can_drop_scheme = parsed.scheme() == "https"
+            && domain.is_some_and(|domain| domain.contains('.'))
+            && !address
+                .chars()
+                .any(|ch| ch.is_whitespace() || ch.is_control());
+        let upper_scheme = scheme.to_ascii_uppercase();
+        let upper_address = domain.map(|_| {
+            format!(
+                "{}{}",
+                authority.to_ascii_uppercase(),
+                &address[authority.len()..]
+            )
+        });
+        for scheme in [scheme, upper_scheme.as_str()] {
+            for address in std::iter::once(address).chain(upper_address.as_deref()) {
+                let explicit = format!("{scheme}://{address}");
+                if !Url::parse(&explicit)
+                    .is_ok_and(|candidate| same_destination(&candidate, &parsed))
+                {
+                    continue;
+                }
+                if seen.insert(explicit.clone()) {
+                    spellings.push(explicit);
+                }
+                if can_drop_scheme && seen.insert(address.to_owned()) {
+                    spellings.push(address.to_owned());
+                }
+            }
+        }
+    }
+    spellings
+}
+
+fn optimize_url(payload: &str) -> QrResult<QrCode> {
+    let smallest = encode_url(payload, EcLevel::L, None)?;
+    let version = Some(smallest.version());
+    Ok([EcLevel::H, EcLevel::Q, EcLevel::M]
+        .into_iter()
+        .find_map(|level| encode_url(payload, level, version).ok())
+        .unwrap_or(smallest))
+}
+
+fn best_code(original: &str, shortlinks: &[Url]) -> QrResult<(QrCode, String)> {
+    std::iter::once(original)
+        .chain(shortlinks.iter().map(Url::as_str))
+        .flat_map(url_spellings)
+        .filter_map(|payload| Some((optimize_url(&payload).ok()?, payload)))
+        .min_by_key(|(code, payload)| {
+            let scheme = payload.split_once("://").map(|(scheme, _)| scheme);
+            let scheme_priority = match scheme {
+                Some(scheme) if scheme.eq_ignore_ascii_case("https") => 0,
+                Some(scheme) if scheme.eq_ignore_ascii_case("http") => 1,
+                _ => 2,
+            };
+            (
+                code.width(),
+                Reverse(code.error_correction_level()),
+                scheme_priority,
+            )
+        })
+        .ok_or(QrError::DataTooLong)
+}
+
+pub(super) fn render(
+    source: &str,
+    number: usize,
+    shortlinks: &Shortlinks,
+) -> Result<Option<String>, String> {
     let (visible, links) = note_links(source);
     if links.is_empty() {
         return Ok(None);
@@ -208,7 +349,11 @@ pub(super) fn render(source: &str, number: usize) -> Result<Option<String>, Stri
         let label = visible[link.visible.clone()].trim();
         let label = if label.is_empty() { &link.href } else { label };
         let caption = label.split_whitespace().collect::<Vec<_>>().join(" ");
-        let code = encode_url(&link.href).map_err(|_| format!(
+        let candidates = shortlinks
+            .get(&link.href)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        let (code, _) = best_code(&link.href, candidates).map_err(|_| format!(
             "The link in footnote {number} is too long for a QR code. Shorten the link or select URLs in parentheses."
         ))?;
         let svg = code
@@ -249,7 +394,146 @@ mod tests {
     use super::*;
 
     fn body(source: &str) -> String {
-        render(source, 3).unwrap().unwrap()
+        render(source, 3, &Shortlinks::new()).unwrap().unwrap()
+    }
+
+    #[test]
+    fn optimizes_size_then_error_correction_then_scheme() {
+        for (original, payload, width, level) in [
+            (
+                "https://wp.me/p6Zr2M-2Xo",
+                "wp.me/p6Zr2M-2Xo",
+                21,
+                EcLevel::L,
+            ),
+            ("https://go.co/ABC123", "GO.CO/ABC123", 21, EcLevel::Q),
+            ("https://x.co/1", "x.co/1", 21, EcLevel::H),
+            ("HTTPS://X.CO", "X.CO", 21, EcLevel::H),
+            (
+                "http://host.local:8080/a",
+                "http://host.local:8080/a",
+                25,
+                EcLevel::M,
+            ),
+        ] {
+            let (code, chosen) = best_code(original, &[]).unwrap();
+            assert_eq!(
+                (chosen.as_str(), code.width(), code.error_correction_level()),
+                (payload, width, level),
+                "{original}"
+            );
+        }
+
+        let fits_with_scheme = format!("HTTPS://EXAMPLE.ORG/{}", "A".repeat(50));
+        let (code, payload) = best_code(&fits_with_scheme, &[]).unwrap();
+        assert_eq!(
+            (
+                payload.as_str(),
+                code.width(),
+                code.error_correction_level()
+            ),
+            (fits_with_scheme.as_str(), 29, EcLevel::L)
+        );
+    }
+
+    #[test]
+    fn uses_the_smallest_verified_candidate_for_the_qr_only() {
+        let original = "https://gnosisvn.org/2023/01/25/ky-nguyen-bao-binh/";
+        let wp_me = url::Url::parse("https://wp.me/p6Zr2M-2Xo").unwrap();
+        let own_domain = url::Url::parse("https://gnosisvn.org/?p=11370").unwrap();
+        let (code, payload) = best_code(original, &[own_domain.clone(), wp_me.clone()]).unwrap();
+        assert_eq!(code.width(), 21);
+        assert!(
+            payload == "wp.me/p6Zr2M-2Xo" || payload == "GNOSISVN.ORG/?p=11370",
+            "{payload}"
+        );
+
+        let shortlinks = Shortlinks::from([(original.to_string(), vec![wp_me, own_domain])]);
+        let note = format!(r#"Read the <a href="{original}">article</a>."#);
+        let output = render(&note, 1, &shortlinks).unwrap().unwrap();
+        assert!(output.contains(&format!("url: \"{original}\"")));
+        assert!(output.contains("words: \"article\", modules: 21"));
+    }
+
+    #[test]
+    fn optimizes_non_ascii_link_payloads_at_the_chosen_version() {
+        let original = "https://example.org/Đọc";
+        let (code, payload) = best_code(original, &[]).unwrap();
+        assert_eq!(
+            code.to_colors(),
+            encode_url(
+                &payload,
+                code.error_correction_level(),
+                Some(code.version())
+            )
+            .unwrap()
+            .to_colors()
+        );
+        assert!(payload.ends_with("/Đọc"));
+    }
+
+    #[test]
+    fn minimizes_the_verified_wikipedia_section_link() {
+        let original =
+            "https://vi.wikipedia.org/wiki/Phẩm_trật_Thiên_sứ_trong_Kitô_giáo#Cherubim_-_Minh_thần";
+        let page_id_link =
+            Url::parse("https://vi.wikipedia.org/?curid=1519434#Cherubim_-_Minh_th%E1%BA%A7n")
+                .unwrap();
+        let (code, payload) = best_code(original, &[page_id_link]).unwrap();
+        assert_eq!(
+            payload,
+            "VI.WIKIPEDIA.ORG/?curid=1519434#Cherubim_-_Minh_thần"
+        );
+        assert_eq!(code.width(), 29);
+        assert_eq!(code.error_correction_level(), EcLevel::L);
+    }
+
+    #[test]
+    fn equivalent_spellings_preserve_escaped_delimiters_and_case_sensitive_fields() {
+        let original = "https://example.org/B%C3%A0i%2F%252F?Token=ABC%26ghi#%C4%90%E1%BB%81";
+        let spellings = url_spellings(original);
+        assert!(spellings
+            .iter()
+            .any(|url| url == "HTTPS://EXAMPLE.ORG/Bài%2F%252F?Token=ABC%26ghi#Đề"));
+        assert!(spellings
+            .iter()
+            .any(|url| url == "EXAMPLE.ORG/Bài%2F%252F?Token=ABC%26ghi#Đề"));
+        let parsed = Url::parse(original).unwrap();
+        for spelling in spellings {
+            let candidate = spelling
+                .contains("://")
+                .then(|| spelling.clone())
+                .unwrap_or_else(|| format!("https://{spelling}"));
+            assert!(
+                same_destination(&parsed, &Url::parse(&candidate).unwrap()),
+                "{spelling}"
+            );
+        }
+        let invalid = "https://example.org/%C0%AF/%E2%80%AE/%C2%A0/%00/%2F";
+        assert_eq!(readable_url(invalid), invalid);
+        for explicit in [
+            "https://user@example.org/Đề",
+            "https://example.org:443/Đề",
+            "http://example.org/Đề",
+        ] {
+            assert!(url_spellings(explicit)
+                .iter()
+                .all(|spelling| spelling.contains("://")));
+        }
+    }
+
+    #[test]
+    fn prefers_an_explicit_https_scheme_when_size_and_correction_tie() {
+        let original = "HTTPS://EXAMPLE.ORG/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        let compact = original.strip_prefix("HTTPS://").unwrap();
+        let (code, payload) = best_code(original, &[]).unwrap();
+        let compact = optimize_url(compact).unwrap();
+        assert_eq!(code.width(), compact.width());
+        assert_eq!(
+            code.error_correction_level(),
+            compact.error_correction_level()
+        );
+        assert_eq!(payload, original);
     }
 
     #[test]
@@ -356,11 +640,14 @@ mod tests {
         assert!(repeat.ends_with("false, false)"));
         let output = body(r#"前文。<a href="https://example.org">動画を見る。</a>次の文。"#);
         assert!(!output.split_once("], (").unwrap().0.contains("動画"));
-        assert!(render("A plain note", 1).unwrap().is_none());
-        assert!(
-            render(&format!("https://example.org/{}", "x".repeat(5000)), 9)
-                .unwrap_err()
-                .contains("footnote 9")
-        );
+        let shortlinks = Shortlinks::new();
+        assert!(render("A plain note", 1, &shortlinks).unwrap().is_none());
+        assert!(render(
+            &format!("https://example.org/{}", "x".repeat(5000)),
+            9,
+            &shortlinks
+        )
+        .unwrap_err()
+        .contains("footnote 9"));
     }
 }

@@ -29,6 +29,7 @@ pub(super) fn prepare(
     workspace: &Path,
     document: &ExportDocument,
     options: &PdfWorkspacePreparationOptions<'_>,
+    shortlinks: &qr_shortlinks::Shortlinks,
     plan: &font_fallback::FontFallbackPlan,
     review_plan: &font_fallback::FontFallbackPlan,
 ) -> Result<PreparedFontReview, String> {
@@ -120,7 +121,7 @@ pub(super) fn prepare(
                     // footnote entries; no invented anchor paragraph is required.
                     excerpts.push((format!("Footnote {number}"), format!(
                         "#text(size: 0.85em)[#grid(columns: (12pt, 1fr), column-gutter: 3pt, align: (end + top, start + top), [#text({})], [{}])]\n",
-                        typst_string(&format!("{number}.")), pdf_note_body(text, *number, options.footnote_links)?
+                        typst_string(&format!("{number}.")), pdf_note_body(text, *number, options.footnote_links, shortlinks)?
                     )));
                 }
             }
@@ -395,7 +396,7 @@ mod tests {
             image_cache_session: &scope,
             layout: TypstLayout::Export,
         };
-        let prepared = prepare(&workspace, &document, &options, &plan, &plan).unwrap();
+        let prepared = prepare(&workspace, &document, &options, &HashMap::new(), &plan, &plan).unwrap();
         assert_eq!(
             prepared.labels,
             [
@@ -506,7 +507,7 @@ mod tests {
             format!("{}{full}", plan.rules(false)),
         )
         .unwrap();
-        let prepared = prepare(&workspace, &document, &options, &plan, &plan).unwrap();
+        let prepared = prepare(&workspace, &document, &options, &HashMap::new(), &plan, &plan).unwrap();
         assert_eq!(
             prepared.labels,
             [
@@ -671,7 +672,7 @@ mod tests {
             image_cache_session: &scope,
             layout: TypstLayout::Export,
         };
-        let prepared = prepare(&workspace, &document, &options, &plan, &plan).unwrap();
+        let prepared = prepare(&workspace, &document, &options, &HashMap::new(), &plan, &plan).unwrap();
         // A local figure in the final document avoids any network during the test.
         let mut full_document = document.clone();
         fs::write(workspace.join("image.svg"), "<svg xmlns='http://www.w3.org/2000/svg' width='30' height='30'><rect width='30' height='30' fill='gray'/></svg>").unwrap();

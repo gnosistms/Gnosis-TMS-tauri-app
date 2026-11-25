@@ -1,4 +1,5 @@
 use super::book_export::{book_title, single_line_title, BookItemInput};
+use super::shortlink_cache;
 use super::*;
 use crate::util::atomic_replace;
 use reqwest::blocking::Client as BlockingClient;
@@ -24,6 +25,7 @@ mod page_preview;
 mod preview_fonts;
 mod qr_footnotes;
 mod qr_packing;
+mod qr_shortlinks;
 
 pub(crate) use preview_fonts::{start_project_book_preview_fonts, BookPreviewFontsInput};
 
@@ -1458,7 +1460,7 @@ fn prepare_typst_workspace(
     document: &ExportDocument,
     options: &PdfWorkspacePreparationOptions<'_>,
     cancelled: &AtomicBool,
-) -> Result<(), String> {
+) -> Result<qr_shortlinks::Shortlinks, String> {
     check_cancelled(cancelled)?;
     let image_paths = if matches!(options.layout, TypstLayout::TextOnly) {
         // Book section images (logo, full-page images) are simply left out.
@@ -1487,10 +1489,61 @@ fn prepare_typst_workspace(
         .map_err(|error| format!("Could not prepare the title ornament for the PDF: {error}"))?;
     write_droplet_package(workspace)?;
     let mut source = typst_preamble(document, options.paper_size);
-    let body = if document.book_parts.is_empty() {
-        render_typst_chapter(document, &image_paths, options, cancelled, None, false)?
+    let shortlinks = if let Some(app) = app.filter(|_| options.footnote_links == PdfFootnoteLinks::Qr) {
+        let urls = qr_footnotes::document_urls(document);
+        let session = crate::broker_auth_storage::load_broker_auth_session_internal(app)
+            .ok()
+            .flatten();
+        let session_token = session.as_ref().map(|session| session.session_token.as_str());
+        let discover = |urls: Vec<String>| {
+            if !urls.is_empty() {
+                emit_progress(
+                    app,
+                    job_id,
+                    "running",
+                    "preparing-links",
+                    "Finding shorter links for QR codes…",
+                    PdfProgressValue::indeterminate(),
+                );
+            }
+            qr_shortlinks::resolve(urls, cancelled, session_token)
+        };
+        let shortlinks = if urls.is_empty() {
+            HashMap::new()
+        } else if let Ok(app_data) = app.path().app_data_dir() {
+            let (shortlinks, saved) = shortlink_cache::resolve(
+                &app_data,
+                urls,
+                |url, links| {
+                    session_token.is_some() && qr_shortlinks::is_cached_wiki_fallback(url, links)
+                },
+                discover,
+            );
+            if saved.is_err() {
+                crate::github::report_backend_nonfatal_error(
+                    app,
+                    "pdf-export.shortlink-cache",
+                    "cache_io_failed",
+                );
+            }
+            shortlinks
+        } else {
+            crate::github::report_backend_nonfatal_error(
+                app,
+                "pdf-export.shortlink-cache",
+                "directory_unavailable",
+            );
+            discover(urls)
+        };
+        check_cancelled(cancelled)?;
+        shortlinks
     } else {
-        render_typst_book(document, &image_paths, options, cancelled)?
+        HashMap::new()
+    };
+    let body = if document.book_parts.is_empty() {
+        render_typst_chapter(document, &image_paths, &shortlinks, options, cancelled, None, false)?
+    } else {
+        render_typst_book(document, &image_paths, &shortlinks, options, cancelled)?
     };
     if options.footnote_links == PdfFootnoteLinks::Qr {
         fs::write(
@@ -1516,7 +1569,8 @@ fn prepare_typst_workspace(
         source.push_str(BOOK_PAGINATION_RULE);
     }
     fs::write(workspace.join("chapter.typ"), source)
-        .map_err(|error| format!("Could not write the temporary Typst document: {error}"))
+        .map_err(|error| format!("Could not write the temporary Typst document: {error}"))?;
+    Ok(shortlinks)
 }
 
 // This is the chapter style: book chapters and standalone exports use this
@@ -1524,6 +1578,7 @@ fn prepare_typst_workspace(
 fn render_typst_chapter(
     document: &ExportDocument,
     image_paths: &HashMap<String, PreparedTypstImage>,
+    shortlinks: &qr_shortlinks::Shortlinks,
     options: &PdfWorkspacePreparationOptions<'_>,
     cancelled: &AtomicBool,
     chapter_number: Option<usize>,
@@ -1542,7 +1597,7 @@ fn render_typst_chapter(
         {
             anchored_footnotes.entry(*anchor_block).or_default().push((
                 *marker,
-                pdf_note_body(text, *number, options.footnote_links)?,
+                pdf_note_body(text, *number, options.footnote_links, shortlinks)?,
             ));
             anchored_numbers.insert(*number);
         }
@@ -1695,7 +1750,7 @@ fn render_typst_chapter(
             ExportBlock::Footnote { number, text, .. } if !anchored_numbers.contains(number) => {
                 source.push_str(&format!(
                     "#footnote[{}]\n",
-                    pdf_note_body(text, *number, options.footnote_links)?
+                    pdf_note_body(text, *number, options.footnote_links, shortlinks)?
                 ));
             }
             ExportBlock::Footnote { .. } => {}
@@ -1840,6 +1895,7 @@ const BOOK_TITLE_FIT_RULE: &str = r#"
 fn render_typst_book(
     document: &ExportDocument,
     image_paths: &HashMap<String, PreparedTypstImage>,
+    shortlinks: &qr_shortlinks::Shortlinks,
     options: &PdfWorkspacePreparationOptions<'_>,
     cancelled: &AtomicBool,
 ) -> Result<String, String> {
@@ -1935,6 +1991,7 @@ fn render_typst_book(
             source.push_str(&render_typst_chapter(
                 &part.document,
                 image_paths,
+                shortlinks,
                 options,
                 cancelled,
                 number,
@@ -2208,7 +2265,14 @@ fn prepare_pdf_workspace(
             report_font_coverage_gap(app, &plan, document);
         }
         plan.validate()?;
-        prepare_typst_workspace(Some(app), job_id, &workspace, document, options, cancelled)?;
+        let shortlinks = prepare_typst_workspace(
+            Some(app),
+            job_id,
+            &workspace,
+            document,
+            options,
+            cancelled,
+        )?;
         let unapproved = plan.unapproved(&approved);
         if !plan.fonts.is_empty() {
             let chapter_path = workspace.join("chapter.typ");
@@ -2224,6 +2288,7 @@ fn prepare_pdf_workspace(
                 &workspace,
                 document,
                 options,
+                &shortlinks,
                 &plan,
                 &unapproved,
             )?)
@@ -3277,9 +3342,14 @@ fn render_inline_typst_parts_with_footnotes(
     render_with_prepared_footnotes(texts, &prepared)
 }
 
-fn pdf_note_body(text: &str, number: usize, mode: PdfFootnoteLinks) -> Result<String, String> {
+fn pdf_note_body(
+    text: &str,
+    number: usize,
+    mode: PdfFootnoteLinks,
+    shortlinks: &qr_shortlinks::Shortlinks,
+) -> Result<String, String> {
     if mode == PdfFootnoteLinks::Qr {
-        if let Some(body) = qr_footnotes::render(text, number)? {
+        if let Some(body) = qr_footnotes::render(text, number, shortlinks)? {
             return Ok(body);
         }
     }

@@ -64,6 +64,7 @@ mod row_fields;
 mod row_merge;
 mod row_structure;
 mod shared;
+mod shortlink_cache;
 mod team_copy;
 
 pub(crate) use self::aligned_translation::{

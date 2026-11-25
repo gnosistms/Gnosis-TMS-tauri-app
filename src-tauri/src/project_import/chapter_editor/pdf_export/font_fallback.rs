@@ -1021,7 +1021,8 @@ mod tests {
             layout: TypstLayout::Export,
         };
         let prepared =
-            font_review::prepare(&workspace, &document, &options, &plan, &review).unwrap();
+            font_review::prepare(&workspace, &document, &options, &HashMap::new(), &plan, &review)
+                .unwrap();
         assert_eq!(prepared.labels, ["Paragraph 2", "Paragraph 3"]);
         let source = fs::read_to_string(workspace.join("font-review.typ")).unwrap();
         assert!(source.contains("#text(\"A B\")"));
