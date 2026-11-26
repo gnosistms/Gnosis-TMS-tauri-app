@@ -8,4 +8,4 @@
 
 The regression for *el tenebroso* passed in one review despite a comment about *la esencia*. A wrong referent in the second of two occurrences triggered a retry with feedback for that occurrence. Resuming a saved paragraph-level failure in the browser took one review of the existing translation.
 
-The project checks cover the unit and workflow suites, the Studio browser suite, and the production build.
+All 3,565 unit and workflow tests, all 84 Studio browser tests, and the production build passed. The unused-code audit reported findings outside the changed files.
