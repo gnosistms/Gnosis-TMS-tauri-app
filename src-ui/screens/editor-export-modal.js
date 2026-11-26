@@ -679,7 +679,7 @@ function renderPdfFontReview(modal) {
   `;
 }
 
-export function renderEditorExportModal(state) {
+export function renderEditorExportModal(state, options) {
   const modal = state.editorChapter?.exportModal;
   if (!modal?.isOpen) {
     return "";
@@ -690,7 +690,7 @@ export function renderEditorExportModal(state) {
 
   if (modal.projectId && modal.book && modal.page === 1) return renderProjectBookComposer(modal);
 
-  if (modal.projectId && modal.book && modal.page === 2) return renderBookRedundancy(modal);
+  if (modal.projectId && modal.book && modal.page === 2) return renderBookRedundancy(modal, options);
 
   const isExporting = modal.status === "exporting" || modal.status === "cancelling";
   const isCancelling = modal.status === "cancelling";

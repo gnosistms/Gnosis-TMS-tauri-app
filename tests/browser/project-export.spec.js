@@ -1675,11 +1675,21 @@ test("independent redundancy progress bypasses settings sync and preserves image
     window.__holdSettingsSave = true;
     window.__holdRedundancyImages = true;
     window.__holdRedundancyFootnotes = true;
-    const picture = (id, itemId) => ({ id, itemId, rowId: id, kind: "image", marker: 0, signature: id, chapterName: itemId, imageSrc: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20'/%3E" });
+    const picture = (id, itemId) => ({ id, itemId, rowId: id, kind: "image", marker: 0, signature: id, chapterName: itemId, imageSrc: "/fixture/plate.svg" });
+    window.__thumbnailResolutions = 0;
+    window.__TAURI_INTERNALS__ = { ...window.__TAURI_INTERNALS__, convertFileSrc: () => {
+      window.__thumbnailResolutions++;
+      return "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20'/%3E";
+    } };
     const images = Array.from({ length: 8 }, (_, i) => ({
       id: i === 0 ? "same" : `group-${i}`, occurrences: [picture(`a${i}`, "fixture-chapter-0-0"), picture(`b${i}`, "fixture-chapter-0-1")],
     }));
-    window.__redundancyResult = { images, footnotes: [], warnings: [], imageWarnings: [] };
+    const footnotes = ["First term", "Second term"].map((anchor, index) => ({
+      id: anchor, anchor, occurrences: [0, 1].map((chapter) => ({
+        id: `note-${index}-${chapter}`, itemId: `fixture-chapter-0-${chapter}`, marker: index + 1, text: anchor, context: anchor,
+      })),
+    }));
+    window.__redundancyResult = { images, footnotes, warnings: [], imageWarnings: [] };
   });
   const modal = page.getByRole("dialog", { name: "Export project", exact: true });
   await modal.getByRole("button", { name: "Next", exact: true }).click();
@@ -1698,6 +1708,7 @@ test("independent redundancy progress bypasses settings sync and preserves image
   await expect(footnotes.getByText("Checking for redundant footnotes...", { exact: true })).toBeVisible();
   await expect.poll(() => page.evaluate(() => window.__heldSettingsRequests.some((request) => request.settings))).toBe(true);
   await expect.poll(() => page.evaluate(() => typeof window.__publishImages)).toBe("function");
+  await footnotes.evaluate((section) => { window.__waitingFootnoteSection = section; });
   await page.evaluate(() => window.__publishImages());
   const checks = images.locator("article").first().getByRole("checkbox");
   await expect(checks).toHaveCount(2);await expect(checks.nth(0)).toBeChecked();
@@ -1722,15 +1733,33 @@ test("independent redundancy progress bypasses settings sync and preserves image
   const barTop = await bar.evaluate((element) => element.getBoundingClientRect().top);
   await scroller.evaluate((element) => { element.scrollTop = 200; });
   await expect(scroller).toHaveJSProperty("scrollTop", 200);
-  await emit({ phase: "meanings", batches: { completed: 8, total: 12 } });
-  await expect(bar).toHaveAttribute("value", "8");
+  const thumbnailWork = await page.evaluate(() => {
+    const before = window.__thumbnailResolutions;
+    for (let completed = 8; completed <= 12; completed++) {
+      window.__publishRedundancyProgress({ phase: "meanings", batches: { completed, total: 12 } });
+    }
+    return window.__thumbnailResolutions - before;
+  });
+  expect(thumbnailWork).toBe(0);
+  await expect(bar).toHaveAttribute("value", "12");
   await page.evaluate(() => window.__gnosisDebug.renderProjectsBackground());
   expect(await bar.evaluate((element) => element.getBoundingClientRect().top)).toBe(barTop);
   await expect(scroller).toHaveJSProperty("scrollTop", 200);
   await expect(checks.nth(1)).toBeFocused();
   await expect(modal.getByRole("button", { name: "Next", exact: true })).toBeDisabled();
-  await page.evaluate(() => window.__finishRedundancy());
-  await expect(footnotes.getByText("No redundant footnotes found.", { exact: true })).toBeVisible();
+  expect(await footnotes.evaluate((section) => section === window.__waitingFootnoteSection)).toBe(true);
+  await expect(footnotes.locator("article")).toHaveCount(0);
+  const publications = await footnotes.evaluate((section) => {
+    const observer = new MutationObserver(() => {});
+    observer.observe(section.parentElement, { childList: true });
+    window.__finishRedundancy();
+    window.__finishRedundancy();
+    const added = observer.takeRecords().flatMap((record) => [...record.addedNodes]);
+    observer.disconnect();
+    return added.filter((node) => node.dataset?.bookRedundancySection === "footnotes").length;
+  });
+  expect(publications).toBe(1);
+  await expect(footnotes.locator("blockquote")).toHaveText(["First term", "Second term"]);
   await expect(modal.locator(".book-redundancy__progress")).toBeHidden();
   await expect(bar).toHaveCount(0);
   await expect(scroller).toHaveJSProperty("scrollTop", 200);

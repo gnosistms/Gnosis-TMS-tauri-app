@@ -26,6 +26,23 @@ test("refresh completion requires discovery, query and page sync to settle", () 
   assert.equal(projectRefreshInProgress({ projectsPageSync: { status: "upToDate" } }), false);
 });
 
+test("a background refresh retains the footnote view throughout comparison progress", () => {
+  const state = stateFor();
+  const modal = state.editorChapter.exportModal;
+  modal.page = 2;
+  const review = { status: "loading", imagesStatus: "ready", footnotesStatus: "loading" };
+  modal.book.redundancy = review;
+  const pending = exportDialogRenderKey(state);
+  review.footnotesPhase = "meanings";
+  for (const completed of [0, 1, 2]) {
+    review.batchProgress = { completed, total: 2 };
+    assert.equal(exportDialogRenderKey(state), pending);
+  }
+  review.status = "ready";
+  review.footnotesStatus = "ready";
+  assert.notEqual(exportDialogRenderKey(state), pending);
+});
+
 test("dialog key ignores project summaries and discovery progress when its output is unchanged", () => {
   const state = stateFor();
   const before = exportDialogRenderKey(state);

@@ -385,10 +385,8 @@ async fn paginate_book(
     let prepare_cancelled = uncancelled.clone();
     let request_id = request_id.to_string();
     let (prepared, font_dir) = tauri::async_runtime::spawn_blocking(move || {
-        let document = apply_print_custom_html_policy(
-            &load_export_document(&prepare_app, &input)?,
-            input.omit_custom_html,
-        );
+        let document = load_export_document(&prepare_app, &input)?;
+        let document = apply_print_custom_html_policy(&document, input.omit_custom_html);
         let font_dir = ensure_fonts(
             &prepare_app,
             &request_id,
