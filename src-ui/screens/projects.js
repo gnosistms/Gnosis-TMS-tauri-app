@@ -523,7 +523,7 @@ export function renderProjectsScreen(state, options = {}) {
     renderProjectClearDeletedFilesModal(state) +
     renderProjectImportModal(state) +
     renderProjectAddTranslationModal(state) +
-    renderEditorExportModal(state) +
+    renderEditorExportModal(state, options) +
     renderEditorWordPressExportSuccessModal(state)
   );
 }

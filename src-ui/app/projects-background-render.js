@@ -29,7 +29,8 @@ export function exportDialogRenderKey(state) {
   if (!modal?.isOpen) return "";
   // Discovery refreshes chapter summaries even without remote edits. Only a
   // change to what this dialog renders should invalidate its mounted preview.
-  return JSON.stringify([state.selectedTeamId, modal.projectId, modal.chapterId, renderEditorExportModal(state)]);
+  const html = renderEditorExportModal(state, { includeRedundancyProgress: false });
+  return JSON.stringify([state.selectedTeamId, modal.projectId, modal.chapterId, html]);
 }
 
 export function rememberProjectsExportRender(root, state) {

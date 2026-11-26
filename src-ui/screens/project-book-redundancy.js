@@ -58,21 +58,22 @@ function checkbox(id, included, description) {
 }
 function section(modal, kind) {
   const review = modal.book.redundancy || {};
-  const numbers = bookChapterNumbers(modal.book.items || []);
-  const labels = new Map((modal.book.items || []).map((item) => [item.id,
-    `${numbers.has(item.id) ? `${numbers.get(item.id)}. ` : ""}${item.kind === "title" ? bookSectionLabel("title") : bookItemTitle(item) || ""}`]));
-  const result = review.result || {};
   const status = review[`${kind}Status`] || review.status || "loading";
-  const groups = result[kind] || [];
-  const imageWarnings = result.imageWarnings || [];
-  const warnings = kind === "images" ? imageWarnings : (result.warnings || []).filter((warning) => !imageWarnings.includes(warning));
-  const key = JSON.stringify([status, groups, warnings]);
+  let key = status;
   let content;
   if (status === "loading") {
     content = `<p class="modal__supporting">Checking for redundant ${kind}...</p>`;
   } else if (status === "error") {
     content = `<p class="modal__supporting">Could not finish checking for redundant ${kind}.</p>`;
   } else {
+    const result = review.result || {};
+    const groups = result[kind] || [];
+    const imageWarnings = result.imageWarnings || [];
+    const warnings = kind === "images" ? imageWarnings : (result.warnings || []).filter((warning) => !imageWarnings.includes(warning));
+    key = JSON.stringify([status, groups, warnings]);
+    const numbers = bookChapterNumbers(modal.book.items || []);
+    const labels = new Map((modal.book.items || []).map((item) => [item.id,
+      `${numbers.has(item.id) ? `${numbers.get(item.id)}. ` : ""}${item.kind === "title" ? bookSectionLabel("title") : bookItemTitle(item) || ""}`]));
     content = groups.map((group) => {
       if (kind === "images") {
         const src = group.occurrences[0].imageSrc;
@@ -103,10 +104,10 @@ function contents(modal) {
   return `<div data-book-redundancy-results>
     ${messages(review)}${section(modal, "images")}${section(modal, "footnotes")}</div>`;
 }
-export function renderBookRedundancy(modal) {
+export function renderBookRedundancy(modal, { includeRedundancyProgress = true } = {}) {
   return `<div class="modal-backdrop"><section class="card modal-card modal-card--book-redundancy" role="dialog" aria-modal="true" aria-label="Export project" data-modal-dialog="editor-export" tabindex="-1"><div class="card__body modal-card__body">
     <header class="book-redundancy__header">${bookNavButton("previous")}<h2 class="modal__title" id="book-redundancy-title">Redundancy checks</h2><div>${secondaryButton("Cancel", "close-editor-export-options", { modalCancel: true })}${bookNavButton("next", !["ready", "error"].includes(modal.book.redundancy?.status))}</div></header>
-    ${renderProgress(progressView(modal.book.redundancy || {}))}
+    ${includeRedundancyProgress ? renderProgress(progressView(modal.book.redundancy || {})) : ""}
     <div class="book-redundancy__scroll">${contents(modal)}</div></div></section></div>${renderBookSettingsNotice(modal)}`;
 }
 export function updateBookRedundancyView(root, appState, { progressOnly = false } = {}) {

@@ -389,7 +389,7 @@ const PROJECTS_SCOPED_RENDER_SCOPES = new Set(["status-surface", "app-update-pro
 
 function currentProjectsRenderKey() {
   return buildProjectsRenderKey({
-    screenHtml: renderProjectsScreen(state, { fullList: true }),
+    screenHtml: renderProjectsScreen(state, { fullList: true, includeRedundancyProgress: false }),
     statusSurfaceHtml: renderFloatingStatusSurface(currentStatusSurfaceModel()),
     extraParts: [
       renderAppUpdateModal(state),
@@ -422,6 +422,12 @@ function skipUnchangedProjectsRender(options) {
 }
 
 function render(options = {}) {
+  // A footnote batch only advances the meter. The next full mount can read
+  // its latest value from state if the dialog isn't currently on screen.
+  if (options?.scope === "book-redundancy" && options.progressOnly) {
+    updateBookRedundancyView(app, state, options);
+    return;
+  }
   // While an input method is composing a word in a field, renders defer so
   // the field isn't replaced mid-word (scrambled Telex/IME text); the hold
   // flushes when the composition ends. See ime-composition-hold.js.
