@@ -209,6 +209,7 @@ function renderActionSelectorFields(actionConfig, scopeId, title, controlsBusy =
           <select
             class="field__select"
             data-ai-settings-model-select
+            data-ai-model-provider="${escapeHtml(selection.providerId)}"
             data-ai-settings-scope="${escapeHtml(scopeId)}"
             ${modelDisabled ? "disabled" : ""}
           >

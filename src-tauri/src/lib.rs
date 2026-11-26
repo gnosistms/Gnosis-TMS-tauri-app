@@ -250,9 +250,15 @@ async fn list_ai_provider_models(
     app: tauri::AppHandle,
     provider_id: AiProviderId,
     installation_id: Option<i64>,
+    notice_known_ids: Option<Vec<String>>,
 ) -> Result<Vec<AiProviderModel>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        load_ai_provider_models_task(&app, provider_id, installation_id)
+        let mut models = load_ai_provider_models_task(&app, provider_id, installation_id)?;
+        if let Some(known) = notice_known_ids {
+            let known: std::collections::HashSet<_> = known.into_iter().collect();
+            models.retain(|model| !known.contains(&model.id));
+        }
+        Ok(models)
     })
     .await
     .map_err(|error| format!("The AI models worker failed: {error}"))?

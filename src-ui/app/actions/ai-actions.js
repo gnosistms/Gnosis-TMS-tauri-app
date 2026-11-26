@@ -9,6 +9,7 @@ import {
   selectAiProvider,
 } from "../ai-settings-flow.js";
 import { state } from "../state.js";
+import { dismissAiModelNotice, openAiModelNoticeSettings } from "../ai-model-notifications.js";
 
 export function createAiActions(render) {
   const providerActions = Object.fromEntries(
@@ -20,6 +21,11 @@ export function createAiActions(render) {
 
   return {
     ...providerActions,
+    "ignore-ai-model-notice": () => {
+      dismissAiModelNotice();
+      render({ scope: "ai-model-notice" });
+    },
+    "open-ai-model-notice-settings": () => openAiModelNoticeSettings(render),
     "save-ai-key": () => saveAiProviderSecret(render),
     "remove-ai-key": () => removeAiProviderSecret(render),
     "cancel-ai-review-missing-key": () => {
