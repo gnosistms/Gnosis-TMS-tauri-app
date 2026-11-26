@@ -1740,6 +1740,10 @@ export async function permanentlyDeleteChapter(render, chapterId) {
   }
 
   const { selectedTeam, context } = resolved;
+  if (context.chapter.status !== "deleted") {
+    setProjectDiscoveryError(render, "Only deleted files can be permanently removed.");
+    return;
+  }
   if (resourceHasPendingLifecycleMutation(context.chapter)) {
     setProjectDiscoveryError(render, chapterLifecycleWriteBlockedMessage());
     return;

@@ -1,12 +1,21 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+const invokeCalls = [];
+
 globalThis.document = globalThis.document ?? {
   querySelector: () => null,
   querySelectorAll: () => [],
 };
 globalThis.window = globalThis.window ?? {
-  __TAURI__: {},
+  __TAURI__: {
+    core: {
+      invoke(command, payload) {
+        invokeCalls.push({ command, payload });
+        return Promise.resolve(null);
+      },
+    },
+  },
   requestAnimationFrame: (callback) => setTimeout(callback, 0),
   setTimeout,
   clearTimeout,
@@ -14,9 +23,51 @@ globalThis.window = globalThis.window ?? {
 
 const {
   applyChapterPendingMutation,
+  confirmProjectClearDeletedFiles,
   normalizeListedChapter,
+  permanentlyDeleteChapter,
   preserveChapterLifecyclePatchesInProjectSnapshot,
 } = await import("./project-chapter-flow.js");
+const { resetSessionState, state } = await import("./state.js");
+const { queryClient } = await import("./query-client.js");
+const { clearNoticeBadge } = await import("./status-feedback.js");
+const { setActiveStorageLogin } = await import("./team-storage.js");
+
+test("single and bulk hard deletion leave the shared shortlink cache alone", async () => {
+  resetSessionState();
+  setActiveStorageLogin("chapter-qr-cache-test");
+  try {
+    state.auth.session = { sessionToken: "token" };
+    state.teams = [{ id: "team-1", installationId: 42, canLocalHardDelete: true }];
+    state.selectedTeamId = "team-1";
+    state.screen = "projects";
+    state.projects = [project({
+      chapters: [
+        chapter({ id: "single", status: "deleted" }),
+        chapter({ id: "bulk", status: "deleted" }),
+        chapter({ id: "keep" }),
+      ],
+    })];
+    await permanentlyDeleteChapter(() => {}, "single");
+    state.projectClearDeletedFiles = {
+      isOpen: true,
+      projectId: "project-1",
+      projectName: "Project",
+      confirmationText: "Project",
+      status: "idle",
+      error: "",
+    };
+    await confirmProjectClearDeletedFiles(() => {});
+
+    assert.equal(invokeCalls.some(({ command }) => command.includes("shortlink_cache")), false);
+    assert.deepEqual(state.projects[0].chapters.map(({ id }) => id), ["keep"]);
+  } finally {
+    clearNoticeBadge();
+    queryClient.clear();
+    resetSessionState();
+    setActiveStorageLogin(null);
+  }
+});
 
 function project(overrides = {}) {
   return {
