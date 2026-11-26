@@ -586,6 +586,7 @@ test("PDF export starts a background job and closes only after its completion ev
   assert.equal(invokeCalls[1].command, "start_gtms_chapter_pdf_export");
   assert.equal(invokeCalls[1].payload.input.format, "pdf");
   assert.equal(invokeCalls[1].payload.input.paperSize, "a4");
+  assert.equal(invokeCalls[1].payload.input.pdfFootnoteLinkMode, "qr");
   assert.ok(invokeCalls[1].payload.input.jobId);
   assert.equal(state.editorChapter.exportModal.isOpen, true);
   assert.equal(state.editorChapter.exportModal.status, "exporting");
@@ -637,6 +638,25 @@ test("an invalid stored PDF paper size falls back to A4", () => {
   assert.equal(state.editorChapter.exportModal.pdfPaperSize, "a4");
 });
 
+test("book PDF links default to QR and honor saved choices", async () => {
+  const { replaceBookSettings } = await import("./project-book-settings.js");
+  const { openProjectExportOptions } = await import("./editor-export-flow.js");
+  installEditorExportFixture();
+  setActiveStorageLogin("pdf-link-default-test");
+  for (const [options, expected] of [
+    [{}, "qr"],
+    [{ footnoteLinksAsPlainText: true }, "qr"],
+    [{ footnoteLinksAsPlainText: false }, "links"],
+    [{ pdfFootnoteLinkMode: "urls", footnoteLinksAsPlainText: false }, "urls"],
+    [{ pdfFootnoteLinkMode: "compact-qr", footnoteLinksAsPlainText: false }, "qr"],
+    [{ pdfFootnoteLinkMode: "links", footnoteLinksAsPlainText: true }, "links"],
+  ]) {
+    replaceBookSettings("project-1", { options });
+    openProjectExportOptions(() => {}, "project-1");
+    assert.equal(state.editorChapter.exportModal.pdfFootnoteLinkMode, expected);
+  }
+});
+
 test("PDF font inspection records the exact missing download before export", async () => {
   installEditorExportFixture();
   openExportModal("file:pdf");
@@ -667,7 +687,8 @@ test("PDF inspection opens immediately and waits for local saves in the backgrou
     invoke: async (_command, payload) => {
       invoked = true;
       assert.equal(payload.input.omitCustomHtml, true);
-      assert.equal(payload.input.footnoteLinksAsPlainText, true);
+      assert.equal(payload.input.pdfFootnoteLinkMode, "qr");
+      assert.equal(payload.input.footnoteLinksAsPlainText, false);
       return { supported: true, savedFallbackFonts: [{ id: "font-1", family: "Noto Sans EgyptHiero" }] };
     },
   });

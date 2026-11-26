@@ -212,10 +212,10 @@ const GLOSSARY_SENTENCE_END_REGEX = /[\p{Sentence_Terminal}…\r\n\u2028\u2029]/
 // Token segments around each gap, or null for a variant without one. Gaps
 // and ruby annotations are not combined.
 function glossaryTermGapSegments(term, languageCode) {
-  if (glossaryRubyHasAnnotation(term)) {
+  if (!/…|\.{3}/u.test(term) || glossaryRubyHasAnnotation(term)) {
     return null;
   }
-  const parts = String(term ?? "").split(GLOSSARY_GAP_MARKER_REGEX);
+  const parts = extractGlossaryRubyBaseText(term).split(GLOSSARY_GAP_MARKER_REGEX);
   if (parts.length < 2) {
     return null;
   }

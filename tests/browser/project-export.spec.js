@@ -39,8 +39,10 @@ async function mountProjectExport(page, multilingual = false, chapterTitles = fa
         if (command === "start_book_redundancy") {
           window.__redundancyCalls.push(args.input);
           const requestId = args.input.requestId;
-          window.__finishRedundancy = (error = "") => window.__pdfListeners["book-redundancy-progress"]?.({ payload: { requestId, complete: true, result: window.__redundancyResult, error } });
-          window.__publishImages = () => window.__pdfListeners["book-redundancy-progress"]?.({ payload: { requestId, phase: "images", result: { ...window.__redundancyResult, footnotes: [] } } });
+          const publish = (event) => window.__pdfListeners["book-redundancy-progress"]?.({ payload: { requestId, ...event } });
+          window.__publishRedundancyProgress = publish;
+          window.__finishRedundancy = (error = "") => publish({ complete: true, result: window.__redundancyResult, error });
+          window.__publishImages = () => publish({ phase: "images", result: { ...window.__redundancyResult, footnotes: [] } });
           setTimeout(() => {
             if (!window.__holdRedundancyImages) window.__publishImages();
             if (!window.__holdRedundancyFootnotes) window.__finishRedundancy();
@@ -166,12 +168,15 @@ test("project PDF export inspects the entire book and exposes cancellation", asy
   await page.evaluate(() => { window.__holdPdfInspection = false; window.__resolvePdfInspection(); });
   await expect(save).toBeEnabled();
   await expect(save.locator(".button__spinner")).toHaveCount(0);
+  await expect(modal.locator("[data-editor-export-pdf-footnote-links]")).toHaveValue("qr");
   await page.screenshot({ path: test.info().outputPath("project-export.png") });
   await modal.getByRole("button", { name: "Save", exact: true }).click();
   await expect(modal.getByRole("button", { name: "Cancel export", exact: true })).toBeEnabled();
   await expect.poll(async () => page.evaluate(() => window.__projectExports.map((call) => call.command))).toContain("start_gtms_chapter_pdf_export");
   const calls = await page.evaluate(() => window.__projectExports);
   expect(calls[0].input.chapterIds).toHaveLength(3);
+  expect(calls.findLast((call) => call.command === "inspect_gtms_chapter_pdf_fonts").input.pdfFootnoteLinkMode).toBe("qr");
+  expect(calls.find((call) => call.command === "start_gtms_chapter_pdf_export").input).toMatchObject({ pdfFootnoteLinkMode: "qr", footnoteLinksAsPlainText: false });
   expect(calls.find((call) => call.command === "start_gtms_chapter_pdf_export").input.chapterIds).toEqual(calls[0].input.chapterIds);
   await modal.getByRole("button", { name: "Cancel export", exact: true }).click();
   await expect.poll(async () => page.evaluate(() => window.__projectExports.at(-1).command)).toBe("cancel_gtms_chapter_pdf_export");
@@ -416,7 +421,7 @@ test("background project refresh retains the redundancy page after review choice
       control: document.querySelectorAll("[data-book-redundancy-choice]")[2],
       top: scroll.scrollTop,
     };
-    window.__redundancyRefresh.control.focus();
+    window.__redundancyRefresh.control.focus({ preventScroll: true });
     const projects = structuredClone(state.projects);
     window.__publishRedundancyRefresh = (fetching, change = "") => {
       const next = structuredClone(projects);
@@ -1595,6 +1600,7 @@ test("redundancy page keeps local decisions through page 3 and reopening, and ex
   await expect(modal.getByRole("heading", { name: "Redundancy checks" })).toBeVisible();
   const checks = modal.locator("[data-book-redundancy-choice]");
   await expect(checks).toHaveCount(4);
+  await expect(modal.locator(".book-redundancy__progress")).toBeHidden();
   await expect(checks.nth(0)).toBeChecked();await expect(checks.nth(1)).not.toBeChecked();
   await expect(checks.nth(2)).toBeChecked();await expect(checks.nth(3)).not.toBeChecked();
   await page.screenshot({ path: test.info().outputPath("book-redundancy-review.png") });
@@ -1670,7 +1676,10 @@ test("independent redundancy progress bypasses settings sync and preserves image
     window.__holdRedundancyImages = true;
     window.__holdRedundancyFootnotes = true;
     const picture = (id, itemId) => ({ id, itemId, rowId: id, kind: "image", marker: 0, signature: id, chapterName: itemId, imageSrc: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20'/%3E" });
-    window.__redundancyResult = { images: [{ id: "same", occurrences: [picture("a", "fixture-chapter-0-0"), picture("b", "fixture-chapter-0-1")] }], footnotes: [], warnings: [], imageWarnings: [] };
+    const images = Array.from({ length: 8 }, (_, i) => ({
+      id: i === 0 ? "same" : `group-${i}`, occurrences: [picture(`a${i}`, "fixture-chapter-0-0"), picture(`b${i}`, "fixture-chapter-0-1")],
+    }));
+    window.__redundancyResult = { images, footnotes: [], warnings: [], imageWarnings: [] };
   });
   const modal = page.getByRole("dialog", { name: "Export project", exact: true });
   await modal.getByRole("button", { name: "Next", exact: true }).click();
@@ -1679,33 +1688,52 @@ test("independent redundancy progress bypasses settings sync and preserves image
   await expect(modal.getByText("Checking for new images and footnotes…")).toHaveCount(0);
   const images = modal.locator('[data-book-redundancy-section="images"]');
   const footnotes = modal.locator('[data-book-redundancy-section="footnotes"]');
+  const bar = modal.getByRole("progressbar");
+  const emit = (event) => page.evaluate((event) => window.__publishRedundancyProgress(event), event);
+  await expect(bar).toHaveAccessibleName("Scanning the book");
+  await expect(bar).not.toHaveAttribute("value");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  expect(await modal.locator(".book-redundancy__track").evaluate((track) => getComputedStyle(track, "::after").animationName)).toBe("none");
   await expect(images.getByText("Checking for redundant images...", { exact: true })).toBeVisible();
-  await expect(images.getByRole("status", { name: "Checking for redundant images...", exact: true })).toBeVisible();
   await expect(footnotes.getByText("Checking for redundant footnotes...", { exact: true })).toBeVisible();
   await expect.poll(() => page.evaluate(() => window.__heldSettingsRequests.some((request) => request.settings))).toBe(true);
   await expect.poll(() => page.evaluate(() => typeof window.__publishImages)).toBe("function");
   await page.evaluate(() => window.__publishImages());
-  const checks = images.locator("input");
+  const checks = images.locator("article").first().getByRole("checkbox");
   await expect(checks).toHaveCount(2);await expect(checks.nth(0)).toBeChecked();
-  await expect(images.getByRole("status")).toHaveCount(0);
-  await expect(footnotes.getByRole("status", { name: "Checking for redundant footnotes..." })).toBeVisible();
+  await expect(images).toHaveAttribute("aria-busy", "false");
+  await expect(footnotes).toHaveAttribute("aria-busy", "true");
+  await expect(bar).toHaveAccessibleName("Preparing footnotes");
   await checks.nth(1).check();await checks.nth(1).focus();
   await checks.nth(1).evaluate((input) => { window.__originalImageControl = input; });
   await expect.poll(() => page.evaluate(() => window.__redundancyChoices["image:same:fixture-chapter-0-1"])).toBe(true);
-  await page.screenshot({ path: test.info().outputPath("redundancy-independent-progress.png") });
-  const phase = (name) => page.evaluate((name) => window.__pdfListeners["book-redundancy-progress"]({ payload: { requestId: window.__redundancyCalls.at(-1).requestId, phase: name, status: "loading" } }), name);
-  await phase("frequencies");
-  await expect(footnotes.getByText("Computing word frequency counts...", { exact: true })).toBeVisible();
-  await expect(footnotes.getByRole("status", { name: "Computing word frequency counts...", exact: true })).toBeVisible();
-  await phase("meanings");
-  await expect(footnotes.getByText("Comparing footnote meanings...", { exact: true })).toBeVisible();
-  await expect(footnotes.getByRole("status", { name: "Comparing footnote meanings...", exact: true })).toBeVisible();
-  await expect(footnotes.getByText("Computing word frequency counts...", { exact: true })).toHaveCount(0);
+  await emit({ phase: "frequencies", status: "loading" });
+  await expect(bar).toHaveAccessibleName("Computing word frequencies");
+  await expect(bar).not.toHaveAttribute("value");
+  await emit({ phase: "meanings", batches: { completed: 0, total: 12 } });
+  await expect(bar).toHaveAccessibleName("Comparing footnote meanings");
+  await expect(bar).toHaveAttribute("value", "0");
+  await expect(bar).toHaveAttribute("max", "12");
+  await emit({ phase: "meanings", batches: { completed: 7, total: 12 } });
+  await expect(modal.getByText("7 of 12 batches", { exact: true })).toBeVisible();
+  await expect(bar).toHaveAttribute("aria-valuetext", "7 of 12 batches complete");
+  await page.screenshot({ path: test.info().outputPath("redundancy-independent-progress.png"), animations: "disabled" });
+  const scroller = modal.locator(".book-redundancy__scroll");
+  const barTop = await bar.evaluate((element) => element.getBoundingClientRect().top);
+  await scroller.evaluate((element) => { element.scrollTop = 200; });
+  await expect(scroller).toHaveJSProperty("scrollTop", 200);
+  await emit({ phase: "meanings", batches: { completed: 8, total: 12 } });
+  await expect(bar).toHaveAttribute("value", "8");
+  await page.evaluate(() => window.__gnosisDebug.renderProjectsBackground());
+  expect(await bar.evaluate((element) => element.getBoundingClientRect().top)).toBe(barTop);
+  await expect(scroller).toHaveJSProperty("scrollTop", 200);
   await expect(checks.nth(1)).toBeFocused();
   await expect(modal.getByRole("button", { name: "Next", exact: true })).toBeDisabled();
   await page.evaluate(() => window.__finishRedundancy());
   await expect(footnotes.getByText("No redundant footnotes found.", { exact: true })).toBeVisible();
-  await expect(footnotes.getByRole("status")).toHaveCount(0);
+  await expect(modal.locator(".book-redundancy__progress")).toBeHidden();
+  await expect(bar).toHaveCount(0);
+  await expect(scroller).toHaveJSProperty("scrollTop", 200);
   await expect(checks.nth(1)).toBeChecked();await expect(checks.nth(1)).toBeFocused();
   expect(await checks.nth(1).evaluate((input) => input === window.__originalImageControl)).toBe(true);
   await expect(modal.getByRole("button", { name: "Next", exact: true })).toBeEnabled();
@@ -1722,11 +1750,23 @@ test("empty redundancy sections finish independently and failed footnotes retain
   await modal.getByRole("button", { name: "Next", exact: true }).click();
   await expect(modal.getByText("No redundant images found.", { exact: true })).toBeVisible();
   await expect(modal.getByText("Checking for redundant footnotes...", { exact: true })).toBeVisible();
+  const bar = modal.getByRole("progressbar");
+  await page.evaluate(() => window.__publishRedundancyProgress({ phase: "meanings", batches: { completed: 1, total: 3 } }));
   await page.evaluate(() => window.__finishRedundancy("Footnote check failed"));
   await expect(modal.getByText("No redundant images found.", { exact: true })).toBeVisible();
   await expect(modal.getByText("No redundant footnotes found.", { exact: true })).toHaveCount(0);
   await expect(modal.getByText("Could not finish checking for redundant footnotes.", { exact: true })).toBeVisible();
-  await expect(modal.getByRole("button", { name: "Retry checks", exact: true })).toBeVisible();
+  await expect(bar).toHaveAccessibleName("Footnote check interrupted");
+  await expect(bar).toHaveAttribute("value", "1");
+  await expect(modal.getByText("1 of 3 batches", { exact: true })).toBeVisible();
+  await page.evaluate(() => { window.__holdRedundancyImages = true; });
+  await modal.getByRole("button", { name: "Retry checks", exact: true }).click();
+  await expect(bar).toHaveAccessibleName("Scanning the book");
+  await expect(bar).not.toHaveAttribute("value");
+  await expect(modal.getByText("1 of 3 batches", { exact: true })).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => window.__redundancyCalls.length)).toBe(2);
+  await page.evaluate(() => window.__finishRedundancy());
+  await expect(modal.locator(".book-redundancy__progress")).toBeHidden();
 });
 
 

@@ -16,6 +16,8 @@ import {
 import {
   DEFAULT_PDF_PAPER_SIZE,
   PDF_PAPER_SIZES,
+  PDF_FOOTNOTE_LINK_MODES,
+  pdfFootnoteLinkMode,
 } from "../app/editor-export-options.js";
 import { selectedWordPressPost } from "../app/editor-export-wordpress-flow.js";
 import {
@@ -598,7 +600,15 @@ function exportDetail(option, isExporting, modal, appState) {
         ${pdfDisclosure}
         ${fileExportLanguageSection(option, modal, appState)}
         ${option.format === "pdf" ? pdfPaperSizeSection(modal, isExporting) : ""}
-        ${footnoteLinkFallbackSection(option, modal)}
+        ${option.format === "pdf" ? renderExportSelect({
+          id: "editor-export-pdf-footnote-links",
+          label: "Footnote links",
+          placeholder: null,
+          selectAttributes: { "data-editor-export-pdf-footnote-links": true },
+          options: PDF_FOOTNOTE_LINK_MODES,
+          value: pdfFootnoteLinkMode(modal),
+          disabled: isExporting,
+        }) : footnoteLinkFallbackSection(option, modal)}
         ${omitCustomHtmlSection(option, modal)}
         ${option.format === "pdf" ? savedPdfFontSettings(modal, isExporting) : ""}
         ${exportProgress}

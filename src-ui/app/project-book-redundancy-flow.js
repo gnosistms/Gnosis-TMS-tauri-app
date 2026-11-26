@@ -18,13 +18,13 @@ function matches(request) {
     && current.book?.previewCache === request.session && state.selectedTeamId === request.teamId
     && getActiveStorageLogin() === request.login;
 }
-function publish(request, patch) {
+function publish(request, patch, renderOptions = {}) {
   if (!matches(request)) return;
   const current = modal();
   state.editorChapter = { ...state.editorChapter, exportModal: { ...current,
     book: { ...current.book, redundancy: { ...current.book.redundancy, ...patch } },
   } };
-  request.render?.({ scope: "book-redundancy" });
+  request.render?.({ scope: "book-redundancy", ...renderOptions });
 }
 export function cancelBookRedundancy() {
   const previous = active;
@@ -40,22 +40,29 @@ export async function startBookRedundancy(render, operations = {}) {
     teamId: team.id, login: getActiveStorageLogin(), session: current.book.previewCache, invoke: operations.invoke || invoke,
     scope: { login: getActiveStorageLogin() || "", installationId: team.installationId, projectId: current.projectId, languageCode: current.languageCode } };
   active = request;
-  publish(request, { status: "loading", imagesStatus: "loading", footnotesStatus: "loading", footnotesPhase: "contexts", stage: "", error: "", choiceSaveError: "" });
+  publish(request, { status: "loading", imagesStatus: "loading", footnotesStatus: "loading", footnotesPhase: "contexts", batchProgress: null, error: "", choiceSaveError: "" });
   try {
     if (!subscribed) subscribed = Promise.resolve((operations.listen || listen)("book-redundancy-progress", ({ payload }) => {
       const request = active;
       if (!request || payload?.requestId !== request.id) return;
       if (!matches(request)) { cancelBookRedundancy(); return; }
+      const review = modal().book.redundancy;
+      if (review?.status !== "loading") return;
       if (payload.phase === "images") {
         request.imagesPublished = true;
-        publishResult(request, payload.result, modal().book.redundancy.choices || {}, { imagesStatus: "ready" });
+        publishResult(request, payload.result, review.choices || {}, { imagesStatus: "ready" });
       } else if (payload.phase === "frequencies") {
-        publish(request, { footnotesPhase: payload.status === "loading" ? "frequencies" : "contexts" });
+        if (review.footnotesPhase === "meanings") return;
+        publish(request, { footnotesPhase: payload.status === "loading" ? "frequencies" : "contexts" }, { progressOnly: true });
       } else if (payload.phase === "meanings") {
-        publish(request, { footnotesPhase: "meanings" });
+        const batches = payload.batches;
+        const valid = Number.isSafeInteger(batches?.total) && batches.total > 0
+          && Number.isSafeInteger(batches.completed) && batches.completed >= 0 && batches.completed <= batches.total;
+        if (review.batchProgress && (!valid || batches.completed <= review.batchProgress.completed)) return;
+        publish(request, { footnotesPhase: "meanings", batchProgress: valid ? batches : null }, { progressOnly: true });
       } else if (payload.complete) {
         if (payload.error) fail(request, payload.error);
-        else publishResult(request, payload.result, modal().book.redundancy.choices || {}, { status: "ready", imagesStatus: "ready", footnotesStatus: "ready", stage: "", error: "" });
+        else publishResult(request, payload.result, review.choices || {}, { status: "ready", imagesStatus: "ready", footnotesStatus: "ready", batchProgress: null, error: "" });
       }
     })).catch((error) => { subscribed = null; throw error; });
     await subscribed;

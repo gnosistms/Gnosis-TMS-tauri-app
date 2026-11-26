@@ -211,11 +211,78 @@
 
 .book-preview-font-status { color: var(--muted); font-size: 12px; max-width: 320px; align-self: center; }
 
-.modal-card--book-redundancy { width: min(960px, calc(100vw - 48px)); max-height: calc(100vh - 48px); }
+.modal-card--book-redundancy {
+  display: flex;
+  flex-direction: column;
+  width: min(960px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  overflow: hidden;
+}
 .modal-card--book-redundancy > .card__body { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 .book-redundancy__header { display: flex; align-items: center; gap: 16px; flex-shrink: 0; }
 .book-redundancy__header h2 { flex: 1; }
 .book-redundancy__header > div { display: flex; gap: 8px; }
+.book-redundancy__progress {
+  --book-progress-fill: var(--modal-progress-fill);
+  flex: none;
+}
+.book-redundancy__progress-caption {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 3px 14px;
+  margin-bottom: 8px;
+  font-size: .9rem;
+  font-weight: 600;
+}
+.book-redundancy__batch-count { color: var(--muted); font-weight: 500; font-variant-numeric: tabular-nums; }
+.book-redundancy__track {
+  position: relative;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-border);
+}
+.book-redundancy__track progress {
+  display: block;
+  appearance: none;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+}
+.book-redundancy__track progress::-webkit-progress-bar { background: transparent; }
+.book-redundancy__track progress::-webkit-progress-value {
+  border-radius: 999px;
+  background: var(--book-progress-fill);
+  transition: width 180ms ease;
+}
+.book-redundancy__track progress::-moz-progress-bar { border-radius: 999px; background: var(--book-progress-fill); }
+.book-redundancy__track progress:not([value]) { opacity: 0; }
+.book-redundancy__progress[data-mode="indeterminate"] .book-redundancy__track::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 32%;
+  border-radius: inherit;
+  background: var(--book-progress-fill);
+  animation: book-redundancy-scan 1.65s ease-in-out infinite alternate;
+}
+@keyframes book-redundancy-scan {
+  from { transform: translateX(0); }
+  to { transform: translateX(212.5%); }
+}
+.book-redundancy__progress[data-mode="interrupted"] { --book-progress-fill: var(--muted); }
+.book-redundancy__progress[data-mode="interrupted"] #book-redundancy-phase { color: var(--message-error-text); }
+@media (prefers-reduced-motion: reduce) {
+  .book-redundancy__track progress::-webkit-progress-value { transition: none; }
+  .book-redundancy__progress[data-mode="indeterminate"] .book-redundancy__track::after {
+    width: 100%;
+    animation: none;
+    background: repeating-linear-gradient(120deg, var(--accent-strong) 0 3px, transparent 3px 10px);
+  }
+}
 .book-redundancy__scroll { overflow: auto; min-height: 0; overscroll-behavior: contain; }
 .book-redundancy__group { border: 1px solid var(--border-color, #d7d0c5); border-radius: 8px; padding: 16px; margin-block: 16px; }
 .book-redundancy__thumbnail { display: block; max-width: 200px; max-height: 160px; object-fit: contain; margin-bottom: 12px; }
@@ -230,10 +297,6 @@
   .book-redundancy__header h2 { order: -1; flex-basis: 100%; }
   .book-redundancy__header > div { margin-left: auto; }
 }
-
-.book-redundancy__checking { display: flex; align-items: center; gap: 8px; }
-.book-redundancy__checking .button__spinner { display: inline-block; border-color: currentColor; border-top-color: transparent; }
-
 
 .book-redundancy__chapters-heading { margin: 0 0 10px; font-size: inherit; font-weight: 600; }
 .book-redundancy__chapters { display: grid; gap: 7px; }

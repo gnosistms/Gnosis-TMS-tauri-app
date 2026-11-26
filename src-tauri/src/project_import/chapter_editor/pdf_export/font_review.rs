@@ -29,6 +29,7 @@ pub(super) fn prepare(
     workspace: &Path,
     document: &ExportDocument,
     options: &PdfWorkspacePreparationOptions<'_>,
+    shortlinks: &qr_shortlinks::Shortlinks,
     plan: &font_fallback::FontFallbackPlan,
     review_plan: &font_fallback::FontFallbackPlan,
 ) -> Result<PreparedFontReview, String> {
@@ -39,6 +40,7 @@ pub(super) fn prepare(
         .then(|| dropcap_block_index(&document.blocks, &order, promoted))
         .flatten();
     let mut excerpts = Vec::new();
+    let mut uses_qr = false;
     if review_plan.affected(&title.to_uppercase(), false) {
         excerpts.push((
             "Chapter title".to_string(),
@@ -99,14 +101,14 @@ pub(super) fn prepare(
             }
             ExportBlock::Image { caption, .. } => {
                 image_number += 1;
-                if review_plan.affected(caption, options.footnote_links_as_plain_text) {
+                if review_plan.affected(caption, options.footnote_links.prints_urls()) {
                     excerpts.push((
                         format!("Image {image_number} caption"),
                         format!(
                             "#align(center)[{}]\n",
                             render_typst_image_caption(
                                 caption,
-                                options.footnote_links_as_plain_text
+                                options.footnote_links.prints_urls()
                             )
                         ),
                     ));
@@ -115,13 +117,20 @@ pub(super) fn prepare(
             // The print policy turned media into link paragraphs.
             ExportBlock::Media { .. } => {}
             ExportBlock::Footnote { number, text, .. } => {
-                if review_plan.affected(text, options.footnote_links_as_plain_text) {
+                if review_plan.affected(text, options.footnote_links.prints_urls()) {
                     // Same size, number gutter, and text alignment as native PDF
                     // footnote entries; no invented anchor paragraph is required.
-                    excerpts.push((format!("Footnote {number}"), format!(
-                        "#text(size: 0.85em)[#grid(columns: (12pt, 1fr), column-gutter: 3pt, align: (end + top, start + top), [#text({})], [{}])]\n",
-                        typst_string(&format!("{number}.")), render_inline_typst(text, options.footnote_links_as_plain_text)
-                    )));
+                    let body = pdf_note_body(text, *number, options.footnote_links, shortlinks)?;
+                    let entry = if body.starts_with("#gnosis-qr-note(") {
+                        uses_qr = true;
+                        format!("#qr-excerpt({number}, [{body}])")
+                    } else {
+                        format!("#grid(columns: (12pt, 1fr), column-gutter: 3pt, align: (end + top, start + top), [#text({})], [{body}])", typst_string(&format!("{number}.")))
+                    };
+                    excerpts.push((
+                        format!("Footnote {number}"),
+                        format!("#text(size: 0.85em)[{entry}]\n"),
+                    ));
                 }
             }
             ExportBlock::Attribution { text } => {
@@ -143,6 +152,10 @@ pub(super) fn prepare(
     }
     let mut source = plan.review_rules(review_plan);
     source.push_str(&typst_preamble(document, options.paper_size));
+    if uses_qr {
+        qr_footnotes::write_templates(workspace)?;
+        source.push_str("#import \"qr-footnotes.typ\": gnosis-qr-note, qr-excerpt\n");
+    }
     source.push_str("#set page(height: auto, margin: (x: 0.85in, y: 12pt), numbering: none)\n");
     // Width and horizontal margins match the final PDF. Compact vertical margins
     // crop each sample without changing the paragraph's available line width.
@@ -388,11 +401,19 @@ mod tests {
         let scope = tests_scope();
         let options = PdfWorkspacePreparationOptions {
             paper_size: "a4",
-            footnote_links_as_plain_text: true,
+            footnote_links: PdfFootnoteLinks::Urls,
             image_cache_session: &scope,
             layout: TypstLayout::Export,
         };
-        let prepared = prepare(&workspace, &document, &options, &plan, &plan).unwrap();
+        let prepared = prepare(
+            &workspace,
+            &document,
+            &options,
+            &HashMap::new(),
+            &plan,
+            &plan,
+        )
+        .unwrap();
         assert_eq!(
             prepared.labels,
             [
@@ -492,7 +513,7 @@ mod tests {
         let scope = tests_scope();
         let options = PdfWorkspacePreparationOptions {
             paper_size: "a4",
-            footnote_links_as_plain_text: false,
+            footnote_links: PdfFootnoteLinks::Links,
             image_cache_session: &scope,
             layout: TypstLayout::Export,
         };
@@ -503,7 +524,15 @@ mod tests {
             format!("{}{full}", plan.rules(false)),
         )
         .unwrap();
-        let prepared = prepare(&workspace, &document, &options, &plan, &plan).unwrap();
+        let prepared = prepare(
+            &workspace,
+            &document,
+            &options,
+            &HashMap::new(),
+            &plan,
+            &plan,
+        )
+        .unwrap();
         assert_eq!(
             prepared.labels,
             [
@@ -664,11 +693,19 @@ mod tests {
         let scope = tests_scope();
         let options = PdfWorkspacePreparationOptions {
             paper_size: "a4",
-            footnote_links_as_plain_text: true,
+            footnote_links: PdfFootnoteLinks::Urls,
             image_cache_session: &scope,
             layout: TypstLayout::Export,
         };
-        let prepared = prepare(&workspace, &document, &options, &plan, &plan).unwrap();
+        let prepared = prepare(
+            &workspace,
+            &document,
+            &options,
+            &HashMap::new(),
+            &plan,
+            &plan,
+        )
+        .unwrap();
         // A local figure in the final document avoids any network during the test.
         let mut full_document = document.clone();
         fs::write(workspace.join("image.svg"), "<svg xmlns='http://www.w3.org/2000/svg' width='30' height='30'><rect width='30' height='30' fill='gray'/></svg>").unwrap();

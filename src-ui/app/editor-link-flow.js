@@ -6,48 +6,58 @@ import { findElementContainingSelection } from "./editor-inline-markup/ranges.js
 import { buildEditorFieldSelector } from "./editor-utils.js";
 import { createEditorInsertLinkModalState, state } from "./state.js";
 
-function languageClusterForButton(button) {
-  return button?.closest?.("[data-editor-language-cluster]") ?? null;
+export function insertLinkEditor(appState, scope) {
+  switch (scope) {
+    case "editor": return appState.editorChapter;
+    case "glossary-term": return appState.glossaryTermEditor;
+    case "qa-term": return appState.qaTermEditor;
+    default: return null;
+  }
 }
 
-function resolveTargetTextarea(button) {
-  const cluster = languageClusterForButton(button);
+// Tabbing to a round button moves DOM focus. Keep the last field on this
+// instance of the term dialog so either language's button uses its selection.
+export function rememberTermLinkField(field) {
+  if (!field?.dataset?.termLinkField) return;
+  const dialog = field.closest("[data-modal-dialog]");
+  if (dialog) dialog.dataset.lastTermLinkField = field.dataset.termLinkField;
+}
+
+function resolveTargetTextarea(button, scope) {
+  const cluster = button?.closest?.(scope === "editor"
+    ? "[data-editor-language-cluster]" : `[data-modal-dialog="${scope}-editor"]`);
   if (!(cluster instanceof HTMLElement)) {
     return null;
   }
 
   const activeElement = document.activeElement;
-  if (activeElement instanceof HTMLTextAreaElement && cluster.contains(activeElement)) {
+  if (activeElement instanceof HTMLTextAreaElement && cluster.contains(activeElement)
+    && (scope === "editor" || activeElement.hasAttribute("data-term-link-field"))) {
     return activeElement;
   }
 
-  const field = cluster.querySelector("[data-editor-row-field]");
+  const field = scope === "editor"
+    ? cluster.querySelector("[data-editor-row-field]")
+    : cluster.querySelector(`[data-term-link-field="${CSS.escape(cluster.dataset.lastTermLinkField ?? "")}"]`);
   return field instanceof HTMLTextAreaElement ? field : null;
 }
 
-function findClusterTextarea(rowId, languageCode, contentKind = "field", footnoteMarker = "") {
-  if (typeof document === "undefined" || !rowId || !languageCode) {
-    return null;
-  }
-
-  const field = document.querySelector(
-    buildEditorFieldSelector(rowId, languageCode, contentKind, { footnoteMarker }),
-  );
+function findLinkTextarea(modal, scope) {
+  if (typeof document === "undefined") return null;
+  const { rowId, languageCode, contentKind, footnoteMarker, fieldKey } = modal;
+  const selector = scope === "editor"
+    ? buildEditorFieldSelector(rowId, languageCode, contentKind, { footnoteMarker })
+    : `[data-modal-dialog="${scope}-editor"] [data-term-link-field="${CSS.escape(fieldKey)}"]`;
+  const field = document.querySelector(selector);
   return field instanceof HTMLTextAreaElement ? field : null;
 }
 
-function setInsertLinkModalState(nextModalState) {
-  if (!state.editorChapter?.chapterId) {
-    return;
+function setInsertLinkModalState(scope, modal) {
+  if (scope === "editor") {
+    state.editorChapter = { ...state.editorChapter, insertLinkModal: modal };
+  } else {
+    insertLinkEditor(state, scope).insertLinkModal = modal;
   }
-
-  state.editorChapter = {
-    ...state.editorChapter,
-    insertLinkModal: {
-      ...createEditorInsertLinkModalState(),
-      ...(nextModalState && typeof nextModalState === "object" ? nextModalState : {}),
-    },
-  };
 }
 
 /**
@@ -93,49 +103,26 @@ export function validateEditorLinkUrl(value) {
   return sanitizeInlineLinkHref(candidate);
 }
 
-function focusInsertLinkUrlInput() {
-  if (typeof window === "undefined") {
+function refocusInsertLinkTextarea(modal, scope, { selectionStart, selectionEnd } = modal) {
+  const textarea = findLinkTextarea(modal, scope);
+  if (!textarea) {
     return;
   }
 
-  window.requestAnimationFrame(() => {
-    const input = document.querySelector("[data-editor-insert-link-url-input]");
-    if (input instanceof HTMLInputElement) {
-      input.focus({ preventScroll: true });
-    }
-  });
+  textarea.focus({ preventScroll: true });
+  if (Number.isInteger(selectionStart) && Number.isInteger(selectionEnd)) {
+    textarea.setSelectionRange(selectionStart, selectionEnd);
+  }
 }
 
-function refocusInsertLinkTextarea(rowId, languageCode, selectionStart, selectionEnd, contentKind = "field", footnoteMarker = "") {
-  if (typeof window === "undefined") {
+export function openEditorInsertLink(render, button, scope = "editor") {
+  const editor = insertLinkEditor(state, scope);
+  const canOpen = scope === "editor" ? editor?.chapterId : editor?.isOpen && editor.status !== "loading";
+  if (!canOpen) {
     return;
   }
 
-  window.requestAnimationFrame(() => {
-    const textarea = findClusterTextarea(rowId, languageCode, contentKind, footnoteMarker);
-    if (!(textarea instanceof HTMLTextAreaElement)) {
-      return;
-    }
-
-    textarea.focus({ preventScroll: true });
-    if (Number.isInteger(selectionStart) && Number.isInteger(selectionEnd)) {
-      textarea.setSelectionRange(selectionStart, selectionEnd);
-    }
-  });
-}
-
-export function openEditorInsertLink(render, button) {
-  if (!state.editorChapter?.chapterId) {
-    return;
-  }
-
-  const textarea = resolveTargetTextarea(button);
-  // Target whichever field the user was actually editing — main text, footnote,
-  // or image caption — not just the cluster's first (main) field.
-  const rowId = textarea?.dataset?.rowId ?? button?.dataset?.rowId ?? "";
-  const languageCode = textarea?.dataset?.languageCode ?? button?.dataset?.languageCode ?? "";
-  const contentKind = textarea?.dataset?.contentKind ?? "field";
-  const footnoteMarker = textarea?.dataset?.footnoteMarker ?? "";
+  const textarea = resolveTargetTextarea(button, scope);
   const selectionStart = textarea?.selectionStart ?? 0;
   const selectionEnd = textarea?.selectionEnd ?? 0;
   const hasSelection =
@@ -144,57 +131,38 @@ export function openEditorInsertLink(render, button) {
     && !textarea.readOnly
     && selectionEnd > selectionStart;
 
-  if (!hasSelection) {
-    setInsertLinkModalState({
-      isOpen: true,
-      mode: "no-selection",
-    });
-    render?.({ scope: "translate-insert-link-modal" });
-    return;
-  }
-
-  setInsertLinkModalState({
+  const target = scope === "editor" ? {
+    rowId: textarea?.dataset.rowId,
+    languageCode: textarea?.dataset.languageCode,
+    contentKind: textarea?.dataset.contentKind ?? "field",
+    footnoteMarker: textarea?.dataset.footnoteMarker ?? "",
+  } : { fieldKey: textarea?.dataset.termLinkField };
+  setInsertLinkModalState(scope, {
+    ...target,
     isOpen: true,
-    mode: "url",
-    rowId,
-    languageCode,
-    contentKind,
-    footnoteMarker,
+    mode: hasSelection ? "url" : "no-selection",
     selectionStart,
     selectionEnd,
-    selectedText: textarea.value.slice(selectionStart, selectionEnd),
+    selectedText: hasSelection ? textarea.value.slice(selectionStart, selectionEnd) : "",
     urlDraft: "",
   });
-  render?.({ scope: "translate-insert-link-modal" });
-  focusInsertLinkUrlInput();
+  render?.({ scope: "insert-link-modal", linkScope: scope });
 }
 
-export function updateEditorInsertLinkUrlDraft(nextValue) {
-  if (!state.editorChapter?.insertLinkModal?.isOpen) {
-    return;
-  }
-
-  state.editorChapter = {
-    ...state.editorChapter,
-    insertLinkModal: {
-      ...state.editorChapter.insertLinkModal,
-      urlDraft: String(nextValue ?? ""),
-    },
-  };
+export function updateEditorInsertLinkUrlDraft(nextValue, scope = "editor") {
+  const modal = insertLinkEditor(state, scope)?.insertLinkModal;
+  if (modal?.isOpen) setInsertLinkModalState(scope, { ...modal, urlDraft: String(nextValue ?? "") });
 }
 
-export function closeEditorInsertLinkModal(render) {
-  const modal = state.editorChapter?.insertLinkModal;
+export function closeEditorInsertLinkModal(render, scope = "editor") {
+  const modal = insertLinkEditor(state, scope)?.insertLinkModal;
   if (!modal?.isOpen) {
     return;
   }
 
-  const { mode, rowId, languageCode, contentKind, footnoteMarker, selectionStart, selectionEnd } = modal;
-  setInsertLinkModalState(null);
-  render?.({ scope: "translate-insert-link-modal" });
-  if (mode === "url") {
-    refocusInsertLinkTextarea(rowId, languageCode, selectionStart, selectionEnd, contentKind, footnoteMarker);
-  }
+  setInsertLinkModalState(scope, createEditorInsertLinkModalState());
+  render?.({ scope: "insert-link-modal", linkScope: scope });
+  if (modal.mode === "url") refocusInsertLinkTextarea(modal, scope);
 }
 
 /**
@@ -238,8 +206,8 @@ export function applyInsertLinkToValue(value, selectionStart, selectionEnd, href
   };
 }
 
-export function submitEditorInsertLink(render, operations = {}) {
-  const modal = state.editorChapter?.insertLinkModal;
+export function submitEditorInsertLink(render, operations = {}, scope = "editor") {
+  const modal = insertLinkEditor(state, scope)?.insertLinkModal;
   if (!modal?.isOpen || modal.mode !== "url") {
     return;
   }
@@ -249,37 +217,37 @@ export function submitEditorInsertLink(render, operations = {}) {
     return;
   }
 
-  const { rowId, languageCode, contentKind, footnoteMarker, selectionStart, selectionEnd, selectedText } = modal;
-  const textarea = findClusterTextarea(rowId, languageCode, contentKind, footnoteMarker);
+  const { selectionStart, selectionEnd, selectedText } = modal;
+  const textarea = findLinkTextarea(modal, scope);
   const selectionIntact =
     textarea instanceof HTMLTextAreaElement
     && !textarea.disabled
     && !textarea.readOnly
     && textarea.value.slice(selectionStart, selectionEnd) === selectedText;
-  if (!selectionIntact) {
-    closeEditorInsertLinkModal(render);
-    return;
-  }
-
-  const result = applyInsertLinkToValue(textarea.value, selectionStart, selectionEnd, href);
+  const result = selectionIntact && applyInsertLinkToValue(textarea.value, selectionStart, selectionEnd, href);
   if (!result) {
-    closeEditorInsertLinkModal(render);
+    closeEditorInsertLinkModal(render, scope);
     return;
   }
 
   // Remove the dialog before focusing the caption/footnote/main field; the
   // modal controller otherwise traps focus in its URL input.
-  setInsertLinkModalState(null);
-  render?.({ scope: "translate-insert-link-modal" });
+  setInsertLinkModalState(scope, createEditorInsertLinkModalState());
+  render?.({ scope: "insert-link-modal", linkScope: scope });
   applyEditorFieldEdit(textarea, result);
-  applyEditorRowFieldInput({
-    input: textarea,
-    render,
-    updateEditorRowFieldValueForContentKind: operations.updateEditorRowFieldValueForContentKind,
-    syncEditorRowTextareaHeight: operations.syncEditorRowTextareaHeight,
-    syncEditorVirtualizationRowLayout: operations.syncEditorVirtualizationRowLayout,
-    syncEditorGlossaryHighlightRowDom: operations.syncEditorGlossaryHighlightRowDom,
-  });
+  if (scope === "editor") {
+    applyEditorRowFieldInput({ ...operations, input: textarea, render });
+  } else {
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+  refocusInsertLinkTextarea(modal, scope, result);
+}
 
-  refocusInsertLinkTextarea(rowId, languageCode, result.selectionStart, result.selectionEnd, contentKind, footnoteMarker);
+export function termInsertLinkActions(render, scope) {
+  return {
+    [`open-${scope}-insert-link`]: (event) =>
+      openEditorInsertLink(render, event?.target?.closest?.("[data-editor-link-button]"), scope),
+    [`submit-${scope}-insert-link`]: () => submitEditorInsertLink(render, {}, scope),
+    [`close-${scope}-insert-link-modal`]: () => closeEditorInsertLinkModal(render, scope),
+  };
 }

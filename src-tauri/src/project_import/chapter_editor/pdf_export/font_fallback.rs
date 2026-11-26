@@ -1015,13 +1015,20 @@ mod tests {
             target: PdfImageCacheTarget::Chapter("another-document".into()),
         });
         let options = PdfWorkspacePreparationOptions {
-            footnote_links_as_plain_text: false,
+            footnote_links: PdfFootnoteLinks::Links,
             paper_size: "a4",
             image_cache_session: &session,
             layout: TypstLayout::Export,
         };
-        let prepared =
-            font_review::prepare(&workspace, &document, &options, &plan, &review).unwrap();
+        let prepared = font_review::prepare(
+            &workspace,
+            &document,
+            &options,
+            &HashMap::new(),
+            &plan,
+            &review,
+        )
+        .unwrap();
         assert_eq!(prepared.labels, ["Paragraph 2", "Paragraph 3"]);
         let source = fs::read_to_string(workspace.join("font-review.typ")).unwrap();
         assert!(source.contains("#text(\"A B\")"));

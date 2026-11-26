@@ -197,11 +197,13 @@ test("glossary term pairs are the underlined source wording and target variant a
 });
 
 test("only a standalone ellipsis between words is a gap, and source terms never have gaps", () => {
-  const forms = ["sự giằng co … giữa các mặt đối lập", "a ... b", "chờ…", "x … y … z"];
+  const forms = ["sự giằng co … giữa các mặt đối lập", "a ... b", "chờ…", "x … y … z",
+    '<a href="https://example.org/reference">a … b</a>'];
   const spans = (text, index) => findGlossaryTargetFormOccurrences(text, [forms[index]], "vi")
     .map((o) => o.pieces.map((p) => text.slice(p.start, p.end)));
   assert.deepEqual(spans("sự giằng co rất dữ dội giữa các mặt đối lập", 0), [["sự giằng co", "giữa các mặt đối lập"]]);
   assert.deepEqual(spans("a c b", 1), [["a", "b"]]);
+  assert.deepEqual(spans("a c b", 4), [["a", "b"]]);
   assert.deepEqual(spans("a, b", 1), [["a", "b"]]);
   assert.deepEqual(spans("chờ… nữa", 2), [["chờ…"]]);
   assert.deepEqual(spans("chờ thêm…", 2), []);

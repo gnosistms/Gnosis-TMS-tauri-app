@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-class FakeElement {}
+class FakeElement extends EventTarget {}
 class FakeHtmlElement extends FakeElement {
   constructor({
     payload,
@@ -21,7 +21,13 @@ class FakeHtmlElement extends FakeElement {
     this.isConnected = isConnected;
     this.isMark = isMark;
     this.children = [];
-    this.classList = { add() {}, remove() {} };
+    const classes = new Set();
+    this.classList = {
+      add: (name) => classes.add(name),
+      remove: (name) => classes.delete(name),
+      toggle: (name, enabled) => enabled ? classes.add(name) : classes.delete(name),
+      contains: (name) => classes.has(name),
+    };
     this.style = {};
     this.offsetHeight = 0;
     this.offsetWidth = 0;
@@ -39,6 +45,10 @@ class FakeHtmlElement extends FakeElement {
   }
 
   setAttribute() {}
+
+  contains(node) {
+    return this === node || this.children.some((child) => child.contains(node));
+  }
 
   querySelector(selector) {
     return this.children.find((child) => selector === `.${child.className}`) ?? null;

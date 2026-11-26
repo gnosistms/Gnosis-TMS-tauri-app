@@ -172,8 +172,7 @@ function persistQaListEditorTerms(terms) {
 
 export async function submitQaTermEditor(render) {
   const editor = state.qaTermEditor;
-  // Ruby parity with glossary: sanitize before persisting so the stored term-text carries only
-  // allowed <ruby>/<rt> markup (mirrors glossary's sanitizeEditableTerms on submit).
+  // Use the same allowed inline markup as glossary variants when saving a QA term.
   const text = sanitizeGlossaryRubyMarkup(String(editor.text ?? "")).trim();
   const notes = String(editor.notes ?? "").trim();
   const isCaseSensitive = editor.isCaseSensitive === true;

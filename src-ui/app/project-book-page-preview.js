@@ -1,7 +1,7 @@
 import { state } from "./state.js";
 import { invoke, listen } from "./runtime.js";
 import { bookExportItems } from "./project-book-model.js";
-import { DEFAULT_PDF_PAPER_SIZE } from "./editor-export-options.js";
+import { DEFAULT_PDF_PAPER_SIZE, pdfFootnoteLinkMode } from "./editor-export-options.js";
 import { formatErrorForDisplay } from "./error-display.js";
 import { selectedProjectsTeam } from "./project-context.js";
 
@@ -27,6 +27,7 @@ function previewInput(modal) {
   // exclusions belong to step 2; approximate numbers do not wait for them.
   const project = state.projects.find((entry) => entry.id === modal.projectId);
   return { ...input, book: {
+    pdfFootnoteLinkMode: pdfFootnoteLinkMode(modal),
     installationId: selectedProjectsTeam()?.installationId, repoName: project?.name || "", projectId: modal.projectId,
     projectFullName: project?.fullName || "", projectTitle: modal.projectTitle || "",
     bookItems: items.map((entry) => ({ ...entry, exclusions: [], reviewRevision: "" })),

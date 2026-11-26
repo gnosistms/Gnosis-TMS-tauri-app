@@ -17,7 +17,7 @@ import { loadStoredAiActionPreferences } from "./ai-action-preferences.js";
 import { loadStoredEditorFontSizePx } from "./editor-preferences.js";
 import { createResourcePageState } from "./resource-page-controller.js";
 import { createSyncState } from "./sync-state.js";
-import { DEFAULT_PDF_PAPER_SIZE } from "./editor-export-options.js";
+import { DEFAULT_PDF_FOOTNOTE_LINK_MODE, DEFAULT_PDF_PAPER_SIZE } from "./editor-export-options.js";
 import { loadKnownAppUpdate } from "./app-update-storage.js";
 
 export const DEFAULT_EDITOR_FONT_SIZE_PX = 20;
@@ -907,6 +907,7 @@ export function createEditorExportModalState() {
     // hyperlink is useless on paper, so print/electronic-incompatible formats should
     // surface the URL unless the user opts out.
     footnoteLinksAsPlainText: true,
+    pdfFootnoteLinkMode: DEFAULT_PDF_FOOTNOTE_LINK_MODE,
     // Print-oriented option: omit custom-HTML rows from formats that can't render
     // raw HTML (DOCX/RTF/TXT/MD/XLSX/plain text/Vellum). On by default — custom HTML
     // is usually intended for electronic export only.

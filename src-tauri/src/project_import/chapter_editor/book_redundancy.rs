@@ -1054,15 +1054,7 @@ fn run(app: &AppHandle, input: &DetectionInput, cancel: &AtomicBool) -> Result<D
     let images = image_result.images;
     let image_warnings = image_result.image_warnings;
     let mut positive = BTreeMap::new();
-    let mut changed = false;
     let batches = adjudication::batches(&candidate_groups, &notes, &cache.pairs);
-    if !batches.is_empty() {
-        changed = true;
-        let _ = app.emit(
-            "book-redundancy-progress",
-            json!({"requestId":input.request_id,"phase":"meanings"}),
-        );
-    }
     adjudication::run_batches(
         &batches,
         cancel,
@@ -1106,6 +1098,16 @@ fn run(app: &AppHandle, input: &DetectionInput, cancel: &AtomicBool) -> Result<D
                 }
             }
             Ok(())
+        },
+        |completed, total| {
+            let _ = app.emit(
+                "book-redundancy-progress",
+                json!({
+                    "requestId": input.request_id,
+                    "phase": "meanings",
+                    "batches": { "completed": completed, "total": total }
+                }),
+            );
         },
     )?;
     for &(a, b) in &candidates {
@@ -1175,7 +1177,7 @@ fn run(app: &AppHandle, input: &DetectionInput, cancel: &AtomicBool) -> Result<D
         image_warnings,
         footnotes,
         warnings: warnings.into_iter().collect(),
-        cached: !changed,
+        cached: batches.is_empty(),
         revisions,
     };
     if cancel.load(AtomicOrdering::Acquire) {
@@ -1214,7 +1216,8 @@ pub(crate) fn cancel(id: &str) -> Result<(), String> {
     Ok(())
 }
 /// Emits book-redundancy-progress with an independent phase=images checkpoint,
-/// optional footnote stages, and the terminal complete result/error, all request-scoped.
+/// optional footnote stages (including completed/total meaning comparison batches),
+/// and the terminal complete result/error, all request-scoped.
 pub(crate) fn start(app: AppHandle, input: DetectionInput) -> Result<(), String> {
     let flag = Arc::new(AtomicBool::new(false));
     {

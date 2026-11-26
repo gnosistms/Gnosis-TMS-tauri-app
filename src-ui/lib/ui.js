@@ -683,7 +683,7 @@ export function renderListboxControl({
   options = [],
 }) {
   const normalizedOptions = [
-    { value: "", label: placeholder },
+    ...(placeholder === null ? [] : [{ value: "", label: placeholder }]),
     ...options.map((option) => ({
       value: String(option?.value ?? ""),
       label: String(option?.label ?? ""),

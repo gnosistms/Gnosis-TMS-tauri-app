@@ -30,6 +30,7 @@ import {
   selectEditorExportLanguage,
   selectEditorExportPaperSize,
   toggleEditorExportFootnoteLinks,
+  selectPdfFootnoteLinkMode,
   toggleEditorExportOmitCustomHtml,
 } from "./editor-export-flow.js";
 import {
@@ -677,6 +678,11 @@ function handleEditorExportFootnoteLinksToggleInput(event, render) {
     return false;
   }
 
+  const select = event.target.closest("[data-editor-export-pdf-footnote-links]");
+  if (select instanceof HTMLSelectElement) {
+    selectPdfFootnoteLinkMode(render, select.value);
+    return true;
+  }
   const input = event.target.closest("[data-editor-export-footnote-links-toggle]");
   if (!(input instanceof HTMLInputElement)) {
     return false;
@@ -850,9 +856,10 @@ function handleEditorInsertLinkUrlInput(event) {
     return false;
   }
 
-  updateEditorInsertLinkUrlDraft(input.value);
+  updateEditorInsertLinkUrlDraft(input.value, input.dataset.editorInsertLinkUrlInput);
   const isValid = Boolean(validateEditorLinkUrl(input.value));
-  const submitButton = document.querySelector('[data-action="submit-editor-insert-link"]');
+  const dialog = input.closest("[data-modal-dialog]");
+  const submitButton = dialog.querySelector("[data-modal-default]");
   if (submitButton instanceof HTMLButtonElement) {
     submitButton.disabled = !isValid;
     submitButton.classList.toggle("is-disabled", !isValid);
@@ -862,7 +869,7 @@ function handleEditorInsertLinkUrlInput(event) {
       submitButton.setAttribute("aria-disabled", "true");
     }
   }
-  const errorText = document.querySelector("[data-editor-insert-link-url-error]");
+  const errorText = dialog.querySelector("[data-editor-insert-link-url-error]");
   if (errorText instanceof HTMLElement) {
     errorText.hidden = !(input.value.trim().length > 0 && !isValid);
   }

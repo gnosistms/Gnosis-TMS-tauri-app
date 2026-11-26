@@ -1,11 +1,12 @@
 import { footnoteParagraphsHtml } from "../editor-footnote-paragraphs.js";
 import {
   renderGlossaryRubyHtml,
+  renderGlossaryNoteHtml,
   renderGlossaryRubyTermListHtml,
 } from "../glossary-ruby.js";
 import { canManageGlossaries } from "../glossary-shared.js";
 import { renderSanitizedInlineMarkupHtml } from "../editor-inline-markup.js";
-import { isMacPlatform } from "../runtime.js";
+import { isMacPlatform, openExternalUrl } from "../runtime.js";
 
 // Double-click detection runs on pointerdown: the display-field pointerdown
 // handler calls preventDefault, which suppresses the derived mousedown events, so
@@ -23,6 +24,7 @@ let activeGlossaryTooltipMark = null;
 let activeGlossaryTooltipPointer = null;
 let glossaryTooltipPlacementFrameId = 0;
 let glossaryTooltipElement = null;
+let tooltipLeaveTimer = 0;
 let pendingGlossaryMarkDoubleClick = null;
 
 function glossaryMarkTermId(mark) {
@@ -201,6 +203,18 @@ function ensureGlossaryTooltipElement() {
   const body = document.createElement("div");
   body.className = "editor-glossary-tooltip__body";
   tooltip.append(body);
+  tooltip.addEventListener("pointerenter", cancelTooltipLeave);
+  tooltip.addEventListener("pointerleave", () => scheduleTooltipLeave(activeGlossaryTooltipMark));
+  tooltip.addEventListener("focusin", cancelTooltipLeave);
+  tooltip.addEventListener("focusout", (event) => {
+    if (!tooltip.contains(event.relatedTarget)) scheduleTooltipLeave(activeGlossaryTooltipMark);
+  });
+  tooltip.addEventListener("click", (event) => {
+    const link = event.target.closest("a[href]");
+    if (!link) return;
+    event.preventDefault();
+    openExternalUrl(link.href);
+  });
 
   document.body.append(tooltip);
   glossaryTooltipElement = tooltip;
@@ -342,7 +356,7 @@ function renderStructuredGlossaryTooltipBody(
       if (note) {
         const noteElement = document.createElement("span");
         noteElement.className = "editor-glossary-info-card__variant-note";
-        noteElement.textContent = note;
+        noteElement.innerHTML = renderGlossaryNoteHtml(note);
         row.append(noteElement);
       }
       return row;
@@ -380,7 +394,7 @@ function renderStructuredGlossaryTooltipBody(
 
       const paragraph = document.createElement("p");
       paragraph.className = "editor-glossary-info-card__comment";
-      paragraph.textContent = comment;
+      paragraph.innerHTML = renderGlossaryNoteHtml(comment);
       translatorSection.append(paragraph);
     }
     if (translatorSection.childElementCount > 0) {
@@ -513,6 +527,9 @@ function updateGlossaryTooltipPlacement(mark) {
     body.classList.remove("editor-glossary-info-card");
     body.textContent = tooltipText;
   }
+  const hasLinks = Boolean(body.querySelector("a[href]"));
+  tooltip.classList.toggle("editor-glossary-tooltip--links", hasLinks);
+  tooltip.setAttribute("aria-hidden", String(!hasLinks));
   tooltip.hidden = false;
   tooltip.classList.add("is-visible");
   const markRect = mark.getBoundingClientRect();
@@ -529,7 +546,10 @@ function updateGlossaryTooltipPlacement(mark) {
     Math.max(gap, Math.round(anchorClientX + gap)),
     Math.max(gap, window.innerWidth - offsetWidth - gap),
   );
-  const top = Math.max(gap, Math.round(anchorClientY - offsetHeight - gap));
+  let top = Math.max(gap, Math.round(anchorClientY - offsetHeight - gap));
+  if (hasLinks && top + offsetHeight >= markRect.top && markRect.bottom + gap + offsetHeight <= window.innerHeight) {
+    top = Math.round(markRect.bottom + gap);
+  }
   tooltip.style.left = `${left}px`;
   tooltip.style.top = `${top}px`;
 }
@@ -541,6 +561,7 @@ export function scheduleActiveGlossaryTooltipPlacementUpdate() {
 
   glossaryTooltipPlacementFrameId = window.requestAnimationFrame(() => {
     glossaryTooltipPlacementFrameId = 0;
+    if (activeGlossaryTooltipMark?.isConnected && glossaryTooltipElement?.matches(":hover, :focus-within")) return;
     const hoveredMark = glossaryTooltipMarkAtActivePointer();
     if (hoveredMark && hoveredMark !== activeGlossaryTooltipMark) {
       activateGlossaryTooltipMark(hoveredMark);
@@ -566,8 +587,29 @@ function activateGlossaryTooltipMark(mark) {
     return;
   }
 
+  cancelTooltipLeave();
   activeGlossaryTooltipMark = mark;
   updateGlossaryTooltipPlacement(mark);
+}
+
+function cancelTooltipLeave() {
+  if (tooltipLeaveTimer) {
+    window.clearTimeout(tooltipLeaveTimer);
+    tooltipLeaveTimer = 0;
+  }
+}
+
+function scheduleTooltipLeave(mark) {
+  if (!mark || mark !== activeGlossaryTooltipMark) return;
+  if (!glossaryTooltipElement?.classList.contains("editor-glossary-tooltip--links")) {
+    deactivateGlossaryTooltipMark(mark);
+  } else if (!tooltipLeaveTimer) {
+    // Allow the pointer to cross the gap between the word and its linked notes.
+    tooltipLeaveTimer = window.setTimeout(() => {
+      tooltipLeaveTimer = 0;
+      if (!glossaryTooltipElement.matches(":hover, :focus-within")) deactivateGlossaryTooltipMark(mark);
+    }, 350);
+  }
 }
 
 function deactivateGlossaryTooltipMark(mark = activeGlossaryTooltipMark) {
@@ -583,6 +625,7 @@ function deactivateGlossaryTooltipMark(mark = activeGlossaryTooltipMark) {
     glossaryTooltipPlacementFrameId = 0;
   }
 
+  cancelTooltipLeave();
   hideGlossaryTooltip();
 
   activeGlossaryTooltipMark = null;
@@ -590,11 +633,10 @@ function deactivateGlossaryTooltipMark(mark = activeGlossaryTooltipMark) {
 }
 
 export function handleGlossaryTooltipPointerMove(event) {
+  if (glossaryTooltipElement?.contains(event.target)) return;
   const mark = glossaryTooltipMark(event.target);
   if (!mark) {
-    if (activeGlossaryTooltipMark) {
-      deactivateGlossaryTooltipMark();
-    }
+    scheduleTooltipLeave(activeGlossaryTooltipMark);
     return;
   }
 
@@ -608,6 +650,7 @@ export function handleGlossaryTooltipPointerMove(event) {
     return;
   }
 
+  cancelTooltipLeave();
   updateGlossaryTooltipPlacement(mark);
 }
 
@@ -758,7 +801,7 @@ export function registerGlossaryTooltipEvents() {
       return;
     }
 
-    deactivateGlossaryTooltipMark(mark);
+    scheduleTooltipLeave(mark);
   });
 
   document.addEventListener("scroll", () => {

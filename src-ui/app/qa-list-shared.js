@@ -50,8 +50,7 @@ export function canPermanentlyDeleteQaLists(team = selectedTeam()) {
 
 export function normalizeQaTerm(value) {
   const termId = normalizeId(value?.termId ?? value?.id, createFallbackId());
-  // Ruby parity with glossary: sanitize term-text ruby markup on normalize so persisted/loaded
-  // QA terms only carry allowed <ruby>/<rt> tags (mirrors normalizeGlossaryTerm). Notes stay plain.
+  // Apply the same inline-markup rules used for stored glossary variants.
   const text = sanitizeGlossaryRubyMarkup(String(value?.text ?? value?.term ?? "")).trim();
   const notes = String(value?.notes ?? value?.note ?? "").trim();
   const isCaseSensitive = value?.isCaseSensitive === true;

@@ -45,6 +45,8 @@ import {
 import {
   DEFAULT_PDF_PAPER_SIZE,
   isSupportedPdfPaperSize,
+  PDF_FOOTNOTE_LINK_MODES,
+  pdfFootnoteLinkMode,
 } from "./editor-export-options.js";
 import {
   copyVellumTextEditorContentToClipboard,
@@ -197,7 +199,7 @@ function currentExportLanguageCode() {
 
 function pdfFontInspectionKey(chapterId, languageCode) {
   const modal = currentExportModal();
-  return `${modal?.projectId ? JSON.stringify(projectExportScopeInput(modal)) : String(chapterId ?? "")}:${String(languageCode ?? "")}:${modal?.omitCustomHtml === true}:${modal?.footnoteLinksAsPlainText === true}`;
+  return `${modal?.projectId ? JSON.stringify(projectExportScopeInput(modal)) : String(chapterId ?? "")}:${String(languageCode ?? "")}:${modal?.omitCustomHtml === true}:${pdfFootnoteLinkMode(modal)}`;
 }
 
 function pdfFontInspectionInput() {
@@ -219,7 +221,8 @@ function pdfFontInspectionInput() {
       ...projectExportScopeInput(modal),
       languageCode,
       omitCustomHtml: modal.omitCustomHtml === true,
-      footnoteLinksAsPlainText: modal.footnoteLinksAsPlainText === true,
+      pdfFootnoteLinkMode: pdfFootnoteLinkMode(modal),
+      footnoteLinksAsPlainText: pdfFootnoteLinkMode(modal) === "urls",
     },
   };
 }
@@ -399,6 +402,7 @@ export function openProjectExportOptions(render, projectId) {
     projectId, projectTitle: project.title || project.name, ...composition,
     chapterIds: composition.book.items.filter((item) => item.kind === "chapter" && bookItemIncluded(item)).map((item) => item.chapterId),
     ...savedOptions,
+    pdfFootnoteLinkMode: pdfFootnoteLinkMode(savedOptions),
     wordpress: { ...createEditorExportModalState().wordpress, ...savedOptions.wordpress },
   };
   if (scope.selectedOptionId === "link:team") scope.selectedOptionId = "file:pdf";
@@ -534,6 +538,15 @@ export function selectEditorExportOption(render, optionId) {
   if (optionId === "file:pdf") {
     void refreshPdfFontInspection(render);
   }
+}
+
+export function selectPdfFootnoteLinkMode(render, mode) {
+  const modal = currentExportModal();
+  if (!modal?.isOpen || exportModalIsBusy(modal)
+    || !PDF_FOOTNOTE_LINK_MODES.some(({ value }) => value === mode)) return;
+  updateEditorExportModal({ pdfFootnoteLinkMode: mode, error: "" });
+  render();
+  void refreshPdfFontInspection(render);
 }
 
 export function toggleEditorExportFootnoteLinks(render, checked) {
@@ -772,10 +785,11 @@ async function submitEditorFileExport(render, option, operations) {
       format: option.format,
       outputPath,
       ...(option.format === "pdf"
-        ? { paperSize: currentExportModal()?.pdfPaperSize || DEFAULT_PDF_PAPER_SIZE }
+        ? { paperSize: currentExportModal()?.pdfPaperSize || DEFAULT_PDF_PAPER_SIZE,
+          pdfFootnoteLinkMode: pdfFootnoteLinkMode(currentExportModal()) }
         : {}),
-      footnoteLinksAsPlainText:
-        option.printLinkFallback === true
+      footnoteLinksAsPlainText: option.format === "pdf" ? pdfFootnoteLinkMode(currentExportModal()) === "urls"
+        : option.printLinkFallback === true
         && currentExportModal()?.footnoteLinksAsPlainText === true,
       omitCustomHtml:
         option.omitCustomHtmlOption === true

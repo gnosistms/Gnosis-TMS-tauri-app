@@ -737,7 +737,7 @@ function renderTranslateDeriveGlossariesModalOnly() {
   reconcileModalRenderState(app, modalSnapshot);
 }
 
-function renderTranslateModalOnly(selector, html) {
+function renderModalOnly(selector, html) {
   const modalSnapshot = captureModalRenderState(app);
   const modalCard = app.querySelector(selector);
   const backdrop = modalCard?.closest?.(".modal-backdrop");
@@ -820,7 +820,7 @@ function renderProjectsBackgroundSurfaces() {
 }
 
 function renderWithOptionsImpl(options = {}) {
-  const bookUpdated = options.scope === "book-redundancy" ? updateBookRedundancyView(app, state)
+  const bookUpdated = options.scope === "book-redundancy" ? updateBookRedundancyView(app, state, options)
     : options.scope === "project-book-preview" ? renderProjectBookPreview(app, state) : false;
   if (bookUpdated) {
     rememberProjectsExportRender(app, state);
@@ -879,13 +879,13 @@ function renderWithOptionsImpl(options = {}) {
     return;
   }
 
-  if (options?.scope === "translate-insert-link-modal" && state.screen === "translate") {
-    renderTranslateModalOnly(".modal-card--insert-link", renderEditorInsertLinkModal(state));
+  if (options?.scope === "insert-link-modal") {
+    renderModalOnly(".modal-card--insert-link", renderEditorInsertLinkModal(state, options.linkScope));
     return;
   }
 
   if (options?.scope === "translate-multiple-h1-modal" && state.screen === "translate") {
-    renderTranslateModalOnly('[data-modal-dialog="editor-multiple-h1"]', renderEditorMultipleH1Modal(state));
+    renderModalOnly('[data-modal-dialog="editor-multiple-h1"]', renderEditorMultipleH1Modal(state));
     return;
   }
 

@@ -1,4 +1,5 @@
 use super::book_export::{book_title, single_line_title, BookItemInput};
+use super::shortlink_cache;
 use super::*;
 use crate::util::atomic_replace;
 use reqwest::blocking::Client as BlockingClient;
@@ -22,6 +23,9 @@ mod font_preferences;
 mod font_review;
 mod page_preview;
 mod preview_fonts;
+mod qr_footnotes;
+mod qr_packing;
+mod qr_shortlinks;
 
 pub(crate) use preview_fonts::{start_project_book_preview_fonts, BookPreviewFontsInput};
 
@@ -31,7 +35,7 @@ use super::chapter_export::{
     apply_print_custom_html_policy, build_scoped_export_document,
     download_public_image_bytes_detailed, export_text_style, footnote_paragraphs, inline_segments,
     inline_visible_text, load_export_chapters, quote_paragraphs, ExportBlock,
-    ExportChapterFileInput, ExportDocument, ExportImage, InlineStyleState,
+    ExportChapterFileInput, ExportDocument, ExportImage, InlineStyleState, PdfFootnoteLinks,
 };
 use super::list_style::{
     is_list_text_style, list_events, list_items, list_kind, ListEvent, ListItem, ListKind,
@@ -108,19 +112,21 @@ struct PdfImageCacheSession {
 #[derive(Clone)]
 struct CachedPreparedPdfImage {
     fingerprint: String,
+    download_stamp: Option<(std::time::SystemTime, u64)>,
     bytes: Arc<Vec<u8>>,
     aspect: Option<f64>,
 }
 
 #[derive(Default)]
 struct PdfImagePreparationCache {
+    disk_dir: Option<PathBuf>,
     scope: Option<PdfImageCacheScope>,
     generation: u64,
     entries: HashMap<String, CachedPreparedPdfImage>,
 }
 
 struct PdfWorkspacePreparationOptions<'a> {
-    footnote_links_as_plain_text: bool,
+    footnote_links: PdfFootnoteLinks,
     paper_size: &'a str,
     image_cache_session: &'a PdfImageCacheSession,
     layout: TypstLayout<'a>,
@@ -162,11 +168,17 @@ impl PdfImagePreparationCache {
         key: &str,
         fingerprint: &str,
     ) -> Option<CachedPreparedPdfImage> {
-        self.matches(session)
-            .then(|| self.entries.get(key))
-            .flatten()
-            .filter(|entry| entry.fingerprint == fingerprint)
-            .cloned()
+        if !self.matches(session) {
+            return None;
+        }
+        let entry = self.entries.get(key)?;
+        if let Some((dir, url)) = self.disk_dir.as_deref().zip(key.strip_prefix("url:")) {
+            let stamp = super::export_image_cache::fresh_download_stamp(dir, url)?;
+            if Some(stamp) != entry.download_stamp {
+                return None;
+            }
+        }
+        (entry.fingerprint == fingerprint).then(|| entry.clone())
     }
 
     fn insert(
@@ -185,7 +197,12 @@ impl PdfImagePreparationCache {
 
 fn pdf_image_preparation_cache() -> &'static Mutex<PdfImagePreparationCache> {
     static CACHE: OnceLock<Mutex<PdfImagePreparationCache>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(PdfImagePreparationCache::default()))
+    CACHE.get_or_init(|| {
+        Mutex::new(PdfImagePreparationCache {
+            disk_dir: super::export_image_cache::directory().map(Path::to_path_buf),
+            ..Default::default()
+        })
+    })
 }
 
 fn begin_pdf_image_cache(scope: &PdfImageCacheScope) -> PdfImageCacheSession {
@@ -221,6 +238,8 @@ pub(crate) struct PdfFontInspectionInput {
     omit_custom_html: Option<bool>,
     #[serde(default)]
     footnote_links_as_plain_text: bool,
+    #[serde(default)]
+    pdf_footnote_link_mode: Option<PdfFootnoteLinks>,
 }
 
 #[derive(Clone, Serialize)]
@@ -546,7 +565,11 @@ pub(crate) fn inspect_gtms_chapter_pdf_fonts(
         return Err("Choose the export language first.".to_string());
     }
     let omit_custom_html = input.omit_custom_html.unwrap_or(true);
-    let show_link_urls = input.footnote_links_as_plain_text;
+    let mode = PdfFootnoteLinks::resolve(
+        input.pdf_footnote_link_mode,
+        input.footnote_links_as_plain_text,
+    );
+    let show_link_urls = mode.prints_urls();
     let document = load_export_document(
         app,
         &ExportChapterFileInput {
@@ -564,6 +587,7 @@ pub(crate) fn inspect_gtms_chapter_pdf_fonts(
             output_path: String::new(),
             paper_size: "us-letter".to_string(),
             footnote_links_as_plain_text: show_link_urls,
+            pdf_footnote_link_mode: Some(mode),
             omit_custom_html,
         },
     )?;
@@ -779,13 +803,16 @@ async fn run_pdf_export(
     );
     let load_app = app.clone();
     let load_input = input;
-    let (document, output_path, footnote_links_as_plain_text, omit_custom_html) =
+    let (document, output_path, footnote_links, omit_custom_html) =
         tauri::async_runtime::spawn_blocking(move || {
             let document = load_export_document(&load_app, &load_input)?;
             Ok::<_, String>((
                 document,
                 PathBuf::from(&load_input.output_path),
-                load_input.footnote_links_as_plain_text,
+                PdfFootnoteLinks::resolve(
+                    load_input.pdf_footnote_link_mode,
+                    load_input.footnote_links_as_plain_text,
+                ),
                 load_input.omit_custom_html,
             ))
         })
@@ -816,7 +843,7 @@ async fn run_pdf_export(
     let prep_job_id = job_id.to_string();
     let prepared = tauri::async_runtime::spawn_blocking(move || {
         let options = PdfWorkspacePreparationOptions {
-            footnote_links_as_plain_text,
+            footnote_links,
             paper_size,
             image_cache_session: &image_cache_session,
             layout: TypstLayout::Export,
@@ -874,6 +901,7 @@ async fn run_pdf_export(
     );
 
     let rendered_path = workspace.join("chapter.pdf");
+    qr_packing::prepare(app, &workspace, &font_dir, &fallback_fonts, &cancelled).await?;
     compile_typst(
         app,
         &workspace,
@@ -1445,7 +1473,7 @@ fn prepare_typst_workspace(
     document: &ExportDocument,
     options: &PdfWorkspacePreparationOptions<'_>,
     cancelled: &AtomicBool,
-) -> Result<(), String> {
+) -> Result<qr_shortlinks::Shortlinks, String> {
     check_cancelled(cancelled)?;
     let image_paths = if matches!(options.layout, TypstLayout::TextOnly) {
         // Book section images (logo, full-page images) are simply left out.
@@ -1474,28 +1502,94 @@ fn prepare_typst_workspace(
         .map_err(|error| format!("Could not prepare the title ornament for the PDF: {error}"))?;
     write_droplet_package(workspace)?;
     let mut source = typst_preamble(document, options.paper_size);
-    if document.book_parts.is_empty() {
-        source.push_str(&render_typst_chapter(
+    let shortlinks = if let Some(app) = app.filter(|_| options.footnote_links.prints_qr()) {
+        let urls = qr_footnotes::document_urls(document);
+        let session = crate::broker_auth_storage::load_broker_auth_session_internal(app)
+            .ok()
+            .flatten();
+        let session_token = session
+            .as_ref()
+            .map(|session| session.session_token.as_str());
+        let discover = |urls: Vec<String>| {
+            if !urls.is_empty() {
+                emit_progress(
+                    app,
+                    job_id,
+                    "running",
+                    "preparing-links",
+                    "Finding shorter links for QR codes…",
+                    PdfProgressValue::indeterminate(),
+                );
+            }
+            qr_shortlinks::resolve(urls, cancelled, session_token)
+        };
+        let shortlinks = if urls.is_empty() {
+            HashMap::new()
+        } else if let Ok(app_data) = app.path().app_data_dir() {
+            let (shortlinks, saved) = shortlink_cache::resolve(
+                &app_data,
+                urls,
+                |url, links| {
+                    session_token.is_some() && qr_shortlinks::is_cached_wiki_fallback(url, links)
+                },
+                discover,
+            );
+            if saved.is_err() {
+                crate::github::report_backend_nonfatal_error(
+                    app,
+                    "pdf-export.shortlink-cache",
+                    "cache_io_failed",
+                );
+            }
+            shortlinks
+        } else {
+            crate::github::report_backend_nonfatal_error(
+                app,
+                "pdf-export.shortlink-cache",
+                "directory_unavailable",
+            );
+            discover(urls)
+        };
+        check_cancelled(cancelled)?;
+        shortlinks
+    } else {
+        HashMap::new()
+    };
+    let body = if document.book_parts.is_empty() {
+        render_typst_chapter(
             document,
             &image_paths,
+            &shortlinks,
             options,
             cancelled,
             None,
             false,
-        )?);
+        )?
     } else {
-        source.push_str(&render_typst_book(
-            document,
-            &image_paths,
-            options,
-            cancelled,
-        )?);
+        render_typst_book(document, &image_paths, &shortlinks, options, cancelled)?
+    };
+    if options.footnote_links.prints_qr() && body.contains("#footnote[#gnosis-qr-note(") {
+        qr_footnotes::write_templates(workspace)?;
+        if body.matches("#footnote[").nth(1).is_some() {
+            qr_packing::initialize(workspace)?;
+            source.push_str("#let gnosis-qr-rows = json(\"qr-rows.json\")\n");
+        } else {
+            source.push_str("#let gnosis-qr-rows = (:)\n");
+        }
+        // Followers cancel the absolute gap used by native footnote entries.
+        let (_, _, body_size, _) = body_font_style(document);
+        source.push_str(&format!(
+            "#let gnosis-footnote-gap = 0.73 * {body_size}pt\n"
+        ));
+        source.push_str(qr_packing::IMPORT);
     }
+    source.push_str(&body);
     if matches!(options.layout, TypstLayout::TextOnly) {
         source.push_str(BOOK_PAGINATION_RULE);
     }
     fs::write(workspace.join("chapter.typ"), source)
-        .map_err(|error| format!("Could not write the temporary Typst document: {error}"))
+        .map_err(|error| format!("Could not write the temporary Typst document: {error}"))?;
+    Ok(shortlinks)
 }
 
 // This is the chapter style: book chapters and standalone exports use this
@@ -1503,6 +1597,7 @@ fn prepare_typst_workspace(
 fn render_typst_chapter(
     document: &ExportDocument,
     image_paths: &HashMap<String, PreparedTypstImage>,
+    shortlinks: &qr_shortlinks::Shortlinks,
     options: &PdfWorkspacePreparationOptions<'_>,
     cancelled: &AtomicBool,
     chapter_number: Option<usize>,
@@ -1511,6 +1606,7 @@ fn render_typst_chapter(
     let mut anchored_footnotes: HashMap<usize, Vec<(usize, String)>> = HashMap::new();
     let mut anchored_numbers = HashSet::new();
     for block in &document.blocks {
+        check_cancelled(cancelled)?;
         if let ExportBlock::Footnote {
             number,
             marker,
@@ -1518,10 +1614,10 @@ fn render_typst_chapter(
             text,
         } = block
         {
-            anchored_footnotes
-                .entry(*anchor_block)
-                .or_default()
-                .push((*marker, text.clone()));
+            anchored_footnotes.entry(*anchor_block).or_default().push((
+                *marker,
+                pdf_note_body(text, *number, options.footnote_links, shortlinks)?,
+            ));
             anchored_numbers.insert(*number);
         }
     }
@@ -1584,18 +1680,13 @@ fn render_typst_chapter(
                             .iter()
                             .map(|item| item.text.as_str())
                             .collect::<Vec<_>>();
-                        let items_inline = render_inline_typst_parts_with_footnotes(
-                            &texts,
-                            footnotes,
-                            options.footnote_links_as_plain_text,
-                        );
+                        let items_inline = render_with_prepared_footnotes(&texts, footnotes);
                         render_typst_list(kind, &items, &items_inline)
                     }
                     // A quote's paragraphs are set as paragraphs of one quote.
-                    None => render_inline_typst_parts_with_footnotes(
+                    None => render_with_prepared_footnotes(
                         &quote_paragraphs(text_style, text),
                         footnotes,
-                        options.footnote_links_as_plain_text,
                     )
                     .join("\n\n"),
                 };
@@ -1678,7 +1769,7 @@ fn render_typst_chapter(
             ExportBlock::Footnote { number, text, .. } if !anchored_numbers.contains(number) => {
                 source.push_str(&format!(
                     "#footnote[{}]\n",
-                    render_footnote_typst(text, options.footnote_links_as_plain_text)
+                    pdf_note_body(text, *number, options.footnote_links, shortlinks)?
                 ));
             }
             ExportBlock::Footnote { .. } => {}
@@ -1699,7 +1790,7 @@ fn render_typst_chapter(
                                 typst_string(path),
                                 render_typst_image_caption(
                                     caption,
-                                    options.footnote_links_as_plain_text
+                                    options.footnote_links.prints_urls()
                                 )
                             )
                         }
@@ -1723,7 +1814,7 @@ fn render_typst_chapter(
                         &body,
                         caption,
                         floating,
-                        options.footnote_links_as_plain_text,
+                        options.footnote_links.prints_urls(),
                     )
                 };
                 if cover {
@@ -1823,6 +1914,7 @@ const BOOK_TITLE_FIT_RULE: &str = r#"
 fn render_typst_book(
     document: &ExportDocument,
     image_paths: &HashMap<String, PreparedTypstImage>,
+    shortlinks: &qr_shortlinks::Shortlinks,
     options: &PdfWorkspacePreparationOptions<'_>,
     cancelled: &AtomicBool,
 ) -> Result<String, String> {
@@ -1918,6 +2010,7 @@ fn render_typst_book(
             source.push_str(&render_typst_chapter(
                 &part.document,
                 image_paths,
+                shortlinks,
                 options,
                 cancelled,
                 number,
@@ -1973,13 +2066,13 @@ fn render_typst_book(
                 source.push_str(&format!(
                     "#gnosis-image({}, caption: [{}])\n",
                     typst_string(path),
-                    render_typst_image_caption(&item.caption, options.footnote_links_as_plain_text)
+                    render_typst_image_caption(&item.caption, options.footnote_links.prints_urls())
                 ));
             }
             if !item.caption.trim().is_empty() {
                 source.push_str(&format!(
                     "#v(0.85em)\n{}\n",
-                    render_typst_image_caption(&item.caption, options.footnote_links_as_plain_text)
+                    render_typst_image_caption(&item.caption, options.footnote_links.prints_urls())
                 ));
             }
             source.push_str("]\n#v(1fr)\n");
@@ -2003,7 +2096,7 @@ fn render_typst_book(
                         if inline_visible_text(&text).is_empty() {
                             source.push_str("#v(1.25em)\n");
                         } else {
-                            source.push_str(&render_inline_typst(&text, options.footnote_links_as_plain_text));
+                            source.push_str(&render_inline_typst(&text, options.footnote_links.prints_urls()));
                             source.push_str("#parbreak()\n");
                         }
                     }
@@ -2183,7 +2276,7 @@ fn prepare_pdf_workspace(
         let plan = font_fallback::resolve(
             document,
             font_dir,
-            options.footnote_links_as_plain_text,
+            options.footnote_links.prints_urls(),
             &approved,
             cancelled,
         )?;
@@ -2191,7 +2284,8 @@ fn prepare_pdf_workspace(
             report_font_coverage_gap(app, &plan, document);
         }
         plan.validate()?;
-        prepare_typst_workspace(Some(app), job_id, &workspace, document, options, cancelled)?;
+        let shortlinks =
+            prepare_typst_workspace(Some(app), job_id, &workspace, document, options, cancelled)?;
         let unapproved = plan.unapproved(&approved);
         if !plan.fonts.is_empty() {
             let chapter_path = workspace.join("chapter.typ");
@@ -2207,6 +2301,7 @@ fn prepare_pdf_workspace(
                 &workspace,
                 document,
                 options,
+                &shortlinks,
                 &plan,
                 &unapproved,
             )?)
@@ -2387,6 +2482,10 @@ fn prepare_typst_images_with_cache(
         }
     }
 
+    let disk_dir = image_cache
+        .lock()
+        .ok()
+        .and_then(|cache| cache.disk_dir.clone());
     let total_images = (cached_images.len() + pending_images.len()) as u64;
     let cached_count = cached_images.len() as u64;
     if let Some(app) = app {
@@ -2398,17 +2497,24 @@ fn prepare_typst_images_with_cache(
             &if pending_images.is_empty() {
                 format!("Reusing prepared images ({total_images} of {total_images})…")
             } else {
-                format!("Preparing images ({cached_count} of {total_images})…")
+                format!("Checking images ({cached_count} of {total_images})…")
             },
             PdfProgressValue::determinate(cached_count, total_images, "items"),
         );
     }
     let pending_order = pending_images
         .iter()
-        .map(|(key, _, _, fingerprint, _)| (key.clone(), fingerprint.clone()))
+        .map(|(key, _, _, fingerprint, _)| {
+            // A concurrent source refresh must never label older output as the new version.
+            let stamp = disk_dir
+                .as_deref()
+                .zip(key.strip_prefix("url:"))
+                .and_then(|(dir, url)| super::export_image_cache::fresh_download_stamp(dir, url));
+            (key.clone(), fingerprint.clone(), stamp)
+        })
         .collect::<Vec<_>>();
     let results = Mutex::new(HashMap::<String, Result<ResolvedPdfImage, String>>::new());
-    let completed = std::sync::atomic::AtomicU64::new(cached_count);
+    let progress = Mutex::new((cached_count, cached_count));
     run_pdf_image_pipeline(
         pending_images,
         cancelled,
@@ -2420,25 +2526,31 @@ fn prepare_typst_images_with_cache(
             (key, resolved)
         },
         |(key, resolved)| {
-            let result = resolved.map(|resolved| match resolved {
-                ResolvedPdfImage::Bytes(bytes) => {
-                    ResolvedPdfImage::Bytes(optimize_pdf_image_bytes(bytes))
+            let (result, reused) = match resolved {
+                Ok(ResolvedPdfImage::Bytes(bytes)) => {
+                    let (bytes, reused) = prepare_pdf_image_bytes(bytes, disk_dir.as_deref());
+                    (Ok(ResolvedPdfImage::Bytes(bytes)), reused)
                 }
-                placeholder => placeholder,
-            });
+                other => (other, false),
+            };
             if let Ok(mut results) = results.lock() {
                 results.insert(key, result);
             } else {
                 return;
             }
-            let current = completed.fetch_add(1, Ordering::AcqRel) + 1;
             if let Some(app) = app {
+                let mut progress = progress.lock().unwrap_or_else(|error| error.into_inner());
+                progress.0 += 1;
+                progress.1 += u64::from(reused);
+                let (current, reused) = *progress;
                 emit_progress(
                     app,
                     job_id,
                     "running",
                     "preparing-images",
-                    &format!("Preparing images ({current} of {total_images})…"),
+                    &format!(
+                        "Images ready ({current} of {total_images}, {reused} from the PDF cache)…"
+                    ),
                     PdfProgressValue::determinate(current, total_images, "items"),
                 );
             }
@@ -2450,7 +2562,7 @@ fn prepare_typst_images_with_cache(
         .lock()
         .map_err(|_| "The PDF image worker results are unavailable.".to_string())?;
     let mut prepared_images = HashMap::new();
-    for (index, (key, fingerprint)) in pending_order.into_iter().enumerate() {
+    for (index, (key, fingerprint, download_stamp)) in pending_order.into_iter().enumerate() {
         let resolved = results
             .remove(&key)
             .ok_or_else(|| "An image could not be prepared for the PDF.".to_string())??;
@@ -2472,6 +2584,7 @@ fn prepare_typst_images_with_cache(
                         key.clone(),
                         CachedPreparedPdfImage {
                             fingerprint,
+                            download_stamp,
                             bytes,
                             aspect,
                         },
@@ -2599,6 +2712,52 @@ const PDF_IMAGE_MAX_WIDTH: u32 = 2040;
 const PDF_IMAGE_MAX_HEIGHT: u32 = 2820;
 const PDF_IMAGE_JPEG_QUALITY: u8 = 95;
 
+fn exceeds_print_dimensions(width: u32, height: u32) -> bool {
+    width > PDF_IMAGE_MAX_WIDTH || height > PDF_IMAGE_MAX_HEIGHT
+}
+
+fn needs_pdf_conversion(bytes: &[u8]) -> bool {
+    match typst_image_extension(bytes) {
+        Some("webp") => true,
+        Some("png") => super::chapter_export::png_dimensions(bytes)
+            .is_some_and(|(w, h)| exceeds_print_dimensions(w, h)),
+        Some("jpg") => {
+            jpeg_dimensions(bytes).is_some_and(|(w, h)| exceeds_print_dimensions(w, h))
+                && !bytes[..bytes.len().min(65536)]
+                    .windows(6)
+                    .any(|s| s == b"Exif\x00\x00")
+        }
+        _ => false,
+    }
+}
+
+fn pdf_conversion_key(source: &[u8]) -> String {
+    let digest = Sha256::digest(source);
+    format!(
+        "{PDF_IMAGE_PREPARATION_REVISION}:{PDF_IMAGE_MAX_WIDTH}x{PDF_IMAGE_MAX_HEIGHT}:q{PDF_IMAGE_JPEG_QUALITY}:{digest:x}"
+    )
+}
+
+fn prepare_pdf_image_bytes(bytes: Vec<u8>, disk_dir: Option<&Path>) -> (Vec<u8>, bool) {
+    if !needs_pdf_conversion(&bytes) {
+        return (bytes, false);
+    }
+    let Some(dir) = disk_dir else {
+        return (optimize_pdf_image_bytes(bytes), false);
+    };
+    // Resolve the source first. An expired download is refreshed by the shared
+    // original-image cache, and an upload replaced in place gets a new key.
+    let key = pdf_conversion_key(&bytes);
+    if let Some(ready) = super::export_image_cache::read_prepared_pdf(dir, &key) {
+        return (ready, true);
+    }
+    let ready = optimize_pdf_image_bytes(bytes);
+    if !needs_pdf_conversion(&ready) {
+        super::export_image_cache::remember_prepared_pdf(dir, &key, &ready);
+    }
+    (ready, false)
+}
+
 /// Recompresses raster images to keep the PDF small. PDF has no WebP support,
 /// so Typst decodes WebP to raw pixels and embeds them losslessly deflated —
 /// a few lossy WebPs balloon a chapter to tens of megabytes. JPEG is the one
@@ -2611,8 +2770,6 @@ const PDF_IMAGE_JPEG_QUALITY: u8 = 95;
 fn optimize_pdf_image_bytes(bytes: Vec<u8>) -> Vec<u8> {
     use image::imageops::FilterType;
 
-    let oversized =
-        |width: u32, height: u32| width > PDF_IMAGE_MAX_WIDTH || height > PDF_IMAGE_MAX_HEIGHT;
     let encode_jpeg = |image: &image::RgbImage| -> Option<Vec<u8>> {
         let mut out = Vec::new();
         image
@@ -2641,7 +2798,7 @@ fn optimize_pdf_image_bytes(bytes: Vec<u8>) -> Vec<u8> {
             let Ok(mut decoded) = image::load_from_memory(&bytes) else {
                 return bytes;
             };
-            if oversized(decoded.width(), decoded.height()) {
+            if exceeds_print_dimensions(decoded.width(), decoded.height()) {
                 decoded = decoded.resize(
                     PDF_IMAGE_MAX_WIDTH,
                     PDF_IMAGE_MAX_HEIGHT,
@@ -2654,7 +2811,7 @@ fn optimize_pdf_image_bytes(bytes: Vec<u8>) -> Vec<u8> {
             let Ok(decoded) = image::load_from_memory(&bytes) else {
                 return bytes;
             };
-            if !oversized(decoded.width(), decoded.height()) {
+            if !exceeds_print_dimensions(decoded.width(), decoded.height()) {
                 return bytes;
             }
             let resized = decoded.resize(
@@ -2672,7 +2829,7 @@ fn optimize_pdf_image_bytes(bytes: Vec<u8>) -> Vec<u8> {
             let Some((width, height)) = jpeg_dimensions(&bytes) else {
                 return bytes;
             };
-            if !oversized(width, height) {
+            if !exceeds_print_dimensions(width, height) {
                 return bytes;
             }
             // Re-encoding drops EXIF metadata, including the orientation tag —
@@ -3153,10 +3310,12 @@ const GNOSIS_QUOTE_RULE: &str = r#"#let gnosis-citation(body, scale: 1) = [#line
 "#;
 
 fn render_inline_typst(text: &str, show_link_urls: bool) -> String {
-    let normalized = text.nfc().collect::<String>();
-    inline_segments(&normalized)
+    inline_segments(text)
         .into_iter()
-        .map(|segment| render_styled_typst_text(&segment.text, &segment.style, show_link_urls))
+        .map(|segment| {
+            let words = segment.text.nfc().collect::<String>();
+            render_styled_typst_text(&words, &segment.style, show_link_urls)
+        })
         .collect::<Vec<_>>()
         .join("")
 }
@@ -3245,14 +3404,37 @@ fn render_inline_typst_with_footnotes(
         .unwrap_or_default()
 }
 
-/// Renders the parts of one block (a paragraph, the paragraphs of a quote, or the
-/// items of a list) that share the block's footnotes. Each footnote is set at its marker in the first part that
-/// has it.
+#[cfg(test)]
 fn render_inline_typst_parts_with_footnotes(
     texts: &[&str],
     footnotes: &[(usize, String)],
-    footnote_links_as_plain_text: bool,
+    urls: bool,
 ) -> Vec<String> {
+    let prepared = footnotes
+        .iter()
+        .map(|(marker, text)| (*marker, render_footnote_typst(text, urls)))
+        .collect::<Vec<_>>();
+    render_with_prepared_footnotes(texts, &prepared)
+}
+
+fn pdf_note_body(
+    text: &str,
+    number: usize,
+    mode: PdfFootnoteLinks,
+    shortlinks: &qr_shortlinks::Shortlinks,
+) -> Result<String, String> {
+    if mode.prints_qr() {
+        if let Some(body) = qr_footnotes::render(text, number, shortlinks)? {
+            return Ok(body);
+        }
+    }
+    Ok(render_footnote_typst(text, mode.prints_urls()))
+}
+
+/// Renders the parts of one block (a paragraph, the paragraphs of a quote, or the
+/// items of a list) that share the block's footnotes. Each footnote is set at its marker in the first part that
+/// has it.
+fn render_with_prepared_footnotes(texts: &[&str], footnotes: &[(usize, String)]) -> Vec<String> {
     if footnotes.is_empty() {
         return texts
             .iter()
@@ -3289,10 +3471,7 @@ fn render_inline_typst_parts_with_footnotes(
                     if last_emitted_footnote {
                         rendered.push_str("#super[,]");
                     }
-                    rendered.push_str(&format!(
-                        "#footnote[{}]",
-                        render_footnote_typst(note, footnote_links_as_plain_text)
-                    ));
+                    rendered.push_str(&format!("#footnote[{note}]"));
                     used.insert(marker);
                     last_emitted_footnote = true;
                 }
@@ -3322,10 +3501,7 @@ fn render_inline_typst_parts_with_footnotes(
             if last_emitted_footnote {
                 rendered.push_str("#super[,]");
             }
-            rendered.push_str(&format!(
-                "#footnote[{}]",
-                render_footnote_typst(note, footnote_links_as_plain_text)
-            ));
+            rendered.push_str(&format!("#footnote[{note}]"));
             used.insert(*marker);
             last_emitted_footnote = true;
         }
@@ -3429,9 +3605,20 @@ fn render_styled_typst_text(text: &str, style: &InlineStyleState, show_link_urls
         } else {
             String::new()
         };
-        rendered = format!("#link({})[{rendered}]{suffix}", typst_string(link));
+        rendered = format!("#link({})[{rendered}]{suffix}", typst_link_target(link));
     }
     rendered
+}
+
+// PDF URI annotations use ASCII. Preserve non-ASCII destinations in the QR
+// payload and use their browser-equivalent URI for clickable text and images.
+fn typst_link_target(url: &str) -> String {
+    if !url.is_ascii() {
+        if let Ok(uri) = url::Url::parse(url) {
+            return typst_string(uri.as_str());
+        }
+    }
+    typst_string(url)
 }
 
 fn typst_string(value: &str) -> String {
@@ -3646,8 +3833,36 @@ fn emit_progress(
 }
 
 #[cfg(test)]
+fn run_typst_for_test(arguments: &[&std::ffi::OsStr], workspace: &Path) -> Option<Vec<u8>> {
+    let (Some(binary), Some(fonts)) = (
+        std::env::var_os("GNOSIS_TYPST_BIN"),
+        std::env::var_os("GNOSIS_TYPST_SMOKE_FONT_DIR"),
+    ) else {
+        return None;
+    };
+    let output = std::process::Command::new(binary)
+        .args(arguments)
+        .args(["--ignore-system-fonts", "--font-path"])
+        .arg(fonts)
+        .arg("--root")
+        .arg(workspace)
+        .arg("--package-path")
+        .arg(workspace.join("packages"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Some(output.stdout)
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    mod qr_rows;
 
     #[test]
     fn saved_font_control_only_appears_for_exported_coverage_gaps() {
@@ -3980,6 +4195,7 @@ mod tests {
             ..chapter.clone()
         };
         let entry = || CachedPreparedPdfImage {
+            download_stamp: None,
             fingerprint: "v1".into(),
             bytes: Arc::new(vec![1]),
             aspect: None,
@@ -4146,6 +4362,7 @@ mod tests {
             &session_a,
             "file:first".to_string(),
             CachedPreparedPdfImage {
+                download_stamp: None,
                 fingerprint: "first-v1".to_string(),
                 bytes: Arc::new(vec![1, 2, 3]),
                 aspect: Some(0.5),
@@ -4155,6 +4372,7 @@ mod tests {
             &session_a,
             "file:second".to_string(),
             CachedPreparedPdfImage {
+                download_stamp: None,
                 fingerprint: "second-v1".to_string(),
                 bytes: Arc::new(vec![4, 5, 6]),
                 aspect: Some(1.0),
@@ -4168,6 +4386,82 @@ mod tests {
         let session_b = cache.begin_export(&chapter_b);
         assert!(cache.get(&session_b, "file:first", "first-v1").is_none());
         assert!(cache.entries.is_empty());
+    }
+
+    #[test]
+    fn prepared_images_survive_restarts_and_source_changes() {
+        let dir = pdf_workspace().unwrap();
+        let _cleanup = WorkspaceCleanup(dir.clone());
+        let original = webp_fixture(40, 30, [200, 20, 10, 255]);
+        let changed = webp_fixture(40, 30, [20, 10, 200, 255]);
+        let (prepared, hit) = prepare_pdf_image_bytes(original.clone(), Some(&dir));
+        assert!(!hit);
+        assert_eq!(typst_image_extension(&prepared), Some("jpg"));
+        let key = pdf_conversion_key(&original);
+        let entry = dir
+            .join(super::super::export_image_cache::PDF_PREPARED_DIR)
+            .join(format!("{:x}", Sha256::digest(key.as_bytes())));
+        fs::File::options()
+            .write(true)
+            .open(&entry)
+            .unwrap()
+            .set_modified(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap();
+        assert_eq!(
+            prepare_pdf_image_bytes(original.clone(), Some(&dir)),
+            (prepared.clone(), true)
+        );
+        let (new, hit) = prepare_pdf_image_bytes(changed.clone(), Some(&dir));
+        assert!(!hit);
+        assert_ne!(new, prepared);
+        assert_eq!(prepare_pdf_image_bytes(changed, Some(&dir)), (new, true));
+
+        let mut damaged = fs::read(&entry).unwrap();
+        damaged[10] ^= 0xff;
+        fs::write(&entry, damaged).unwrap();
+        assert_eq!(
+            prepare_pdf_image_bytes(original.clone(), Some(&dir)),
+            (prepared.clone(), false)
+        );
+        assert_eq!(
+            prepare_pdf_image_bytes(original, Some(&dir)),
+            (prepared, true)
+        );
+    }
+
+    #[test]
+    fn refreshed_or_expired_downloads_invalidate_the_memory_copy() {
+        let dir = pdf_workspace().unwrap();
+        let _cleanup = WorkspaceCleanup(dir.clone());
+        let url = "https://example.org/plate.webp";
+        let key = format!("url:{url}");
+        let raw = dir.join(format!("{:x}", Sha256::digest(url.as_bytes())));
+        let mut cache = PdfImagePreparationCache {
+            disk_dir: Some(dir.clone()),
+            ..Default::default()
+        };
+        let session = cache.begin_export(&test_image_cache_scope("plates"));
+        fs::write(&raw, [1, 2, 3]).unwrap();
+        cache.insert(
+            &session,
+            key.clone(),
+            CachedPreparedPdfImage {
+                fingerprint: "v1".into(),
+                download_stamp: super::super::export_image_cache::fresh_download_stamp(&dir, url),
+                bytes: Arc::new(vec![10]),
+                aspect: None,
+            },
+        );
+        assert!(cache.get(&session, &key, "v1").is_some());
+        fs::File::options()
+            .write(true)
+            .open(&raw)
+            .unwrap()
+            .set_modified(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap();
+        assert!(cache.get(&session, &key, "v1").is_none());
+        fs::write(&raw, [9, 8, 7, 6]).unwrap();
+        assert!(cache.get(&session, &key, "v1").is_none());
     }
 
     #[test]
@@ -4421,7 +4715,7 @@ mod tests {
         let session = begin_pdf_image_cache(&test_image_cache_scope("title-layout"));
         let options = PdfWorkspacePreparationOptions {
             paper_size: "a5",
-            footnote_links_as_plain_text: true,
+            footnote_links: PdfFootnoteLinks::Urls,
             image_cache_session: &session,
             layout: TypstLayout::Export,
         };
@@ -4631,7 +4925,7 @@ mod tests {
         };
         let cache_session = begin_pdf_image_cache(&test_image_cache_scope("book-smoke"));
         let options = PdfWorkspacePreparationOptions {
-            footnote_links_as_plain_text: true,
+            footnote_links: PdfFootnoteLinks::Urls,
             paper_size: "a5",
             image_cache_session: &cache_session,
             layout: TypstLayout::Export,
@@ -4801,7 +5095,7 @@ mod tests {
         };
         let cache_session = begin_pdf_image_cache(&test_image_cache_scope("book-section"));
         let options = PdfWorkspacePreparationOptions {
-            footnote_links_as_plain_text: true,
+            footnote_links: PdfFootnoteLinks::Urls,
             paper_size: "us-letter",
             image_cache_session: &cache_session,
             layout: TypstLayout::Export,
@@ -5116,7 +5410,7 @@ mod tests {
         let session = begin_pdf_image_cache(&test_image_cache_scope("dropcap-lines"));
         let options = PdfWorkspacePreparationOptions {
             paper_size: "a5",
-            footnote_links_as_plain_text: true,
+            footnote_links: PdfFootnoteLinks::Urls,
             image_cache_session: &session,
             layout: TypstLayout::Export,
         };
@@ -5221,7 +5515,7 @@ mod tests {
         let session = begin_pdf_image_cache(&test_image_cache_scope("multi-paragraph-quote"));
         let options = PdfWorkspacePreparationOptions {
             paper_size: "a5",
-            footnote_links_as_plain_text: true,
+            footnote_links: PdfFootnoteLinks::Urls,
             image_cache_session: &session,
             layout: TypstLayout::Export,
         };
@@ -5274,7 +5568,7 @@ mod tests {
         let session = begin_pdf_image_cache(&test_image_cache_scope("quote-spacing"));
         let options = PdfWorkspacePreparationOptions {
             paper_size: "a5",
-            footnote_links_as_plain_text: true,
+            footnote_links: PdfFootnoteLinks::Urls,
             image_cache_session: &session,
             layout: TypstLayout::Export,
         };
@@ -5327,7 +5621,7 @@ mod tests {
         let session = begin_pdf_image_cache(&test_image_cache_scope("body-citation"));
         let options = PdfWorkspacePreparationOptions {
             paper_size: "a5",
-            footnote_links_as_plain_text: true,
+            footnote_links: PdfFootnoteLinks::Urls,
             image_cache_session: &session,
             layout: TypstLayout::Export,
         };
@@ -5376,7 +5670,7 @@ mod tests {
         let session = begin_pdf_image_cache(&test_image_cache_scope("paragraph-indents"));
         let options = PdfWorkspacePreparationOptions {
             paper_size: "a5",
-            footnote_links_as_plain_text: true,
+            footnote_links: PdfFootnoteLinks::Urls,
             image_cache_session: &session,
             layout: TypstLayout::Export,
         };
@@ -5433,7 +5727,7 @@ mod tests {
             )));
             let options = PdfWorkspacePreparationOptions {
                 paper_size: "a5",
-                footnote_links_as_plain_text: true,
+                footnote_links: PdfFootnoteLinks::Urls,
                 image_cache_session: &session,
                 layout: TypstLayout::Export,
             };
@@ -5473,7 +5767,7 @@ mod tests {
         let session = begin_pdf_image_cache(&test_image_cache_scope("quote-page-breaks"));
         let options = PdfWorkspacePreparationOptions {
             paper_size: "a5",
-            footnote_links_as_plain_text: true,
+            footnote_links: PdfFootnoteLinks::Urls,
             image_cache_session: &session,
             layout: TypstLayout::Export,
         };
@@ -5675,7 +5969,7 @@ mod tests {
         let session = begin_pdf_image_cache(&test_image_cache_scope("chapter-covers"));
         let options = PdfWorkspacePreparationOptions {
             paper_size: "a5",
-            footnote_links_as_plain_text: true,
+            footnote_links: PdfFootnoteLinks::Urls,
             image_cache_session: &session,
             layout: TypstLayout::Export,
         };
@@ -6190,6 +6484,105 @@ mod tests {
     }
 
     #[test]
+    fn qr_footnotes_compile_with_native_anchors_and_wrapped_rows() {
+        let workspace = pdf_workspace().unwrap();
+        let _cleanup = WorkspaceCleanup(workspace.clone());
+        let session = begin_pdf_image_cache(&test_image_cache_scope("qr-print"));
+        let options = PdfWorkspacePreparationOptions {
+            footnote_links: PdfFootnoteLinks::Qr,
+            paper_size: "a5",
+            image_cache_session: &session,
+            layout: TypstLayout::Export,
+        };
+        let media = super::super::chapter_export::AudioExport::QrFootnote.note_text(
+            &ExportImage::Url("https://example.org/interview.mp3#t=12".into()),
+            "The interview",
+        );
+        let mut collection = String::from(
+            r#"The editor asks “<a href="https://example.org/資料/訪談#question">Where does the story begin?</a>” in the transcript. "#,
+        );
+        for i in 1..=6 {
+            collection.push_str(&format!(r#"<a href="https://example.org/archive/recording-{i}?edition=2&amp;lang=en#start">Play recording {i}.</a> "#));
+        }
+        let note = |number, text: &str| ExportBlock::Footnote {
+            number,
+            marker: number,
+            anchor_block: Some(0),
+            text: text.into(),
+        };
+        let document = ExportDocument {
+            title: "Listening to the archive".into(), language_code: "en".into(), book_parts: vec![],
+            blocks: vec![
+                text_block("paragraph", "Listen to the original interview.[1] Compare its opening question across six related recordings.[2]"),
+                note(1, &media),
+                note(2, &collection),
+            ],
+        };
+        let book = ExportDocument {
+            book_parts: vec![super::super::book_export::BookPart {
+                item: BookItemInput {
+                    kind: "chapter".into(),
+                    id: "c1".into(),
+                    title: document.title.clone(),
+                    ..Default::default()
+                },
+                document: document.clone(),
+            }],
+            ..document.clone()
+        };
+        assert_eq!(
+            serde_json::from_str::<PdfFootnoteLinks>(r#""compact-qr""#).unwrap(),
+            PdfFootnoteLinks::Qr
+        );
+        for document in [&document, &book] {
+            prepare_typst_workspace(
+                None,
+                "",
+                &workspace,
+                document,
+                &options,
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+            let source = fs::read_to_string(workspace.join("chapter.typ")).unwrap();
+            assert_eq!(source.matches("#footnote[#gnosis-qr-note(").count(), 2);
+            assert_eq!(source.matches("modules: ").count(), 8);
+            if let (Some(binary), Some(fonts)) = (
+                std::env::var_os("GNOSIS_TYPST_BIN"),
+                std::env::var_os("GNOSIS_TYPST_SMOKE_FONT_DIR"),
+            ) {
+                let pdf = workspace.join("proof.pdf");
+                let result = std::process::Command::new(binary)
+                    .current_dir(&workspace)
+                    .args([
+                        "compile",
+                        "--root",
+                        ".",
+                        "--package-path",
+                        "packages",
+                        "--ignore-system-fonts",
+                        "--font-path",
+                    ])
+                    .arg(fonts)
+                    .arg("chapter.typ")
+                    .arg(&pdf)
+                    .output()
+                    .unwrap();
+                assert!(
+                    result.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&result.stderr)
+                );
+                if document.book_parts.is_empty() {
+                    if let Some(dest) = std::env::var_os("GNOSIS_QR_SMOKE_OUTPUT") {
+                        fs::copy(pdf, dest).unwrap();
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn generated_typst_compiles_when_smoke_runtime_is_configured() {
         let Some(typst_binary) = std::env::var_os("GNOSIS_TYPST_BIN") else {
             return;
@@ -6280,7 +6673,7 @@ mod tests {
         };
         let image_cache_session = begin_pdf_image_cache(&test_image_cache_scope("smoke-chapter"));
         let options = PdfWorkspacePreparationOptions {
-            footnote_links_as_plain_text: true,
+            footnote_links: PdfFootnoteLinks::Urls,
             paper_size: "a4",
             image_cache_session: &image_cache_session,
             layout: TypstLayout::Export,
@@ -6457,7 +6850,7 @@ mod tests {
         let session = begin_pdf_image_cache(&test_image_cache_scope("list-rows"));
         let options = PdfWorkspacePreparationOptions {
             paper_size: "a5",
-            footnote_links_as_plain_text: true,
+            footnote_links: PdfFootnoteLinks::Urls,
             image_cache_session: &session,
             layout: TypstLayout::Export,
         };

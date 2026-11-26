@@ -100,6 +100,29 @@ pub(crate) struct ExportChapterFileResponse {
     skipped_rows_without_timing: Option<usize>,
 }
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub(super) enum PdfFootnoteLinks {
+    Links,
+    Urls,
+    #[serde(alias = "compact-qr")]
+    Qr,
+}
+
+impl PdfFootnoteLinks {
+    pub(super) fn resolve(mode: Option<Self>, legacy_urls: bool) -> Self {
+        mode.unwrap_or(if legacy_urls { Self::Urls } else { Self::Links })
+    }
+
+    pub(super) fn prints_qr(self) -> bool {
+        self == Self::Qr
+    }
+
+    pub(super) fn prints_urls(self) -> bool {
+        self == Self::Urls
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ExportChapterFileInput {
@@ -128,6 +151,8 @@ pub(crate) struct ExportChapterFileInput {
     // "(url)" after the link, since a clickable hyperlink is useless on paper.
     #[serde(default)]
     pub(super) footnote_links_as_plain_text: bool,
+    #[serde(default)]
+    pub(super) pdf_footnote_link_mode: Option<PdfFootnoteLinks>,
     // Print-oriented option: drop custom-HTML rows from formats that can't carry
     // raw HTML (DOCX/RTF/TXT/MD/XLSX). HTML export always passes them through.
     #[serde(default)]
@@ -421,6 +446,15 @@ pub(super) fn build_scoped_export_document(
     full_name: Option<&str>,
     head_sha: &str,
 ) -> Result<ExportDocument, String> {
+    let audio_export = if input.format.trim().eq_ignore_ascii_case("pdf")
+        && input
+            .pdf_footnote_link_mode
+            .is_some_and(PdfFootnoteLinks::prints_qr)
+    {
+        AudioExport::QrFootnote
+    } else {
+        AudioExport::for_format(&input.format)
+    };
     let documents = chapters
         .iter()
         .map(|(chapter, rows)| {
@@ -431,7 +465,7 @@ pub(super) fn build_scoped_export_document(
                 &input.language_code,
                 full_name,
                 head_sha,
-                AudioExport::for_format(&input.format),
+                audio_export,
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -948,10 +982,7 @@ pub(super) fn build_export_document(
                 .then(|| last_visible_text_block_index(&blocks, row_block_start))
                 .flatten();
             if let Some(anchor_block) = footnote_anchor {
-                audio_footnote = Some((
-                    anchor_block,
-                    audio_footnote_text(&image, &caption, audio_export.links()),
-                ));
+                audio_footnote = Some((anchor_block, audio_export.note_text(&image, &caption)));
             } else if media.is_image() {
                 blocks.push(ExportBlock::Image { image, caption });
             } else {
@@ -1217,9 +1248,12 @@ pub(super) enum AudioExport {
     Embed,
     /// EPUB plays the audio it bundles and footnotes the rest.
     EpubBundled,
+    QrFootnote,
     /// The format cannot play audio. `links` says whether the address in the
     /// footnote is a link (TXT has none).
-    Footnote { links: bool },
+    Footnote {
+        links: bool,
+    },
 }
 
 impl AudioExport {
@@ -1236,12 +1270,32 @@ impl AudioExport {
         match self {
             Self::Embed => false,
             Self::EpubBundled => !epub_bundles_audio(source),
-            Self::Footnote { .. } => true,
+            Self::Footnote { .. } | Self::QrFootnote => true,
         }
     }
 
-    fn links(self) -> bool {
-        !matches!(self, Self::Footnote { links: false })
+    pub(super) fn note_text(self, source: &ExportImage, caption: &str) -> String {
+        if let (Self::QrFootnote, ExportImage::Url(url)) = (self, source) {
+            let href = escape_html(url);
+            let visible = inline_visible_text(caption);
+            if visible.trim().is_empty() {
+                return format!("<a href=\"{href}\">{url}</a>");
+            }
+            // An existing caption link has its own destination. Keep it intact
+            // and put the recording in a separate paragraph to avoid nested anchors.
+            if inline_segments(caption)
+                .iter()
+                .any(|run| run.style.link.is_some())
+            {
+                return format!("{caption}\n\n<a href=\"{href}\">{url}</a>");
+            }
+            return format!("<a href=\"{href}\">{caption}</a>");
+        }
+        audio_footnote_text(
+            source,
+            caption,
+            !matches!(self, Self::Footnote { links: false }),
+        )
     }
 }
 
@@ -1521,7 +1575,7 @@ fn escape_xml(value: &str) -> String {
 
 /// A recognized inline link tag in the canonical editor form
 /// (`<a href="...">` with an http(s) href, or `</a>`).
-enum InlineLinkTag {
+pub(super) enum InlineLinkTag {
     Open { source_len: usize, href: String },
     Close { source_len: usize },
 }
@@ -1535,7 +1589,7 @@ fn decode_inline_attribute_entities(value: &str) -> String {
         .replace("&amp;", "&")
 }
 
-fn inline_link_tag(remaining: &str) -> Option<InlineLinkTag> {
+pub(super) fn inline_link_tag(remaining: &str) -> Option<InlineLinkTag> {
     if remaining.starts_with("</a>") {
         return Some(InlineLinkTag::Close { source_len: 4 });
     }
@@ -3329,6 +3383,16 @@ pub(super) fn public_http_client_for_url(
     timeout: Duration,
     user_agent: &str,
 ) -> Result<BlockingClient, PublicImageDownloadError> {
+    public_http_client_builder_for_url(url, timeout, user_agent)?
+        .build()
+        .map_err(|_| PublicImageDownloadError::ClientSetupFailed)
+}
+
+pub(super) fn public_http_client_builder_for_url(
+    url: &str,
+    timeout: Duration,
+    user_agent: &str,
+) -> Result<reqwest::blocking::ClientBuilder, PublicImageDownloadError> {
     let request = validated_export_image_request(url)?;
     let mut builder = BlockingClient::builder()
         .timeout(timeout)
@@ -3337,9 +3401,7 @@ pub(super) fn public_http_client_for_url(
     if let Some((host, addresses)) = request.pinned_addresses.as_ref() {
         builder = builder.resolve_to_addrs(host, addresses);
     }
-    builder
-        .build()
-        .map_err(|_| PublicImageDownloadError::ClientSetupFailed)
+    Ok(builder)
 }
 
 /// Fetches a remote image (with the same public-host validation, redirect
@@ -3494,7 +3556,7 @@ fn docx_image_info(data: &[u8]) -> Option<(String, u32, u32)> {
     None
 }
 
-fn png_dimensions(data: &[u8]) -> Option<(u32, u32)> {
+pub(super) fn png_dimensions(data: &[u8]) -> Option<(u32, u32)> {
     let width = u32::from_be_bytes(data.get(16..20)?.try_into().ok()?);
     let height = u32::from_be_bytes(data.get(20..24)?.try_into().ok()?);
     nonzero_dimensions(width, height)
@@ -5337,6 +5399,37 @@ mod tests {
         let rtf = render_rtf_document(&printed, false);
         assert!(rtf.contains("Evening"), "{rtf}");
         assert!(!rtf.contains("Audio:"), "{rtf}");
+    }
+
+    #[test]
+    fn qr_media_footnotes_link_the_recording_caption_or_its_full_address() {
+        let url = "https://example.com/talk.mp3?q=1&b=2#t=12";
+        let row = row_with_media("row-1", "a", "Text", url, "Evening <em>talk.</em>");
+        let document = build_export_document(
+            Path::new("/repo"),
+            &paragraph_test_chapter(""),
+            &[row],
+            "en",
+            None,
+            "",
+            AudioExport::QrFootnote,
+        )
+        .unwrap();
+        assert!(
+            matches!(&document.blocks[1], ExportBlock::Footnote { anchor_block: Some(0), text, .. }
+            if text == r#"<a href="https://example.com/talk.mp3?q=1&amp;b=2#t=12">Evening <em>talk.</em></a>"#)
+        );
+        let source = ExportImage::Url(url.into());
+        assert_eq!(
+            inline_visible_text(&AudioExport::QrFootnote.note_text(&source, "")),
+            url
+        );
+        let upload = ExportImage::Upload {
+            repo_relative_path: "audio/local.mp3".into(),
+            raw_url: None,
+            absolute_path: PathBuf::from("audio/local.mp3"),
+        };
+        assert_eq!(AudioExport::QrFootnote.note_text(&upload, ""), "local.mp3");
     }
 
     #[test]
