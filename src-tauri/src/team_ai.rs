@@ -184,11 +184,22 @@ pub(crate) async fn load_team_ai_broker_public_key(
 
 #[tauri::command]
 pub(crate) async fn load_team_ai_settings(
+    app: AppHandle,
     installation_id: i64,
     org_login: String,
     session_token: String,
+    owner_only: Option<bool>,
 ) -> Result<Option<TeamAiSettingsRecord>, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        // Weekly discovery reads other teams without navigating to them.
+        // Verify ownership before inspecting their selections or resolving keys.
+        if owner_only == Some(true) {
+            crate::installation_access::require_command_access(
+                &app,
+                installation_id,
+                ensure_installation_allows_team_management,
+            )?;
+        }
         let client = broker_client()?;
         load_team_ai_settings_with_client(&client, installation_id, &org_login, &session_token)
     })

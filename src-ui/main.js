@@ -135,6 +135,8 @@ import {
 } from "./app/updater-flow.js";
 import { renderAppUpdateSurface } from "./app/app-update-surface.js";
 import { renderAppUpdateModal } from "./screens/app-update-modal.js";
+import { renderAiModelNotice } from "./screens/ai-model-notification.js";
+import { currentAiModelNotice, startAiModelNotifications, syncAiModelNotice } from "./app/ai-model-notifications.js";
 import { renderConnectionFailureModal } from "./screens/connection-failure-modal.js";
 import { renderEditorAiTranslateAllModal } from "./screens/editor-ai-translate-all-modal.js";
 import { renderEditorDeriveGlossariesModal } from "./screens/editor-derive-glossaries-modal.js";
@@ -385,7 +387,7 @@ function patchFixtureEditorRowState(rowId, updates = {}) {
 
 // Key of the latest projects-page render, including scoped book updates.
 let lastProjectsRenderKey = null;
-const PROJECTS_SCOPED_RENDER_SCOPES = new Set(["status-surface", "app-update-progress", "book-redundancy", "project-book-preview"]);
+const PROJECTS_SCOPED_RENDER_SCOPES = new Set(["status-surface", "app-update-progress", "ai-model-notice", "book-redundancy", "project-book-preview"]);
 
 function currentProjectsRenderKey() {
   return buildProjectsRenderKey({
@@ -418,6 +420,7 @@ function skipUnchangedProjectsRender(options) {
 
   renderStatusSurfaceOnly();
   renderAppUpdateSurface(app, state.appUpdate);
+  syncAiModelNoticeSurface();
   return true;
 }
 
@@ -763,6 +766,14 @@ function renderModalOnly(selector, html) {
   reconcileModalRenderState(app, modalSnapshot);
 }
 
+function patchAiModelNotice(notice) {
+  renderModalOnly('[data-modal-dialog="ai-model-notification"]', renderAiModelNotice(notice));
+}
+
+function syncAiModelNoticeSurface() {
+  syncAiModelNotice(app, patchAiModelNotice);
+}
+
 function renderTranslateImagePreviewOverlayOnly() {
   renderEditorMediaPlayerHost(state);
   const html = renderEditorImagePreviewOverlay(state);
@@ -791,6 +802,7 @@ function renderWithOptions(options = {}) {
     return renderWithOptionsImpl(options);
   } finally {
     syncEditorRowConnection();
+    syncAiModelNoticeSurface();
   }
 }
 
@@ -805,6 +817,7 @@ function renderProjectsBackgroundSurfaces() {
   // Discovery can open migration progress or a connection/update prompt. Patch
   // those overlays independently while leaving the projects list and export alone.
   for (const [selector, html] of [
+    ['[data-modal-dialog="ai-model-notification"]', renderAiModelNotice(currentAiModelNotice())],
     ['[data-modal-dialog^="app-update:"]', renderAppUpdateModal(state)],
     ['[data-modal-dialog="navigation-loading"]', renderNavigationLoadingModal(state)],
     ['[data-modal-dialog="team-resource-migration"]', renderTeamResourceMigrationModal(state)],
@@ -826,6 +839,10 @@ function renderProjectsBackgroundSurfaces() {
 }
 
 function renderWithOptionsImpl(options = {}) {
+  if (options.scope === "ai-model-notice") {
+    patchAiModelNotice(currentAiModelNotice());
+    return;
+  }
   const bookUpdated = options.scope === "book-redundancy" ? updateBookRedundancyView(app, state, options)
     : options.scope === "project-book-preview" ? renderProjectBookPreview(app, state) : false;
   if (bookUpdated) {
@@ -933,6 +950,7 @@ function renderWithOptionsImpl(options = {}) {
   const focusedBeforeRender = document.activeElement;
   const html =
     renderScreen()
+    + renderAiModelNotice(currentAiModelNotice())
     + renderAppUpdateModal(state)
     + renderNavigationLoadingModal(state)
     + renderTeamResourceMigrationModal(state)
@@ -1332,6 +1350,7 @@ async function bootstrap() {
   void registerEditorImageCaptionListeners(render);
   void registerAppUpdateProgressListener(render);
   startAppUpdateChecks(render);
+  startAiModelNotifications(syncAiModelNoticeSurface);
   render();
   void initializeConnectivity(render, () => restoreStoredBrokerSession(
     render,

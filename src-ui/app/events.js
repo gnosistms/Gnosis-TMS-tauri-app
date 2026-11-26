@@ -15,6 +15,7 @@ import { syncEditorGlossaryEntryButtons } from "./editor-glossary-entry-selectio
 import { registerKeyboardShortcutEvents } from "./events/keyboard-shortcuts.js";
 import { registerListboxControlEvents } from "./events/listbox-control.js";
 import { registerModalDialogEvents } from "./events/modal-dialog.js";
+import { registerAiModelPickerEvents } from "./events/ai-model-picker.js";
 import { registerRovingChoiceEvents } from "./events/roving-choice.js";
 import { registerNativeDropEvents } from "./events/native-drops.js";
 import { reportBackendNonfatalError } from "./telemetry.js";
@@ -59,6 +60,7 @@ export function registerAppEvents(render) {
   registerListboxControlEvents();
   registerRovingChoiceEvents();
   registerModalDialogEvents();
+  registerAiModelPickerEvents();
   registerMoneyInputEvents();
   registerGlossaryTooltipEvents();
   registerProjectAddTranslationProgress(render);

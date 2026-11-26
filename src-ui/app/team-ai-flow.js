@@ -461,8 +461,9 @@ async function ensureTeamAiMemberKeypair(context) {
   return generated;
 }
 
-async function issueAndCacheTeamAiProviderSecret(context, providerId, render) {
+async function issueAndCacheTeamAiProviderSecret(context, providerId, render, isCurrent) {
   const memberKeypair = await ensureTeamAiMemberKeypair(context);
+  if (!isCurrent(context)) return { ok: false, reason: "stale" };
   let issuedSecret = null;
   try {
     issuedSecret = await invoke("issue_team_ai_provider_secret", {
@@ -496,7 +497,7 @@ async function issueAndCacheTeamAiProviderSecret(context, providerId, render) {
     issuedSecret.wrappedKey,
     memberKeypair.privateKeyPem,
   );
-  if (!isTeamAiContextCurrent(context)) {
+  if (!isCurrent(context)) {
     return {
       ok: false,
       reason: "stale",
@@ -513,6 +514,43 @@ async function issueAndCacheTeamAiProviderSecret(context, providerId, render) {
     source: "broker-issue",
     keyVersion: issuedSecret.keyVersion,
   };
+}
+
+async function issueTeamAiProviderOnce(context, providerId, keyVersion, render, isCurrent) {
+  const key = `${context.login?.toLowerCase()}:${context.installationId}:${providerId}:${keyVersion}`;
+  const pending = providerSecretIssuances.get(key);
+  if (pending) {
+    const result = await pending;
+    // The other caller may have navigated away while this one is still eligible.
+    if (result.reason !== "stale" || !isCurrent(context)) return result;
+    return issueTeamAiProviderOnce(context, providerId, keyVersion, render, isCurrent);
+  }
+  const issuance = issueAndCacheTeamAiProviderSecret(context, providerId, render, isCurrent);
+  providerSecretIssuances.set(key, issuance);
+  try {
+    return await issuance;
+  } finally {
+    providerSecretIssuances.delete(key);
+  }
+}
+
+// An owner can use a provider in a different team from the one on screen.
+// Resolve that installation's credential without changing the active AI Settings.
+export async function ensureOwnedTeamAiModelCheckKey(context, providerId, isCurrent) {
+  const [cache, secrets] = await Promise.all([
+    invoke("load_team_ai_provider_cache", { installationId: context.installationId, providerId }),
+    invoke("load_team_ai_secrets_metadata", {
+      installationId: context.installationId, orgLogin: context.orgLogin, sessionToken: context.sessionToken,
+    }),
+  ]);
+  if (!isCurrent(context)) return false;
+  const metadata = normalizeTeamAiProviderSecretMetadata(secrets?.providers?.[providerId]);
+  const cached = normalizeTeamAiProviderCache(cache);
+  // Local-only owner keys predate shared keys and do not have a key version.
+  if (!metadata) return Boolean(cached.apiKey && cached.keyVersion === null);
+  if (cached.apiKey && cached.keyVersion === metadata.keyVersion) return true;
+  const issued = await issueTeamAiProviderOnce(context, providerId, metadata.keyVersion, null, isCurrent);
+  return issued.ok;
 }
 
 export async function ensureSelectedTeamAiProviderReady(render, providerId, options = {}) {
@@ -571,23 +609,9 @@ export async function ensureSelectedTeamAiProviderReady(render, providerId, opti
       };
     }
 
-    const issuanceKey = `${context.installationId}:${normalizedProviderId}:${providerMetadata.keyVersion}`;
-    if (providerSecretIssuances.has(issuanceKey)) {
-      return providerSecretIssuances.get(issuanceKey);
-    }
-    const issuance = issueAndCacheTeamAiProviderSecret(
-      context,
-      normalizedProviderId,
-      render,
+    return issueTeamAiProviderOnce(
+      context, normalizedProviderId, providerMetadata.keyVersion, render, isTeamAiContextCurrent,
     );
-    providerSecretIssuances.set(issuanceKey, issuance);
-    try {
-      return await issuance;
-    } finally {
-      if (providerSecretIssuances.get(issuanceKey) === issuance) {
-        providerSecretIssuances.delete(issuanceKey);
-      }
-    }
   }
 
   if (context.isOwner && typeof localApiKey === "string" && localApiKey.trim()) {

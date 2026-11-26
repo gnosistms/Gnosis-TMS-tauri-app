@@ -64,15 +64,12 @@ export function loadStoredAiActionPreferences(
 export function loadStoredTeamAiActionPreferences(
   login = getActiveStorageLogin(),
   installationId = selectedTeamInstallationId(),
+  { useDefaults = true } = {},
 ) {
   const key = scopedTeamAiActionSettingsKey(login, installationId);
-  if (!key) {
-    return normalizeStoredAiActionPreferences(null);
-  }
-
-  const rawValue = readPersistentValue(key, null);
+  const rawValue = key ? readPersistentValue(key, null) : null;
   if (rawValue === null || rawValue === undefined) {
-    return normalizeStoredAiActionPreferences(null);
+    return useDefaults ? normalizeStoredAiActionPreferences(null) : null;
   }
 
   const normalizedValue = normalizeStoredAiActionPreferences(rawValue);
