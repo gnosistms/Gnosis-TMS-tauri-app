@@ -805,14 +805,15 @@ async fn run_pdf_export(
     let load_input = input;
     let (document, output_path, footnote_links, omit_custom_html) =
         tauri::async_runtime::spawn_blocking(move || {
+            let footnote_links = PdfFootnoteLinks::resolve(
+                load_input.pdf_footnote_link_mode,
+                load_input.footnote_links_as_plain_text,
+            );
             let document = load_export_document(&load_app, &load_input)?;
             Ok::<_, String>((
                 document,
                 PathBuf::from(&load_input.output_path),
-                PdfFootnoteLinks::resolve(
-                    load_input.pdf_footnote_link_mode,
-                    load_input.footnote_links_as_plain_text,
-                ),
+                footnote_links,
                 load_input.omit_custom_html,
             ))
         })
