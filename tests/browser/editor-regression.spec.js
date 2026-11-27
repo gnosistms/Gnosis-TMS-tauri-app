@@ -7526,7 +7526,7 @@ test.describe("editor regressions", () => {
       }).toBeLessThan(STABLE_SCROLL_TOLERANCE_PX);
     });
 
-    test("guarantee 2: leaving to the glossary screen and returning restores the editor viewport", async ({ page }) => {
+    test("guarantee 2: returning from the glossary restores the editor viewport after a large scroll", async ({ page }) => {
       await page.addInitScript(() => {
         globalThis.__gnosisMockTauriHandlers = {
           async load_gtms_glossary_editor_data() {
@@ -7556,7 +7556,7 @@ test.describe("editor regressions", () => {
         };
       });
 
-      const rowId = "fixture-row-0025";
+      const rowId = "fixture-row-0008";
       await mountEditorFixture(page, {
         rowCount: 60,
         glossary: true,
@@ -7564,6 +7564,15 @@ test.describe("editor regressions", () => {
       }, { mockTauri: true });
 
       await bringRowNearTop(page, rowId, 100);
+      const destination = await waitForStableRowLayout(page, rowId);
+      await bringRowNearTop(page, "fixture-row-0025", 100);
+      await expect(page.locator(`[data-editor-row-card][data-row-id="${rowId}"]`)).toHaveCount(0);
+
+      // Jump back in one native scroll event. These rows already have measured
+      // heights, so mounting them need not generate a second scroll event.
+      await page.locator(".translate-main-scroll").evaluate((pane, top) => {
+        pane.scrollTop = top;
+      }, destination.scrollTop);
       const before = await waitForStableRowLayout(page, rowId);
       expect(before).not.toBeNull();
       // Let the debounced editor-location save settle.

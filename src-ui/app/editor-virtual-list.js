@@ -356,6 +356,7 @@ export function createEditorVirtualListController({
   let scheduledRenderReason = "";
   let scheduledRenderAnchorSnapshot = null;
   let suppressNextScrollRender = false;
+  let scrollAnchorNeedsRender = false;
   let renderedImageDebugEntries = [];
   let isRendering = false;
   let needsPostMeasureRender = false;
@@ -682,6 +683,10 @@ export function createEditorVirtualListController({
     } finally {
       isRendering = false;
       onLayout();
+      // A large jump can run the scroll handler before its rows are mounted.
+      if (scrollAnchorNeedsRender) {
+        recordScrollAnchor();
+      }
     }
 
     if (needsPostMeasureRender) {
@@ -841,6 +846,12 @@ export function createEditorVirtualListController({
     glossarySync.schedule();
   };
 
+  function recordScrollAnchor() {
+    const anchor = captureVisibleTranslateRowLocation();
+    scrollAnchorNeedsRender = !anchor;
+    updateSessionAnchor(anchor, currentModel.editorChapter?.chapterId ?? "");
+  }
+
   const handleScroll = () => {
     logEditorScrollDebug("virtualization-scroll-event", {
       engine: "tanstack",
@@ -849,10 +860,7 @@ export function createEditorVirtualListController({
       suppressNextScrollRender,
       pendingAnchorRowId: pendingTranslateAnchorRowId(),
     });
-    updateSessionAnchor(
-      captureVisibleTranslateRowLocation(),
-      currentModel.editorChapter?.chapterId ?? "",
-    );
+    recordScrollAnchor();
     if (suppressNextScrollRender) {
       suppressNextScrollRender = false;
       glossarySync.schedule();
