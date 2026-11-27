@@ -339,22 +339,18 @@ test.describe("projects page virtualization", () => {
     expect(Math.abs(after - before.offset)).toBeLessThanOrEqual(2);
   });
 
-  test("leaving and returning within a session restores the viewport", async ({ page }) => {
+  test("leaving and returning restores the Projects viewport after a large scroll", async ({ page }) => {
     await mountProjectsFixture(page, LARGE_FIXTURE);
     const { scrollHeight } = await readScrollState(page);
     await scrollProjectsPage(page, Math.floor(scrollHeight * 0.4));
-    const before = await page.evaluate(() => {
-      const container = document.querySelector(".page-body");
-      const containerRect = container.getBoundingClientRect();
-      const first = [...document.querySelectorAll("[data-projects-item-key]")].find((element) => {
-        const rect = element.getBoundingClientRect();
-        return rect.bottom > containerRect.top && rect.top < containerRect.bottom;
-      });
-      return {
-        key: first?.dataset.projectsItemKey ?? "",
-        offset: first ? first.getBoundingClientRect().top - containerRect.top : null,
-      };
-    });
+    const destination = await readScrollState(page);
+    await scrollProjectsPage(page, 0);
+    await scrollProjectsPage(page, 120);
+    const departed = await topVisibleAnchor(page);
+    await scrollProjectsPage(page, destination.scrollTop);
+    const before = await topVisibleAnchor(page);
+    expect(before.key).not.toBe("");
+    expect(before.key).not.toBe(departed.key);
 
     // Leave to the start screen, then return to the projects screen.
     await page.evaluate(() => {
@@ -366,16 +362,7 @@ test.describe("projects page virtualization", () => {
     }, LARGE_FIXTURE);
     await page.waitForTimeout(150);
 
-    const after = await page.evaluate((anchorKey) => {
-      const container = document.querySelector(".page-body");
-      const containerRect = container.getBoundingClientRect();
-      const element = document.querySelector(
-        `[data-projects-item-key="${CSS.escape(anchorKey)}"]`,
-      );
-      return element
-        ? element.getBoundingClientRect().top - containerRect.top
-        : null;
-    }, before.key);
+    const after = await offsetOfItem(page, before.key);
     expect(after).not.toBeNull();
     expect(Math.abs(after - before.offset)).toBeLessThanOrEqual(2);
   });

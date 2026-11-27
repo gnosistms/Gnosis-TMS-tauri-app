@@ -291,6 +291,7 @@ export function initializeProjectsVirtualization(root, appState, hooks) {
   let animationFrameId = 0;
   let isRendering = false;
   let needsPostMeasureRender = false;
+  let scrollAnchorNeedsRender = false;
   // Virtual-core's built-in scroll compensation on resizeItem is wanted only
   // while measuring during scroll-driven renders (keeps upward scrolling
   // smooth as estimates correct to real heights). See the editor controller
@@ -495,6 +496,9 @@ export function initializeProjectsVirtualization(root, appState, hooks) {
       isRendering = false;
     }
 
+    if (scrollAnchorNeedsRender) {
+      recordScrollAnchor();
+    }
     if (needsPostMeasureRender) {
       needsPostMeasureRender = false;
       scheduleRender("post-measure");
@@ -532,8 +536,7 @@ export function initializeProjectsVirtualization(root, appState, hooks) {
       element = findRenderedItemElement(item.key);
     }
     if (!isHtmlElement(element)) {
-      // Scrolled past the rendered range within this frame; keep the previous
-      // anchor — the post-patch scroll event will refresh it.
+      // The scroll handler can reach this item one frame before it is mounted.
       return null;
     }
 
@@ -598,12 +601,13 @@ export function initializeProjectsVirtualization(root, appState, hooks) {
     updateProjectsSessionAnchor(captureCurrentAnchor(), teamId);
   };
 
-  const handleScroll = () => {
+  function recordScrollAnchor() {
     const anchor = captureCurrentAnchor();
+    scrollAnchorNeedsRender = !anchor;
     updateProjectsSessionAnchor(anchor, teamId);
     scheduleProjectsScrollSave(teamId, anchor, projectIds, scrollContainer.scrollTop);
-  };
-  scrollContainer.addEventListener("scroll", handleScroll, { passive: true });
+  }
+  scrollContainer.addEventListener("scroll", recordScrollAnchor, { passive: true });
 
   // Item heights depend on layout width: re-measure what is mounted after a
   // resize (off-window cache entries self-correct as they re-enter the window
@@ -628,7 +632,7 @@ export function initializeProjectsVirtualization(root, appState, hooks) {
         window.cancelAnimationFrame(animationFrameId);
         animationFrameId = 0;
       }
-      scrollContainer.removeEventListener("scroll", handleScroll);
+      scrollContainer.removeEventListener("scroll", recordScrollAnchor);
       window.removeEventListener("resize", handleResize);
       cleanupVirtualizer?.();
     },
